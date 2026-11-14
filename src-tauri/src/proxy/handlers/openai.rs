@@ -3363,15 +3363,6 @@ pub async fn handle_chat_completions(
         // 每账号一次，不存在无界等待。Claude 因历史原因仍按调度模式决定是否原地等待。
 
         // 确定重试策略：传入当前 attempt 与 pool_size，执行智能自适应裁决
-        let strategy = retry_state.determine_strategy_adaptive(
-            &account_id,
-            status_code,
-            &error_text,
-            retry_after.as_deref(),
-            retried_without_thinking,
-            attempt,
-            pool_size,
-        );
         // 统一流水线决策判定：协议无关的限流与错误判定
         let classification = crate::proxy::pipeline::UpstreamClassification::classify(
             status_code,
@@ -3415,6 +3406,7 @@ pub async fn handle_chat_completions(
             );
 
             if can_rotate {
+                token_manager.abandon_session(&affinity_key, &account_id);
                 tracing::warn!(
                     "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     trace_id, status_code, email, mapped_model, attempt, pool_size
@@ -3466,6 +3458,24 @@ pub async fn handle_chat_completions(
             }
         }
 
+        let sticky_cfg = token_manager.get_sticky_config().await;
+        // [Grace Policy] 非 CacheFirst 下维持 429 微间隙 GraceRetry 账号池保护（每账号限 1 次）；
+        // CacheFirst 下统一由 plan_http_retry 对瞬态 500/503/529 及可恢复 429 执行原地退避并保住 KV 缓存。
+        let http_plan = retry_state.plan_http_retry(
+            &account_id,
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            retried_without_thinking,
+            attempt,
+            pool_size,
+            sticky_cfg.mode,
+            config.request_type != "image_gen",
+            sticky_cfg.max_wait_seconds,
+            true,
+            &classification,
+        );
+
         let should_mark_limited = classification.should_lock_account_on_attempt(
             status_code,
             &error_text,
@@ -3485,7 +3495,7 @@ pub async fn handle_chat_completions(
         } else {
             false
         };
-        if !matches!(&strategy, RetryStrategy::GraceRetry(_)) {
+        if !matches!(&http_plan.strategy, RetryStrategy::GraceRetry(_)) {
             drop(image_permit.take());
         }
         if needs_quota_refresh {
@@ -3494,7 +3504,7 @@ pub async fn handle_chat_completions(
                 .await;
         }
 
-        if classification.abandons_sticky_account() {
+        if http_plan.abandon_sticky_account {
             token_manager.abandon_session(&affinity_key, &account_id);
         }
 
@@ -3538,7 +3548,7 @@ pub async fn handle_chat_completions(
 
         // 执行退避
         if apply_retry_strategy(
-            strategy.clone(),
+            http_plan.strategy.clone(),
             attempt,
             max_attempts,
             status_code,
@@ -3546,15 +3556,6 @@ pub async fn handle_chat_completions(
         )
         .await
         {
-            if matches!(strategy, RetryStrategy::GraceRetry(_)) {
-                retry_credentials = Some((
-                    access_token.clone(),
-                    project_id.clone(),
-                    email.clone(),
-                    account_id.clone(),
-                    0,
-                ));
-            }
             // [NEW] Apply Client Adapter "let_it_crash" strategy
             if let Some(adapter) = &client_adapter {
                 if adapter.let_it_crash() && attempt > 0 {
@@ -3566,29 +3567,38 @@ pub async fn handle_chat_completions(
                 }
             }
 
-            // 判断是否需要轮换账号
-            if !should_rotate_account(status_code, Some(&strategy)) {
-                debug!(
-                    "[{}] Keeping same account for status {} (Grace Retry or Server Issue)",
-                    trace_id, status_code
-                );
-                force_rotate = false;
-            } else {
-                crate::proxy::pipeline::rotation::record_attempted_account(
-                    &mut attempted_accounts,
-                    &account_id,
-                    pool_size,
-                    &mut force_rotate,
-                );
+            match http_plan.next {
+                crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                    debug!(
+                        "[{}] Keeping same account {} for status {} (CacheFirst/Grace in-place retry)",
+                        trace_id, email, status_code
+                    );
+                    force_rotate = false;
+                    retry_credentials = Some((
+                        access_token.clone(),
+                        project_id.clone(),
+                        email.clone(),
+                        account_id.clone(),
+                        0,
+                    ));
+                }
+                crate::proxy::pipeline::TerminalNextStep::Rotate => {
+                    crate::proxy::pipeline::rotation::record_attempted_account(
+                        &mut attempted_accounts,
+                        &account_id,
+                        pool_size,
+                        &mut force_rotate,
+                    );
+                    tracing::warn!(
+                        "OpenAI Upstream {} on {} attempt {}/{}, rotating account",
+                        status_code,
+                        email,
+                        attempt + 1,
+                        max_attempts
+                    );
+                }
+                crate::proxy::pipeline::TerminalNextStep::Stop => break,
             }
-
-            tracing::warn!(
-                "OpenAI Upstream {} on {} attempt {}/{}, rotating account",
-                status_code,
-                email,
-                attempt + 1,
-                max_attempts
-            );
             continue;
         }
 
@@ -5635,6 +5645,7 @@ pub async fn handle_completions(
                 || token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900)),
             );
             if can_rotate {
+                token_manager.abandon_session(&affinity_key, &account_id);
                 tracing::warn!(
                     "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     trace_id, status_code, email, mapped_model, attempt, pool_size
@@ -5691,15 +5702,10 @@ pub async fn handle_completions(
             }
         }
 
-        if classification.abandons_sticky_account() {
-            token_manager.abandon_session(&affinity_key, &account_id);
-        }
-
-        // [Grace Policy] SchedulingMode 不参与此裁决：429 微间隙 GraceRetry 属于
-        // “账号池保护”（Fixes #3329/#3409），单账号等待已由 RequestRetryState 限制为
-        // 每账号一次，不存在无界等待。Claude 因历史原因仍按调度模式决定是否原地等待。
-
-        let strategy = retry_state.determine_strategy_adaptive(
+        let sticky_cfg = token_manager.get_sticky_config().await;
+        // [Grace Policy] 非 CacheFirst 下维持 429 微间隙 GraceRetry 账号池保护（每账号限 1 次）；
+        // CacheFirst 下统一由 plan_http_retry 对瞬态 500/503/529 及可恢复 429 执行原地退避并保住 KV 缓存。
+        let http_plan = retry_state.plan_http_retry(
             &account_id,
             status_code,
             &error_text,
@@ -5707,11 +5713,20 @@ pub async fn handle_completions(
             false,
             attempt,
             pool_size,
+            sticky_cfg.mode,
+            config.request_type != "image_gen",
+            sticky_cfg.max_wait_seconds,
+            true,
+            &classification,
         );
 
-        // 执行退备
+        if http_plan.abandon_sticky_account {
+            token_manager.abandon_session(&affinity_key, &account_id);
+        }
+
+        // 执行退避
         if apply_retry_strategy(
-            strategy.clone(),
+            http_plan.strategy.clone(),
             attempt,
             max_attempts,
             status_code,
@@ -5719,23 +5734,30 @@ pub async fn handle_completions(
         )
         .await
         {
-            if matches!(strategy, RetryStrategy::GraceRetry(_)) {
-                retry_credentials = Some((
-                    access_token.clone(),
-                    project_id.clone(),
-                    email.clone(),
-                    account_id.clone(),
-                    0,
-                ));
-            }
-            force_rotate = should_rotate_account(status_code, Some(&strategy));
-            if force_rotate {
-                crate::proxy::pipeline::rotation::record_attempted_account(
-                    &mut attempted_accounts,
-                    &account_id,
-                    pool_size,
-                    &mut force_rotate,
-                );
+            match http_plan.next {
+                crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                    debug!(
+                        "[{}] Keeping same account {} for status {} (CacheFirst/Grace in-place retry)",
+                        trace_id, email, status_code
+                    );
+                    force_rotate = false;
+                    retry_credentials = Some((
+                        access_token.clone(),
+                        project_id.clone(),
+                        email.clone(),
+                        account_id.clone(),
+                        0,
+                    ));
+                }
+                crate::proxy::pipeline::TerminalNextStep::Rotate => {
+                    crate::proxy::pipeline::rotation::record_attempted_account(
+                        &mut attempted_accounts,
+                        &account_id,
+                        pool_size,
+                        &mut force_rotate,
+                    );
+                }
+                crate::proxy::pipeline::TerminalNextStep::Stop => break,
             }
             continue;
         } else {

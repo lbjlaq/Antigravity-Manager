@@ -14,8 +14,7 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::debug_logger;
 use crate::proxy::handlers::common::{
     apply_retry_strategy, build_token_error_headers, is_transient_token_error,
-    next_rotation_attempt, should_rotate_account, FailureStatusTracker, RequestRetryState,
-    RetryStrategy,
+    next_rotation_attempt, FailureStatusTracker, RequestRetryState, RetryStrategy,
 };
 use crate::proxy::mappers::gemini::{unwrap_response, wrap_request_v2};
 use crate::proxy::pipeline::response_has_inline_image_data;
@@ -1059,16 +1058,6 @@ pub async fn handle_generate(
         // “账号池保护”（Fixes #3329/#3409），单账号等待已由 RequestRetryState 限制为
         // 每账号一次，不存在无界等待。Claude 因历史原因仍按调度模式决定是否原地等待。
 
-        // 确定重试策略：传入当前 attempt 与 pool_size，执行智能自适应裁决
-        let strategy = retry_state.determine_strategy_adaptive(
-            &account_id,
-            status_code,
-            &error_text,
-            retry_after.as_deref(),
-            retried_without_thinking,
-            attempt,
-            pool_size,
-        );
         // 统一流水线决策判定：协议无关的限流与错误判定
         let classification = crate::proxy::pipeline::UpstreamClassification::classify(
             status_code,
@@ -1098,16 +1087,6 @@ pub async fn handle_generate(
             continue;
         }
 
-        if classification.abandons_sticky_account() {
-            token_manager.abandon_session(&affinity_key, &account_id);
-            tracing::debug!(
-                "[Gemini] Unbound session {} from account {} due to status {}",
-                affinity_key,
-                email,
-                status_code
-            );
-        }
-
         if classification.is_model_not_found() {
             // [Pipeline Policy] UA 门禁短路 + 单模型临时熔断 + 是否换号的决策已下沉；这里只构造协议响应。
             let custom_ua = state.upstream.get_user_agent_override().await;
@@ -1122,6 +1101,7 @@ pub async fn handle_generate(
             );
 
             if can_rotate {
+                token_manager.abandon_session(&affinity_key, &account_id);
                 tracing::warn!(
                     "[Gemini] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     status_code, email, mapped_model, attempt, pool_size
@@ -1172,6 +1152,22 @@ pub async fn handle_generate(
             }
         }
 
+        let sticky_cfg = token_manager.get_sticky_config().await;
+        let http_plan = retry_state.plan_http_retry(
+            &account_id,
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            retried_without_thinking,
+            attempt,
+            pool_size,
+            sticky_cfg.mode,
+            config.request_type != "image_gen",
+            sticky_cfg.max_wait_seconds,
+            true,
+            &classification,
+        );
+
         let should_mark_limited = classification.should_lock_account_on_attempt(
             status_code,
             &error_text,
@@ -1191,7 +1187,7 @@ pub async fn handle_generate(
         } else {
             false
         };
-        if !matches!(&strategy, RetryStrategy::GraceRetry(_)) {
+        if !matches!(&http_plan.strategy, RetryStrategy::GraceRetry(_)) {
             drop(image_permit.take());
         }
         if needs_quota_refresh {
@@ -1199,11 +1195,20 @@ pub async fn handle_generate(
                 .refresh_quota_lock_after_fast_mark(&email, Some(&mapped_model))
                 .await;
         }
+        if http_plan.abandon_sticky_account {
+            token_manager.abandon_session(&affinity_key, &account_id);
+            tracing::debug!(
+                "[Gemini] Unbound session {} from account {} due to status {}",
+                affinity_key,
+                email,
+                status_code
+            );
+        }
         let trace_id = format!("gemini_{}", session_id);
 
         // 执行退避
         if apply_retry_strategy(
-            strategy.clone(),
+            http_plan.strategy.clone(),
             attempt,
             max_attempts,
             status_code,
@@ -1211,15 +1216,6 @@ pub async fn handle_generate(
         )
         .await
         {
-            if matches!(strategy, RetryStrategy::GraceRetry(_)) {
-                retry_credentials = Some((
-                    access_token.clone(),
-                    project_id.clone(),
-                    email.clone(),
-                    account_id.clone(),
-                    0,
-                ));
-            }
             // [NEW] Apply Client Adapter "let_it_crash" strategy
             if let Some(adapter) = &client_adapter {
                 if adapter.let_it_crash() && attempt > 0 {
@@ -1231,20 +1227,30 @@ pub async fn handle_generate(
                 }
             }
 
-            // 判断是否需要轮换账号
-            if !should_rotate_account(status_code, Some(&strategy)) {
-                debug!(
-                "[{}] Keeping same account for status {} (Gemini server-side issue or Grace Retry)",
-                trace_id, status_code
-            );
-                force_rotate = false;
-            } else {
-                crate::proxy::pipeline::rotation::record_attempted_account(
-                    &mut attempted_accounts,
-                    &account_id,
-                    pool_size,
-                    &mut force_rotate,
-                );
+            match http_plan.next {
+                crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                    debug!(
+                        "[{}] Keeping same account {} for status {} (CacheFirst/Grace in-place retry)",
+                        trace_id, email, status_code
+                    );
+                    force_rotate = false;
+                    retry_credentials = Some((
+                        access_token.clone(),
+                        project_id.clone(),
+                        email.clone(),
+                        account_id.clone(),
+                        0,
+                    ));
+                }
+                crate::proxy::pipeline::TerminalNextStep::Rotate => {
+                    crate::proxy::pipeline::rotation::record_attempted_account(
+                        &mut attempted_accounts,
+                        &account_id,
+                        pool_size,
+                        &mut force_rotate,
+                    );
+                }
+                crate::proxy::pipeline::TerminalNextStep::Stop => break,
             }
 
             continue;

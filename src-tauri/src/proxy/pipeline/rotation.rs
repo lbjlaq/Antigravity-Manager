@@ -18,11 +18,13 @@
 //! `handlers::common` 仍保留同名再导出，避免一次性改动全部调用点；
 //! 新代码请直接引用本模块。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::proxy::pipeline::policy::{Structured429Signal, UpstreamClassification};
+use crate::proxy::pipeline::terminal::TerminalNextStep;
+use crate::proxy::sticky_config::SchedulingMode;
 use tokio::time::sleep;
 use tracing::{debug, info};
 
@@ -49,11 +51,30 @@ pub enum RetryStrategy {
     GraceRetry(Duration),
 }
 
+/// CacheFirst 模式下对上游瞬态服务端错误（500/503/529）的单请求同账号重试上限（不含首次请求）。
+const CACHE_FIRST_SERVER_ERROR_MAX_RETRIES: usize = 2;
+
+/// CacheFirst 模式下对可恢复 429 限流的单请求同账号原地等待重试上限（不含首次请求）。
+const CACHE_FIRST_RATE_LIMIT_MAX_RETRIES: usize = 2;
+
+/// 一次非 2xx 上游 HTTP 响应的最终执行计划（由流水线按调度模式统一裁决）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpRetryPlan {
+    pub strategy: RetryStrategy,
+    pub next: TerminalNextStep,
+    /// 是否解绑当前会话与该账号的粘性绑定
+    pub abandon_sticky_account: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct RequestRetryState {
     grace_retried_accounts: HashSet<String>,
     /// 已在本次请求内因上游终态原地重放过的账号（每账号每请求至多一次）
     terminal_retried_accounts: HashSet<String>,
+    /// CacheFirst 模式下各账号在本次请求内因瞬态服务端错误（500/503/529）已原地重试的次数
+    server_error_retries: HashMap<String, usize>,
+    /// CacheFirst 模式下各账号在本次请求内因可恢复 429 已原地等待重试的次数
+    rate_limit_retries: HashMap<String, usize>,
 }
 
 impl RequestRetryState {
@@ -77,6 +98,137 @@ impl RequestRetryState {
                 .insert(account_id.to_string());
         }
         plan
+    }
+
+    /// 非 2xx HTTP 响应的统一流水线重试/轮换裁决（四协议共用）
+    ///
+    /// - 在 `CacheFirst` 且承载上下文 KV 缓存（`cache_bound == true`）时：
+    ///   - 瞬态服务端错误（500/503/529）不属于账号故障：绝不解绑、绝不换号，在当前绑定账号上按单账号退避
+    ///     最多重试 `CACHE_FIRST_SERVER_ERROR_MAX_RETRIES` 次（共 3 次尝试），耗尽后直接终止并保留绑定；
+    ///   - 429 仅在硬配额枯竭或冷却超过 `max_wait_seconds` 时解绑换号；否则在 `max_wait_seconds` 与剩余预算内
+    ///     原地等待并继续复用原绑定账号，绝不丢弃 KV 缓存；
+    ///   - 401/403/404 与 400 地区限制等账号级/端点级异常保持正常解绑/轮换语义。
+    /// - 其余调度模式或无缓存请求（如生图 `cache_bound == false`）严格保持既有自适应策略与轮换逻辑。
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_http_retry(
+        &mut self,
+        account_id: &str,
+        status_code: u16,
+        error_text: &str,
+        retry_after: Option<&str>,
+        retried_without_thinking: bool,
+        attempt: usize,
+        pool_size: usize,
+        mode: SchedulingMode,
+        cache_bound: bool,
+        max_wait_seconds: u64,
+        allow_grace_policy: bool,
+        classification: &UpstreamClassification,
+    ) -> HttpRetryPlan {
+        if mode == SchedulingMode::CacheFirst && cache_bound {
+            if matches!(status_code, 500 | 503 | 529)
+                && !is_model_not_found_error(status_code, error_text)
+            {
+                let retries_used = self
+                    .server_error_retries
+                    .get(account_id)
+                    .copied()
+                    .unwrap_or(0);
+                let delay_ms = match status_code {
+                    500 => 1000 * (retries_used as u64 + 1),
+                    _ => (1000 * 2_u64.pow(retries_used as u32)).min(4000),
+                };
+                let budget_ok = crate::proxy::pipeline::budget::remaining_secs()
+                    .map(|rem| rem > (delay_ms / 1000) + 2)
+                    .unwrap_or(true);
+                if retries_used < CACHE_FIRST_SERVER_ERROR_MAX_RETRIES && budget_ok {
+                    *self
+                        .server_error_retries
+                        .entry(account_id.to_string())
+                        .or_insert(0) += 1;
+                    return HttpRetryPlan {
+                        strategy: RetryStrategy::FixedDelay(Duration::from_millis(delay_ms)),
+                        next: TerminalNextStep::RetrySameAccount,
+                        abandon_sticky_account: false,
+                    };
+                }
+                return HttpRetryPlan {
+                    strategy: RetryStrategy::NoRetry,
+                    next: TerminalNextStep::Stop,
+                    abandon_sticky_account: false,
+                };
+            }
+
+            if status_code == 429 {
+                let parsed_delay = crate::proxy::upstream::retry::parse_retry_delay_with_source(
+                    error_text,
+                    retry_after,
+                );
+                let is_hard_quota = is_hard_quota_429(error_text, parsed_delay.as_ref());
+                let max_wait_ms = max_wait_seconds.saturating_mul(1000);
+                let delay_exceeds_max_wait = parsed_delay
+                    .as_ref()
+                    .map(|d| max_wait_seconds == 0 || d.actual_wait_ms() > max_wait_ms)
+                    .unwrap_or(false);
+
+                if !is_hard_quota && !delay_exceeds_max_wait {
+                    let retries_used = self
+                        .rate_limit_retries
+                        .get(account_id)
+                        .copied()
+                        .unwrap_or(0);
+                    let wait_ms = if let Some(delay) = parsed_delay.as_ref() {
+                        delay.actual_wait_ms()
+                    } else if retries_used == 0 {
+                        REQUEST_429_GRACE_MS.load(Ordering::Relaxed)
+                    } else {
+                        3000
+                    };
+                    let budget_ok = crate::proxy::pipeline::budget::remaining_secs()
+                        .map(|rem| rem > (wait_ms / 1000) + 2)
+                        .unwrap_or(true);
+                    if retries_used < CACHE_FIRST_RATE_LIMIT_MAX_RETRIES && budget_ok {
+                        *self
+                            .rate_limit_retries
+                            .entry(account_id.to_string())
+                            .or_insert(0) += 1;
+                        self.grace_retried_accounts.insert(account_id.to_string());
+                        return HttpRetryPlan {
+                            strategy: RetryStrategy::GraceRetry(Duration::from_millis(wait_ms)),
+                            next: TerminalNextStep::RetrySameAccount,
+                            abandon_sticky_account: false,
+                        };
+                    }
+                    return HttpRetryPlan {
+                        strategy: RetryStrategy::NoRetry,
+                        next: TerminalNextStep::Stop,
+                        abandon_sticky_account: false,
+                    };
+                }
+            }
+        }
+
+        let strategy = self.determine_strategy_adaptive_with_policy(
+            account_id,
+            status_code,
+            error_text,
+            retry_after,
+            retried_without_thinking,
+            attempt,
+            pool_size,
+            allow_grace_policy,
+        );
+        let next = match decide_rotation(status_code, Some(&strategy), false, false) {
+            RotationDecision::RetrySame => TerminalNextStep::RetrySameAccount,
+            RotationDecision::Rotate => TerminalNextStep::Rotate,
+            RotationDecision::Stop => TerminalNextStep::Stop,
+        };
+        HttpRetryPlan {
+            strategy,
+            next,
+            abandon_sticky_account: next != TerminalNextStep::RetrySameAccount
+                && classification.abandons_sticky_account(),
+        }
     }
 
     pub fn determine_strategy(
@@ -332,40 +484,7 @@ pub fn determine_retry_strategy_adaptive(
             // 注意：Google 标准通用 429 的 "resource has been exhausted (e.g. check quota)" 属于无明确延迟的通用流控/TPM拒绝，
             // 严禁归入硬配额，否则将导致全池快速轮换遍历并引发全池 30 秒级联锁定 (#3506)。
             // 但若明确包含 multi-day/跨小时超长重置延迟 (如 quotaResetDelay: 68h / retryDelay > 30min)，则明确属于周期硬配额耗尽。
-            let is_long_delay = parsed_delay
-                .as_ref()
-                .map(|d| d.actual_wait_ms() > 1800_000)
-                .unwrap_or(false);
-            // [Fixes #3901] 结构化 429 信号优先于消息关键词：
-            // - QuotaFailure → 账号级硬配额，快速切号；
-            // - RetryInfo / 请求级 / 未知 details → 不作为硬配额，交给后续 GraceRetry/轮换逻辑；
-            // - 无结构化 details 时才回退到关键词表。
-            let structured_429 = if status_code == 429 {
-                UpstreamClassification::structured_429_signal(error_text)
-            } else {
-                None
-            };
-            let is_hard_quota_exhausted = match structured_429 {
-                Some(Structured429Signal::HardQuota) => true,
-                Some(Structured429Signal::RequestLevel)
-                | Some(Structured429Signal::ExplicitDelay)
-                | Some(Structured429Signal::Unknown) => false,
-                None => {
-                    (parsed_delay.is_none() || is_long_delay)
-                        && (lower.contains("exceeded your current quota")
-                            || lower.contains("insufficient_quota")
-                            || lower.contains("credits")
-                            || lower.contains("zero_quota")
-                            || lower.contains("weekly quota")
-                            || lower.contains("daily quota")
-                            || lower.contains("per day")
-                            || lower.contains("individual quota")
-                            || lower.contains("quotaresetdelay")
-                            || (lower.contains("quota_exhausted")
-                                && (!lower.contains("resource has been exhausted")
-                                    || lower.contains("quotaresetdelay"))))
-                }
-            };
+            let is_hard_quota_exhausted = is_hard_quota_429(error_text, parsed_delay.as_ref());
 
             // 多账号环境下，账号级硬配额枯竭在第一轮立即切换下一个账号（50ms 闪电切号，避免 CPU 空转并快速恢复响应）
             if is_hard_quota_exhausted && attempt < pool_size {
@@ -612,6 +731,41 @@ pub fn decide_rotation(
 /// [MODEL GATE] 网关自答（404 `model not exist` / 502 `no quota accounts`）永远不会到达这里：
 /// `enforce_model_gate` 在选号之前就返回，且 `UpstreamClassification::classify` 优先把它们
 /// 归为 `InternalGatewayMessage`（既不锁号也不解绑粘性会话）。此注释用于防止后续重构破防。
+fn is_hard_quota_429(
+    error_text: &str,
+    parsed_delay: Option<&crate::proxy::upstream::retry::ParsedRetryDelay>,
+) -> bool {
+    let is_long_delay = parsed_delay
+        .map(|d| d.actual_wait_ms() > 1_800_000)
+        .unwrap_or(false);
+    // [Fixes #3901] 结构化 429 信号优先于消息关键词：
+    // - QuotaFailure → 账号级硬配额，快速切号；
+    // - RetryInfo / 请求级 / 未知 details → 不作为硬配额，交给后续 GraceRetry/轮换逻辑；
+    // - 无结构化 details 时才回退到关键词表。
+    match UpstreamClassification::structured_429_signal(error_text) {
+        Some(Structured429Signal::HardQuota) => true,
+        Some(Structured429Signal::RequestLevel)
+        | Some(Structured429Signal::ExplicitDelay)
+        | Some(Structured429Signal::Unknown) => false,
+        None => {
+            let lower = error_text.to_lowercase();
+            (parsed_delay.is_none() || is_long_delay)
+                && (lower.contains("exceeded your current quota")
+                    || lower.contains("insufficient_quota")
+                    || lower.contains("credits")
+                    || lower.contains("zero_quota")
+                    || lower.contains("weekly quota")
+                    || lower.contains("daily quota")
+                    || lower.contains("per day")
+                    || lower.contains("individual quota")
+                    || lower.contains("quotaresetdelay")
+                    || (lower.contains("quota_exhausted")
+                        && (!lower.contains("resource has been exhausted")
+                            || lower.contains("quotaresetdelay"))))
+        }
+    }
+}
+
 pub fn should_rotate_account(status_code: u16, strategy: Option<&RetryStrategy>) -> bool {
     // [NEW] 如果识别为 Grace Retry，则显式要求不轮换账号
     if let Some(RetryStrategy::GraceRetry(_)) = strategy {
@@ -884,5 +1038,179 @@ mod tests {
         record_attempted_account(&mut attempted, "acc-3", pool_size, &mut force_rotate);
         assert_eq!(attempted.len(), 1);
         assert!(attempted.contains("acc-3"));
+    }
+
+    #[test]
+    fn cache_first_text_keeps_bound_account_on_transient_500_503_529() {
+        let mut state = RequestRetryState::default();
+        for status in [500_u16, 503, 529] {
+            let acc = format!("acc-{status}");
+            let cls = UpstreamClassification::classify(status, "upstream error", None);
+            let first = state.plan_http_retry(
+                &acc,
+                status,
+                "upstream error",
+                None,
+                false,
+                0,
+                6,
+                SchedulingMode::CacheFirst,
+                true,
+                180,
+                true,
+                &cls,
+            );
+            assert_eq!(first.next, TerminalNextStep::RetrySameAccount);
+            assert!(!first.abandon_sticky_account);
+            assert!(matches!(
+                first.strategy,
+                RetryStrategy::FixedDelay(d) if d == Duration::from_millis(1000)
+            ));
+
+            let second = state.plan_http_retry(
+                &acc,
+                status,
+                "upstream error",
+                None,
+                false,
+                0,
+                6,
+                SchedulingMode::CacheFirst,
+                true,
+                180,
+                true,
+                &cls,
+            );
+            assert_eq!(second.next, TerminalNextStep::RetrySameAccount);
+            assert!(!second.abandon_sticky_account);
+            assert!(matches!(
+                second.strategy,
+                RetryStrategy::FixedDelay(d) if d == Duration::from_millis(2000)
+            ));
+
+            let exhausted = state.plan_http_retry(
+                &acc,
+                status,
+                "upstream error",
+                None,
+                false,
+                0,
+                6,
+                SchedulingMode::CacheFirst,
+                true,
+                180,
+                true,
+                &cls,
+            );
+            assert_eq!(exhausted.next, TerminalNextStep::Stop);
+            assert!(!exhausted.abandon_sticky_account);
+            assert!(matches!(exhausted.strategy, RetryStrategy::NoRetry));
+        }
+    }
+
+    #[test]
+    fn balance_and_cache_first_image_still_rotate_on_500_503() {
+        let mut state = RequestRetryState::default();
+        let cls = UpstreamClassification::classify(500, "internal error", None);
+
+        let balance_plan = state.plan_http_retry(
+            "acc-1",
+            500,
+            "internal error",
+            None,
+            false,
+            0,
+            6,
+            SchedulingMode::Balance,
+            true,
+            180,
+            true,
+            &cls,
+        );
+        assert_eq!(balance_plan.next, TerminalNextStep::Rotate);
+        assert!(!balance_plan.abandon_sticky_account);
+
+        let image_plan = state.plan_http_retry(
+            "acc-1",
+            500,
+            "internal error",
+            None,
+            false,
+            0,
+            6,
+            SchedulingMode::CacheFirst,
+            false,
+            180,
+            true,
+            &cls,
+        );
+        assert_eq!(image_plan.next, TerminalNextStep::Rotate);
+        assert!(!image_plan.abandon_sticky_account);
+    }
+
+    #[test]
+    fn cache_first_429_waits_in_place_within_max_wait_and_rotates_on_hard_quota_or_excess_delay() {
+        let mut state = RequestRetryState::default();
+        let soft_body = r#"{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"4s"}]}}"#;
+        let soft_cls = UpstreamClassification::classify(429, soft_body, None);
+
+        // 4s <= max_wait_seconds(180s): 原地等待，不解绑、不换号
+        let soft_plan = state.plan_http_retry(
+            "acc-1",
+            429,
+            soft_body,
+            None,
+            false,
+            0,
+            6,
+            SchedulingMode::CacheFirst,
+            true,
+            180,
+            true,
+            &soft_cls,
+        );
+        assert_eq!(soft_plan.next, TerminalNextStep::RetrySameAccount);
+        assert!(!soft_plan.abandon_sticky_account);
+        assert!(matches!(soft_plan.strategy, RetryStrategy::GraceRetry(_)));
+
+        // 硬配额枯竭: 立即解绑并轮换
+        let hard_body = r#"{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","reason":"QUOTA_EXHAUSTED"}]}}"#;
+        let hard_cls = UpstreamClassification::classify(429, hard_body, None);
+        let hard_plan = state.plan_http_retry(
+            "acc-2",
+            429,
+            hard_body,
+            None,
+            false,
+            0,
+            6,
+            SchedulingMode::CacheFirst,
+            true,
+            180,
+            true,
+            &hard_cls,
+        );
+        assert_eq!(hard_plan.next, TerminalNextStep::Rotate);
+        assert!(hard_plan.abandon_sticky_account);
+
+        // 冷却超出 max_wait_seconds (300s > 180s): 解绑并轮换
+        let long_body = r#"{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"300s"}]}}"#;
+        let long_cls = UpstreamClassification::classify(429, long_body, None);
+        let long_plan = state.plan_http_retry(
+            "acc-3",
+            429,
+            long_body,
+            None,
+            false,
+            0,
+            6,
+            SchedulingMode::CacheFirst,
+            true,
+            180,
+            true,
+            &long_cls,
+        );
+        assert_eq!(long_plan.next, TerminalNextStep::Rotate);
+        assert!(long_plan.abandon_sticky_account);
     }
 }

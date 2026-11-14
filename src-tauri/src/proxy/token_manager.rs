@@ -7269,12 +7269,16 @@ impl TokenManager {
     }
 
     /// 上游成功后写下真正用过的账号。轮换成功的新账号也从这里进入粘性表。
+    ///
+    /// 若会话当前仍绑定在另一账号上（未经过 `abandon_session` 或失效解绑），
+    /// 绝不允许由临时强制换号（如生图或非解绑降级重试）静默覆写原会话绑定。
     pub fn commit_session(&self, session_id: &str, account_id: &str) {
         if session_id.is_empty() || account_id.is_empty() {
             return;
         }
         self.session_accounts
-            .insert(session_id.to_string(), account_id.to_string());
+            .entry(session_id.to_string())
+            .or_insert_with(|| account_id.to_string());
     }
 
     /// 解绑当前会话。不清全局 last_used，避免一个租户的失败打散别人的 60 秒窗口。
@@ -11093,6 +11097,16 @@ mod tests {
             "CAS check must succeed and unbind matching account"
         );
         assert!(manager.session_accounts.get(session_id).is_none());
+
+        // 未解绑时调用 commit_session 不得覆写既有绑定（如强制轮换/生图换号）
+        manager.commit_session(session_id, acc1);
+        manager.commit_session(session_id, acc2);
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc1,
+            "commit_session must not overwrite existing bound account without prior unbind"
+        );
+        assert!(manager.abandon_session(session_id, acc1));
 
         // 故障转移到 acc2 成功后 commit
         manager.commit_session(session_id, acc2);
