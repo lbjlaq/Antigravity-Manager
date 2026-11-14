@@ -18,6 +18,7 @@ import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
+import { isArgonModel } from '../../utils/modelCategory';
 import AccountActionsModal from './AccountActionsModal';
 
 interface AccountCardProps {
@@ -97,7 +98,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
-        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(m => m.includes('argon'));
+        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isArgonModel);
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
@@ -110,10 +111,10 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
         if (!config?.quota_protection?.enabled) return false;
         if (!account.protected_models || account.protected_models.length === 0) return false;
         if (key === 'argon') {
-            return account.protected_models.some(m => m.toLowerCase().includes('argon'));
+            return account.protected_models.some(isArgonModel);
         }
         if (key === 'gemini') {
-            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && !m.toLowerCase().includes('argon'));
+            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && !isArgonModel(m));
         } else {
             return account.protected_models.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
         }

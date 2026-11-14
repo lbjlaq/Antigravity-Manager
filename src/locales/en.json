@@ -1005,7 +1005,7 @@
             "request": {
                 "user_agent": "User-Agent Override",
                 "user_agent_tooltip": "Override the User-Agent header sent to upstream APIs. Leave empty to use default.",
-                "user_agent_hint": "Current Default: antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)",
+                "user_agent_hint": "Current Default: antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)",
                 "user_agent_placeholder": "Enter custom User-Agent string...",
                 "user_agent_risk_title": "Risk Warning",
                 "user_agent_risk_desc": "Custom User-Agent strings may break upstream protocol compatibility. Google Cloud Code upstream strictly enforces client fingerprint version gating on flagship reasoning models like Gemini 4 Argon. If a non-Hub signature format (such as legacy IDE antigravity/4.3.0) or an outdated version (below official latest baseline {{version}}) is configured, upstream will immediately reject requests with HTTP 404 (Requested entity was not found) and trigger a 15-minute protective circuit break for the entire account pool. If unfamiliar with upstream fingerprint requirements, please proceed with caution or keep default settings.",

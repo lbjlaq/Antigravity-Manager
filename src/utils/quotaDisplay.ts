@@ -1,4 +1,5 @@
 import { checkArgonEligibility, type ModelQuota, type QuotaGroup } from '../types/account';
+import { isArgonModel } from './modelCategory';
 
 export type DashboardQuotaView = 'weighted' | '5h' | 'weekly';
 
@@ -28,7 +29,7 @@ export interface ConstrainedQuotaResult {
 // An exhausted weekly window takes precedence; protection still uses the backend quota.
 export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefined, groups: QuotaGroup[] = []) {
     const name = modelId.toLowerCase();
-    const isArgon = name.includes('argon');
+    const isArgon = isArgonModel(name);
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
     const buckets = (groups || []).filter(group => {
         const groupName = (group?.display_name || '').toLowerCase();
@@ -83,7 +84,7 @@ export function getModelConstrainedQuota(
     view: DashboardQuotaView = 'weighted'
 ): ConstrainedQuotaResult {
     const name = modelId.toLowerCase();
-    const isArgon = name.includes('argon');
+    const isArgon = isArgonModel(name);
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
 
     const buckets = (groups || []).filter(group => {
@@ -220,7 +221,7 @@ export interface GroupQuotaSummary {
     isWeeklyExhausted: boolean;
 }
 
-function isSupportedDisplayModel(name: string): boolean {
+export function isSupportedDisplayModel(name: string): boolean {
     const m = name.trim().toLowerCase();
     if (
         m.includes('-disabled') ||
@@ -231,6 +232,7 @@ function isSupportedDisplayModel(name: string): boolean {
         m.includes('-exp') ||
         m.endsWith('-agent') ||
         m === 'gemini-3-flash' ||
+        m === 'gemini-flash-worker-agy' ||
         m.includes('2.5') ||
         m.includes('2-5') ||
         m.includes('3.5-flash-low') ||
@@ -252,7 +254,7 @@ function summarizeSupportedModels(models: ModelQuota[], key: 'gemini' | 'claude'
         if (key === 'argon') {
             return {
                 dynamicLabel: 'Gemini 4 Argon',
-                supportedModels: ['gemini-4-argon', 'gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low'],
+                supportedModels: ['gemini-4-argon', 'gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low', 'gemini-pro-orchestrator-g1-pro'],
             };
         }
         return { supportedModels: [] };
@@ -369,8 +371,8 @@ export function getGroupQuotaSummaries(
         if (fallbackModels.length > 0) {
             const matched = fallbackModels.filter(m => {
                 const n = (m?.name || '').toLowerCase();
-                if (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled) return false;
-                const isArgon = n.includes('argon');
+                if (!isSupportedDisplayModel(n) || (m as any)?.disabled) return false;
+                const isArgon = isArgonModel(n);
                 if (key === 'argon') return isArgon;
                 if (isArgon) return false;
                 return key === 'claude' ? (n.startsWith('claude') || n.startsWith('gpt')) : n.startsWith('gemini');
@@ -453,8 +455,8 @@ export function getGroupQuotaSummaries(
 
         const matchedForSummary = fallbackModels.filter(m => {
             const n = (m?.name || '').toLowerCase();
-            if (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled) return false;
-            const isArgon = n.includes('argon');
+            if (!isSupportedDisplayModel(n) || (m as any)?.disabled) return false;
+            const isArgon = isArgonModel(n);
             if (key === 'argon') return isArgon;
             if (isArgon) return false;
             return key === 'claude' ? (n.startsWith('claude') || n.startsWith('gpt')) : n.startsWith('gemini');

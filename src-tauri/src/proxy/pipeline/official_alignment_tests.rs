@@ -578,6 +578,20 @@ mod tests {
         assert_eq!(gc_argon["thinkingConfig"]["thinkingLevel"], "MEDIUM");
         assert_eq!(gc_argon["thinkingConfig"]["includeThoughts"], true);
         assert!(gc_argon["thinkingConfig"].get("thinkingBudget").is_none());
+
+        // 8. Orchestrator (Argon) 必须通过官方 thinkingLevel: 3 走 HIGH 等级通道，严禁输出 thinkingBudget
+        let mut gc_orch = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-pro-orchestrator-g1-pro",
+            &mut gc_orch,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(gc_orch["thinkingConfig"]["thinkingLevel"], "HIGH");
+        assert_eq!(gc_orch["thinkingConfig"]["includeThoughts"], true);
+        assert!(gc_orch["thinkingConfig"].get("thinkingBudget").is_none());
     }
 
     #[test]

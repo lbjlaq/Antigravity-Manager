@@ -31,6 +31,7 @@ const DEFAULT_MODEL_LABELS: Record<string, string> = {
     'gemini-4-argon-high': 'gemini-4-argon-high',
     'gemini-4-argon-medium': 'gemini-4-argon-medium',
     'gemini-4-argon-low': 'gemini-4-argon-low',
+    'gemini-pro-orchestrator-g1-pro': 'gemini-pro-orchestrator-g1-pro',
     'gemini-4-hydrogen': 'gemini-4-hydrogen',
     'gemini-4-hydrogen-xhigh': 'gemini-4-hydrogen-xhigh',
     'gemini-4-hydrogen-high': 'gemini-4-hydrogen-high',
@@ -191,6 +192,12 @@ const GENERIC_G4_ROLE_TOKENS = new Set([
     'wtu', 'weekly', '5h', '7d', 'hour', 'quota', 'pool', 'default', 'standard',
 ]);
 
+/** 判断模型是否属于 Gemini 4 Argon（包含命名含 argon 的模型与 Orchestrator Argon 旗舰入口） */
+export function isArgonModel(modelName: string): boolean {
+    const lower = modelName.trim().toLowerCase();
+    return lower.includes('argon') || lower === 'gemini-pro-orchestrator-g1-pro';
+}
+
 /** 从模型名动态提取 Gemini 4+ 专属代号（零硬编码） */
 export function extractGemini4Codename(modelName: string): string | null {
     const lower = modelName.trim().toLowerCase();
@@ -203,7 +210,7 @@ export function extractGemini4Codename(modelName: string): string | null {
             return code;
         }
     }
-    if (lower.includes('argon')) return 'argon';
+    if (isArgonModel(lower)) return 'argon';
     return null;
 }
 

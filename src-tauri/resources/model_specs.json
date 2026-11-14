@@ -5,6 +5,11 @@
             "thinking_budget": 10001,
             "is_thinking": true
         },
+        "gemini-pro-orchestrator-g1-pro": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 0,
+            "is_thinking": true
+        },
         "gemini-3.8-flash": {
             "max_output_tokens": 65536,
             "thinking_budget": 4000,

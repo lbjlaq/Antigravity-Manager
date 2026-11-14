@@ -245,6 +245,9 @@ pub fn resolve_non_variant_model(model: &str) -> Option<RealModelSpec> {
     if key == "gpt-oss-120b-medium" {
         return Some(apply_official_params(SPEC_GPT_OSS_120B));
     }
+    if key == "gemini-pro-orchestrator-g1-pro" {
+        return Some(apply_official_params(SPEC_PRO_ORCHESTRATOR_G1_PRO));
+    }
     None
 }
 
@@ -558,6 +561,13 @@ const SPEC_GPT_OSS_120B: RealModelSpec = RealModelSpec {
     id: "gpt-oss-120b-medium",
     thinking_budget: 0,
     max_output_tokens: 32768,
+    include_thoughts: true,
+    preserve_client_budget: false,
+};
+const SPEC_PRO_ORCHESTRATOR_G1_PRO: RealModelSpec = RealModelSpec {
+    id: "gemini-pro-orchestrator-g1-pro",
+    thinking_budget: 0,
+    max_output_tokens: 65536,
     include_thoughts: true,
     preserve_client_budget: false,
 };
@@ -1248,6 +1258,22 @@ mod tests {
             "gpt-oss-120b-medium",
             8192,
             32768,
+        );
+
+        // ── Orchestrator (Argon) ──────────────────────────────────────
+        check(
+            "gemini-pro-orchestrator-g1-pro",
+            None,
+            "gemini-pro-orchestrator-g1-pro",
+            0,
+            65536,
+        );
+        check(
+            "gemini-pro-orchestrator-g1-pro",
+            Some(1000),
+            "gemini-pro-orchestrator-g1-pro",
+            0,
+            65536,
         );
     }
 

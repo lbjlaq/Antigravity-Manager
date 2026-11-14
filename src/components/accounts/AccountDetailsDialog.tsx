@@ -5,6 +5,7 @@ import { Account, getAccountTier, getTierLabel, ModelPriorities } from '../../ty
 import { formatDate, formatTimeRemaining } from '../../utils/format';
 import { useTranslation } from 'react-i18next';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
+import { isSupportedDisplayModel } from '../../utils/quotaDisplay';
 import { showToast } from '../common/ToastContainer';
 import { copyToClipboard } from '../../utils/clipboard';
 
@@ -39,26 +40,7 @@ export default function AccountDetailsDialog({
 
     const displayModels = useMemo(() => {
         const models = account?.quota?.models || [];
-        return models.filter(m => {
-            const name = (m.name || '').trim().toLowerCase();
-            if (
-                name.startsWith('chat_') ||
-                name.startsWith('tab_') ||
-                name.includes('internal') ||
-                name.includes('-exp') ||
-                name.endsWith('-agent') ||
-                name === 'gemini-3-flash' ||
-                name.includes('2.5') ||
-                name.includes('2-5') ||
-                name.includes('3.5-flash-low') ||
-                name.includes('3.5-flash-extra-low') ||
-                name.includes('3.6-flash') ||
-                name.includes('3.7-flash')
-            ) {
-                return false;
-            }
-            return true;
-        });
+        return models.filter(m => isSupportedDisplayModel(m.name || ''));
     }, [account?.quota?.models]);
 
     useEffect(() => {

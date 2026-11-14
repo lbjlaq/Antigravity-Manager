@@ -61,6 +61,7 @@ import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
+import { isArgonModel } from '../../utils/modelCategory';
 import AccountActionsModal from './AccountActionsModal';
 
 // ============================================================================
@@ -138,9 +139,9 @@ interface AccountRowContentProps {
 function isGroupProtected(protectedModels: string[] | undefined, groupKey: 'gemini' | 'claude' | 'argon'): boolean {
     if (!protectedModels || protectedModels.length === 0) return false;
     if (groupKey === 'argon') {
-        return protectedModels.some(m => m.toLowerCase().includes('argon'));
+        return protectedModels.some(isArgonModel);
     } else if (groupKey === 'gemini') {
-        return protectedModels.some(m => m.toLowerCase().startsWith('gemini') && !m.toLowerCase().includes('argon'));
+        return protectedModels.some(m => m.toLowerCase().startsWith('gemini') && !isArgonModel(m));
     } else {
         return protectedModels.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
     }
@@ -377,7 +378,7 @@ function AccountRowContent({
 
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
-        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(m => m.includes('argon'));
+        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isArgonModel);
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));

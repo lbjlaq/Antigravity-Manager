@@ -1,3 +1,5 @@
+import { isArgonModel } from '../utils/modelCategory';
+
 export type ModelPriorityGroup = 'gemini' | 'claude';
 
 export interface ModelPriorities {
@@ -199,7 +201,7 @@ export function checkArgonEligibility(
     if (tier === 'ultra' || tier === 'enterprise') {
         const hasExplicitDisabled = models.some(m => {
             const n = (m?.name || '').toLowerCase();
-            return /argon/i.test(n) && (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled);
+            return isArgonModel(n) && (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled);
         });
         if (hasExplicitDisabled) return false;
         return true;
@@ -220,7 +222,7 @@ export function checkArgonEligibility(
     if (!groups || groups.length === 0) {
         return models.some(m => {
             const n = (m?.name || '').toLowerCase();
-            return /argon/i.test(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+            return isArgonModel(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
         });
     }
 

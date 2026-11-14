@@ -95,7 +95,7 @@ const HUB_FINGERPRINT_ARCH: &str = "amd64";
 
 /// 构建官方标准的 Antigravity Hub User-Agent 字符串
 ///
-/// 形如: `antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)`
+/// 形如: `antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)`
 pub fn build_hub_user_agent(version: &str, cl: &str) -> String {
     format!(
         "antigravity/hub/{} (aidev_client; os_type={}; arch={}; cl={})",
@@ -114,7 +114,7 @@ pub fn is_update_available(latest_version: &str) -> bool {
 }
 
 /// 官方 Hub 发布清单（下载页 https://antigravity.google/download 自身也在此拉取）
-/// 返回降序 JSON 数组: [{"version":"2.28.0","execution_id":"6410674700681216"}, ...]
+/// 返回降序 JSON 数组: [{"version":"2.32.1","execution_id":"6410674700681216"}, ...]
 const HUB_RELEASES_URL: &str =
     "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/releases";
 

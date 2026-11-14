@@ -69,8 +69,8 @@ interface CustomPreset {
     mappings: Record<string, string>;
 }
 
-export const DEFAULT_RECOMMENDED_HUB_UA = 'antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)';
-export const RECOMMENDED_HUB_VERSION = '2.28.0';
+export const DEFAULT_RECOMMENDED_HUB_UA = 'antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)';
+export const RECOMMENDED_HUB_VERSION = '2.32.1';
 
 
 interface CollapsibleCardProps {
@@ -208,7 +208,7 @@ export default function ApiProxy() {
     const [isClearBindingsConfirmOpen, setIsClearBindingsConfirmOpen] = useState(false);
     const [isClearRateLimitsConfirmOpen, setIsClearRateLimitsConfirmOpen] = useState(false);
     // Dynamic Hub Fingerprint from launch detection
-    const [latestHubVersion, setLatestHubVersion] = useState<string>('2.28.0');
+    const [latestHubVersion, setLatestHubVersion] = useState<string>('2.32.1');
     const [latestHubUa, setLatestHubUa] = useState<string>(DEFAULT_RECOMMENDED_HUB_UA);
 
     // User-Agent & Argon Sandbox Tester states
@@ -313,7 +313,7 @@ export default function ApiProxy() {
         try {
             const updateStatus = await invoke<{ current: string; latest?: string; update_available: boolean }>('check_hub_update');
             const fp = await invoke<{ version: string; user_agent: string }>('get_hub_fingerprint');
-            const targetVersion = (updateStatus && updateStatus.latest) || (fp && fp.version) || '2.28.0';
+            const targetVersion = (updateStatus && updateStatus.latest) || (fp && fp.version) || '2.32.1';
             setLatestHubVersion(targetVersion);
             if (fp && fp.user_agent) {
                 setLatestHubUa(fp.user_agent);
@@ -2172,13 +2172,18 @@ print(response.choices[0].message.content)`;
 
                                         return (
                                             <React.Fragment key={family.familyId}>
-                                                {/* 一级界面：模型家族基准模型（默认测活无后缀模型） */}
+                                                {/* 一级界面：模型家族基准模型（默认测活无后缀模型，点击整行直接展开/折叠模型组） */}
                                                 <tr
                                                     className={cn(
                                                         "h-11 border-b border-gray-100/70 dark:border-base-200/60 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 cursor-pointer transition-colors",
                                                         isBaseSelected ? "bg-blue-50/70 dark:bg-blue-900/20" : ""
                                                     )}
-                                                    onClick={() => setSelectedModelId(family.baseModel.id)}
+                                                    onClick={() => {
+                                                        setSelectedModelId(family.baseModel.id);
+                                                        if (hasVariants) {
+                                                            toggleFamily(family.familyId);
+                                                        }
+                                                    }}
                                                 >
                                                     {/* 折叠/展开箭头 */}
                                                     <td className="pl-3 pr-0 py-0 align-middle">
@@ -3079,6 +3084,7 @@ print(response.choices[0].message.content)`;
                                                     className="select select-xs border-gray-300 dark:border-base-300 bg-white dark:bg-base-100 text-xs rounded-lg flex-1 font-mono"
                                                 >
                                                     <option value="gemini-4-argon">gemini-4-argon (旗舰高阶推理)</option>
+                                                    <option value="gemini-pro-orchestrator-g1-pro">gemini-pro-orchestrator-g1-pro (Orchestrator Argon)</option>
                                                     <option value="gemini-4-argon-low">gemini-4-argon-low (轻量推理)</option>
                                                     <option value="simulate_no_response">[模拟故障] 无请求回报 (上游网络超时与阶段中断)</option>
                                                     <option value="claude-opus-5-5">claude-opus-5-5</option>

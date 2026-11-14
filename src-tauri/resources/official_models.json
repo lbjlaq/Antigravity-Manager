@@ -160,6 +160,20 @@
       "tagTitle": "New",
       "thinkingLevel": 4
     },
+    "gemini-pro-orchestrator-g1-pro": {
+      "displayName": "Orchestrator (Argon)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "minThinkingBudget": 32,
+      "recommended": true,
+      "maxTokens": 1048576,
+      "maxOutputTokens": 65536,
+      "model": "MODEL_PLACEHOLDER_M668",
+      "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+      "modelProvider": "MODEL_PROVIDER_GOOGLE",
+      "supportsVideo": true,
+      "thinkingLevel": 3
+    },
     "gemini-4-hydrogen": {
       "displayName": "Gemini 4 Hydrogen",
       "supportsImages": true,

@@ -685,7 +685,11 @@ pub async fn fetch_quota_with_cache(
                 let mut known_g4_codenames: Vec<String> = Vec::new();
                 for (name, info) in &quota_response.models {
                     let nl = name.trim().to_lowercase();
-                    if info.is_disabled() || nl.contains("-disabled") || nl.ends_with("_disabled") {
+                    if info.is_disabled()
+                        || nl.contains("-disabled")
+                        || nl.ends_with("_disabled")
+                        || nl == "gemini-flash-worker-agy"
+                    {
                         continue;
                     }
                     if let Some(code) =
@@ -702,10 +706,11 @@ pub async fn fetch_quota_with_cache(
                 for (name, info) in quota_response.models {
                     let name_lower = name.trim().to_lowercase();
 
-                    // 显式过滤官方明确标记禁用的条目（如 disabled: true 或名字包含 -disabled / _disabled）
+                    // 显式过滤官方明确标记禁用或内部专用的条目（如 disabled: true、-disabled / _disabled、gemini-flash-worker-agy）
                     if info.is_disabled()
                         || name_lower.contains("-disabled")
                         || name_lower.ends_with("_disabled")
+                        || name_lower == "gemini-flash-worker-agy"
                     {
                         continue;
                     }
@@ -887,10 +892,13 @@ pub async fn fetch_quota_with_cache(
                             })
                     });
                     if (has_argon_group || is_ultra)
-                        && !quota_data
-                            .models
-                            .iter()
-                            .any(|m| m.name.to_lowercase().contains("argon"))
+                        && !quota_data.models.iter().any(|m| {
+                            crate::proxy::common::model_mapping::extract_gemini4_codename(
+                                &m.name.to_lowercase(),
+                            )
+                            .as_deref()
+                                == Some("argon")
+                        })
                     {
                         let argon_b = groups
                             .iter()
@@ -923,12 +931,19 @@ pub async fn fetch_quota_with_cache(
                             "gemini-4-argon-high",
                             "gemini-4-argon-medium",
                             "gemini-4-argon-low",
+                            "gemini-pro-orchestrator-g1-pro",
                         ] {
                             let label = match argon_name {
                                 "gemini-4-argon-high" => "Gemini 4 Argon (High)",
                                 "gemini-4-argon-medium" => "Gemini 4 Argon (Medium)",
                                 "gemini-4-argon-low" => "Gemini 4 Argon (Low)",
+                                "gemini-pro-orchestrator-g1-pro" => "Orchestrator (Argon)",
                                 _ => "Gemini 4 Argon",
+                            };
+                            let placeholder = if argon_name == "gemini-pro-orchestrator-g1-pro" {
+                                "MODEL_PLACEHOLDER_M668"
+                            } else {
+                                "MODEL_PLACEHOLDER_M421"
                             };
                             let catalog_max_output =
                                 crate::models::OfficialModelCatalog::get(argon_name)
@@ -947,7 +962,7 @@ pub async fn fetch_quota_with_cache(
                                 recommended: Some(true),
                                 max_tokens: Some(1048576),
                                 max_output_tokens: Some(catalog_max_output),
-                                model: Some("MODEL_PLACEHOLDER_M421".to_string()),
+                                model: Some(placeholder.to_string()),
                                 supported_mime_types: None,
                             });
                         }
