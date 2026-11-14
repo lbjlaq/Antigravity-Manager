@@ -70,8 +70,17 @@ pub fn resolve_requested_model(
     requested: &str,
     custom_mapping: &HashMap<String, String>,
 ) -> String {
-    model_mapping::resolve_custom_model_route(requested, custom_mapping)
-        .unwrap_or_else(|| requested.to_string())
+    if let Some(target) = model_mapping::resolve_custom_model_route(requested, custom_mapping) {
+        return target;
+    }
+    // 客户端联网修饰后缀处理：如 `gemini-3.8-flash-online` 剥离 `-online` 后匹配自定义映射或基准模型
+    if let Some(base) = requested.strip_suffix("-online") {
+        if let Some(target) = model_mapping::resolve_custom_model_route(base, custom_mapping) {
+            return target;
+        }
+        return base.to_string();
+    }
+    requested.to_string()
 }
 
 /// 已下线模型族硬门禁（作用于**映射后的最终出站模型 ID**，而非客户端原始请求名）。
@@ -361,8 +370,9 @@ pub async fn gate_inbound_model(
         let mapping = custom_mapping.read().await;
         resolve_requested_model(requested, &mapping)
     };
+    let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
     let final_model =
-        model_mapping::resolve_adaptive_target(&raw_target, requested, None, Some(token_manager));
+        model_mapping::resolve_adaptive_target(&raw_target, lookup_base, None, Some(token_manager));
 
     // 已下线模型族硬门禁：检查 **映射后的真实出站模型**，
     // 允许用户把已下线的旧名作为别名键映射到合规模型。
@@ -552,8 +562,9 @@ pub async fn gate_inbound_model_exists(
         let mapping = custom_mapping.read().await;
         resolve_requested_model(requested, &mapping)
     };
+    let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
     let final_model =
-        model_mapping::resolve_adaptive_target(&raw_target, requested, None, Some(token_manager));
+        model_mapping::resolve_adaptive_target(&raw_target, lookup_base, None, Some(token_manager));
 
     // 检查映射后的真实出站模型，允许旧名作为自定义别名键。
     if is_retired_model_id(&final_model) {
@@ -832,6 +843,21 @@ mod tests {
             resolve_requested_model("gemini-3.8-flash-high", &mapping),
             "gemini-3.8-flash-high",
             "无自定义映射时必须原样保留请求 ID"
+        );
+    }
+
+    #[test]
+    fn test_issue_3937_online_suffix_resolves_base_model() {
+        let mapping = HashMap::new();
+        assert_eq!(
+            resolve_requested_model("gemini-3.8-flash-online", &mapping),
+            "gemini-3.8-flash",
+            "-online 后缀必须在门禁中被剥离以匹配基准模型"
+        );
+        assert_eq!(
+            resolve_requested_model("gemini-3.8-flash-low-online", &mapping),
+            "gemini-3.8-flash-low",
+            "-online 后缀必须在门禁中被剥离以匹配具体档位"
         );
     }
 

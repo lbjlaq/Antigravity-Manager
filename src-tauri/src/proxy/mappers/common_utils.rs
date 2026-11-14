@@ -176,7 +176,7 @@ pub fn resolve_request_config(
     let _has_non_networking = contains_non_networking_tool(tools);
 
     // Strip -online suffix from original model if present (to detect networking intent)
-    let is_online_suffix = original_model.ends_with("-online");
+    let is_online_suffix = original_model.ends_with("-online") || mapped_model.ends_with("-online");
 
     // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
     let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
@@ -187,16 +187,21 @@ pub fn resolve_request_config(
         || mapped_model.starts_with("gemini-3-")
         || mapped_model.starts_with("gemini-3.")
         || mapped_model.starts_with("gemini-3.5-")
+        || mapped_model.starts_with("gemini-3.8-")
         || mapped_model.starts_with("gemini-pro-")
         || mapped_model.starts_with("gemini-3-flash")
         || mapped_model.starts_with("gemini-3.5-flash")
+        || mapped_model.starts_with("gemini-3.8-flash")
+        || mapped_model.starts_with("gemini-4")
         || mapped_model.starts_with("agent")
         || mapped_model.contains("claude-3-5-sonnet")
         || mapped_model.contains("claude-3-opus")
         || mapped_model.contains("claude-sonnet")
         || mapped_model.contains("claude-opus")
         || mapped_model.contains("claude-4")
-        || crate::proxy::model_specs::is_gemini_v3_or_above(mapped_model);
+        || mapped_model.contains("claude-5")
+        || crate::proxy::model_specs::is_gemini_v3_or_above(mapped_model)
+        || crate::proxy::model_specs::is_gemini_v4_or_above(mapped_model);
 
     // Determine if we should enable networking
     // [FIX] 禁用基于模型的自动联网逻辑，防止图像请求被联网搜索结果覆盖。
@@ -214,6 +219,7 @@ pub fn resolve_request_config(
     final_model = match final_model.as_str() {
         "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
         "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
+        "gemini-3.8-flash" => "gemini-3.8-flash-high".to_string(),
         _ => final_model,
     };
 
@@ -938,6 +944,35 @@ mod tests {
         assert_eq!(config.request_type, "web_search");
         assert!(config.inject_google_search);
         assert_eq!(config.final_model, "gemini-3-flash");
+    }
+
+    #[test]
+    fn test_issue_3937_gemini_38_flash_online_grounding() {
+        let config = resolve_request_config(
+            "gemini-3.8-flash-online",
+            "gemini-3.8-flash-high",
+            &None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(config.request_type, "web_search");
+        assert!(config.inject_google_search);
+        assert_eq!(config.final_model, "gemini-3.8-flash-high");
+
+        let config_bare = resolve_request_config(
+            "gemini-3.8-flash-online",
+            "gemini-3.8-flash",
+            &None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(config_bare.request_type, "web_search");
+        assert!(config_bare.inject_google_search);
+        assert_eq!(config_bare.final_model, "gemini-3.8-flash-high");
     }
 
     #[test]

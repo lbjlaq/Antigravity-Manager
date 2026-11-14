@@ -963,6 +963,17 @@ pub fn resolve_model_route_with_effort_and_pool(
         return map_claude_model_to_gemini(&target);
     }
 
+    // 2.5 客户端联网修饰后缀 (-online)：剥离后交由内部路由器解析基准模型（物理档位与号池配额），
+    // 确保出站模型与号池选择一致，同时保留原始模型名在 request_config 中激活 Google Search。
+    if let Some(base) = original_model.strip_suffix("-online") {
+        return resolve_model_route_with_effort_and_pool(
+            base,
+            custom_mapping,
+            client_effort,
+            token_manager,
+        );
+    }
+
     // 3. 系统默认映射
     // Variant 已经写出的上游真实 id 在此停住，避免公开名反向覆盖（Issue #3551）。
     if crate::proxy::common::variant_mapping::is_physical_upstream_id(original_model) {
@@ -1935,6 +1946,27 @@ mod tests {
         assert_eq!(
             clean_tier_from_display_name("Gemini 3.7 Flash"),
             "Gemini 3.7 Flash"
+        );
+    }
+
+    #[test]
+    fn test_issue_3937_online_suffix_tier_routing() {
+        let empty = HashMap::new();
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-3.8-flash-online", &empty, None),
+            "gemini-3.8-flash-high"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-3.8-flash-online", &empty, Some("low")),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-3.8-flash-low-online", &empty, None),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-4-6-online", &empty, None),
+            "claude-sonnet-4-6"
         );
     }
 
