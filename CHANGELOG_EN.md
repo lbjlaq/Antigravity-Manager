@@ -3,6 +3,24 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.10 (2026-11-14)**:
+        -   **[Official Hub Fingerprint Upgrade to 2.32.1 & Full Integration of Orchestrator (Argon)] (Ref #3745, #3937, PR #3949, Thanks to @cubelikeplayDaniel)**:
+            -   **Upgrade Official Hub Fingerprint Baseline to 2.32.1**: Synchronized Hub baseline constants, User-Agent synthesis, and pipeline policies across the gateway to `antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)`, preventing outdated client rejections. (PR #3949)
+            -   **Full Pipeline Integration of `gemini-pro-orchestrator-g1-pro`**: Aligned official model specifications (`MODEL_PLACEHOLDER_M668`, Orchestrator Argon, 1M context, 65,536 max output, thinking level channel) across model catalog, variant routing, CLI synchronization, and QoS streaming watchdog; integrated into Argon bucket isolation (Ref #3745) to ensure scheduling is restricted exclusively to Pro and Ultra accounts holding dedicated Argon weekly quota. (Ref #3745, PR #3949)
+            -   **Exclude Internal Worker Models**: Filtered Google internal worker model `gemini-flash-worker-agy` globally, preventing leakage into public recommended lists or quota dashboards. (PR #3949)
+            -   **Unify Argon Capability & Row-Click Family Expansion**: Unified `isArgonModel` and `isSupportedDisplayModel` logic across account cards, tables, details modal, and Mini View; enabled direct row-clicking on model families in the Supported Models panel to expand or collapse variants. (Ref #3937, PR #3949)
+        -   **[Hierarchical Model Catalog, -online Suffix Stripping & Dropdown Fix] (Fixes #3937, PR #3938, Thanks to @cubelikeplayDaniel)**:
+            -   **Strip `-online` Suffix in Gateway Routing**: Normalized incoming requests with `-online` suffixes (e.g. `gemini-3.8-flash-online`) to base models, resolving 404 errors during web-search-augmented calls. (Fixes #3937, PR #3938)
+            -   **Hierarchical Family View & Bare Testing**: Restructured supported models display with tier grouping, default bare model connectivity testing, official Gemini icons, and custom dropdowns resolving native select rendering glitches. (Fixes #3937, PR #3938)
+        -   **[ThinkingStore Plain-Text Signature Protection & Compaction Boundary Hardening] (Ref #3614, #3944, PR #3944, #3945, Thanks to @mclinyeshi)**:
+            -   **Protect Thought Signatures Across Plain-Text Turns**: Prevented consecutive plain-text chat turns without tool calls from overwriting existing `thoughtSignature` entries in ThinkingStore. (PR #3944)
+            -   **Tighten Compaction Boundary Matching**: Refined compaction slicing and micro-folding boundary detection to eliminate spurious prompt cache resets. (Ref #3614, PR #3945)
+        -   **[CacheFirst Transient 5xx Account Protection & QoS TTFT Cache-Miss Alignment] (Ref #3639, #3821, #3893, #3899, #3935, PR #3942, #3943, Thanks to @mclinyeshi)**:
+            -   **Preserve CacheFirst Sticky Bindings on Transient 500/503/529**: Maintained sticky account sessions through upstream transient server errors to safeguard high-value KV prompt cache assets. (PR #3943)
+            -   **Reconcile QoS TTFT Against Upstream usageMetadata**: Adjusted time-to-first-token thresholds based on upstream cache miss metadata, avoiding false QoS penalty lockouts during cache warmups. (PR #3942)
+        -   **[Add Android ARM64 (Termux) Headless Server to Release Pipeline] (Fixes #3818, PR #3946, Thanks to @cubelikeplayDaniel)**:
+            -   **Automated Android ARM64 Cross-Compilation**: Integrated `cargo-ndk` with NDK r26d into `.github/workflows/release.yml` to automatically build and publish `antigravity-server-android-arm64` assets on release. (Fixes #3818, PR #3946)
+
     *   **v5.0.4-beta.9 (2026-11-14)**:
         -   **[Official Recommended Catalog Convergence, Cross-Restart Persistence & Account Toggle Sync] (Fixes #3932, PR #3933, Thanks to @jeikl)**:
             -   **Generalized Gemini 4+ Discovery & XHigh Thinking Alignment**: Generalized Gemini 4+ codename discovery and quota isolation, aligning `gemini-4-hydrogen` official placeholders (`MODEL_PLACEHOLDER_M525~M528`) and `xhigh`/`100` `thinkingLevel` handling alongside frontend category and dashboard views. (Fixes #3932, PR #3933)

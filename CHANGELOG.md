@@ -3,6 +3,24 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.10 (2026-11-14)**:
+        -   **[官方 Hub 指纹升级至 2.32.1 与 Orchestrator (Argon) 编排者模型全链路接入] (Ref #3745, #3937, PR #3949, Thanks to @cubelikeplayDaniel)**:
+            -   **官方 Hub 指纹基准升级至 2.32.1**: 将常量定义、User-Agent 生成、版本同步与网关流水线策略基准线全量更新为 `antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)`，消除旧版本客户端拦截风险。(PR #3949)
+            -   **全链路集成 `gemini-pro-orchestrator-g1-pro` 编排者模型**: 对齐官方模型规格（`MODEL_PLACEHOLDER_M668`，Orchestrator Argon，1M 上下文、65,536 最大输出与思考通道），接入网关模型目录、路由映射、CLI 同步及 QoS 流式看门狗；将其纳入高阶 Argon 配额隔离与智能探测机制（Ref #3745），仅限具备 Argon 独立周配额的 Pro/Ultra 账号调度。(Ref #3745, PR #3949)
+            -   **内部 Worker 模型全链路排除**: 统一过滤 Google 内部专用模型 `gemini-flash-worker-agy`，杜绝其泄露至公开推荐列表与配额看板。(PR #3949)
+            -   **前端 Argon 能力统合与模型组整行展开**: 统合 `isArgonModel` 与 `isSupportedDisplayModel` 判定，覆盖账号卡片、表格、详情弹窗与 Mini 悬浮窗；在「支持模型与集成」面板支持直接点击模型家族整行展开或折叠子档位。(Ref #3937, PR #3949)
+        -   **[多级模型展示优化、-online 联网后缀剥离与下拉菜单交互修复] (Fixes #3937, PR #3938, Thanks to @cubelikeplayDaniel)**:
+            -   **剥离 `-online` 联网后缀路由**: 自动将客户端请求的 `-online` 后缀模型（如 `gemini-3.8-flash-online`）归一化至底层目标模型，根治联网请求 404 错误。(Fixes #3937, PR #3938)
+            -   **分级模型目录与默认裸模型测活**: 前端重构为家族分组层级展示与默认测试裸模型，修复 Gemini 官方图标与部分平台原生 select 弹窗失灵问题。(Fixes #3937, PR #3938)
+        -   **[ThinkingStore 纯文本轮次签名保护与边界匹配加固] (Ref #3614, #3944, PR #3944, #3945, Thanks to @mclinyeshi)**:
+            -   **防止纯文本轮次覆盖思考签名**: 修复连续多轮无工具调用的纯文本交互误覆盖上轮 `thoughtSignature` 导致后续轮次签名丢失缺陷。(PR #3944)
+            -   **紧缩 Compaction 摘要边界匹配**: 精细化压缩切片与微折叠边界判定，消除缓存误重置。(Ref #3614, PR #3945)
+        -   **[CacheFirst 粘性会话瞬态 5xx 保护与 QoS TTFT 缓存未命中对齐] (Ref #3639, #3821, #3893, #3899, #3935, PR #3942, #3943, Thanks to @mclinyeshi)**:
+            -   **保护瞬态 500/503/529 错误下的粘性绑定**: 在服务器瞬态拥塞或断流时坚决不解绑 CacheFirst 会话账号，保护昂贵的 KV 缓存资产。(PR #3943)
+            -   **根据上游 usageMetadata 对齐 QoS TTFT**: 排除上游未命中缓存时的冷启动预热首字延迟，避免账号被误判进 QoS 小黑屋。(PR #3942)
+        -   **[Release 工作流新增 Android ARM64 (Termux) 架构支持] (Fixes #3818, PR #3946, Thanks to @cubelikeplayDaniel)**:
+            -   **自动化交叉编译 Android ARM64 无头服务端**: 在发布流水线中接入 `cargo-ndk` 与 NDK r26d，自动构建并随 Release 附件分发 `antigravity-server-android-arm64`。(Fixes #3818, PR #3946)
+
     *   **v5.0.4-beta.9 (2026-11-14)**:
         -   **[官方推荐模型目录收敛、跨重启持久化与账号启停同步修复] (Fixes #3932, PR #3933, Thanks to @jeikl)**:
             -   **Gemini 4+ 通用发现与高阶思考对齐**: 泛化 Gemini 4+ 代号模型发现与配额隔离逻辑，对齐 `gemini-4-hydrogen` 官方占位符（`MODEL_PLACEHOLDER_M525~M528`）与 `xhigh`/`100` `thinkingLevel` 处理；前端同步补齐模型分类与看板展示。(Fixes #3932, PR #3933)
