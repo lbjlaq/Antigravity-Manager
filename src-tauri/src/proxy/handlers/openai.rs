@@ -782,7 +782,7 @@ fn responses_usage_value(chat_response: &OpenAIResponse) -> Value {
         })
 }
 
-/// 剥离最外层 Markdown 代码块围栏（如 ```json ... ```），确保 Codex Desktop 原生 JSON.parse 正常解析。
+/// 剥离最外层 Markdown 代码块围栏（如 ```json ... ```），确保客户端原生 json.loads / JSON.parse 正常解析。
 /// 严格执行整包匹配（starts_with 与 ends_with），绝不在正文中进行贪婪查找或截断，彻底避免误杀。
 pub(crate) fn unwrap_outer_code_fence_if_structured(text: &str) -> String {
     let trimmed = text.trim();
@@ -792,12 +792,20 @@ pub(crate) fn unwrap_outer_code_fence_if_structured(text: &str) -> String {
     }
 
     // 2. 仅当整段输出被 ``` ... ``` 严格包裹时执行整包剥离
-    if trimmed.starts_with("```") && trimmed.ends_with("```") && trimmed.len() >= 6 {
-        if let Some(first_newline) = trimmed.find('\n') {
-            let inner = trimmed[first_newline + 1..trimmed.len() - 3].trim();
-            if serde_json::from_str::<serde_json::Value>(inner).is_ok() {
-                return inner.to_string();
-            }
+    let without_prefix = if let Some(rest) = trimmed.strip_prefix("```json") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("```JSON") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("```") {
+        rest
+    } else {
+        return text.to_string();
+    };
+
+    if let Some(inner) = without_prefix.strip_suffix("```") {
+        let inner_trimmed = inner.trim();
+        if serde_json::from_str::<serde_json::Value>(inner_trimmed).is_ok() {
+            return inner_trimmed.to_string();
         }
     }
 
@@ -809,7 +817,7 @@ pub(crate) fn unwrap_outer_code_fence_if_structured(text: &str) -> String {
 pub(crate) fn is_request_structured_output(req: &OpenAIRequest) -> bool {
     req.response_format
         .as_ref()
-        .is_some_and(|f| f.r#type == "json_schema" || f.r#type == "json_object")
+        .is_some_and(|f| f.r#type() == "json_schema" || f.r#type() == "json_object")
         || req.text.as_ref().and_then(|t| t.get("format")).is_some()
 }
 
@@ -1593,6 +1601,65 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
             unwrap_outer_code_fence_if_structured(conversational),
             conversational
         );
+
+        // 7. [Issue #3951] 支持 ```JSON 大写与单行紧凑包裹
+        let wrapped_uppercase = "```JSON\n{\"status\": \"ok\"}\n```";
+        assert_eq!(
+            unwrap_outer_code_fence_if_structured(wrapped_uppercase),
+            "{\"status\": \"ok\"}"
+        );
+        let wrapped_compact = "```json{\"status\": \"ok\"}```";
+        assert_eq!(
+            unwrap_outer_code_fence_if_structured(wrapped_compact),
+            "{\"status\": \"ok\"}"
+        );
+    }
+
+    #[test]
+    fn test_is_request_structured_output_supports_both_string_and_object_format_issue_3951() {
+        use super::is_request_structured_output;
+        use crate::proxy::mappers::openai::models::OpenAIRequest;
+
+        // 1. 对象语法：{"type": "json_object"}
+        let req_obj: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash-tiered",
+            "messages": [{"role": "user", "content": "Return json"}],
+            "response_format": {"type": "json_object"}
+        }))
+        .unwrap();
+        assert!(is_request_structured_output(&req_obj));
+
+        // 2. 字符串语法： "json_object"
+        let req_str: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash-tiered",
+            "messages": [{"role": "user", "content": "Return json"}],
+            "response_format": "json_object"
+        }))
+        .unwrap();
+        assert!(is_request_structured_output(&req_str));
+
+        // 3. json_schema 语法
+        let req_schema: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash-tiered",
+            "messages": [{"role": "user", "content": "Return schema"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "result",
+                    "schema": {"type": "object"}
+                }
+            }
+        }))
+        .unwrap();
+        assert!(is_request_structured_output(&req_schema));
+
+        // 4. 普通文本：无 response_format
+        let req_plain: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash-tiered",
+            "messages": [{"role": "user", "content": "Hello"}]
+        }))
+        .unwrap();
+        assert!(!is_request_structured_output(&req_plain));
     }
 
     #[test]
@@ -2854,6 +2921,7 @@ pub async fn handle_chat_completions(
                     .as_ref()
                     .map(|o| o.include_usage)
                     .unwrap_or(false);
+                let is_structured = is_request_structured_output(&openai_req);
                 let mut openai_stream = create_openai_sse_stream_with_anchor(
                     gemini_stream,
                     openai_req.model.clone(),
@@ -2862,6 +2930,7 @@ pub async fn handle_chat_completions(
                     Some(client_tool_names.clone()),
                     include_usage,
                     Some(causal_anchor),
+                    is_structured,
                 );
 
                 let mut first_data_chunk = None;
@@ -3219,13 +3288,20 @@ pub async fn handle_chat_completions(
                 }
             }
 
-            let openai_response = transform_openai_response_with_anchor(
+            let mut openai_response = transform_openai_response_with_anchor(
                 &gemini_resp,
                 Some(&session_id),
                 message_count,
                 Some(&client_tool_names),
                 Some(&causal_anchor),
             );
+            if is_request_structured_output(&openai_req) {
+                for choice in &mut openai_response.choices {
+                    if let Some(OpenAIContent::String(ref mut text)) = choice.message.content {
+                        *text = unwrap_outer_code_fence_if_structured(text);
+                    }
+                }
+            }
             if debug_logger::is_enabled(&debug_cfg) {
                 let converted_response = serde_json::to_value(&openai_response)
                     .unwrap_or_else(|e| json!({ "serialization_error": e.to_string() }));
@@ -5072,6 +5148,7 @@ pub async fn handle_completions(
                     use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor;
                     // Note: We use create_openai_sse_stream regardless of is_codex_style here,
                     // because we just want the content aggregation which chat stream does well.
+                    let is_structured = is_request_structured_output(&openai_req);
                     let mut openai_stream = create_openai_sse_stream_with_anchor(
                         gemini_stream,
                         openai_req.model.clone(),
@@ -5084,6 +5161,7 @@ pub async fn handle_completions(
                         Some(client_tool_names.clone()),
                         true,
                         Some(causal_anchor),
+                        is_structured,
                     );
 
                     // [Pipeline StreamPeek] 内部强制流（非流式客户端）：返回前仍需首包，
