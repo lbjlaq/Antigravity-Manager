@@ -5,18 +5,6 @@ use crate::proxy::token_manager::ProxyToken;
 
 use serde_json::{json, Value};
 
-pub(crate) fn is_tiered_flash_model(model: &str) -> bool {
-    let model_id = model
-        .rsplit('/')
-        .next()
-        .unwrap_or(model)
-        .to_ascii_lowercase();
-    model_id
-        .strip_prefix("gemini-")
-        .and_then(|rest| rest.strip_suffix("-flash-tiered"))
-        .is_some_and(|version| !version.is_empty())
-}
-
 /// Collect system/developer text without joining. A string content is one block;
 /// a content array contributes one block per text part.
 fn collect_system_instruction_blocks(request: &OpenAIRequest) -> Vec<String> {
@@ -1352,12 +1340,6 @@ pub fn transform_openai_request_with_session(
         hash
     };
 
-    // [CACHE:L3] 记录前缀哈希生命周期统计（Google v1internal 依赖 TPU 隐式前缀缓存，杜绝显式注入 cachedContent 造成 400）
-    let cache_manager = crate::proxy::cache_manager::global_cache_manager();
-    if cache_manager.lookup_prefix(&prefix_hash).is_some() {
-        cache_manager.record_explicit_hit(&prefix_hash);
-    }
-
     // [DEFENSE] 净化所有 contents 中的 inlineData，过滤或降级空数据/损坏数据
     if let Some(inner) = final_body.get_mut("request") {
         crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(inner);
@@ -1540,7 +1522,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         // 官方 2026-10 起 tiered 模型走 thinkingLevel 通道；客户端 effort 仅决定等级
         for model in ["gemini-3.8-flash-tiered"] {
-            assert!(is_tiered_flash_model(model));
+            assert!(crate::proxy::model_specs::is_tiered_flash_model(model));
             for (effort, expected_level) in [
                 (None, "HIGH"),
                 (Some("low"), "LOW"),
@@ -1565,7 +1547,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         for model in ["gemini-3.1-pro-high", "gemini-3.1-pro-low"] {
-            assert!(!is_tiered_flash_model(model));
+            assert!(!crate::proxy::model_specs::is_tiered_flash_model(model));
             let body = tiered_request_body(model, Some("low"));
             let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
 
@@ -1573,7 +1555,9 @@ mod tests {
             assert!(thinking.get("thinkingLevel").is_none());
             assert!(thinking.get("thinkingBudget").is_some());
         }
-        assert!(!is_tiered_flash_model("gemini-3.8-flash-tiered-image"));
+        assert!(!crate::proxy::model_specs::is_tiered_flash_model(
+            "gemini-3.8-flash-tiered-image"
+        ));
     }
 
     #[test]

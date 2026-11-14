@@ -73,7 +73,9 @@ enum VersionSource {
 /// Helper struct for version info
 struct VersionConfig {
     version: String,
+    #[allow(dead_code)]
     electron: String,
+    #[allow(dead_code)]
     chrome: String,
 }
 

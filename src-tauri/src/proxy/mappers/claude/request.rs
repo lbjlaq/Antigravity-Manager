@@ -2,7 +2,6 @@
 // 对应 transformClaudeRequestIn
 
 use super::models::*;
-use crate::proxy::mappers::signature_store::get_thought_signature; // Deprecated, kept for fallback
 use crate::proxy::session_manager::SessionManager;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -315,8 +314,6 @@ pub fn merge_consecutive_messages(messages: &mut Vec<Message>) {
     *messages = merged;
 }
 
-/// 转换 Claude 请求为 Gemini v1internal 格式
-
 /// [FIX #709] Reorder serialized Gemini parts to ensure thinking blocks are first,
 /// deduplicate multiple thinking blocks to at most ONE per model turn, and clean out raw dot placeholders.
 fn reorder_gemini_parts(parts: &mut Vec<Value>) {
@@ -517,9 +514,6 @@ pub fn transform_claude_request_in_timed(
     }
 
     //  Map model name (Use standard mapping)
-    // [IMPROVED] 提取 web search 模型为常量，便于维护
-    const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
-
     let mapped_model =
         crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
 
@@ -577,8 +571,6 @@ pub fn transform_claude_request_in_timed(
 
     // Check signature requirements for function calls
     if is_thinking_enabled {
-        let _global_sig = get_thought_signature();
-
         // Check if there are function calls in the request
         let has_function_calls = claude_req.messages.iter().any(|m| {
             if let MessageContent::Array(blocks) = &m.content {
@@ -1618,41 +1610,6 @@ fn build_google_contents(
     timing.think_fill_micros = think_start.elapsed().as_micros() as u64;
 
     Ok(json!(contents))
-}
-
-/// Merge adjacent messages with the same role
-fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
-    if contents.is_empty() {
-        return contents;
-    }
-
-    let mut merged = Vec::new();
-    let mut current_msg = contents.remove(0);
-
-    for msg in contents {
-        let current_role = current_msg["role"].as_str().unwrap_or_default();
-        let next_role = msg["role"].as_str().unwrap_or_default();
-
-        if current_role == next_role {
-            // Merge parts
-            if let Some(current_parts) = current_msg.get_mut("parts").and_then(|p| p.as_array_mut())
-            {
-                if let Some(next_parts) = msg.get("parts").and_then(|p| p.as_array()) {
-                    current_parts.extend(next_parts.clone());
-
-                    // [FIX #709] Core Fix: After merging parts from adjacent messages,
-                    // we must RE-SORT them to ensure any thinking blocks from the
-                    // second message are moved to the very front of the combined array.
-                    reorder_gemini_parts(current_parts);
-                }
-            }
-        } else {
-            merged.push(current_msg);
-            current_msg = msg;
-        }
-    }
-    merged.push(current_msg);
-    merged
 }
 
 /// 构建 Tools

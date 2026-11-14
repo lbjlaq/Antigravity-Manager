@@ -3,8 +3,6 @@
 
 use super::models::*;
 use super::utils::to_claude_usage;
-use crate::proxy::mappers::estimation_calibrator::get_calibrator;
-// use crate::proxy::mappers::signature_store::store_thought_signature; // Deprecated
 use crate::proxy::common::client_adapter::{ClientAdapter, SignatureBufferStrategy}; // [NEW]
 use crate::proxy::SignatureCache;
 use bytes::Bytes;
@@ -411,7 +409,6 @@ impl StreamingState {
                     (self.estimated_prompt_tokens, u.prompt_token_count)
                 {
                     if estimated > 0 && actual > 0 {
-                        get_calibrator().record(estimated, actual);
                         tracing::debug!(
                             "[Calibrator] Recorded: estimated={}, actual={}, ratio={:.2}x",
                             estimated,

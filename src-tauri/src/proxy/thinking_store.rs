@@ -3644,10 +3644,6 @@ pub fn synthesize_tool_id(
     )
 }
 
-fn inspect_parts(parts: &[Value]) -> (String, Vec<String>, Vec<String>, String) {
-    inspect_parts_with_anchor(parts, "root")
-}
-
 fn inspect_parts_with_anchor(
     parts: &[Value],
     anchor: &str,

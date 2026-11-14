@@ -22,14 +22,6 @@ static RE_TEXT_DELAY_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     ]
 });
 
-static RE_LEGACY_DELAY_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-    vec![
-        Regex::new(r"(?i)quota will reset after ([^.,;\]\n]+)").unwrap(),
-        Regex::new(r"(?i)retry after ([^.,;\]\n]+)").unwrap(),
-        Regex::new(r#"(?i)quotaResetDelay["'=:\s]+([^\s,"}\]]+)"#).unwrap(),
-    ]
-});
-
 static RETRY_HINT_KEYS: Lazy<std::collections::HashSet<&'static str>> = Lazy::new(|| {
     [
         "retryafter",
@@ -167,25 +159,6 @@ pub fn parse_retry_delay_with_source(
         (None, Some(b)) => Some(b),
         (None, None) => None,
     }
-}
-
-/// Preserve the pre-state-machine delay parsing used by the Claude handler.
-pub(crate) fn parse_legacy_retry_delay(error_text: &str) -> Option<u64> {
-    for re in RE_LEGACY_DELAY_PATTERNS.iter() {
-        if let Some(cap) = re.captures(error_text) {
-            if let Some(delay) = parse_duration_ms(&cap[1]) {
-                return Some(delay);
-            }
-        }
-    }
-
-    let delay = if let Ok(json) = serde_json::from_str(error_text) {
-        extract_structured_delay_recursive(&json, 0, true)
-    } else {
-        None
-    };
-
-    delay.map(|delay_ms| delay_ms.saturating_add(1500))
 }
 
 /// 递归提取结构化延迟

@@ -293,17 +293,3 @@ fn extract_step_content(item: &Value) -> Option<Value> {
     }
     None
 }
-
-pub fn step_marker(step: &InteractionStep) -> String {
-    let mut marker = format!(
-        "[codex-turn:{} step:{} type:{}]",
-        step.turn_id, step.step_id, step.step_type
-    );
-    if let Some(name) = &step.name {
-        marker.push_str(&format!(" tool:{}", name));
-    }
-    if let Some(call_id) = &step.call_id {
-        marker.push_str(&format!(" call_id:{}", call_id));
-    }
-    marker
-}

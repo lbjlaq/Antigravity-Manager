@@ -4,10 +4,12 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 #[cfg(not(target_os = "android"))]
 use tauri::{
     image::Image,
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    menu::{CheckMenuItem, MenuItem, PredefinedMenuItem},
+    tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Listener, Manager,
 };
+#[cfg(all(not(target_os = "android"), not(target_os = "macos")))]
+use tauri::{menu::Menu, tray::MouseButton};
 
 static MINI_VIEW_ACTIVE: AtomicBool = AtomicBool::new(false);
 static MINI_VIEW_PINNED: AtomicBool = AtomicBool::new(false);
@@ -340,7 +342,9 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     #[cfg(not(target_os = "android"))]
     {
         // 1. Load config to get language settings
+        #[cfg(not(target_os = "macos"))]
         let config = modules::load_app_config().unwrap_or_default();
+        #[cfg(not(target_os = "macos"))]
         let texts = modules::i18n::get_tray_texts(&config.language);
 
         // 2. Load icon (macOS uses Template Image `tray-icon.png`, Windows/Linux uses full-color `icon.png`)
@@ -361,50 +365,54 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         let icon = Image::new_owned(img.into_raw(), width, height);
 
         // 3. Define streamlined secondary menu items
-        let loading_text = format!("{}: ...", texts.current);
-        let info_user = MenuItem::with_id(app, "info_user", &loading_text, false, None::<&str>)?;
+        #[cfg(not(target_os = "macos"))]
+        let menu = {
+            let loading_text = format!("{}: ...", texts.current);
+            let info_user =
+                MenuItem::with_id(app, "info_user", &loading_text, false, None::<&str>)?;
 
-        let switch_next =
-            MenuItem::with_id(app, "switch_next", &texts.switch_next, true, None::<&str>)?;
-        let refresh_curr = MenuItem::with_id(
-            app,
-            "refresh_curr",
-            &texts.refresh_current,
-            true,
-            None::<&str>,
-        )?;
+            let switch_next =
+                MenuItem::with_id(app, "switch_next", &texts.switch_next, true, None::<&str>)?;
+            let refresh_curr = MenuItem::with_id(
+                app,
+                "refresh_curr",
+                &texts.refresh_current,
+                true,
+                None::<&str>,
+            )?;
 
-        let show_i = MenuItem::with_id(app, "show", &texts.show_window, true, None::<&str>)?;
-        let mini_i = MenuItem::with_id(app, "mini_view", &texts.mini_view, true, None::<&str>)?;
-        let lightweight_i = CheckMenuItem::with_id(
-            app,
-            "toggle_lightweight",
-            &texts.lightweight_mode,
-            true,
-            config.lightweight_mode,
-            None::<&str>,
-        )?;
-        let quit_i = MenuItem::with_id(app, "quit", &texts.quit, true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", &texts.show_window, true, None::<&str>)?;
+            let mini_i = MenuItem::with_id(app, "mini_view", &texts.mini_view, true, None::<&str>)?;
+            let lightweight_i = CheckMenuItem::with_id(
+                app,
+                "toggle_lightweight",
+                &texts.lightweight_mode,
+                true,
+                config.lightweight_mode,
+                None::<&str>,
+            )?;
+            let quit_i = MenuItem::with_id(app, "quit", &texts.quit, true, None::<&str>)?;
 
-        let sep1 = PredefinedMenuItem::separator(app)?;
-        let sep2 = PredefinedMenuItem::separator(app)?;
-        let sep3 = PredefinedMenuItem::separator(app)?;
+            let sep1 = PredefinedMenuItem::separator(app)?;
+            let sep2 = PredefinedMenuItem::separator(app)?;
+            let sep3 = PredefinedMenuItem::separator(app)?;
 
-        let menu = Menu::with_items(
-            app,
-            &[
-                &info_user,
-                &sep1,
-                &switch_next,
-                &refresh_curr,
-                &sep2,
-                &show_i,
-                &mini_i,
-                &lightweight_i,
-                &sep3,
-                &quit_i,
-            ],
-        )?;
+            Menu::with_items(
+                app,
+                &[
+                    &info_user,
+                    &sep1,
+                    &switch_next,
+                    &refresh_curr,
+                    &sep2,
+                    &show_i,
+                    &mini_i,
+                    &lightweight_i,
+                    &sep3,
+                    &quit_i,
+                ],
+            )?
+        };
 
         // 4. Build tray icon
         #[cfg(target_os = "macos")]
@@ -424,7 +432,10 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         let _ = builder
             .on_tray_icon_event(|tray, event| match event {
                 TrayIconEvent::Click {
+                    #[cfg(not(target_os = "macos"))]
                     button,
+                    #[cfg(target_os = "macos")]
+                        button: _,
                     button_state,
                     rect,
                     ..
@@ -872,9 +883,9 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
                     }
                     items.push(&q);
 
+                    #[cfg(not(target_os = "macos"))]
                     if let Ok(menu) = Menu::with_items(&app_handle_for_main, &items) {
                         if let Some(tray) = app_handle_for_main.tray_by_id("main") {
-                            #[cfg(not(target_os = "macos"))]
                             let _ = tray.set_menu(Some(menu));
                         }
                     }

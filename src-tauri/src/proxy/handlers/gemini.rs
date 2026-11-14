@@ -24,8 +24,6 @@ use crate::proxy::session_manager::SessionManager;
 use crate::proxy::upstream::client::mask_email;
 use axum::http::HeaderMap;
 
-const MAX_RETRY_ATTEMPTS: usize = 3;
-
 /// 处理 generateContent 和 streamGenerateContent
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
 pub async fn handle_generate(
@@ -78,12 +76,9 @@ pub async fn handle_generate(
     // [Stage Timing] 阶段耗时度量变量 (毫秒)
     let clean_micros = clean_start.elapsed().as_micros() as u64;
     let clean_ms: f64 = clean_micros as f64 / 1000.0;
-    let mut norm_ms: f64 = 0.0;
-    let mut think_fill_ms: f64 = 0.0;
     // TTFT 单源口径：仅记录“首个上游数据块”；流式发头时写 -1。
     let mut ttft_ms: f64 = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
     let mut headers_ms: f64 = 0.0;
-    let mut fallback_overhead_ms: f64 = 0.0;
 
     // 1. 验证方法
     // [NEW] :countTokens 冒号语法，直接代理到上游 v1internal:countTokens
@@ -390,14 +385,9 @@ pub async fn handle_generate(
         }
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
-        norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
-        think_fill_ms = tf_micros as f64 / 1000.0;
+        let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
+        let think_fill_ms = tf_micros as f64 / 1000.0;
 
-        let _ =
-            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-                &mut wrapped_body,
-                &mapped_model,
-            );
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut wrapped_body,
         );
@@ -572,7 +562,7 @@ pub async fn handle_generate(
 
         let effective_attempt_start = call_result.effective_attempt_start;
         let mut fallback_attempts = call_result.fallback_attempts.clone();
-        fallback_overhead_ms = call_result.fallback_overhead_s() * 1000.0;
+        let fallback_overhead_ms = call_result.fallback_overhead_s() * 1000.0;
         let attempts_b64 =
             crate::proxy::handlers::common::encode_attempts_header(&fallback_attempts);
 
@@ -1261,6 +1251,13 @@ pub async fn handle_generate(
 
         // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
         if status_code == 429 && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text) {
+            if classification.abandons_sticky_account() {
+                token_manager.abandon_session(&affinity_key, &account_id);
+                tracing::debug!(
+                    "[Gemini] Unbound session {} from account {} due to quota depletion (status {})",
+                    affinity_key, email, status_code
+                );
+            }
             if let Ok(raw_json) = serde_json::from_str::<Value>(&error_text) {
                 return Ok((
                     status,
@@ -1276,6 +1273,13 @@ pub async fn handle_generate(
         }
 
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
+        if classification.abandons_sticky_account() {
+            token_manager.abandon_session(&affinity_key, &account_id);
+            tracing::debug!(
+                "[Gemini] Unbound session {} from account {} due to non-retryable error (status {})",
+                affinity_key, email, status_code
+            );
+        }
         error!(
             "Gemini Upstream non-retryable error {}: {}",
             status_code, error_text

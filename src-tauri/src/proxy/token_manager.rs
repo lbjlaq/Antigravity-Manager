@@ -192,7 +192,6 @@ pub struct ProxyToken {
     pub remaining_quota: Option<i32>,      // [FIX #563] Remaining quota for priority sorting
     pub protected_models: HashSet<String>, // [NEW #621]
     pub forbidden_models: HashSet<String>, // [NEW] 模型级 403 冻结（只影响对应模型）
-    pub health_score: f32,                 // [NEW] 健康分数 (0.0 - 1.0)
     pub reset_time: Option<i64>,           // [NEW] 配额刷新时间戳（用于排序优化）
     pub weekly_reset_time: Option<i64>, // [NEW] 周配额刷新时间戳（用于临期优先调度 EDF，防止周期重置作废配额）
     pub validation_blocked: bool, // [NEW] Check for validation block (VALIDATION_REQUIRED temporary block)
@@ -350,14 +349,12 @@ impl Drop for InFlightGuard {
 
 pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>, // account_id -> ProxyToken
-    current_index: Arc<AtomicUsize>,
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
     data_dir: PathBuf,
     rate_limit_tracker: Arc<RateLimitTracker>, // 新增: 限流跟踪器
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
     session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
-    health_scores: Arc<DashMap<String, f32>>,                       // account_id -> health_score
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
 
     // [NEW] 按账号分配的同步刷新锁。
@@ -410,14 +407,12 @@ impl TokenManager {
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
             tokens: Arc::new(DashMap::new()),
-            current_index: Arc::new(AtomicUsize::new(0)),
             last_used_account: Arc::new(tokio::sync::Mutex::new(None)),
             data_dir,
             rate_limit_tracker: Arc::new(RateLimitTracker::new()),
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
-            health_scores: Arc::new(DashMap::new()),
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
                 crate::models::CircuitBreakerConfig::default(),
             )),
@@ -1349,7 +1344,6 @@ impl TokenManager {
         if self.tokens.remove(account_id).is_some() {
             tracing::info!("[Proxy] Removed account {} from memory cache", account_id);
         }
-        self.health_scores.remove(account_id);
         self.rate_limit_tracker.clear(account_id);
         self.refresh_locks.remove(account_id);
         self.invalid_grant_failures.remove(account_id);
@@ -2340,12 +2334,6 @@ impl TokenManager {
             })
             .unwrap_or_default();
 
-        let health_score = self
-            .health_scores
-            .get(&account_id)
-            .map(|v| *v)
-            .unwrap_or(1.0);
-
         // [NEW] 提取最近的配额刷新时间（用于排序优化：刷新时间越近优先级越高）
         let reset_time = self.extract_earliest_reset_time(&account);
         // [NEW] 提取周配额刷新时间（来自 retrieveUserQuotaSummary 的 weekly/7d 窗口，用于临期优先消耗）
@@ -2587,7 +2575,6 @@ impl TokenManager {
             remaining_quota,
             protected_models,
             forbidden_models,
-            health_score,
             reset_time,
             weekly_reset_time,
             validation_blocked: account
@@ -4452,16 +4439,7 @@ impl TokenManager {
                 return quota_cmp;
             }
 
-            // Priority 2: Health score (higher is better)
-            let health_cmp = b
-                .health_score
-                .partial_cmp(&a.health_score)
-                .unwrap_or(std::cmp::Ordering::Equal);
-            if health_cmp != std::cmp::Ordering::Equal {
-                return health_cmp;
-            }
-
-            // Priority 3: Reset time (earlier is better) [Fix #3570]
+            // Priority 2: Reset time (earlier is better) [Fix #3570]
             let reset_a = a.reset_time.unwrap_or(i64::MAX);
             let reset_b = b.reset_time.unwrap_or(i64::MAX);
             let reset_cmp = reset_a.cmp(&reset_b);
@@ -4469,7 +4447,7 @@ impl TokenManager {
                 return reset_cmp;
             }
 
-            // Priority 4: Deterministic fallback (Tie-breaker for strict total order)
+            // Priority 3: Deterministic fallback (Tie-breaker for strict total order)
             a.account_id.cmp(&b.account_id)
         });
 
@@ -4480,7 +4458,7 @@ impl TokenManager {
             tokens_snapshot
                 .iter()
                 .map(|t| format!(
-                    "{}(quota={}%, reset={:?}, health={:.2})",
+                    "{}(quota={}%, reset={:?})",
                     t.email,
                     t.model_quotas.get(&normalized_target).copied().unwrap_or(0),
                     t.reset_time.map(|ts| {
@@ -4492,7 +4470,6 @@ impl TokenManager {
                             "now".to_string()
                         }
                     }),
-                    t.health_score
                 ))
                 .collect::<Vec<_>>()
         );
@@ -4828,10 +4805,10 @@ impl TokenManager {
                                 self.session_accounts.remove(sid);
                             }
                         } else if reset_sec > 0 {
-                            if scheduling.mode == SchedulingMode::CacheFirst
+                            if scheduling.max_wait_seconds > 0
                                 && reset_sec <= scheduling.max_wait_seconds
                             {
-                                // CacheFirst（缓存优先）：当限流冷却时长 <= max_wait_seconds 时原地精准等待，绝不解绑换号丢失缓存
+                                // 当限流冷却时长 <= max_wait_seconds 时原地精准等待（支持 Balance 与 CacheFirst），绝不解绑换号丢失缓存
                                 let wait_secs =
                                     match crate::proxy::pipeline::budget::remaining_secs() {
                                         Some(rem_budget) => {
@@ -4841,7 +4818,7 @@ impl TokenManager {
                                     };
                                 if wait_secs > 0 {
                                     tracing::info!(
-                                        "Sticky Session (CacheFirst): Bound account {} is rate-limited for {} ({}s <= max_wait {}s), waiting {}s in-place to preserve session binding and KV cache...",
+                                        "Sticky Session: Bound account {} is rate-limited for {} ({}s <= max_wait {}s), waiting {}s in-place to preserve session binding and KV cache...",
                                         bound_token.email,
                                         normalized_target,
                                         reset_sec,
@@ -4914,8 +4891,6 @@ impl TokenManager {
                                     .unwrap_or(100);
                                 let last_zero_quota = last_quota <= 0;
 
-                                let found_eff_priority =
-                                    found.effective_priority(target_model, &normalized_target);
                                 let has_healthy_alt = tokens_snapshot.iter().any(|t| {
                                     &t.account_id != account_id
                                         && !attempted.contains(&t.account_id)
@@ -4938,24 +4913,6 @@ impl TokenManager {
                                             > 0
                                 });
 
-                                let has_higher_priority_alt = tokens_snapshot.iter().any(|t| {
-                                    &t.account_id != account_id
-                                        && !attempted.contains(&t.account_id)
-                                        && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
-                                        && !self.rate_limit_tracker.is_rate_limited(
-                                            &t.account_id,
-                                            Some(&normalized_target),
-                                        )
-                                        && !(quota_protection_enabled
-                                            && t.protected_models.contains(&normalized_target))
-                                        && Self::has_candidate_quota_admission(
-                                            t,
-                                            &normalized_target,
-                                        )
-                                        && t.effective_priority(target_model, &normalized_target)
-                                            < found_eff_priority
-                                });
-
                                 let is_qos_jailed =
                                     self.qos_guardian.is_jailed_or_probing(&found.account_id);
                                 if is_qos_jailed {
@@ -4969,11 +4926,6 @@ impl TokenManager {
                                         found.email, normalized_target
                                     );
                                     attempted.insert(account_id.clone());
-                                } else if has_higher_priority_alt {
-                                    tracing::debug!(
-                                        "60s Window: Last account {} has lower effective priority ({}) for model {}, yielding to higher-priority account",
-                                        found.email, found_eff_priority, normalized_target
-                                    );
                                 } else if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
                                     .await
@@ -7393,24 +7345,6 @@ impl TokenManager {
         self.reload_all_accounts().await.map(|_| ())
     }
 
-    /// 记录请求成功，增加健康分
-    pub fn record_success(&self, account_id: &str) {
-        self.health_scores
-            .entry(account_id.to_string())
-            .and_modify(|s| *s = (*s + 0.05).min(1.0))
-            .or_insert(1.0);
-        tracing::debug!("📈 Health score increased for account {}", account_id);
-    }
-
-    /// 记录请求失败，降低健康分
-    pub fn record_failure(&self, account_id: &str) {
-        self.health_scores
-            .entry(account_id.to_string())
-            .and_modify(|s| *s = (*s - 0.2).max(0.0))
-            .or_insert(0.8);
-        tracing::warn!("📉 Health score decreased for account {}", account_id);
-    }
-
     /// 获取当前 QoS 守卫实例
     pub fn get_qos_guardian(&self) -> Arc<crate::proxy::qos_guardian::QoSGuardian> {
         self.qos_guardian.clone()
@@ -7439,18 +7373,23 @@ impl TokenManager {
         session_id: Option<&str>,
         action: crate::proxy::qos_guardian::QoSAction,
     ) {
-        let is_cache_first = self
-            .sticky_config
-            .try_read()
-            .map(|c| c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst)
-            .unwrap_or(false);
+        let should_wait_in_place = |wd: std::time::Duration| -> bool {
+            self.sticky_config
+                .try_read()
+                .map(|c| {
+                    c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst
+                        || (c.max_wait_seconds > 0 && wd.as_secs() <= c.max_wait_seconds)
+                })
+                .unwrap_or(false)
+        };
 
         match action {
             crate::proxy::qos_guardian::QoSAction::TriggerJailedAndUnbind {
                 level,
                 wait_duration,
             } => {
-                if !is_cache_first {
+                let allow_in_place_wait = should_wait_in_place(wait_duration);
+                if !allow_in_place_wait {
                     if let Some(sid) = session_id {
                         self.unbind_session(sid);
                     }
@@ -7460,14 +7399,15 @@ impl TokenManager {
                     account_id,
                     level,
                     wait_duration,
-                    !is_cache_first
+                    !allow_in_place_wait
                 );
             }
             crate::proxy::qos_guardian::QoSAction::HalfOpenFailed {
                 escalated_level,
                 wait_duration,
             } => {
-                if !is_cache_first {
+                let allow_in_place_wait = should_wait_in_place(wait_duration);
+                if !allow_in_place_wait {
                     if let Some(sid) = session_id {
                         self.unbind_session(sid);
                     }
@@ -7477,7 +7417,7 @@ impl TokenManager {
                     account_id,
                     escalated_level,
                     wait_duration,
-                    !is_cache_first
+                    !allow_in_place_wait
                 );
             }
             _ => {}
@@ -9735,7 +9675,7 @@ mod tests {
     fn create_test_token(
         email: &str,
         tier: Option<&str>,
-        health_score: f32,
+        _health_score: f32,
         reset_time: Option<i64>,
         remaining_quota: Option<i32>,
     ) -> ProxyToken {
@@ -9754,7 +9694,6 @@ mod tests {
             remaining_quota,
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score,
             reset_time,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -9795,16 +9734,7 @@ mod tests {
             return tier_cmp;
         }
 
-        // Second: compare by health score (higher is better)
-        let health_cmp = b
-            .health_score
-            .partial_cmp(&a.health_score)
-            .unwrap_or(Ordering::Equal);
-        if health_cmp != Ordering::Equal {
-            return health_cmp;
-        }
-
-        // Third: compare by reset time (earlier/closer is better) [Fix #3570]
+        // Second: compare by reset time (earlier/closer is better) [Fix #3570]
         let reset_a = a.reset_time.unwrap_or(i64::MAX);
         let reset_b = b.reset_time.unwrap_or(i64::MAX);
         let reset_cmp = reset_a.cmp(&reset_b);
@@ -9812,7 +9742,7 @@ mod tests {
             return reset_cmp;
         }
 
-        // Fourth: compare by remaining quota percentage (higher is better)
+        // Third: compare by remaining quota percentage (higher is better)
         let quota_a = a.remaining_quota.unwrap_or(0);
         let quota_b = b.remaining_quota.unwrap_or(0);
         let quota_cmp = quota_b.cmp(&quota_a);
@@ -9852,16 +9782,6 @@ mod tests {
         assert_eq!(compare_tokens(&advanced, &free), Ordering::Less);
         assert_eq!(compare_tokens(&ultra, &free), Ordering::Less);
         assert_eq!(compare_tokens(&free, &ultra), Ordering::Greater);
-    }
-
-    #[test]
-    fn test_sorting_health_score_priority() {
-        // 同等级下，健康分高的优先
-        let high_health = create_test_token("high@test.com", Some("PRO"), 1.0, None, Some(50));
-        let low_health = create_test_token("low@test.com", Some("PRO"), 0.5, None, Some(50));
-
-        assert_eq!(compare_tokens(&high_health, &low_health), Ordering::Less);
-        assert_eq!(compare_tokens(&low_health, &high_health), Ordering::Greater);
     }
 
     #[test]
@@ -9996,7 +9916,7 @@ mod tests {
     fn test_full_sorting_integration() {
         let now = chrono::Utc::now().timestamp();
 
-        let mut tokens = vec![
+        let mut tokens = [
             create_test_token(
                 "free_high@test.com",
                 Some("FREE"),
@@ -10005,9 +9925,9 @@ mod tests {
                 Some(90),
             ),
             create_test_token(
-                "pro_low_health@test.com",
+                "pro_high_quota_soon@test.com",
                 Some("PRO"),
-                0.5,
+                1.0,
                 Some(now + 1800),
                 Some(90),
             ),
@@ -10038,14 +9958,14 @@ mod tests {
 
         // 预期顺序:
         // 1. ULTRA (最高等级，即使刷新时间最远)
-        // 2. PRO + 高健康分 + 30分钟后刷新
-        // 3. PRO + 高健康分 + 5小时后刷新
-        // 4. PRO + 低健康分
+        // 2. PRO + 30分钟后刷新 + 高配额 (90%)
+        // 3. PRO + 30分钟后刷新 + 低配额 (50%)
+        // 4. PRO + 5小时后刷新 (90%)
         // 5. FREE (最低等级，即使配额最高)
         assert_eq!(tokens[0].email, "ultra@test.com");
-        assert_eq!(tokens[1].email, "pro_soon@test.com");
-        assert_eq!(tokens[2].email, "pro_late@test.com");
-        assert_eq!(tokens[3].email, "pro_low_health@test.com");
+        assert_eq!(tokens[1].email, "pro_high_quota_soon@test.com");
+        assert_eq!(tokens[2].email, "pro_soon@test.com");
+        assert_eq!(tokens[3].email, "pro_late@test.com");
         assert_eq!(tokens[4].email, "free_high@test.com");
     }
 
@@ -10165,7 +10085,6 @@ mod tests {
             remaining_quota,
             protected_models,
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -10458,16 +10377,7 @@ mod tests {
                 return quota_cmp;
             }
 
-            // Priority 2: Health score
-            let health_cmp = b
-                .health_score
-                .partial_cmp(&a.health_score)
-                .unwrap_or(Ordering::Equal);
-            if health_cmp != Ordering::Equal {
-                return health_cmp;
-            }
-
-            // Priority 3: Tier (for non-high-end models)
+            // Priority 2: Tier (for non-high-end models)
             if !requires_ultra {
                 let tier_cmp =
                     tier_priority(&a.subscription_tier).cmp(&tier_priority(&b.subscription_tier));
@@ -10804,7 +10714,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -10839,7 +10748,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -11062,7 +10970,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -11139,7 +11046,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -11845,6 +11751,185 @@ mod tests {
             "只要绑定账号有额度，Balance 模式必须坚守原绑定账号以保护 KV 缓存，绝不主动解绑"
         );
         assert_eq!(email, "mcl51@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_balance_mode_waits_in_place_for_transient_rate_limit() {
+        use crate::proxy::sticky_config::{SchedulingMode, StickySessionConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_balance_bound_rl";
+        let acc2_id = "acc_balance_alt_free";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        manager
+            .update_sticky_config(StickySessionConfig {
+                mode: SchedulingMode::Balance,
+                max_wait_seconds: 2,
+                max_spillover_accounts: 0,
+                affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
+                ..Default::default()
+            })
+            .await;
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 70);
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100);
+
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(70));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        let session_id = "test-session-balance-in-place-wait";
+        manager.commit_session(session_id, acc1_id);
+
+        // 1. 设置短期限流 (1秒)，reset_sec (1s) <= max_wait_seconds (2s)
+        // 无论 Balance 还是 CacheFirst，只要 reset_sec <= max_wait_seconds，必须原地精准等待并复用绑定账号，保住 KV 缓存
+        manager.rate_limit_tracker.set_lockout_until(
+            acc1_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(1),
+            crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+            Some(norm_target.clone()),
+        );
+
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Balance mode must wait in-place and reuse bound account when reset_sec <= max_wait_seconds");
+
+        assert_eq!(
+            selected_id, acc1_id,
+            "Balance 模式下当限流冷却时长 <= max_wait_seconds 时必须原地等待并复用绑定账号，绝不得解绑切号"
+        );
+        assert_eq!(email, "acc1@test.com");
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc1_id,
+            "会话绑定必须被保留"
+        );
+
+        // 2. 当限流冷却时长 > max_wait_seconds 时，必须解绑并切换到池中健康账号
+        manager.rate_limit_tracker.set_lockout_until(
+            acc1_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(10),
+            crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+            Some(norm_target.clone()),
+        );
+
+        let (_token_switched, _, email_switched, selected_switched, _) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Balance mode should switch when reset_sec > max_wait_seconds");
+
+        assert_eq!(
+            selected_switched, acc2_id,
+            "限流冷却时长 (10s) 超过 max_wait_seconds (2s) 时应解绑并切换到 acc2"
+        );
+        assert_eq!(email_switched, "acc2@test.com");
+        assert!(
+            manager
+                .session_accounts
+                .get(session_id)
+                .map(|v| v.clone())
+                .as_deref()
+                != Some(acc1_id),
+            "原账号绑定应已被解除"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_60s_window_retains_account_even_if_higher_priority_alt_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_mode_b_p1";
+        let acc2_id = "acc_mode_b_p0";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 80);
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100);
+
+        // acc1: priority 1 (静态优先级低)
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(80));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.priority = 1;
+        token1.model_quotas = quotas1;
+
+        // acc2: priority 0 (静态优先级更高)
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.priority = 0;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        // 模拟 60s 窗口内上一请求使用了 acc1
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = Some((acc1_id.to_string(), std::time::Instant::now()));
+        }
+
+        // 无 session_id 请求（模式 B 60s 全局锁定）
+        // 即使号池存在静态优先级更高 (priority 0) 的 acc2，
+        // 只要 acc1 额度 > 0% 且未限流，60s 窗口内必须坚决复用 acc1，杜绝静态优先级抢占破坏 KV 缓存
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect(
+                "60s window should retain last used account even if higher priority account exists",
+            );
+
+        assert_eq!(
+            selected_id, acc1_id,
+            "Mode B 60s 窗口内必须复用最近账号以保住 KV 缓存，严禁因池中存在静态高优先级账号而发生抢占切换"
+        );
+        assert_eq!(email, "acc1@test.com");
     }
 
     #[tokio::test]
@@ -12611,7 +12696,6 @@ mod tests {
             remaining_quota: Some(100),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -13813,8 +13897,24 @@ mod tests {
         assert_eq!(id_claude, "acc_personal");
         assert_eq!(tok_claude, "tok_personal");
 
-        // 2. Immediately requesting Gemini (even within the 60s stateless window) yields to `acc_pool`
+        // 2. Immediately requesting Gemini (within the 60s stateless window) retains `acc_personal`
+        // even though `acc_pool` has higher priority (50 < 80), to preserve KV cache!
+        let (tok_gemini_retained, _, _, id_gemini_retained, _) = manager
+            .get_token("gemini", false, None, gemini_model)
+            .await
+            .unwrap();
+        assert_eq!(
+            id_gemini_retained, "acc_personal",
+            "Mode B 60s window must retain last used account even if another account has higher priority"
+        );
+        assert_eq!(tok_gemini_retained, "tok_personal");
+
+        // 3. When outside the 60s window (or window reset), requesting Gemini yields to `acc_pool`
         // because `acc_personal` has effective Gemini priority 80 > `acc_pool` priority 50.
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = None;
+        }
         let (tok_gemini, _, _, id_gemini, _) = manager
             .get_token("gemini", false, None, gemini_model)
             .await
@@ -13822,7 +13922,11 @@ mod tests {
         assert_eq!(id_gemini, "acc_pool");
         assert_eq!(tok_gemini, "tok_pool");
 
-        // 3. Hot-updating model priorities via TokenManager flips Gemini priority to 1 on `acc_personal`
+        // 4. Hot-updating model priorities via TokenManager flips Gemini priority to 1 on `acc_personal`
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = None;
+        }
         let mut updated_map = HashMap::new();
         updated_map.insert("claude".to_string(), 1);
         updated_map.insert("gemini".to_string(), 1);
@@ -14344,7 +14448,6 @@ mod tests {
             remaining_quota: Some(0),
             protected_models: HashSet::new(),
             forbidden_models: HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -14424,7 +14527,6 @@ mod tests {
             remaining_quota: Some(100),
             protected_models: HashSet::new(),
             forbidden_models: HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,

@@ -3167,7 +3167,6 @@ pub fn upsert_account(
     let mut index = load_account_index()?;
 
     let norm_email = email.trim().to_lowercase();
-    let norm_rt = token.refresh_token.trim().to_string();
 
     // 幂等查找：按邮箱（忽略大小写）或凭据查找已有账号 ID
     let existing_account_id = index

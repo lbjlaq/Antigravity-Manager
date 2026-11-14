@@ -1,7 +1,7 @@
 // OpenAI 流式转换
 use bytes::Bytes;
 use chrono::Utc;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use rand::Rng;
 use serde_json::{json, Value};
 use std::pin::Pin;
@@ -1820,7 +1820,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::stream;
+    use futures::{stream, StreamExt};
     use serde_json::json;
 
     async fn collect_codex_stream(chunks: Vec<Value>) -> (String, Vec<Value>) {

@@ -25,7 +25,7 @@ use crate::proxy::token_manager::ProxyToken;
 fn create_test_token(
     email: &str,
     tier: Option<&str>,
-    health_score: f32,
+    _health_score: f32,
     reset_time: Option<i64>,
     remaining_quota: Option<i32>,
     supported_models: Vec<&str>,
@@ -51,7 +51,6 @@ fn create_test_token(
         remaining_quota,
         protected_models: HashSet::new(),
         forbidden_models: std::collections::HashSet::new(),
-        health_score,
         reset_time,
         weekly_reset_time: None,
         validation_blocked: false,
@@ -119,15 +118,6 @@ fn compare_tokens_for_model(a: &ProxyToken, b: &ProxyToken, _target_model: &str)
     let quota_cmp = quota_b.cmp(&quota_a);
     if quota_cmp != Ordering::Equal {
         return quota_cmp;
-    }
-
-    // Priority 2: Health score
-    let health_cmp = b
-        .health_score
-        .partial_cmp(&a.health_score)
-        .unwrap_or(Ordering::Equal);
-    if health_cmp != Ordering::Equal {
-        return health_cmp;
     }
 
     Ordering::Equal
@@ -263,7 +253,7 @@ fn test_ultra_accounts_sorted_by_quota() {
 /// 测试完整排序场景：混合账号池
 #[test]
 fn test_full_sorting_mixed_accounts() {
-    fn sort_tokens_for_model(tokens: &mut Vec<ProxyToken>, target_model: &str) {
+    fn sort_tokens_for_model(tokens: &mut [ProxyToken], target_model: &str) {
         tokens.sort_by(|a, b| compare_tokens_for_model(a, b, target_model));
     }
 

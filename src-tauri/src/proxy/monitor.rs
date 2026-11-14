@@ -254,7 +254,7 @@ pub(crate) struct UpstreamCapture {
 }
 
 #[derive(Clone, Default)]
-pub struct UpstreamRequestBodyHolder(pub std::sync::Arc<std::sync::Mutex<UpstreamCapture>>);
+pub struct UpstreamRequestBodyHolder(pub(crate) std::sync::Arc<std::sync::Mutex<UpstreamCapture>>);
 
 tokio::task_local! {
     pub static CURRENT_UPSTREAM_CAPTURE: UpstreamRequestBodyHolder;
