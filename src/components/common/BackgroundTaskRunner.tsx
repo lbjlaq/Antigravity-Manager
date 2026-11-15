@@ -25,7 +25,9 @@ function BackgroundTaskRunner() {
 
         if (auto_refresh && !prevAutoRefreshRef.current && !isFirstMount) {
             console.log('[BackgroundTask] Auto-refresh manually toggled on, executing once...');
-            refreshAllQuotas();
+            refreshAllQuotas().catch((err) => {
+                console.error('[BackgroundTask] Manual toggle quota refresh failed:', err);
+            });
         }
         prevAutoRefreshRef.current = auto_refresh;
     }, [config?.auto_refresh]);
