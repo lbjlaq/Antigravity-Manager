@@ -3,6 +3,15 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.11 (2026-11-15)**:
+        -   **[Gemini 原生流禁用 SSE ': ping' 注释心跳，修复 Antigravity CLI 解析崩溃] (Fixes #3952, PR #3953, Thanks to @koeria)**:
+            -   **Antigravity CLI (agy) 流式解析兼容**: 对 Gemini 原生流重写 `heartbeat_frame` 返回空字节，并在 `run_stream_lifecycle` 中跳过空心跳帧下发，彻底根除 Google GenAI Go SDK 因遇到非数据包 `: ping\n\n` 抛出 `iterateResponseStream: invalid stream chunk: : ping` 致命异常打崩生成的问题。(Fixes #3952, PR #3953, Thanks to @koeria)
+        -   **[Google 兼容接口支持首尾 Markdown JSON 围栏剥离与 Token 统计口径全对齐] (Fixes #3951, PR #3954, Thanks to @hazerwin)**:
+            -   **结构化输出围栏剥离**: `response_format` 兼容支持字符串与对象声明（`json_object` / `{"type": "json_object"}`），在非流式与流式双通道建立正则安全状态机，自动剥离首尾 ````json` / ```` 围栏，确保各类客户端 `json.loads` 直接反序列化无异常。(Fixes #3951, PR #3954, Thanks to @hazerwin)
+            -   **Token 统计全口径对齐**: 在 `CanonicalUsage::from_gemini` 中累加思考 Token（`reasoning_tokens`）至 `completion_tokens`，严格符合 OpenAI 规范并确保 `total_tokens = prompt_tokens + completion_tokens` 恒等。(Fixes #3951, PR #3954, Thanks to @hazerwin)
+        -   **[提示词清洗作用域收缩至身份归属声明句] (Fixes #3940, Ref #3941, PR #3954, Thanks to @sujuxiaoren, @koeria)**:
+            -   **收窄竞品厂牌清洗作用域**: 将 `RE_COMPETITOR_BRANDS` 归一化限制在身份归属声明句内部，杜绝误伤 `MEMORY`、`USER PROFILE` 及技能/工具文档中的业务厂牌词（如百度坐标系、DeepSeek 评测集等）；增加带小数点感知的分句器保护版本号；在同位语改写前执行以维持完整从句边界。(Fixes #3940, Ref #3941, PR #3954, Thanks to @sujuxiaoren, @koeria)
+
     *   **v5.0.4-beta.10 (2026-11-14)**:
         -   **[官方 Hub 指纹升级至 2.32.1 与 Orchestrator (Argon) 编排者模型全链路接入] (Ref #3745, #3937, PR #3949, Thanks to @cubelikeplayDaniel)**:
             -   **官方 Hub 指纹基准升级至 2.32.1**: 将常量定义、User-Agent 生成、版本同步与网关流水线策略基准线全量更新为 `antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)`，消除旧版本客户端拦截风险。(PR #3949)

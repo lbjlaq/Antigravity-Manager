@@ -3,6 +3,15 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.11 (2026-11-15)**:
+        -   **[Disable SSE ': ping' Comment Heartbeat for Gemini Streams to Fix Antigravity CLI Crashes] (Fixes #3952, PR #3953, Thanks to @koeria)**:
+            -   **Antigravity CLI (agy) Streaming Compatibility**: Overrode `heartbeat_frame` to return empty bytes for native Gemini streams and skipped yielding empty heartbeat frames in `run_stream_lifecycle`, eliminating crashes where the Google GenAI Go SDK terminates with `iterateResponseStream: invalid stream chunk: : ping` upon encountering non-data SSE comment pings. (Fixes #3952, PR #3953, Thanks to @koeria)
+        -   **[Strip Outer Markdown JSON Fences and Align Token Accounting with Reasoning] (Fixes #3951, PR #3954, Thanks to @hazerwin)**:
+            -   **Structured Output Fence Stripping**: Supported both string and object syntax for `response_format` (`json_object` / `{"type": "json_object"}`), establishing regex-safe state machines across streaming and non-streaming channels to strip outer ````json` / ```` fences so client-side `json.loads` calls succeed seamlessly. (Fixes #3951, PR #3954, Thanks to @hazerwin)
+            -   **Token Accounting Alignment**: Summed `reasoning_tokens` into `completion_tokens` within `CanonicalUsage::from_gemini`, strictly conforming to the OpenAI standard where `total_tokens = prompt_tokens + completion_tokens`. (Fixes #3951, PR #3954, Thanks to @hazerwin)
+        -   **[Scope Competitor Brand Replacement Strictly to Identity Declarations] (Fixes #3940, Ref #3941, PR #3954, Thanks to @sujuxiaoren, @koeria)**:
+            -   **Narrow Brand Sanitization Boundary**: Confined `RE_COMPETITOR_BRANDS` replacement strictly to identity declaration clauses, preventing accidental tampering with valid technical terms and competitor references in `MEMORY`, `USER PROFILE`, and skill/tool documentation; added decimal-aware sentence splitting to protect model version numbers; executed brand replacement prior to appositive folding to preserve clause integrity. (Fixes #3940, Ref #3941, PR #3954, Thanks to @sujuxiaoren, @koeria)
+
     *   **v5.0.4-beta.10 (2026-11-14)**:
         -   **[Official Hub Fingerprint Upgrade to 2.32.1 & Full Integration of Orchestrator (Argon)] (Ref #3745, #3937, PR #3949, Thanks to @cubelikeplayDaniel)**:
             -   **Upgrade Official Hub Fingerprint Baseline to 2.32.1**: Synchronized Hub baseline constants, User-Agent synthesis, and pipeline policies across the gateway to `antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)`, preventing outdated client rejections. (PR #3949)
