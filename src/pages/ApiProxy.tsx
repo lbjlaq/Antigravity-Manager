@@ -5,6 +5,11 @@ import { isTauri } from '../utils/env';
 import { copyToClipboard } from '../utils/clipboard';
 import { inferModelGroup } from '../config/modelConfig';
 import {
+    getModelFamilyId,
+    getTierLabel,
+    getTierBadgeClass
+} from '../utils/modelFamily';
+import {
     Power,
     Copy,
     RefreshCw,
@@ -1756,55 +1761,6 @@ print(response.choices[0].message.content)`;
                 </div>
             </div>
         );
-    };
-
-    // 档位后缀与分类帮助函数
-    const TIER_SUFFIXES = ['-tiered', '-xhigh', '-high', '-medium', '-low', '-extra-low', '-thinking'];
-
-    const getModelFamilyId = (modelId: string): string => {
-        const id = modelId.toLowerCase().trim();
-        for (const suffix of TIER_SUFFIXES) {
-            if (id.endsWith(suffix)) {
-                return id.slice(0, -suffix.length);
-            }
-        }
-        return id;
-    };
-
-    const getTierLabel = (modelId: string, familyId: string): string => {
-        const id = modelId.toLowerCase().trim();
-        if (id === familyId) return 'Default (无后缀)';
-        if (id.endsWith('-xhigh')) return 'X-High';
-        if (id.endsWith('-high')) return 'High';
-        if (id.endsWith('-medium')) return 'Medium';
-        if (id.endsWith('-low')) return 'Low';
-        if (id.endsWith('-extra-low')) return 'Extra-Low';
-        if (id.endsWith('-tiered')) return 'Tiered';
-        if (id.endsWith('-thinking')) return 'Thinking';
-        const rem = id.replace(familyId, '').replace(/^[-_]/, '');
-        return rem ? rem.toUpperCase() : 'Default';
-    };
-
-    const getTierBadgeClass = (tierLabel: string): string => {
-        if (tierLabel.includes('Default') || tierLabel.includes('无后缀')) {
-            return 'bg-gray-100 text-gray-700 border-gray-200/90 dark:bg-base-200 dark:text-gray-300 dark:border-base-300';
-        }
-        if (tierLabel.includes('X-High')) {
-            return 'bg-purple-50 text-purple-700 border-purple-200/90 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800/60';
-        }
-        if (tierLabel.includes('High')) {
-            return 'bg-emerald-50 text-emerald-700 border-emerald-200/90 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60';
-        }
-        if (tierLabel.includes('Medium')) {
-            return 'bg-blue-50 text-blue-700 border-blue-200/90 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60';
-        }
-        if (tierLabel.includes('Low')) {
-            return 'bg-amber-50 text-amber-700 border-amber-200/90 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60';
-        }
-        if (tierLabel.includes('Tiered')) {
-            return 'bg-cyan-50 text-cyan-700 border-cyan-200/90 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/60';
-        }
-        return 'bg-indigo-50 text-indigo-700 border-indigo-200/90 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/60';
     };
 
     const renderSupportedModelsSection = () => {
