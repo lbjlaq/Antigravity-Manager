@@ -2805,88 +2805,59 @@ impl InboundThinkingPipeline {
         // 7. 处理 requestType
         let mut request_type = body_obj.remove("requestType");
 
-        // 8. 规范化内部 request
-        if let Some(inner_req) = body_obj.get_mut("request") {
-            // [Issue / Defect 18] 若 requestId 仍未生成，根据 sessionId 与 contents 步数提前构建官方 requestId，
-            // 确保后续 align_google_request_prefix_topology_with_model 解析出的 labels.trajectory_id
-            // 与顶层 requestId 中的 trajectory_id 保持 100% 严格同步一致
-            if request_id
-                .as_ref()
-                .and_then(|v| v.as_str())
-                .map_or(true, |s| s.is_empty())
-            {
-                let sid = inner_req
-                    .get("sessionId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("default");
-                let step = inner_req
-                    .get("contents")
-                    .and_then(|c| c.as_array())
-                    .map_or(0, |a| a.len() as u64);
-                request_id = Some(json!(
-                    crate::proxy::mappers::common_utils::build_official_request_id(sid, step)
-                ));
-            }
-
-            let top_rid_str = request_id
-                .as_ref()
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            Self::align_google_request_prefix_topology_with_model(
-                inner_req,
-                &model_str,
-                top_rid_str.as_deref(),
-            );
-
-            // 若 requestType 缺失，根据 tools 或 contents 判定是否为 agent 请求
-            if request_type.is_none() {
-                let has_tools = inner_req
-                    .get("tools")
-                    .and_then(|t| t.as_array())
-                    .map_or(false, |a| !a.is_empty());
-                let has_tool_interactions = inner_req
-                    .get("contents")
-                    .map(crate::proxy::mappers::common_utils::contents_has_tool_interactions)
-                    .unwrap_or(false);
-                if has_tools || has_tool_interactions {
-                    request_type = Some(json!("agent"));
-                }
-            }
+        // 8. 规范化内部 request（若无顶层 request 包装，直接将剩余字段封装为内部 request 对象）
+        let mut inner_req = if let Some(req) = body_obj.remove("request") {
+            req
         } else {
-            // 如果顶层没有 request 包装，直接规范化 body 自身
-            if request_id
-                .as_ref()
-                .and_then(|v| v.as_str())
-                .map_or(true, |s| s.is_empty())
-            {
-                let sid = body
-                    .get("sessionId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("default");
-                let step = body
-                    .get("contents")
-                    .and_then(|c| c.as_array())
-                    .map_or(0, |a| a.len() as u64);
-                request_id = Some(json!(
-                    crate::proxy::mappers::common_utils::build_official_request_id(sid, step)
-                ));
-            }
+            Value::Object(std::mem::take(body_obj))
+        };
 
-            let top_rid_str = request_id
-                .as_ref()
+        // [Issue / Defect 18] 若 requestId 仍未生成，根据 sessionId 与 contents 步数提前构建官方 requestId，
+        // 确保后续 align_google_request_prefix_topology_with_model 解析出的 labels.trajectory_id
+        // 与顶层 requestId 中的 trajectory_id 保持 100% 严格同步一致
+        if request_id
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .is_none_or(|s| s.is_empty())
+        {
+            let sid = inner_req
+                .get("sessionId")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            Self::align_google_request_prefix_topology_with_model(
-                body,
-                &model_str,
-                top_rid_str.as_deref(),
-            );
-            return;
+                .unwrap_or("default");
+            let step = inner_req
+                .get("contents")
+                .and_then(|c| c.as_array())
+                .map_or(0, |a| a.len() as u64);
+            request_id = Some(json!(
+                crate::proxy::mappers::common_utils::build_official_request_id(sid, step)
+            ));
         }
 
-        let inner_request = body_obj.remove("request");
+        let top_rid_str = request_id
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        Self::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            &model_str,
+            top_rid_str.as_deref(),
+        );
+
+        // 若 requestType 缺失，根据 tools 或 contents 判定是否为 agent 请求
+        if request_type.is_none() {
+            let has_tools = inner_req
+                .get("tools")
+                .and_then(|t| t.as_array())
+                .is_some_and(|a| !a.is_empty());
+            let has_tool_interactions = inner_req
+                .get("contents")
+                .map(crate::proxy::mappers::common_utils::contents_has_tool_interactions)
+                .unwrap_or(false);
+            if has_tools || has_tool_interactions {
+                request_type = Some(json!("agent"));
+            }
+        }
 
         // 9. 顶层严格键序重排:
         // project -> requestId -> request -> model -> userAgent -> requestType -> 其余
@@ -2895,9 +2866,7 @@ impl InboundThinkingPipeline {
         if let Some(rid) = request_id {
             reordered.insert("requestId".to_string(), rid);
         }
-        if let Some(req) = inner_request {
-            reordered.insert("request".to_string(), req);
-        }
+        reordered.insert("request".to_string(), inner_req);
         if let Some(m) = model {
             reordered.insert("model".to_string(), m);
         }

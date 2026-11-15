@@ -852,4 +852,37 @@ mod tests {
 
         update_thinking_budget_config(ThinkingBudgetConfig::default());
     }
+
+    #[test]
+    fn test_flat_body_envelope_alignment() {
+        let mut body = json!({
+            "model": "gemini-4-argon",
+            "contents": [
+                { "role": "user", "parts": [{ "text": "hello" }] }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 2048
+            }
+        });
+
+        InboundThinkingPipeline::align_official_envelope(&mut body);
+
+        // 顶层必须严格满足官方信封规范且包含 model 和 request
+        let keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["project", "requestId", "request", "model", "userAgent"]
+        );
+
+        assert_eq!(body["model"], "gemini-4-argon");
+        assert_eq!(body["project"], "aicode-consumers");
+        assert_eq!(body["userAgent"], "antigravity");
+        assert!(body["request"]["contents"].is_array());
+        assert_eq!(body["request"]["generationConfig"]["maxOutputTokens"], 2048);
+    }
 }
