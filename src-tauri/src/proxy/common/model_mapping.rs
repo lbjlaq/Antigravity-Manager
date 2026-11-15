@@ -1035,6 +1035,7 @@ pub fn resolve_model_route_with_effort(
 /// Returns `None` if the model doesn't match any of the 3 protected categories.
 /// 判断是否为 Gemini 3.5 Flash 及以上的高阶 Flash 模型（与 3.1 Pro 共享高级配额）
 /// 严格语义通配：gemini-{ver}-flash*，当版本数值 ver >= 3.5 时生效（支持未来任意 3.10、4.x 等）
+#[allow(dead_code)]
 fn is_high_tier_flash(lower: &str) -> bool {
     if !lower.contains("flash") {
         return false;
@@ -1237,19 +1238,30 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         return Some("gemini-3-pro-image".to_string());
     }
 
-    // 2. 3.5 Flash 及以上的高阶 Flash 模型（如 3.5-flash, 3.7-flash, 3.8-flash 等）与 3.1 Pro 共享高级配额
-    if is_high_tier_flash(&lower) {
-        return Some("gemini-3-pro-high".to_string());
-    }
-
-    // 3. gemini-3-flash (包含普通 1.5-flash, 2.0-flash, 2.5-flash, 3.0-flash 等基础 flash 变体)
+    // 2. Flash 系列：按基底模型归一化（如 gemini-3.8-flash, gemini-3.7-flash, gemini-3.1-flash-lite）
+    // 兼容旧版 gemini-3-flash / 2.5-flash / 2.0-flash / 1.5-flash 基础 flash 变体
     if lower.contains("flash") {
-        return Some("gemini-3-flash".to_string());
+        if lower.contains("3-flash")
+            || lower.contains("2.5-flash")
+            || lower.contains("2.0-flash")
+            || lower.contains("1.5-flash")
+        {
+            return Some("gemini-3-flash".to_string());
+        }
+        let base = strip_tier_suffix(&lower);
+        return Some(base);
     }
 
-    // 4. gemini-3-pro-high (包含 pro 变体)
+    // 3. Pro 系列：按基底模型归一化（gemini-3.1-pro 及其变体归一化为 gemini-3.1-pro，兼容保留 gemini-3-pro-high）
     if lower.contains("pro") && !lower.contains("image") {
-        return Some("gemini-3-pro-high".to_string());
+        if lower.contains("3.1-pro") {
+            return Some("gemini-3.1-pro".to_string());
+        }
+        if lower.contains("3-pro") {
+            return Some("gemini-3-pro-high".to_string());
+        }
+        let base = strip_tier_suffix(&lower);
+        return Some(base);
     }
 
     // 4. Claude 系列 (上游同一账号下共享配额池，统一归一化为 'claude' 保护组)
@@ -1442,6 +1454,48 @@ mod tests {
         assert_eq!(
             normalize_to_standard_id("gemini-3.1-flash-image-4k"),
             Some("gemini-3.1-flash-image".to_string())
+        );
+
+        // [Fix #3965] Flash 与 Pro 基底模型独立归一化，杜绝高阶 Flash 误映射至 gemini-3-pro-high
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.8-flash-high"),
+            Some("gemini-3.8-flash".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.8-flash-medium"),
+            Some("gemini-3.8-flash".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.8-flash"),
+            Some("gemini-3.8-flash".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.7-flash-high"),
+            Some("gemini-3.7-flash".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.1-flash-lite"),
+            Some("gemini-3.1-flash-lite".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.1-pro-high"),
+            Some("gemini-3.1-pro".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.1-pro-low"),
+            Some("gemini-3.1-pro".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.1-pro"),
+            Some("gemini-3.1-pro".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3-pro-high"),
+            Some("gemini-3-pro-high".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3-flash"),
+            Some("gemini-3-flash".to_string())
         );
     }
 
