@@ -314,6 +314,14 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
         ]
     }
 
+    fn heartbeat_frame(&mut self) -> Bytes {
+        // [Fixes #3952] Google GenAI SDK 与 Antigravity CLI (agy) 的底层流式解析器
+        // (google.golang.org/genai iterateResponseStream) 严格要求所有 stream chunk 必须为合法 JSON 数据行 (data: {...})。
+        // 遇到 SSE 注释行 (`: ping\n\n`) 会直接抛出 `iterateResponseStream: invalid stream chunk: : ping` 致命异常并强行终止生成。
+        // Google Gemini 原生官方流无需亦不支持下发注释心跳，故返回空字节块静默跳过下游心跳发射。
+        Bytes::new()
+    }
+
     fn on_finish(&mut self) {
         // 与 Claude/OpenAI 一致：流结束（含优雅收尾）时提交思维链
         if let Some(acc) = self.thinking_acc.take() {
@@ -325,6 +333,7 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::pipeline::StreamLifecycleConfig;
     use futures::StreamExt;
 
     fn test_gemini_handler() -> GeminiStreamHandler {
@@ -664,5 +673,47 @@ mod tests {
         assert!(output.contains("Normal completion"));
         assert!(output.contains(r#""finishReason":"STOP""#));
         assert!(!output.contains("MAX_TOKENS"));
+    }
+
+    #[tokio::test]
+    async fn test_gemini_stream_no_heartbeat_ping_issue_3952() {
+        // [Regression Issue #3952]
+        // 验证 Gemini 流在经历网络静默等待期间绝不下发 `: ping\n\n` 心跳包，
+        // 确保使用 google.golang.org/genai 的 Antigravity CLI (agy) 不因 invalid stream chunk 崩溃。
+        let upstream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}]}\n\n"));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            yield Ok::<_, String>(Bytes::from("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" World\"}]},\"finishReason\":\"STOP\"}]}\n\n"));
+        };
+
+        let handler = test_gemini_handler();
+        let lifecycle_cfg = StreamLifecycleConfig::new(
+            "gemini-test",
+            "test_gemini_stream_no_heartbeat_ping_issue_3952",
+            "trace_3952".to_string(),
+        )
+        .with_heartbeat_secs(1); // 缩短心跳周期
+
+        let mut stream = crate::proxy::pipeline::run_stream_lifecycle(
+            Box::pin(upstream),
+            handler,
+            lifecycle_cfg,
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        assert!(output.contains("Hello"));
+        assert!(output.contains(" World"));
+        // 核心断言：Gemini 输出中严禁出现 `: ping` 伪心跳帧
+        assert!(
+            !output.contains(": ping"),
+            "Gemini SSE 流中包含了会导致 agy cli 崩溃的 : ping 帧: {output}"
+        );
     }
 }
