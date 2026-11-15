@@ -409,6 +409,12 @@ pub async fn refresh_all_quotas(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     app_handle: tauri::AppHandle,
 ) -> Result<RefreshStats, String> {
+    let _guard = match modules::auto_refresh::try_acquire_refresh_lock() {
+        Some(guard) => guard,
+        None => {
+            return Err("A quota refresh task is already in progress, please wait.".to_string());
+        }
+    };
     refresh_all_quotas_internal(&proxy_state, Some(app_handle)).await
 }
 /// 获取设备指纹（当前 storage.json + 账号绑定）

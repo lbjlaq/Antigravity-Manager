@@ -11,7 +11,6 @@ import { useAccountStore } from '../../stores/useAccountStore';
 import { isTauri } from '../../utils/env';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { formatTimeRemaining } from '../../utils/format';
@@ -255,26 +254,8 @@ export default function MiniView() {
     };
 
     // [Fix #3958] 定时全量刷新已完全下沉至后端调度器 (modules::auto_refresh)；
-    // 悬浮窗只需监听 accounts://refreshed 全局广播事件即可即时获取最新配额，杜绝悬浮窗在后台重复轮询。
-    useEffect(() => {
-        if (!isTauri()) return;
-        let unlisten: (() => void) | undefined;
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        listen('accounts://refreshed', () => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(() => {
-                fetchAccounts();
-                fetchCurrentAccount();
-            }, 100);
-        }).then((fn) => {
-            unlisten = fn;
-        });
-
-        return () => {
-            if (timer) clearTimeout(timer);
-            if (unlisten) unlisten();
-        };
-    }, []);
+    // 全局 accounts://refreshed 广播事件由 App.tsx 根级统一监听并调用 fetchAccounts(true)，
+    // 悬浮窗无需额外绑定重复监听器，彻底杜绝多窗口并发与卸载内存泄漏。
 
     useEffect(() => {
         if (isTauri()) {
