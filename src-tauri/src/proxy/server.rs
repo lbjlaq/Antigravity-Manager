@@ -1001,6 +1001,18 @@ impl AxumServer {
                 post(admin_update_account_priority),
             )
             .route(
+                "/accounts/:accountId/project-id",
+                post(admin_update_account_project_id),
+            )
+            .route(
+                "/accounts/:accountId/auto-fetch-project-id",
+                post(admin_auto_fetch_account_project_id),
+            )
+            .route(
+                "/accounts/:accountId/label",
+                post(admin_update_account_label),
+            )
+            .route(
                 "/system/data-dir",
                 get(admin_get_data_dir_path).post(admin_set_data_dir),
             )
@@ -3568,6 +3580,68 @@ async fn admin_update_account_priority(
             None
         },
     );
+    Ok(StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountProjectIdRequest {
+    #[serde(default, alias = "projectId")]
+    project_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountLabelRequest {
+    label: String,
+}
+
+async fn admin_update_account_project_id(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+    Json(payload): Json<AccountProjectIdRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::modules::account::update_account_project_id(&account_id, payload.project_id.clone())
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
+    state
+        .token_manager
+        .update_account_project_id(&account_id, payload.project_id);
+    Ok(StatusCode::OK)
+}
+
+async fn admin_auto_fetch_account_project_id(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let pid = crate::modules::account::auto_fetch_account_project_id(&account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+    state
+        .token_manager
+        .update_account_project_id(&account_id, Some(pid.clone()));
+    Ok(Json(serde_json::json!(pid)))
+}
+
+async fn admin_update_account_label(
+    Path(account_id): Path<String>,
+    Json(payload): Json<AccountLabelRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::commands::update_account_label(account_id, payload.label)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(StatusCode::OK)
 }
 

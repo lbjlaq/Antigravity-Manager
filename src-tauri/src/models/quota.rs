@@ -169,9 +169,12 @@ pub struct QuotaData {
     /// 禁止访问的原因 (403 详细信息)
     #[serde(default)]
     pub forbidden_reason: Option<String>,
-    /// 订阅等级 (FREE/PRO/ULTRA)
+    /// 订阅等级 (FREE/PRO/ULTRA/ENTERPRISE)
     #[serde(default)]
     pub subscription_tier: Option<String>,
+    /// 原始未归一化的订阅等级代码 (如 "GCP_GE_PAYGO_TIER", "g1-pro-tier")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_tier: Option<String>,
     /// 模型淘汰重定向规则表 (old_model_id -> new_model_id)
     #[serde(default)]
     pub model_forwarding_rules: std::collections::HashMap<String, String>,
@@ -188,6 +191,7 @@ impl QuotaData {
             is_forbidden: false,
             forbidden_reason: None,
             subscription_tier: None,
+            raw_tier: None,
             model_forwarding_rules: std::collections::HashMap::new(),
             quota_groups: None,
         }

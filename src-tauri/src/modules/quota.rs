@@ -339,7 +339,7 @@ async fn fetch_project_id(
     access_token: &str,
     email: &str,
     account_id: Option<&str>,
-) -> (Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
     let health_tracker = get_quota_endpoint_health();
@@ -411,8 +411,8 @@ async fn fetch_project_id(
 
                         if let Some(ref tier) = subscription_tier {
                             crate::modules::logger::log_info(&format!(
-                                "📊 [{}] Subscription identified successfully: {}",
-                                email, tier
+                                "📊 [{}] Subscription identified successfully: {} (raw: {})",
+                                email, tier, raw_tier
                             ));
                         }
 
@@ -424,7 +424,7 @@ async fn fetch_project_id(
                             ));
                         }
 
-                        return (project_id, subscription_tier);
+                        return (project_id, subscription_tier, Some(raw_tier));
                     }
                 } else {
                     if crate::proxy::upstream::client::should_try_next_endpoint_for_url(
@@ -450,7 +450,7 @@ async fn fetch_project_id(
         }
     }
 
-    (None, None)
+    (None, None, None)
 }
 
 /// 解析账号的 project_id（控制面查询，被封禁账号同样会返回 200）。
@@ -494,16 +494,22 @@ pub async fn fetch_quota_with_cache(
     // 这个「优化」只剩副作用，因此移除。
     //
     // 现在：始终调用；仅在上游返回空值时用缓存/已存值兜底，避免网络抖动把数据抹掉。
-    let (fresh_project_id, fresh_tier) = fetch_project_id(access_token, email, account_id).await;
+    let (fresh_project_id, fresh_tier, fresh_raw_tier) =
+        fetch_project_id(access_token, email, account_id).await;
 
     let project_id = fresh_project_id.or_else(|| cached_project_id.map(|s| s.to_string()));
 
-    let existing_tier = account_id
-        .and_then(|id| crate::modules::load_account(id).ok())
-        .and_then(|acc| acc.quota.and_then(|q| q.subscription_tier));
+    let existing_account = account_id.and_then(|id| crate::modules::load_account(id).ok());
+    let existing_tier = existing_account
+        .as_ref()
+        .and_then(|acc| acc.quota.as_ref().and_then(|q| q.subscription_tier.clone()));
+    let existing_raw_tier = existing_account
+        .as_ref()
+        .and_then(|acc| acc.quota.as_ref().and_then(|q| q.raw_tier.clone()));
 
     // 上游值优先；上游这次没给（网络失败 / 未识别）才保留旧值。
     let subscription_tier = fresh_tier.or(existing_tier);
+    let raw_tier = fresh_raw_tier.or(existing_raw_tier);
 
     // We keep project_id to store in the DB, but we NO LONGER force inject it into payload if it's absent
 
@@ -556,6 +562,7 @@ pub async fn fetch_quota_with_cache(
                         q.forbidden_reason = Some(text.clone());
                         // 保留本次 loadCodeAssist 拿到的等级；拿不到才回退到已存值
                         q.subscription_tier = subscription_tier.clone();
+                        q.raw_tier = raw_tier.clone();
 
                         // 智能识别上游返回信息并分类处理
                         if let Some(id) = account_id {
@@ -671,6 +678,7 @@ pub async fn fetch_quota_with_cache(
                 let final_tier =
                     crate::models::quota::resolve_subscription_tier(subscription_tier.as_deref());
                 quota_data.subscription_tier = Some(final_tier.clone());
+                quota_data.raw_tier = raw_tier.clone();
                 let is_ultra = final_tier == "ULTRA";
 
                 // Best-effort: 先行获取分组配额摘要 (weekly + 5h windows)。
@@ -1181,7 +1189,7 @@ pub async fn get_valid_token_for_warmup(
     {
         pid.to_string()
     } else {
-        let (project_id, _) = fetch_project_id(
+        let (project_id, _, _) = fetch_project_id(
             &account.token.access_token,
             &account.email,
             Some(&account.id),

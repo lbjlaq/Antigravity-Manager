@@ -1315,6 +1315,12 @@ pub fn transform_openai_request_with_session(
         final_body["requestType"] = json!("agent");
     }
 
+    if let Some(tok) = token {
+        if tok.is_paygo() {
+            final_body["enabledCreditTypes"] = json!(["GOOGLE_ONE_AI"]);
+        }
+    }
+
     crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut final_body);
 
     // [CACHE:L3] 使用多层级缓存的 compute_prefix_hash 计算组合哈希

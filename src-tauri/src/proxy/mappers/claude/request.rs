@@ -749,6 +749,12 @@ pub fn transform_claude_request_in_timed(
         body["requestType"] = json!("agent");
     }
 
+    if let Some(tok) = token {
+        if tok.is_paygo() {
+            body["enabledCreditTypes"] = json!(["GOOGLE_ONE_AI"]);
+        }
+    }
+
     crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut body);
 
     // [FIX #593] 最后一道防线: 递归深度清理所有 cache_control 字段
