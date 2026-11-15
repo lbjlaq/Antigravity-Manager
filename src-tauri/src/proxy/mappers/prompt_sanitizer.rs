@@ -73,6 +73,22 @@ static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 触发上游 Google WAF 伪 429 拦截的第三方 Agent 特征指令与规范特征正则（Issue #3965，仅在非代码区域生效）
+/// Google Cloud Code WAF 会对特定 Agent 模板中的高频特征指令进行启发式拦截，返回伪造的 429 RESOURCE_EXHAUSTED：
+/// 1) `Prefer read_file, edit_file, and write_file over cat/sed`
+/// 2) `Always read_file before edit_file`
+/// 3) `call read_file on its SKILL.md`
+/// 4) `Google model operational directives / guidelines`
+static RE_WAF_TRIGGER_AGENT_TOOL_GUIDELINES: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"(?i)\bprefer\s+(?:the\s+)?read_file,\s*edit_file,?\s+and\s+write_file\s+over\s+cat/sed\b",
+        r"|(?i)\balways\s+read_file\s+before\s+edit_file\b",
+        r"|(?i)\bcall\s+read_file\s+on\s+(?:its\s+)?SKILL\.md\b",
+        r"|(?i)\bGoogle\s+model\s+operational\s+(?:directives|guidelines)\b"
+    ))
+    .unwrap()
+});
+
 /// 连续多余空行收拢正则（剥离元数据后若产生 3 个及以上连续换行，收拢为 2 个换行以保持自然段落）
 static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -689,7 +705,11 @@ impl PromptSanitizer {
             || lower.contains("cch=")
             || lower.contains("claude agent sdk")
             || lower.contains("security testing")
-            || lower.contains("authorized security testing");
+            || lower.contains("authorized security testing")
+            || lower.contains("read_file")
+            || lower.contains("edit_file")
+            || lower.contains("operational directives")
+            || lower.contains("operational guidelines");
 
         if !has_suspect {
             return text.to_string();
@@ -716,8 +736,26 @@ impl PromptSanitizer {
             }
         });
 
+        // 步骤 3.5：中和触发上游 WAF 伪 429 拦截的第三方 Agent 工具指令特征（Issue #3965）
+        let pass2_5 =
+            RE_WAF_TRIGGER_AGENT_TOOL_GUIDELINES.replace_all(&pass2, |caps: &regex::Captures| {
+                let matched = &caps[0];
+                let lower = matched.to_lowercase();
+                if lower.contains("prefer") {
+                    "Prefer read file, edit file, and write file over cat/sed".to_string()
+                } else if lower.contains("always") {
+                    "Always read file before edit file".to_string()
+                } else if lower.contains("call") {
+                    "call read file on its SKILL.md".to_string()
+                } else if lower.contains("operational") {
+                    "Model operational guidelines".to_string()
+                } else {
+                    matched.to_string()
+                }
+            });
+
         // 步骤 4：单趟无递归还原受保护的代码块
-        let restored = RE_CODE_BLOCK_PLACEHOLDER.replace_all(&pass2, |caps: &regex::Captures| {
+        let restored = RE_CODE_BLOCK_PLACEHOLDER.replace_all(&pass2_5, |caps: &regex::Captures| {
             if let Ok(idx) = caps[1].parse::<usize>() {
                 if let Some(code) = placeholders.get(idx) {
                     return code.clone();
@@ -4143,5 +4181,47 @@ mod tests {
             .unwrap_or_else(|| billing_raw.to_string());
         assert!(!rewritten_billing.contains("x-anthropic-billing-header"));
         assert!(rewritten_billing.contains("System prompt."));
+    }
+
+    // ============================ issue #3965：中和触发上游 WAF 伪 429 拦截的第三方 Agent 特征指令 ============================
+
+    #[test]
+    fn test_issue_3965_waf_trigger_agent_tool_guidelines_neutralized() {
+        let raw = concat!(
+            "You are a coding assistant.\n",
+            "Guidelines: Prefer read_file, edit_file, and write_file over cat/sed.\n",
+            "Guideline 2: Always read_file before edit_file.\n",
+            "Guideline 3: Please call read_file on its SKILL.md before proceeding.\n",
+            "Guideline 4: Follow Google model operational directives.\n",
+            "Guideline 5: Follow Google model operational guidelines.\n",
+            "```python\n",
+            "# Code blocks must remain 100% intact:\n",
+            "def read_file(path):\n",
+            "    pass\n",
+            "# In-code comment: Prefer read_file, edit_file, and write_file over cat/sed.\n",
+            "```\n",
+            "Done."
+        );
+
+        let cleaned = PromptSanitizer::clean_text(raw);
+
+        // 1. 验证非代码区域的高危特征已被有效中和
+        assert!(!cleaned
+            .contains("Guidelines: Prefer read_file, edit_file, and write_file over cat/sed"));
+        assert!(!cleaned.contains("Guideline 2: Always read_file before edit_file"));
+        assert!(!cleaned.contains("call read_file on its SKILL.md"));
+        assert!(!cleaned.contains("Google model operational directives"));
+        assert!(!cleaned.contains("Google model operational guidelines"));
+        assert!(cleaned
+            .contains("Guidelines: Prefer read file, edit file, and write file over cat/sed"));
+        assert!(cleaned.contains("Guideline 2: Always read file before edit file"));
+        assert!(cleaned.contains("call read file on its SKILL.md"));
+        assert!(cleaned.contains("Model operational guidelines"));
+
+        // 2. 验证代码块内部完全未受任何影响
+        assert!(cleaned.contains("def read_file(path):"));
+        assert!(cleaned.contains(
+            "# In-code comment: Prefer read_file, edit_file, and write_file over cat/sed."
+        ));
     }
 }

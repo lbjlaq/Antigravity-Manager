@@ -367,7 +367,7 @@ pub async fn check_and_auto_switch_classic(
             monitored_models: vec![
                 "gemini-3.8-flash".to_string(),
                 "claude".to_string(),
-                "gemini-3-pro-high".to_string(),
+                "gemini-3.1-pro-high".to_string(),
             ],
         }
     } else {
