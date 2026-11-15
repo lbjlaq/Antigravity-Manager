@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.13 (2026-11-15)**:
+        -   **[Neutralize Upstream WAF Prompt Triggers & Decouple Model Quota Normalization] (Fixes #3965)**:
+            -   **Neutralize Agent Tool Directives Against Fake 429**: High-precision neutralization for Google Cloud Code upstream WAF heuristic triggers targeting third-party agent templates (e.g. Kelivo, Hermes Agent) with tool guidelines (`Prefer read_file, edit_file, and write_file over cat/sed`), preserving fenced code blocks while completely eliminating fake 429 RESOURCE_EXHAUSTED upstream responses. (Fixes #3965)
+            -   **Decouple Flash and Pro Quota Normalization**: Deprecated obsolete mapping of high-tier Flash models (e.g. `gemini-3.8-flash-high`) to `gemini-3-pro-high`, ensuring granular base model normalization and preventing 429 quota lookup mismatches from triggering cascading 30-second cooldowns across all accounts. (Fixes #3965)
+            -   **Modernize Default Monitored and Warmup Models**: Upgraded default warmup, quota protection, and classic auto-switch configurations from legacy `gemini-3-flash` / `gemini-3-pro-high` to `gemini-3.8-flash` and `gemini-3.1-pro-high`. (Fixes #3965)
+
     *   **v5.0.4-beta.12 (2026-11-15)**:
         -   **[Harden Background Quota Auto-Refresh with Single-Flight RAII Locking] (Fixes #3958, PR #3964, Thanks to @mclinyeshi)**:
             -   **Single-Flight Scheduling & RAII Unlock**: Introduced `RefreshLockGuard` establishing a full-lifecycle single-flight lock across manual triggers and periodic background refreshes; RAII drop guarantees resetting `IS_REFRESHING` atomic flag to zero, eliminating deadlocks caused by unhandled panics or async task cancellations. (Fixes #3958, PR #3964, Thanks to @mclinyeshi)

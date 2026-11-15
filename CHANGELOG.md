@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.13 (2026-11-15)**:
+        -   **[上游 WAF 特征提示词中和与模型配额归一化修复] (Fixes #3965)**:
+            -   **中和第三方 Agent 工具指令特征防伪 429**: 针对 Google Cloud Code 上游 WAF 针对特定第三方 Agent 模板（如 Kelivo、Hermes Agent 等）的启发式指令拦截（`Prefer read_file, edit_file, and write_file over cat/sed` 等模式），在单趟保护代码块的前提下对非代码区域进行高精度中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3965)
+            -   **Flash 与 Pro 配额归一化解耦**: 废除将高阶 Flash 模型（如 `gemini-3.8-flash-high`）历史错配至 `gemini-3-pro-high` 的旧规则，按基底模型分别独立归一化，根除 429 发生时配额查找错位触发全账号 30 秒级联冷却降级的严重隐患。(Fixes #3965)
+            -   **默认监控与预热模型现代化**: 将默认预热、配额保护与经典自动切号的过时默认模型从 `gemini-3-flash` / `gemini-3-pro-high` 现代化升级为 `gemini-3.8-flash` 与 `gemini-3.1-pro-high`。(Fixes #3965)
+
     *   **v5.0.4-beta.12 (2026-11-15)**:
         -   **[后台配额自动刷新全面加固与单飞锁防重护航] (Fixes #3958, PR #3964, Thanks to @mclinyeshi)**:
             -   **单飞调度与 RAII 自动解锁**: 引入 `RefreshLockGuard`，在手动触发与后台定时刷新之间建立全生命周期单飞锁，Drop 保证 `IS_REFRESHING` 标志位归零，彻底消灭未捕获 panic 或协程取消导致的死锁隐患。(Fixes #3958, PR #3964, Thanks to @mclinyeshi)
