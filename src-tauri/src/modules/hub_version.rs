@@ -280,7 +280,7 @@ async fn try_detect_remote_hub_version_with(force: bool) -> Option<String> {
     parse_hub_version_from_manifest(&resp.text().await.ok()?)
 }
 
-/// 尝试从本地已安装的 Antigravity 客户端探测 Hub 版本
+/// 尝试从本地已安装的 Antigravity 客户端探测 Hub 版本（仅接受 2.x Hub 版本线，过滤 IDE 4.x 版本）
 pub fn try_detect_local_hub_version() -> Option<String> {
     if let Ok(local_ver) = crate::modules::version::get_antigravity_version(None) {
         let ver = if !local_ver.short_version.is_empty() {
@@ -288,7 +288,7 @@ pub fn try_detect_local_hub_version() -> Option<String> {
         } else {
             local_ver.bundle_version
         };
-        if !ver.is_empty() {
+        if is_acceptable_local_hub_version(&ver) {
             return Some(ver);
         }
     }
@@ -296,7 +296,8 @@ pub fn try_detect_local_hub_version() -> Option<String> {
 }
 
 /// 同步解析 Hub 客户端指纹（不发起任何外部网络 I/O，安全可靠）
-/// 优先级: 用户手动自定义 > 本地安装探测 > 稳态基准
+/// 出站指纹必须严格保证「版本号 + CL + 平台段三者同源」！
+/// 优先级: 用户手动显式双字段自定义 > 稳态基准兜底
 pub fn resolve_hub_fingerprint_sync(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
@@ -304,7 +305,7 @@ pub fn resolve_hub_fingerprint_sync(
     let clean_ver = custom_version.map(|s| s.trim()).filter(|s| !s.is_empty());
     let clean_cl = custom_cl.map(|s| s.trim()).filter(|s| !s.is_empty());
 
-    // 1. 如果用户自定义了版本与 CL
+    // 1. 如果用户显式且同时自定义了版本与 CL，尊重用户配置
     if let (Some(v), Some(c)) = (clean_ver, clean_cl) {
         return HubFingerprint {
             version: v.to_string(),
@@ -314,41 +315,28 @@ pub fn resolve_hub_fingerprint_sync(
         };
     }
 
-    let final_cl = clean_cl.unwrap_or(OFFICIAL_HUB_CL).to_string();
-
-    // 2. 如果用户仅自定义了版本
-    if let Some(v) = clean_ver {
-        return HubFingerprint {
-            version: v.to_string(),
-            cl: final_cl.clone(),
-            user_agent: build_hub_user_agent(v, &final_cl),
-            source: HubFingerprintSource::Custom,
-        };
+    if clean_ver.is_some() || clean_cl.is_some() {
+        tracing::warn!(
+            custom_version = ?clean_ver,
+            custom_cl = ?clean_cl,
+            "Custom Hub fingerprint requires both version and CL to avoid upstream signature mismatch; falling back to calibrated baseline"
+        );
     }
 
-    // 3. 尝试本地已安装探测（仅接受 2.x Hub 版本线，IDE 4.x 不可用作 hub 指纹）
-    if let Some(local_ver) =
-        try_detect_local_hub_version().filter(|v| is_acceptable_local_hub_version(v))
-    {
-        return HubFingerprint {
-            version: local_ver.clone(),
-            cl: final_cl.clone(),
-            user_agent: build_hub_user_agent(&local_ver, &final_cl),
-            source: HubFingerprintSource::Local,
-        };
-    }
-
-    // 4. 稳态基准兜底（硬编码校准值：版本与 CL 必须成对，不自动跟随远程版本）
+    // 2. 稳态基准兜底（硬编码校准值：版本与 CL 必须严格成对人工校准同源）
+    // Google Piper monorepo 的 CL 严格单调递增，版本号与 CL 必须人工校准成对（如 2.32.1 对应 1021296516）。
+    // 严禁将本地已安装旧版 (如 2.23.1) 或远程探测版本与基准 CL 错配拼接；错配的弗兰肯斯坦指纹
+    // 会被 Google Cloud Code WAF 判定为非正版客户端模拟（触发 TOS_VIOLATION 封禁）。
     HubFingerprint {
         version: OFFICIAL_HUB_VERSION.to_string(),
-        cl: final_cl.clone(),
-        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, &final_cl),
+        cl: OFFICIAL_HUB_CL.to_string(),
+        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
         source: HubFingerprintSource::Baseline,
     }
 }
 
-/// 异步全流程解析 Hub 客户端指纹（包含官方远程源实时探测）
-/// 优先级: 用户手动自定义 > 远程更新源探测 > 本地安装探测 > 稳态基准
+/// 异步全流程解析 Hub 客户端指纹
+/// 同样遵循版本与 CL 严格同源校准原则，防止远程源或本地旧版污染出站 UA
 pub async fn resolve_hub_fingerprint_async(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
@@ -356,66 +344,13 @@ pub async fn resolve_hub_fingerprint_async(
     resolve_hub_fingerprint_async_with(custom_version, custom_cl, false).await
 }
 
-/// 同上，`force_remote = true` 时跳过 6h 发布缓存（UI「强制探测」）
+/// 同上，`force_remote` 保留用于接口兼容
 pub async fn resolve_hub_fingerprint_async_with(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
-    force_remote: bool,
+    _force_remote: bool,
 ) -> HubFingerprint {
-    let clean_ver = custom_version.map(|s| s.trim()).filter(|s| !s.is_empty());
-    let clean_cl = custom_cl.map(|s| s.trim()).filter(|s| !s.is_empty());
-
-    // 1. 用户自定义版本与 CL
-    if let (Some(v), Some(c)) = (clean_ver, clean_cl) {
-        return HubFingerprint {
-            version: v.to_string(),
-            cl: c.to_string(),
-            user_agent: build_hub_user_agent(v, c),
-            source: HubFingerprintSource::Custom,
-        };
-    }
-
-    let final_cl = clean_cl.unwrap_or(OFFICIAL_HUB_CL).to_string();
-
-    // 2. 用户仅自定义了版本
-    if let Some(v) = clean_ver {
-        return HubFingerprint {
-            version: v.to_string(),
-            cl: final_cl.clone(),
-            user_agent: build_hub_user_agent(v, &final_cl),
-            source: HubFingerprintSource::Custom,
-        };
-    }
-
-    // 3. 尝试远程动态探测 (异步非阻塞，超时 5 秒；自带 6h 缓存，force 时强制刷新)
-    if let Some(remote_ver) = try_detect_remote_hub_version_with(force_remote).await {
-        return HubFingerprint {
-            version: remote_ver.clone(),
-            cl: final_cl.clone(),
-            user_agent: build_hub_user_agent(&remote_ver, &final_cl),
-            source: HubFingerprintSource::Remote,
-        };
-    }
-
-    // 4. 尝试本地已安装探测（仅接受 2.x Hub 版本线，IDE 4.x 不可用作 hub 指纹）
-    if let Some(local_ver) =
-        try_detect_local_hub_version().filter(|v| is_acceptable_local_hub_version(v))
-    {
-        return HubFingerprint {
-            version: local_ver.clone(),
-            cl: final_cl.clone(),
-            user_agent: build_hub_user_agent(&local_ver, &final_cl),
-            source: HubFingerprintSource::Local,
-        };
-    }
-
-    // 5. 稳态基准兜底（硬编码校准值：版本与 CL 必须成对，不自动跟随远程版本）
-    HubFingerprint {
-        version: OFFICIAL_HUB_VERSION.to_string(),
-        cl: final_cl.clone(),
-        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, &final_cl),
-        source: HubFingerprintSource::Baseline,
-    }
+    resolve_hub_fingerprint_sync(custom_version, custom_cl)
 }
 
 /// 获取当前缓存的 Hub 客户端指纹（带毒化恢复保障）
@@ -546,10 +481,32 @@ files:
     }
 
     #[test]
+    fn test_unpaired_custom_falls_back_to_calibrated_baseline() {
+        // 仅传版本不传 CL，必须回退到基线，绝不产生弗兰肯斯坦指纹
+        let fp = resolve_hub_fingerprint_sync(Some("2.23.1"), None);
+        assert_eq!(fp.version, OFFICIAL_HUB_VERSION);
+        assert_eq!(fp.cl, OFFICIAL_HUB_CL);
+        assert_eq!(fp.source, HubFingerprintSource::Baseline);
+
+        // 仅传 CL 不传版本，同理必须回退到基线
+        let fp_cl_only = resolve_hub_fingerprint_sync(None, Some("99999999"));
+        assert_eq!(fp_cl_only.version, OFFICIAL_HUB_VERSION);
+        assert_eq!(fp_cl_only.cl, OFFICIAL_HUB_CL);
+        assert_eq!(fp_cl_only.source, HubFingerprintSource::Baseline);
+    }
+
+    #[test]
     fn test_baseline_fallback() {
         let fp = resolve_hub_fingerprint_sync(None, None);
-        // 如果本地没有安装 Antigravity，则必定回退到 baseline 或检测到 local
-        assert!(!fp.version.is_empty());
-        assert!(!fp.cl.is_empty());
+        assert_eq!(fp.version, OFFICIAL_HUB_VERSION);
+        assert_eq!(fp.cl, OFFICIAL_HUB_CL);
+        assert_eq!(fp.source, HubFingerprintSource::Baseline);
+        assert_eq!(
+            fp.user_agent,
+            format!(
+                "antigravity/hub/{} (aidev_client; os_type=windows; arch=amd64; cl={})",
+                OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL
+            )
+        );
     }
 }
