@@ -288,3 +288,68 @@ export function resolvePricingRule(
 
     return pricing['default'] || { input: 1.0, output: 5.0, cached: 0.1 };
 }
+
+export interface ModelTrendPoint {
+    period: string;
+    model_data: Record<string, number>;
+}
+
+/**
+ * Aggregates trend time points into unified model families to prevent
+ * multiple thinking tiers of the same model from cluttering charts.
+ */
+export function aggregateModelTrendsByFamily(
+    modelTrend: ModelTrendPoint[],
+    topN: number = 5,
+    otherLabel: string = 'Other Models'
+): {
+    transformedTrend: Record<string, any>[];
+    displayModelKeys: string[];
+} {
+    // 1. Group points by model family
+    const familyTrend = modelTrend.map(point => {
+        const famData: Record<string, number> = {};
+        for (const [m, val] of Object.entries(point.model_data)) {
+            const fam = getModelFamilyId(m);
+            famData[fam] = (famData[fam] || 0) + val;
+        }
+        return { period: point.period, model_data: famData };
+    });
+
+    // 2. Calculate totals per family to determine top N
+    const familyTotals: Record<string, number> = {};
+    const familiesSet = new Set<string>();
+    for (const point of familyTrend) {
+        for (const [fam, val] of Object.entries(point.model_data)) {
+            familiesSet.add(fam);
+            familyTotals[fam] = (familyTotals[fam] || 0) + val;
+        }
+    }
+
+    const sortedFamilies = Array.from(familiesSet).sort(
+        (a, b) => (familyTotals[b] || 0) - (familyTotals[a] || 0)
+    );
+    const topFamilies = sortedFamilies.slice(0, topN);
+    const hasOther = sortedFamilies.length > topN;
+    const displayModelKeys = hasOther ? [...topFamilies, otherLabel] : topFamilies;
+
+    // 3. Transform to recharts row format
+    const transformedTrend = familyTrend.map(point => {
+        const row: Record<string, any> = { period: point.period };
+        let otherSum = 0;
+        for (const [fam, val] of Object.entries(point.model_data)) {
+            if (topFamilies.includes(fam)) {
+                row[fam] = val;
+            } else {
+                otherSum += val;
+            }
+        }
+        if (hasOther) {
+            row[otherLabel] = otherSum;
+        }
+        return row;
+    });
+
+    return { transformedTrend, displayModelKeys };
+}
+

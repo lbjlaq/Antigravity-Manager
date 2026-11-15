@@ -31,6 +31,8 @@ import {
     BarChart3,
     Sparkles,
     Terminal,
+    ChevronRight,
+    CornerDownRight,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { DayUsagePoint } from '../components/token_stats/ActivityHeatmapCard';
@@ -39,6 +41,21 @@ import type { ModelShareItem } from '../components/token_stats/TopModelsShareCar
 import { AppleBentoView } from '../components/token_stats/AppleBentoView';
 import { CyberCockpitView } from '../components/token_stats/CyberCockpitView';
 import { PricingModal } from '../components/token_stats/PricingModal';
+import {
+    resolvePricingRule,
+    groupModelTokenStatsByFamily,
+    getModelFamilyId,
+    getTierLabel,
+    getTierBadgeClass,
+    aggregateModelTrendsByFamily,
+    type ModelFamilyTokenStats,
+    type ModelPricingRule,
+    type ModelTokenStats,
+    type ModelTrendPoint,
+} from '../utils/modelFamily';
+
+export { getModelFamilyId, getTierLabel, getTierBadgeClass };
+export type { ModelPricingRule, ModelTokenStats, ModelFamilyTokenStats, ModelTrendPoint };
 
 export interface TokenStatsAggregated {
     period: string;
@@ -61,22 +78,6 @@ export interface AccountTokenStats {
     request_count: number;
 }
 
-export interface ModelTokenStats {
-    model: string;
-    total_input_tokens: number;
-    total_output_tokens: number;
-    total_cached_tokens: number;
-    total_reasoning_tokens?: number;
-    total_tokens: number;
-    request_count: number;
-    avg_ttft_ms?: number;
-}
-
-export interface ModelTrendPoint {
-    period: string;
-    model_data: Record<string, number>;
-}
-
 export interface AccountTrendPoint {
     period: string;
     account_data: Record<string, number>;
@@ -93,40 +94,25 @@ export interface TokenStatsSummary {
     avg_ttft_ms?: number;
 }
 
-export interface ModelPricingRule {
-    input: number; // $ per 1M tokens
-    output: number; // $ per 1M tokens
-    cached: number; // $ per 1M tokens
-}
-
 export const DEFAULT_PRICING: Record<string, ModelPricingRule> = {
-    // Google Gemini 3.x & 2.x
-    'gemini-3.8-flash': { input: 0.75, output: 3.75, cached: 0.075 },
-    'gemini-3.7-flash': { input: 0.75, output: 3.75, cached: 0.075 },
-    'gemini-3.6-flash': { input: 0.75, output: 3.75, cached: 0.075 },
-    'gemini-3.5-flash': { input: 0.75, output: 3.75, cached: 0.075 },
-    'gemini-3-flash': { input: 0.75, output: 3.75, cached: 0.075 },
-    'gemini-2.5-flash': { input: 0.75, output: 3.75, cached: 0.075 },
+    // Google Gemini 家族系列
+    'gemini-flash': { input: 0.75, output: 3.75, cached: 0.075 },
+    'gemini-pro': { input: 2.00, output: 12.00, cached: 0.20 },
     'gemini-2.0-flash': { input: 0.10, output: 0.40, cached: 0.025 },
-    'gemini-3.1-pro': { input: 2.00, output: 12.00, cached: 0.20 },
-    'gemini-3-pro': { input: 2.00, output: 12.00, cached: 0.20 },
-    'gemini-2.5-pro': { input: 2.00, output: 12.00, cached: 0.20 },
-    // Anthropic Claude 4.x & 3.x
-    'claude-sonnet-4-6': { input: 3.00, output: 15.00, cached: 0.30 },
-    'claude-sonnet-4-5': { input: 3.00, output: 15.00, cached: 0.30 },
-    'claude-3-7-sonnet': { input: 3.00, output: 15.00, cached: 0.30 },
-    'claude-3-5-sonnet': { input: 3.00, output: 15.00, cached: 0.30 },
-    'claude-opus-4-6': { input: 5.00, output: 25.00, cached: 0.50 },
-    'claude-opus-4-5': { input: 5.00, output: 25.00, cached: 0.50 },
-    'claude-3-opus': { input: 5.00, output: 25.00, cached: 0.50 },
-    'claude-haiku-4': { input: 0.80, output: 4.00, cached: 0.08 },
-    'claude-3-5-haiku': { input: 0.80, output: 4.00, cached: 0.08 },
-    // OpenAI Models
+    'gemini-4-argon': { input: 2.00, output: 12.00, cached: 0.20 },
+    'gemini-4-hydrogen': { input: 0.75, output: 3.75, cached: 0.075 },
+    // Anthropic Claude 家族系列
+    'claude-sonnet': { input: 3.00, output: 15.00, cached: 0.30 },
+    'claude-opus': { input: 5.00, output: 25.00, cached: 0.50 },
+    'claude-haiku': { input: 0.80, output: 4.00, cached: 0.08 },
+    'claude-fable': { input: 5.00, output: 25.00, cached: 0.50 },
+    // OpenAI 系列
     'gpt-4o': { input: 2.50, output: 10.00, cached: 1.25 },
     'gpt-4o-mini': { input: 0.15, output: 0.60, cached: 0.075 },
+    'gpt-5': { input: 2.50, output: 10.00, cached: 1.25 },
     'o3-mini': { input: 1.10, output: 4.40, cached: 0.55 },
     'o1': { input: 15.00, output: 60.00, cached: 7.50 },
-    // Default Fallback
+    // 默认兜底
     'default': { input: 1.00, output: 5.00, cached: 0.10 },
 };
 
@@ -355,29 +341,7 @@ const TokenStats: React.FC = () => {
     const [showPricingModal, setShowPricingModal] = useState(false);
 
     const getPricing = useCallback((modelName: string): ModelPricingRule => {
-        let key = modelName.toLowerCase().trim();
-        // 1. 直接精确命中
-        if (pricing[key]) return pricing[key];
-
-        // 2. 剥除档位后缀进行规范化匹配 (如 -low, -high, -medium, -tiered, -extra-low, -xhigh, -lite, -default)
-        const stripped = key.replace(/-(tiered|max|xhigh|high|medium|default|low|extra-low|lite)$/, '');
-        if (pricing[stripped]) return pricing[stripped];
-
-        // 3. 点分与破折号互通匹配 (如 claude-sonnet-4.6 与 claude-sonnet-4-6)
-        const normalizedKey = key.replace(/\./g, '-');
-        const normalizedStripped = stripped.replace(/\./g, '-');
-        if (pricing[normalizedKey]) return pricing[normalizedKey];
-        if (pricing[normalizedStripped]) return pricing[normalizedStripped];
-
-        // 4. 子串模式匹配（排除 default）
-        for (const [pattern, rule] of Object.entries(pricing)) {
-            if (pattern === 'default') continue;
-            const normPattern = pattern.toLowerCase().replace(/\./g, '-');
-            if (key.includes(pattern) || normalizedKey.includes(normPattern) || normalizedStripped.includes(normPattern)) {
-                return rule;
-            }
-        }
-        return pricing['default'] || DEFAULT_PRICING['default'];
+        return resolvePricingRule(modelName, pricing);
     }, [pricing]);
 
     const calculateModelCost = useCallback((m: ModelTokenStats): number => {
@@ -393,19 +357,47 @@ const TokenStats: React.FC = () => {
         return modelData.reduce((sum, m) => sum + calculateModelCost(m), 0);
     }, [modelData, calculateModelCost]);
 
-    // 主力模型列表数据（带单项费用）
-    const modelShareItems: ModelShareItem[] = useMemo(() => {
-        return modelData.map(m => ({
-            model: m.model,
-            total_tokens: m.total_tokens,
-            request_count: m.request_count,
-            total_input_tokens: m.total_input_tokens,
-            total_output_tokens: m.total_output_tokens,
-            total_cached_tokens: m.total_cached_tokens,
-            cost: calculateModelCost(m),
-            avg_ttft_ms: m.avg_ttft_ms,
+    // 模型家族树形表格展开/折叠状态
+    const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({});
+
+    const toggleFamily = useCallback((familyId: string) => {
+        setExpandedFamilies(prev => ({
+            ...prev,
+            [familyId]: !prev[familyId],
         }));
+    }, []);
+
+    const toggleAllFamilies = useCallback((families: ModelFamilyTokenStats[]) => {
+        const anyExpanded = families.some(f => f.variants.length > 1 && expandedFamilies[f.familyId]);
+        const next: Record<string, boolean> = {};
+        if (!anyExpanded) {
+            families.forEach(f => {
+                if (f.variants.length > 1) {
+                    next[f.familyId] = true;
+                }
+            });
+        }
+        setExpandedFamilies(next);
+    }, [expandedFamilies]);
+
+    // 模型家族聚合数据（将同一模型的不同思考档位/后缀聚拢）
+    const modelFamilyGroups: ModelFamilyTokenStats[] = useMemo(() => {
+        return groupModelTokenStatsByFamily(modelData, calculateModelCost);
     }, [modelData, calculateModelCost]);
+
+    // 主力模型列表数据（带单项费用，基于家族级聚合，彻底避免多档位挤占 Top 5 榜单）
+    const modelShareItems: ModelShareItem[] = useMemo(() => {
+        return modelFamilyGroups.map(fam => ({
+            model: fam.familyId,
+            total_tokens: fam.total_tokens,
+            request_count: fam.request_count,
+            total_input_tokens: fam.total_input_tokens,
+            total_output_tokens: fam.total_output_tokens,
+            total_cached_tokens: fam.total_cached_tokens,
+            cost: fam.cost,
+            avg_ttft_ms: fam.avg_ttft_ms,
+        }));
+    }, [modelFamilyGroups]);
 
     // 经典模式分账号饼图数据
     const pieData = useMemo(() => {
@@ -499,39 +491,10 @@ const TokenStats: React.FC = () => {
                     break;
             }
 
-            // 处理模型趋势数据：提取 Top 5 模型，长尾自动归并到 Other，避免图例过多导致排版杂乱
-            const modelsSet = new Set<string>();
-            modelTrend.forEach(point => {
-                Object.keys(point.model_data).forEach(m => modelsSet.add(m));
-            });
-            const modelTotals: Record<string, number> = {};
-            modelTrend.forEach(p => {
-                Object.entries(p.model_data).forEach(([m, val]) => {
-                    modelTotals[m] = (modelTotals[m] || 0) + val;
-                });
-            });
-            const sortedModels = Array.from(modelsSet).sort((a, b) => (modelTotals[b] || 0) - (modelTotals[a] || 0));
-            const top5Models = sortedModels.slice(0, 5);
-            const hasOther = sortedModels.length > 5;
+            // 处理模型趋势数据：按模型家族聚合并提取 Top 5 家族，长尾自动归并到 Other
             const otherModelKey = t('token_stats.other_models', 'Other Models');
-            const displayModelKeys = hasOther ? [...top5Models, otherModelKey] : top5Models;
+            const { transformedTrend, displayModelKeys } = aggregateModelTrendsByFamily(modelTrend, 5, otherModelKey);
             setAllModels(displayModelKeys);
-
-            const transformedTrend = modelTrend.map(point => {
-                const row: Record<string, any> = { period: point.period };
-                let otherSum = 0;
-                Object.entries(point.model_data).forEach(([model, val]) => {
-                    if (top5Models.includes(model)) {
-                        row[model] = val;
-                    } else {
-                        otherSum += val;
-                    }
-                });
-                if (hasOther) {
-                    row[otherModelKey] = otherSum;
-                }
-                return row;
-            });
             setModelTrendData(transformedTrend);
 
             // 处理账号趋势数据
@@ -608,26 +571,30 @@ const TokenStats: React.FC = () => {
         fetchData();
     }, [timeRange, minuteSpan, modelPerspective]);
 
-    // 计算单个模型的有效单价 ($ / Token)
-    const getModelEffectiveRate = useCallback((modelName: string): number => {
-        const stats = modelData.find(m => m.model === modelName);
+    // 计算单个模型家族的有效单价 ($ / Token)
+    const getModelEffectiveRate = useCallback((modelKey: string): number => {
+        const fam = modelFamilyGroups.find(f => f.familyId === modelKey);
+        if (fam && fam.total_tokens > 0) {
+            return fam.cost / fam.total_tokens;
+        }
+        const stats = modelData.find(m => m.model === modelKey);
         if (stats && stats.total_tokens > 0) {
             return calculateModelCost(stats) / stats.total_tokens;
         }
-        const p = getPricing(modelName);
+        const p = getPricing(modelKey);
         return ((p.input + p.output) / 2) / 1_000_000;
-    }, [modelData, calculateModelCost, getPricing]);
+    }, [modelFamilyGroups, modelData, calculateModelCost, getPricing]);
 
     // 计算“其他模型”的加权平均单价
     const getOtherModelsEffectiveRate = useCallback((): number => {
-        const otherStats = modelData.filter(m => !allModels.includes(m.model) || m.model === t('token_stats.other_models', 'Other Models'));
-        const totalOtherTokens = otherStats.reduce((sum, m) => sum + m.total_tokens, 0);
-        const totalOtherCost = otherStats.reduce((sum, m) => sum + calculateModelCost(m), 0);
+        const otherFams = modelFamilyGroups.filter(f => !allModels.includes(f.familyId));
+        const totalOtherTokens = otherFams.reduce((sum, f) => sum + f.total_tokens, 0);
+        const totalOtherCost = otherFams.reduce((sum, f) => sum + f.cost, 0);
         if (totalOtherTokens > 0) {
             return totalOtherCost / totalOtherTokens;
         }
         return (DEFAULT_PRICING['default'].input + DEFAULT_PRICING['default'].output) / 2 / 1_000_000;
-    }, [modelData, allModels, calculateModelCost, t]);
+    }, [modelFamilyGroups, allModels]);
 
     // 动态根据 metricType ('tokens' | 'cost') 转换模型趋势数据
     const displayModelTrendData = useMemo(() => {
@@ -1137,7 +1104,12 @@ const TokenStats: React.FC = () => {
                                         <span>{t('token_stats.models_used', '使用模型')}</span>
                                     </div>
                                     <div className="text-xl font-bold font-mono tracking-tight text-amber-600 dark:text-amber-400">
-                                        {modelData.length}
+                                        {modelFamilyGroups.length}
+                                        {modelData.length > modelFamilyGroups.length && (
+                                            <span className="text-xs font-normal text-gray-400 dark:text-gray-500 ml-1.5" title={`${modelData.length} 个细分档位`}>
+                                                ({modelData.length})
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -1482,18 +1454,31 @@ const TokenStats: React.FC = () => {
                 )}
 
                 {/* ==================== 底部通用详细统计表格 ==================== */}
-                {dashboardMode === 'classic' && viewMode === 'model' && modelData.length > 0 && (
+                {dashboardMode === 'classic' && viewMode === 'model' && modelFamilyGroups.length > 0 && (
                     <div className="bg-white dark:bg-base-100 rounded-2xl p-4 sm:p-5 border border-gray-200/80 dark:border-base-200 shadow-sm">
                         <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-[13px] font-semibold text-gray-900 dark:text-base-content flex items-center gap-2">
-                                <Cpu className="w-4 h-4 text-blue-500" />
-                                {t('token_stats.model_details', '分模型详细统计')}
-                                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-gray-100 dark:bg-base-200 text-gray-500 dark:text-gray-400">
-                                    {modelPerspective === 'routed'
-                                        ? t('token_stats.perspective_routed', '实际路由')
-                                        : t('token_stats.perspective_requested', '请求模型')}
-                                </span>
-                            </h2>
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-[13px] font-semibold text-gray-900 dark:text-base-content flex items-center gap-2">
+                                    <Cpu className="w-4 h-4 text-blue-500" />
+                                    {t('token_stats.model_details', '分模型详细统计')}
+                                    <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-gray-100 dark:bg-base-200 text-gray-500 dark:text-gray-400">
+                                        {modelPerspective === 'routed'
+                                            ? t('token_stats.perspective_routed', '实际路由')
+                                            : t('token_stats.perspective_requested', '请求模型')}
+                                    </span>
+                                </h2>
+                                {modelFamilyGroups.some(f => f.variants.length > 1) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleAllFamilies(modelFamilyGroups)}
+                                        className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 px-2 py-0.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors ml-2"
+                                    >
+                                        {modelFamilyGroups.some(f => f.variants.length > 1 && expandedFamilies[f.familyId])
+                                            ? t('token_stats.collapse_all', '全部折叠')
+                                            : t('token_stats.expand_all', '全部展开')}
+                                    </button>
+                                )}
+                            </div>
                             <span className="text-xs text-gray-400 dark:text-gray-400 font-mono">
                                 {t('token_stats.pricing_snapshot_note', '按照单价快照核算')}
                             </span>
@@ -1514,51 +1499,139 @@ const TokenStats: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 dark:divide-base-200">
-                                    {modelData.map((model, index) => {
-                                        const percentage = summary && summary.total_tokens > 0 ? ((model.total_tokens / summary.total_tokens) * 100).toFixed(1) : '0';
-                                        const cost = calculateModelCost(model);
+                                    {modelFamilyGroups.map((fam, index) => {
+                                        const percentage = summary && summary.total_tokens > 0 ? ((fam.total_tokens / summary.total_tokens) * 100).toFixed(1) : '0';
+                                        const isMultiVariant = fam.variants.length > 1;
+                                        const isExpanded = isMultiVariant && !!expandedFamilies[fam.familyId];
+
                                         return (
-                                            <tr key={model.model} className="hover:bg-gray-50/70 dark:hover:bg-base-200/50 transition-colors">
-                                                <td className="py-2.5 px-3">
-                                                    <div className="flex items-center gap-2 font-mono">
-                                                        <div
-                                                            className="w-2 h-2 rounded-full flex-shrink-0"
-                                                            style={{ backgroundColor: TOP_COLORS[index % TOP_COLORS.length] }}
-                                                        />
-                                                        <span className="text-gray-900 dark:text-base-content font-medium truncate max-w-[180px]" title={model.model}>
-                                                            {model.model}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono text-gray-500 dark:text-gray-400">
-                                                    {model.request_count.toLocaleString()}
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono text-blue-600 dark:text-blue-400">
-                                                    {formatNumber(model.total_input_tokens)}
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono text-purple-600 dark:text-purple-400">
-                                                    {formatNumber(model.total_output_tokens)}
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono text-sky-600 dark:text-sky-400">
-                                                    {formatNumber(model.total_cached_tokens)}
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono font-semibold text-gray-900 dark:text-base-content">
-                                                    {formatNumber(model.total_tokens)}
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono text-teal-600 dark:text-teal-400">
-                                                    {model.avg_ttft_ms && model.avg_ttft_ms > 0
-                                                        ? model.avg_ttft_ms < 1000
-                                                            ? `${model.avg_ttft_ms.toFixed(0)} ms`
-                                                            : `${(model.avg_ttft_ms / 1000).toFixed(2)} s`
-                                                        : '-'}
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono text-gray-500 dark:text-gray-400">
-                                                    {percentage}%
-                                                </td>
-                                                <td className="py-2.5 px-3 text-right font-mono font-medium text-emerald-600 dark:text-emerald-400">
-                                                    ${cost.toFixed(2)}
-                                                </td>
-                                            </tr>
+                                            <React.Fragment key={fam.familyId}>
+                                                {/* 主家族行 */}
+                                                <tr
+                                                    onClick={() => isMultiVariant && toggleFamily(fam.familyId)}
+                                                    className={`transition-colors ${
+                                                        isMultiVariant ? 'cursor-pointer hover:bg-gray-50/80 dark:hover:bg-base-200/60' : 'hover:bg-gray-50/50 dark:hover:bg-base-200/40'
+                                                    } ${isExpanded ? 'bg-blue-50/20 dark:bg-blue-950/10' : ''}`}
+                                                >
+                                                    <td className="py-2.5 px-3">
+                                                        <div className="flex items-center gap-2 font-mono">
+                                                            {isMultiVariant ? (
+                                                                <button
+                                                                    type="button"
+                                                                    aria-label="Toggle tier variants"
+                                                                    className="p-0.5 -ml-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-transform"
+                                                                >
+                                                                    <ChevronRight
+                                                                        className={`w-3.5 h-3.5 transition-transform duration-150 ${isExpanded ? 'rotate-90 text-blue-500' : ''}`}
+                                                                    />
+                                                                </button>
+                                                            ) : (
+                                                                <span className="w-3.5 -ml-1" />
+                                                            )}
+                                                            <div
+                                                                className="w-2 h-2 rounded-full flex-shrink-0"
+                                                                style={{ backgroundColor: TOP_COLORS[index % TOP_COLORS.length] }}
+                                                            />
+                                                            <span className="text-gray-900 dark:text-base-content font-semibold truncate max-w-[180px]" title={fam.familyId}>
+                                                                {fam.familyId}
+                                                            </span>
+                                                            {isMultiVariant && (
+                                                                <span className="text-[10px] font-sans px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-800/40 font-medium shrink-0">
+                                                                    {t('token_stats.variants_count', '{{count}} 个档位', { count: fam.variants.length })}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono text-gray-700 dark:text-gray-300 font-medium">
+                                                        {fam.request_count.toLocaleString()}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono text-blue-600 dark:text-blue-400">
+                                                        {formatNumber(fam.total_input_tokens)}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono text-purple-600 dark:text-purple-400">
+                                                        {formatNumber(fam.total_output_tokens)}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono text-sky-600 dark:text-sky-400">
+                                                        {formatNumber(fam.total_cached_tokens)}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono font-semibold text-gray-900 dark:text-base-content">
+                                                        {formatNumber(fam.total_tokens)}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono text-teal-600 dark:text-teal-400">
+                                                        {fam.avg_ttft_ms && fam.avg_ttft_ms > 0
+                                                            ? fam.avg_ttft_ms < 1000
+                                                                ? `${fam.avg_ttft_ms.toFixed(0)} ms`
+                                                                : `${(fam.avg_ttft_ms / 1000).toFixed(2)} s`
+                                                            : '-'}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono text-gray-700 dark:text-gray-300 font-medium">
+                                                        {percentage}%
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-right font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                                                        ${fam.cost.toFixed(2)}
+                                                    </td>
+                                                </tr>
+
+                                                {/* 展开的具体档位子行 */}
+                                                {isExpanded && fam.variants.map((variant) => {
+                                                    const variantPercentage = summary && summary.total_tokens > 0
+                                                        ? ((variant.total_tokens / summary.total_tokens) * 100).toFixed(1)
+                                                        : '0';
+                                                    return (
+                                                        <tr
+                                                            key={variant.model}
+                                                            className="bg-gray-50/40 dark:bg-base-200/30 hover:bg-gray-100/60 dark:hover:bg-base-200/60 transition-colors border-l-2 border-l-blue-400 dark:border-l-blue-500"
+                                                        >
+                                                            <td className="py-2 px-3 pl-8">
+                                                                <div className="flex items-center gap-2 font-mono">
+                                                                    <CornerDownRight className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 shrink-0" />
+                                                                    <span
+                                                                        className={`text-[10px] font-sans px-1.5 py-0.5 rounded border font-medium shrink-0 ${getTierBadgeClass(
+                                                                            variant.tierLabel
+                                                                        )}`}
+                                                                    >
+                                                                        {variant.tierLabel}
+                                                                    </span>
+                                                                    <span
+                                                                        className="text-gray-600 dark:text-gray-300 text-[11px] truncate max-w-[160px]"
+                                                                        title={variant.model}
+                                                                    >
+                                                                        {variant.model}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-gray-500 dark:text-gray-400 text-[11px]">
+                                                                {variant.request_count.toLocaleString()}
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-blue-500/80 dark:text-blue-400/80 text-[11px]">
+                                                                {formatNumber(variant.total_input_tokens)}
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-purple-500/80 dark:text-purple-400/80 text-[11px]">
+                                                                {formatNumber(variant.total_output_tokens)}
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-sky-500/80 dark:text-sky-400/80 text-[11px]">
+                                                                {formatNumber(variant.total_cached_tokens)}
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-gray-700 dark:text-gray-300 text-[11px] font-medium">
+                                                                {formatNumber(variant.total_tokens)}
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-teal-600/80 dark:text-teal-400/80 text-[11px]">
+                                                                {variant.avg_ttft_ms && variant.avg_ttft_ms > 0
+                                                                    ? variant.avg_ttft_ms < 1000
+                                                                        ? `${variant.avg_ttft_ms.toFixed(0)} ms`
+                                                                        : `${(variant.avg_ttft_ms / 1000).toFixed(2)} s`
+                                                                    : '-'}
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-gray-400 dark:text-gray-500 text-[11px]">
+                                                                {variantPercentage}%
+                                                            </td>
+                                                            <td className="py-2 px-3 text-right font-mono text-emerald-600/90 dark:text-emerald-400/90 text-[11px]">
+                                                                ${variant.cost.toFixed(2)}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
                                         );
                                     })}
                                 </tbody>

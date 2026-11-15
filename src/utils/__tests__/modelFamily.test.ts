@@ -7,6 +7,8 @@ import {
     getTierLabel,
     groupModelTokenStatsByFamily,
     resolvePricingRule,
+    aggregateModelTrendsByFamily,
+    type ModelTrendPoint,
 } from '../modelFamily';
 
 let passed = 0;
@@ -169,6 +171,48 @@ async function runTests() {
 
         // Unknown model fallback to default
         assertEqual(resolvePricingRule('unknown-custom-model', pricingTable).input, 1.00);
+    });
+
+    await test('5. Aggregates trend time points into unified model families', () => {
+        const mockTrend: ModelTrendPoint[] = [
+            {
+                period: '10:00',
+                model_data: {
+                    'gemini-3.8-flash-high': 150,
+                    'gemini-3.8-flash-medium': 350,
+                    'claude-opus-5-5-medium': 500,
+                    'gpt-4o': 100,
+                },
+            },
+            {
+                period: '11:00',
+                model_data: {
+                    'gemini-3.8-flash-low': 200,
+                    'gemini-3.8-flash': 100,
+                    'claude-opus-5-5': 600,
+                },
+            },
+        ];
+
+        const { transformedTrend, displayModelKeys } = aggregateModelTrendsByFamily(mockTrend, 5, 'Other');
+
+        // Check display keys: should contain canonical families, not variants
+        assertEqual(displayModelKeys.includes('gemini-3.8-flash'), true);
+        assertEqual(displayModelKeys.includes('claude-opus-5-5'), true);
+        assertEqual(displayModelKeys.includes('gemini-3.8-flash-high'), false);
+
+        // Check row 0
+        const row0 = transformedTrend[0];
+        assertEqual(row0.period, '10:00');
+        assertEqual(row0['gemini-3.8-flash'], 500); // 150 + 350
+        assertEqual(row0['claude-opus-5-5'], 500);
+        assertEqual(row0['gpt-4o'], 100);
+
+        // Check row 1
+        const row1 = transformedTrend[1];
+        assertEqual(row1.period, '11:00');
+        assertEqual(row1['gemini-3.8-flash'], 300); // 200 + 100
+        assertEqual(row1['claude-opus-5-5'], 600);
     });
 
     console.log(`\nModel Family Tests Summary: ${passed} passed, ${failed} failed.\n`);
