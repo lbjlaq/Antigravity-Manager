@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
     Maximize2, RefreshCw, ShieldAlert, Tag, Users,
     Laptop, Code2, Terminal, Blocks, Mail, Gem, Diamond, Circle, HelpCircle,
@@ -11,6 +11,7 @@ import { useAccountStore } from '../../stores/useAccountStore';
 import { isTauri } from '../../utils/env';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { formatTimeRemaining } from '../../utils/format';
@@ -253,22 +254,27 @@ export default function MiniView() {
         }
     };
 
-    const handleRefreshRef = useRef(handleRefresh);
-    handleRefreshRef.current = handleRefresh;
-
+    // [Fix #3958] 定时全量刷新已完全下沉至后端调度器 (modules::auto_refresh)；
+    // 悬浮窗只需监听 accounts://refreshed 全局广播事件即可即时获取最新配额，杜绝悬浮窗在后台重复轮询。
     useEffect(() => {
-        if (!config?.auto_refresh || !config?.refresh_interval || config.refresh_interval <= 0) return;
+        if (!isTauri()) return;
+        let unlisten: (() => void) | undefined;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        listen('accounts://refreshed', () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                fetchAccounts();
+                fetchCurrentAccount();
+            }, 100);
+        }).then((fn) => {
+            unlisten = fn;
+        });
 
-        const intervalId = setInterval(() => {
-            // [Fix #3757] 当悬浮窗收起或处于后台隐藏态时跳过定时刷新，避免 500 个账号下的 IPC 数据颠簸
-            if (typeof document !== 'undefined' && document.hidden) {
-                return;
-            }
-            handleRefreshRef.current();
-        }, config.refresh_interval * 60 * 1000);
-
-        return () => clearInterval(intervalId);
-    }, [config?.auto_refresh, config?.refresh_interval]);
+        return () => {
+            if (timer) clearTimeout(timer);
+            if (unlisten) unlisten();
+        };
+    }, []);
 
     useEffect(() => {
         if (isTauri()) {

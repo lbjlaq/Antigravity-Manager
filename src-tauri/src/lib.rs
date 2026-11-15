@@ -307,6 +307,10 @@ pub async fn run_headless_server(
     modules::scheduler::start_scheduler(None, proxy_state.clone());
     info!("Smart scheduler (7-Day Weekly Reset Warmup) started in headless mode.");
 
+    // Start background auto-refresh scheduler for periodic quota maintenance in headless mode (Fixes #3958)
+    modules::auto_refresh::start_auto_refresh(None, proxy_state.clone());
+    info!("Background auto-refresh scheduler started in headless mode.");
+
     // 账号在 internal_start_proxy_service 中已完成加载，异步刷新一次全量配额
     modules::startup_refresh::spawn_startup_quota_refresh(None, proxy_state.clone());
 
@@ -702,6 +706,10 @@ pub fn run() {
             let scheduler_state = app.handle().state::<commands::proxy::ProxyServiceState>();
             modules::scheduler::start_scheduler(Some(app.handle().clone()), scheduler_state.inner().clone());
             info!("Smart scheduler (7-Day Weekly Reset Warmup) initialized.");
+
+            // Start background auto-refresh scheduler (Fixes #3958)
+            modules::auto_refresh::start_auto_refresh(Some(app.handle().clone()), scheduler_state.inner().clone());
+            info!("Background auto-refresh scheduler initialized.");
 
             // [PHASE 1] 已整合至 Axum 端口 (8045)，不再单独启动 19527 端口
             info!("Management API integrated into main proxy server (port 8045)");

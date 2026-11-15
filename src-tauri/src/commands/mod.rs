@@ -379,6 +379,9 @@ pub async fn refresh_all_quotas_internal(
 ) -> Result<RefreshStats, String> {
     let stats = modules::account::refresh_all_quotas_logic().await?;
 
+    // 记录刷新完成时间戳，供后台自动刷新调度器对齐周期 (Fixes #3958)
+    modules::auto_refresh::record_refresh_timestamp(chrono::Utc::now().timestamp());
+
     // 同步到运行中的反代服务（如果已启动，覆盖 instance 与 admin_server）
     for tm in proxy_state.active_token_managers().await {
         let _ = tm.reload_all_accounts().await;

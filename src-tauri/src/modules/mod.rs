@@ -1,5 +1,6 @@
 pub mod account;
 pub mod account_service;
+pub mod auto_refresh;
 pub mod auto_switch;
 pub mod cache;
 pub mod cli_handler;
