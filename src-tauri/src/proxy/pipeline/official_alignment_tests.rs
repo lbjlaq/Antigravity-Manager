@@ -885,4 +885,126 @@ mod tests {
         assert!(body["request"]["contents"].is_array());
         assert_eq!(body["request"]["generationConfig"]["maxOutputTokens"], 2048);
     }
+
+    #[test]
+    fn test_gcp_paygo_envelope_alignment_preserves_field_8_credit_types() {
+        let mut body = json!({
+            "project": "my-gcp-project-12345",
+            "model": "gemini-4-argon",
+            "contents": [
+                { "role": "user", "parts": [{ "text": "Run analysis" }] }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "analyze", "parameters": { "type": "object" } }
+                    ]
+                }
+            ]
+        });
+
+        InboundThinkingPipeline::align_official_envelope(&mut body);
+
+        // 顶层必须严格满足官方 Protobuf 字段序 1..8:
+        // project (1) -> requestId (2) -> request (3) -> model (4) -> userAgent (6) -> requestType (7) -> enabledCreditTypes (8)
+        let keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "project",
+                "requestId",
+                "request",
+                "model",
+                "userAgent",
+                "requestType",
+                "enabledCreditTypes"
+            ]
+        );
+
+        assert_eq!(body["project"], "my-gcp-project-12345");
+        assert_eq!(body["requestType"], "agent");
+        assert_eq!(body["enabledCreditTypes"], json!(["GOOGLE_ONE_AI"]));
+    }
+
+    #[test]
+    fn test_consumer_envelope_alignment_strips_field_8_credit_types() {
+        let mut body = json!({
+            "project": "aicode-consumers",
+            "model": "claude-sonnet-4-6",
+            "enabledCreditTypes": ["GOOGLE_ONE_AI"],
+            "contents": [
+                { "role": "user", "parts": [{ "text": "hello" }] }
+            ]
+        });
+
+        InboundThinkingPipeline::align_official_envelope(&mut body);
+
+        assert_eq!(body["project"], "aicode-consumers");
+        assert!(
+            body.get("enabledCreditTypes").is_none(),
+            "Consumer accounts must strictly omit field 8 enabledCreditTypes"
+        );
+    }
+
+    #[test]
+    fn test_proxy_token_is_paygo_discrimination() {
+        use std::collections::{HashMap, HashSet};
+        use std::path::PathBuf;
+
+        let base_token = crate::proxy::token_manager::ProxyToken {
+            account_id: "test-paygo".to_string(),
+            priority: 0,
+            model_priorities: HashMap::new(),
+            access_token: "ya29.paygo".to_string(),
+            refresh_token: "ref".to_string(),
+            expires_in: 3600,
+            timestamp: 0,
+            email: "paygo@example.com".to_string(),
+            account_path: PathBuf::from("/tmp/acc.json"),
+            project_id: None,
+            subscription_tier: Some("FREE".to_string()),
+            remaining_quota: Some(100),
+            protected_models: HashSet::new(),
+            forbidden_models: HashSet::new(),
+            reset_time: None,
+            weekly_reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            available_models: HashSet::new(),
+            model_metadata: HashMap::new(),
+            model_reset_times: HashMap::new(),
+            model_weekly_reset_times: HashMap::new(),
+            model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
+        };
+
+        // 1. 普通免费消费级账号
+        assert!(!base_token.is_paygo());
+
+        // 2. raw_tier 声明为 GCP_GE_PAYGO_TIER
+        let mut paygo_tier_token = base_token.clone();
+        paygo_tier_token.raw_tier = Some("GCP_GE_PAYGO_TIER".to_string());
+        assert!(paygo_tier_token.is_paygo());
+
+        // 3. 企业签署且绑定了有效 GCP 自费项目
+        let mut custom_proj_token = base_token.clone();
+        custom_proj_token.is_gcp_tos = true;
+        custom_proj_token.project_id = Some("my-vertex-ai-project-987".to_string());
+        assert!(custom_proj_token.is_paygo());
+
+        // 4. 企业签署但未绑定有效项目或为消费级项目，不能判定为 PAYGO
+        let mut consumer_proj_token = base_token.clone();
+        consumer_proj_token.is_gcp_tos = true;
+        consumer_proj_token.project_id = Some("aicode-consumers".to_string());
+        assert!(!consumer_proj_token.is_paygo());
+    }
 }

@@ -2124,6 +2124,8 @@ mod tests {
             model_reset_times: std::collections::HashMap::new(),
             model_weekly_reset_times: std::collections::HashMap::new(),
             model_quota_windows: std::collections::HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         });
 
         let custom = tokio::sync::RwLock::new(std::collections::HashMap::new());

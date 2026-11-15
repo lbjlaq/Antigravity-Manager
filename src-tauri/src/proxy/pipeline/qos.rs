@@ -478,6 +478,8 @@ mod tests {
             model_reset_times: std::collections::HashMap::new(),
             model_weekly_reset_times: std::collections::HashMap::new(),
             model_quota_windows: std::collections::HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
         let mut acc_b = acc_a.clone();
         acc_b.account_id = "acc_b".to_string();

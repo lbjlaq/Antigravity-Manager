@@ -48,6 +48,8 @@ mod tests {
             model_reset_times: std::collections::HashMap::new(),
             model_weekly_reset_times: std::collections::HashMap::new(),
             model_quota_windows: std::collections::HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         }
     }
 
@@ -1123,6 +1125,8 @@ mod tests {
             model_reset_times: std::collections::HashMap::new(),
             model_weekly_reset_times: std::collections::HashMap::new(),
             model_quota_windows: std::collections::HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         }
     }
 

@@ -63,6 +63,8 @@ fn create_test_token(
         model_reset_times: HashMap::new(),
         model_weekly_reset_times: HashMap::new(),
         model_quota_windows: HashMap::new(),
+        is_gcp_tos: false,
+        raw_tier: None,
     }
 }
 

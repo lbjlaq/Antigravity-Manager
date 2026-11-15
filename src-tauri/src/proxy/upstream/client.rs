@@ -1530,14 +1530,20 @@ impl UpstreamClient {
             }),
         );
 
-        // Keep body.project for content requests, but omit the quota-project header.
+        // [Issue #3960] x-goog-user-project 治理:
+        // - 消费级 aicode-consumers: 严禁在 content 请求中携带 x-goog-user-project，避免 403 (User is not permitted to use project aicode-consumers)
+        // - 企业 / 自费 GCP 账号: 必须保留 x-goog-user-project: <project_id>，否则 Google Cloud 校验项目归属失败并返回 403 PERMISSION_DENIED
         let is_content_request = matches!(method, "generateContent" | "streamGenerateContent");
-        if !is_content_request {
-            if let Some(proj) = body.get("project").and_then(|v| v.as_str()) {
-                if !proj.is_empty() && proj != "test-project" && proj != "project-id" {
-                    if let Ok(hv) = header::HeaderValue::from_str(proj) {
-                        headers.insert("x-goog-user-project", hv);
-                    }
+        let mut retain_user_project = false;
+        if let Some(proj) = body.get("project").and_then(|v| v.as_str()) {
+            if !proj.is_empty()
+                && proj != "aicode-consumers"
+                && proj != "test-project"
+                && proj != "project-id"
+            {
+                if let Ok(hv) = header::HeaderValue::from_str(proj) {
+                    headers.insert("x-goog-user-project", hv);
+                    retain_user_project = true;
                 }
             }
         }
@@ -1562,7 +1568,7 @@ impl UpstreamClient {
                 }
             }
         }
-        if is_content_request {
+        if is_content_request && !retain_user_project {
             headers.remove("x-goog-user-project");
         }
 

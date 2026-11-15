@@ -731,6 +731,12 @@ pub fn wrap_request_v2(
         final_request_obj["requestType"] = json!("agent");
     }
 
+    if let Some(tok) = token {
+        if tok.is_paygo() {
+            final_request_obj["enabledCreditTypes"] = json!(["GOOGLE_ONE_AI"]);
+        }
+    }
+
     crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(
         &mut final_request_obj,
     );

@@ -2752,10 +2752,13 @@ impl InboundThinkingPipeline {
     /// 统一规范化出站顶层信封结构（Pipeline First 核心归一出口）
     /// 确保输出至 Google v1internal 接口的报文 100% 完美对齐官方 Antigravity 报文结构:
     /// 1. 消除 _session_thinking_id (若 requestId 缺失则提升为 requestId)
-    /// 2. 移除违规计费标号 enabledCreditTypes
-    /// 3. 对齐统一 project ("aicode-consumers")、userAgent ("antigravity") 与 requestType ("agent")
+    /// 2. 处理计费与配额凭据标号 enabledCreditTypes (Protobuf 字段 8: enabled_credit_types):
+    ///    - 消费级账号 (project 为 aicode-consumers) 严禁携带 enabledCreditTypes，予以彻底移除
+    ///    - 企业 / GCP / PAYGO 账号 (project 为真实 GCP project) 保留或自动对齐 enabledCreditTypes: ["GOOGLE_ONE_AI"]
+    /// 3. 对齐统一 project ("aicode-consumers" 或自定义 GCP project)、userAgent ("antigravity") 与 requestType ("agent")
     /// 4. 统一处理内部 request 拓扑对齐
-    /// 5. 顶层键序严格对齐: project -> requestId -> request -> model -> userAgent -> requestType -> 其余
+    /// 5. 顶层键序严格对齐官方 Protobuf 字段序 (1..8):
+    ///    project (1) -> requestId (2) -> request (3) -> model (4) -> userAgent (6) -> requestType (7) -> enabledCreditTypes (8) -> 其余
     pub fn align_official_envelope(body: &mut Value) {
         if !body.is_object() {
             return;
@@ -2769,8 +2772,8 @@ impl InboundThinkingPipeline {
         // 1. 处理 _session_thinking_id
         let session_thinking_id = body_obj.remove("_session_thinking_id");
 
-        // 2. 移除 enabledCreditTypes
-        body_obj.remove("enabledCreditTypes");
+        // 2. 提取 enabledCreditTypes
+        let mut enabled_credit_types = body_obj.remove("enabledCreditTypes");
 
         // 3. 处理 requestId
         let mut request_id = body_obj.remove("requestId");
@@ -2788,6 +2791,20 @@ impl InboundThinkingPipeline {
         let project = body_obj
             .remove("project")
             .unwrap_or_else(|| json!("aicode-consumers"));
+
+        let is_custom_gcp_project = project.as_str().map_or(false, |p| {
+            !p.is_empty() && p != "aicode-consumers" && p != "test-project" && p != "project-id"
+        });
+
+        if is_custom_gcp_project {
+            // GCP 企业 / 自费项目账号：若未指定 credit types，默认自动对齐官方 GOOGLE_ONE_AI 计费通道
+            if enabled_credit_types.is_none() {
+                enabled_credit_types = Some(json!(["GOOGLE_ONE_AI"]));
+            }
+        } else {
+            // 消费级 aicode-consumers 账号绝对不可携带 enabledCreditTypes，上游直接拒绝或风控
+            enabled_credit_types = None;
+        }
 
         // 5. 处理 userAgent (默认对齐官方 antigravity)
         let user_agent = body_obj
@@ -2859,8 +2876,8 @@ impl InboundThinkingPipeline {
             }
         }
 
-        // 9. 顶层严格键序重排:
-        // project -> requestId -> request -> model -> userAgent -> requestType -> 其余
+        // 9. 顶层严格键序重排 (严格对齐官方 Protobuf field order 1..8):
+        // 1: project -> 2: requestId -> 3: request -> 4: model -> 6: userAgent -> 7: requestType -> 8: enabledCreditTypes -> 其余未知
         let mut reordered = serde_json::Map::new();
         reordered.insert("project".to_string(), project);
         if let Some(rid) = request_id {
@@ -2873,6 +2890,11 @@ impl InboundThinkingPipeline {
         reordered.insert("userAgent".to_string(), user_agent);
         if let Some(rt) = request_type {
             reordered.insert("requestType".to_string(), rt);
+        }
+        if let Some(ect) = enabled_credit_types {
+            if ect.as_array().map_or(false, |a| !a.is_empty()) {
+                reordered.insert("enabledCreditTypes".to_string(), ect);
+            }
         }
 
         // 其余未知顶层扩展字段保留在末尾
@@ -5647,6 +5669,8 @@ mod tests {
             model_reset_times: std::collections::HashMap::new(),
             model_weekly_reset_times: std::collections::HashMap::new(),
             model_quota_windows: std::collections::HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
 
         let mut gen_cfg = json!({"maxOutputTokens": 200000});

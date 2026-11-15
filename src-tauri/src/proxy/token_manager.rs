@@ -211,9 +211,34 @@ pub struct ProxyToken {
     pub model_weekly_reset_times: HashMap<String, i64>,
     /// [NEW] 各模型及各同族配额组具体配额窗口快照（包含 is_weekly, remaining_fraction, reset_time）
     pub model_quota_windows: HashMap<String, Vec<QuotaWindowStatus>>,
+    /// [NEW Issue #3960] 是否签署了 GCP 服务条款 / 企业客户端授权标记
+    pub is_gcp_tos: bool,
+    /// [NEW Issue #3960] 原始未归一化的订阅等级代码 (如 "GCP_GE_PAYGO_TIER")
+    pub raw_tier: Option<String>,
 }
 
 impl ProxyToken {
+    /// 判定当前账号是否处于 GCP PAYGO 计费层级或具备企业自费项目
+    pub fn is_paygo(&self) -> bool {
+        if let Some(ref raw) = self.raw_tier {
+            let u = raw.to_ascii_uppercase();
+            if u.contains("PAYGO") || u == "GCP_GE_PAYGO_TIER" {
+                return true;
+            }
+        }
+        if self.is_gcp_tos {
+            if let Some(ref pid) = self.project_id {
+                if !pid.is_empty()
+                    && pid != "aicode-consumers"
+                    && pid != "test-project"
+                    && pid != "project-id"
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
     /// 根据当前请求的目标模型与归一化模型组，计算该账号的实际生效调度优先级。
     /// 若设置了对应模型组（"gemini" | "claude"）的独立优先级则优先采用，否则回退至账号全局 `priority`。
     pub fn effective_priority(&self, target_model: &str, normalized_target: &str) -> u8 {
@@ -1395,9 +1420,13 @@ impl TokenManager {
     /// Apply a saved GCP project_id dynamically to in-memory ProxyToken.
     pub fn update_account_project_id(&self, account_id: &str, project_id: Option<String>) {
         if let Some(mut token) = self.tokens.get_mut(account_id) {
-            token.project_id = project_id
+            let pid = project_id
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
+            if pid.is_some() {
+                token.is_gcp_tos = true;
+            }
+            token.project_id = pid;
         }
         self.project_id_failures.remove(account_id);
     }
@@ -1520,6 +1549,7 @@ impl TokenManager {
     }
 
     /// 组级配额族 Key 解析（无模型上下文时的兼容入口）。
+    #[allow(dead_code)]
     fn quota_family_key(display_name_lower: &str, bucket_id_lower: &str) -> String {
         Self::quota_family_key_with_codenames(display_name_lower, bucket_id_lower, &[])
     }
@@ -2300,10 +2330,21 @@ impl TokenManager {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        // 【新增】提取订阅等级 (subscription_tier 为 "FREE" | "PRO" | "ULTRA")
+        let is_gcp_tos = token_obj
+            .get("is_gcp_tos")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // 【新增】提取订阅等级 (subscription_tier 为 "FREE" | "PRO" | "ULTRA" | "ENTERPRISE")
         let subscription_tier = account
             .get("quota")
             .and_then(|q| q.get("subscription_tier"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let raw_tier = account
+            .get("quota")
+            .and_then(|q| q.get("raw_tier"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -2602,6 +2643,8 @@ impl TokenManager {
             model_reset_times,
             model_weekly_reset_times,
             model_quota_windows,
+            is_gcp_tos,
+            raw_tier,
         }))
     }
 
@@ -4212,16 +4255,17 @@ impl TokenManager {
             .collect();
 
         let is_advanced_canary = if !accounts_with_capability.is_empty() {
-            // 只要池中有明确支持的账号，且并非所有 FREE 账号都普惠支持（例如只在 PRO/ULTRA 账号中出现），
+            // 只要池中有明确支持的账号，且并非所有 FREE 账号都普惠支持（例如只在 PRO/ULTRA/ENTERPRISE/PAYGO 账号中出现），
             // 就直接将候选池收敛到这些具备实际能力的账号！
             let only_in_paid_tiers = accounts_with_capability.iter().all(|t| {
-                matches!(
-                    t.subscription_tier
-                        .as_deref()
-                        .map(str::to_uppercase)
-                        .as_deref(),
-                    Some("PRO") | Some("ULTRA")
-                )
+                t.is_paygo()
+                    || matches!(
+                        t.subscription_tier
+                            .as_deref()
+                            .map(str::to_uppercase)
+                            .as_deref(),
+                        Some("PRO") | Some("ULTRA") | Some("ENTERPRISE")
+                    )
             });
             // 如果仅在付费账号中出现，或者只有部分账号拥有（灰度特征），均触发精准收敛
             only_in_paid_tiers || accounts_with_capability.len() < tokens_snapshot.len()
@@ -4244,24 +4288,25 @@ impl TokenManager {
             if !accounts_with_capability.is_empty() {
                 tokens_snapshot = accounts_with_capability;
             } else {
-                // 冷启动：先行保留符合基本高级订阅资质的账号 (PRO / ULTRA)
+                // 冷启动：先行保留符合基本高级订阅资质的账号 (PRO / ULTRA / ENTERPRISE / PAYGO)
                 tokens_snapshot.retain(|t| {
-                    matches!(
-                        t.subscription_tier
-                            .as_deref()
-                            .map(str::to_uppercase)
-                            .as_deref(),
-                        Some("PRO") | Some("ULTRA")
-                    )
+                    t.is_paygo()
+                        || matches!(
+                            t.subscription_tier
+                                .as_deref()
+                                .map(str::to_uppercase)
+                                .as_deref(),
+                            Some("PRO") | Some("ULTRA") | Some("ENTERPRISE")
+                        )
                 });
                 if tokens_snapshot.is_empty() {
                     if before_tier > 0 {
                         tracing::warn!(
-                            "Model {} requires PRO or ULTRA subscription, but no PRO/ULTRA accounts available in pool",
+                            "Model {} requires PRO, ULTRA, ENTERPRISE or PAYGO subscription, but no matching accounts available in pool",
                             target_model
                         );
                         return Err(format!(
-                            "Model {} requires PRO or ULTRA subscription, but no PRO/ULTRA accounts are available",
+                            "Model {} requires PRO, ULTRA, ENTERPRISE or PAYGO subscription, but no eligible accounts are available",
                             target_model
                         ));
                     }
@@ -8127,6 +8172,9 @@ impl TokenManager {
                         } else if gemini {
                             vec![
                                 "gemini-3-flash".to_string(),
+                                "gemini-3.8-flash".to_string(),
+                                "gemini-3.7-flash".to_string(),
+                                "gemini-3-pro-high".to_string(),
                                 "gemini-3.1-pro-high".to_string(),
                                 "gemini-3.1-flash-image".to_string(),
                                 "gemini-3-pro-image".to_string(),
@@ -9720,6 +9768,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         }
     }
 
@@ -10111,6 +10161,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         }
     }
 
@@ -10740,6 +10792,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
 
         // 账号 2: PRO 订阅，经定时刷新成功上报 Claude 5.5 模型配额
@@ -10778,6 +10832,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
 
         // 验证辅助函数检测
@@ -10996,6 +11052,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
 
         std::fs::write(
@@ -11072,6 +11130,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
 
         manager.tokens.insert(token.account_id.clone(), token);
@@ -12722,6 +12782,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
 
         manager.tokens.insert(token.account_id.clone(), token);
@@ -14474,6 +14536,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
         manager.tokens.insert("acc-active".to_string(), tok);
         let future_reset =
@@ -14553,6 +14617,8 @@ mod tests {
             model_reset_times: HashMap::new(),
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
         };
         manager.tokens.insert("acc-toggle".to_string(), tok);
         manager
