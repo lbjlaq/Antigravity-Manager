@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.12 (2026-11-15)**:
+        -   **[后台配额自动刷新全面加固与单飞锁防重护航] (Fixes #3958, PR #3964, Thanks to @mclinyeshi)**:
+            -   **单飞调度与 RAII 自动解锁**: 引入 `RefreshLockGuard`，在手动触发与后台定时刷新之间建立全生命周期单飞锁，Drop 保证 `IS_REFRESHING` 标志位归零，彻底消灭未捕获 panic 或协程取消导致的死锁隐患。(Fixes #3958, PR #3964, Thanks to @mclinyeshi)
+            -   **Tokio 漏跳补偿与时钟跳变自适应**: 配置 `MissedTickBehavior::Delay`，根除休眠唤醒后的密集突发轮询风暴；检测并自适应校正 NTP 时钟回拨；针对网络瞬态失败引入 60 秒轻量退避机制，不再直接延迟整个轮询周期。(Fixes #3958, PR #3964, Thanks to @mclinyeshi)
+            -   **前端刷新事件去重**: 根组件 `App.tsx` 全局监听并以静默同步方式更新，移除 MiniView 冗余监听与挂载竞争。(Fixes #3958, PR #3964, Thanks to @mclinyeshi)
+        -   **[Token 统计分析重构：按模型家族层级聚合与单价表收敛] (PR #3963, Thanks to @cubelikeplayDaniel)**:
+            -   **模型变体家族化聚合**: 提取跨端公用的模型家族归一化与分组工具（`modelFamilyUtils.ts`），按标准代号（如 Claude 3.5 Sonnet、Gemini 2.5 Flash 等）将繁复的日期后缀、联网变体进行家族级聚合展示。(PR #3963, Thanks to @cubelikeplayDaniel)
+            -   **树状下钻与紧凑单价表**: 支持点击家族整行展开或折叠子版本明细；将庞大的单价参考表收敛至家族顶层，精简界面高度与视觉噪音。(PR #3963, Thanks to @cubelikeplayDaniel)
+        -   **[Hub 官方指纹协同步长校准与 Flat Envelope 结构加固防封] (Fixes #3956, PR #3959, Thanks to @hazerwin, @koeria)**:
+            -   **客户端指纹与平铺 Envelope 结构校准**: 升级 Hub 指纹至官方最新基准，补齐平铺封装体上下文参数，防止因包头缺失触发上游 Google 服务条款 (TOS) 封禁与 400 校验拦截。(Fixes #3956, PR #3959, Thanks to @hazerwin, @koeria)
+
     *   **v5.0.4-beta.11 (2026-11-15)**:
         -   **[Gemini 原生流禁用 SSE ': ping' 注释心跳，修复 Antigravity CLI 解析崩溃] (Fixes #3952, PR #3953, Thanks to @koeria)**:
             -   **Antigravity CLI (agy) 流式解析兼容**: 对 Gemini 原生流重写 `heartbeat_frame` 返回空字节，并在 `run_stream_lifecycle` 中跳过空心跳帧下发，彻底根除 Google GenAI Go SDK 因遇到非数据包 `: ping\n\n` 抛出 `iterateResponseStream: invalid stream chunk: : ping` 致命异常打崩生成的问题。(Fixes #3952, PR #3953, Thanks to @koeria)

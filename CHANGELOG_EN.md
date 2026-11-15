@@ -3,6 +3,17 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.12 (2026-11-15)**:
+        -   **[Harden Background Quota Auto-Refresh with Single-Flight RAII Locking] (Fixes #3958, PR #3964, Thanks to @mclinyeshi)**:
+            -   **Single-Flight Scheduling & RAII Unlock**: Introduced `RefreshLockGuard` establishing a full-lifecycle single-flight lock across manual triggers and periodic background refreshes; RAII drop guarantees resetting `IS_REFRESHING` atomic flag to zero, eliminating deadlocks caused by unhandled panics or async task cancellations. (Fixes #3958, PR #3964, Thanks to @mclinyeshi)
+            -   **Tokio Missed Tick Delay & Clock Skew Self-Healing**: Configured `MissedTickBehavior::Delay` to eliminate burst polling storms upon host resume from sleep; detected and auto-corrected backward NTP clock drift; added a 60-second backoff upon transient network failure rather than delaying by the full polling interval. (Fixes #3958, PR #3964, Thanks to @mclinyeshi)
+            -   **Frontend Refresh Event Deduplication**: Centralized refresh listening in root `App.tsx` via silent sync (`fetchAccounts(true)`), removing redundant MiniView listeners and unmount races. (Fixes #3958, PR #3964, Thanks to @mclinyeshi)
+        -   **[Token Statistics Analytics: Model Family Hierarchy Aggregation & Condensed Pricing] (PR #3963, Thanks to @cubelikeplayDaniel)**:
+            -   **Model Family Aggregation**: Extracted reusable model family normalization and grouping utilities (`modelFamilyUtils.ts`), aggregating date-stamped variants and online models under standard family codes (e.g. Claude 3.5 Sonnet, Gemini 2.5 Flash). (PR #3963, Thanks to @cubelikeplayDaniel)
+            -   **Expandable Tree Drill-Down & Compact Pricing**: Supported expanding and collapsing sub-model variants by clicking anywhere on the family row; condensed lengthy pricing tables to the family level, reducing UI clutter. (PR #3963, Thanks to @cubelikeplayDaniel)
+        -   **[Co-Calibrate Hub Fingerprint & Wrap Flat Envelope Bodies] (Fixes #3956, PR #3959, Thanks to @hazerwin, @koeria)**:
+            -   **Client Fingerprint & Flat Envelope Wrapping**: Upgraded official Hub fingerprint baseline and wrapped flat envelope payload contexts to prevent upstream Google Terms of Service (TOS) bans and 400 validation failures. (Fixes #3956, PR #3959, Thanks to @hazerwin, @koeria)
+
     *   **v5.0.4-beta.11 (2026-11-15)**:
         -   **[Disable SSE ': ping' Comment Heartbeat for Gemini Streams to Fix Antigravity CLI Crashes] (Fixes #3952, PR #3953, Thanks to @koeria)**:
             -   **Antigravity CLI (agy) Streaming Compatibility**: Overrode `heartbeat_frame` to return empty bytes for native Gemini streams and skipped yielding empty heartbeat frames in `run_stream_lifecycle`, eliminating crashes where the Google GenAI Go SDK terminates with `iterateResponseStream: invalid stream chunk: : ping` upon encountering non-data SSE comment pings. (Fixes #3952, PR #3953, Thanks to @koeria)
