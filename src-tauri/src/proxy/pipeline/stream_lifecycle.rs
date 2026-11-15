@@ -416,7 +416,10 @@ where
                             );
                             phase = StreamPhase::Transition;
                             last_activity = tokio::time::Instant::now();
-                            yield Ok(handler.heartbeat_frame());
+                            let frame = handler.heartbeat_frame();
+                            if !frame.is_empty() {
+                                yield Ok(frame);
+                            }
                             continue;
                         }
 
@@ -473,7 +476,12 @@ where
                         }
                         break;
                     }
-                    yield Ok(handler.heartbeat_frame());
+                    // [FIX #3952] 协议可选择返回空帧以禁用注入式心跳
+                    // （Gemini/Antigravity CLI 无法解析 SSE 注释帧 `: ping`）
+                    let frame = handler.heartbeat_frame();
+                    if !frame.is_empty() {
+                        yield Ok(frame);
+                    }
                 }
             }
         }

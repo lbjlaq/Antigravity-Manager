@@ -79,6 +79,14 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
         }
     }
 
+    /// [FIX #3952] Gemini/Antigravity 协议没有官方 ping 心跳事件：
+    /// Antigravity CLI (agy) 的 iterateResponseStream 会将 SSE 注释帧 `: ping\n\n`
+    /// 判定为 invalid stream chunk 直接报错中断。此处下发空帧并由
+    /// run_stream_lifecycle 跳过，即对 Gemini 系客户端禁用注入式心跳保活。
+    fn heartbeat_frame(&mut self) -> Bytes {
+        Bytes::new()
+    }
+
     fn process_line(&mut self, line: &str) -> Vec<Bytes> {
         if !line.starts_with("data: ") {
             // 注释行 / 非数据行原样透传
@@ -365,6 +373,30 @@ mod tests {
         assert!(finish_handler.is_thinking_active());
         finish_handler.process_line(r#"data: {"candidates":[{"finishReason":"STOP"}]}"#);
         assert!(!finish_handler.is_thinking_active());
+    }
+
+    /// [FIX #3952] Antigravity CLI (agy) 的 iterateResponseStream 将 SSE 注释帧
+    /// `: ping` 判定为 invalid stream chunk。Gemini 系心跳帧必须为空帧（由
+    /// run_stream_lifecycle 跳过下发），绝不能注入 SSE 注释或伪协议事件。
+    #[test]
+    fn test_gemini_heartbeat_frame_is_empty_for_agy_cli_compat() {
+        let mut handler = GeminiStreamHandler::new(
+            Some("trace_agy_heartbeat".to_string()),
+            "session_agy".to_string(),
+            "gemini-3.8-flash".to_string(),
+            1,
+            "anchor".to_string(),
+            false,
+            None,
+            "acct".to_string(),
+            "gemini-3.8-flash".to_string(),
+        );
+        let frame = handler.heartbeat_frame();
+        assert!(
+            frame.is_empty(),
+            "Gemini heartbeat frame must be empty (agy cli rejects ': ping' comment frames), got: {}",
+            String::from_utf8_lossy(&frame)
+        );
     }
 
     #[tokio::test]
