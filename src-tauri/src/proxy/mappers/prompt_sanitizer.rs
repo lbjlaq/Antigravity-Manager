@@ -771,11 +771,24 @@ impl PromptSanitizer {
             }
         });
 
-        // 2.2b 官方 AG 后紧跟 ASCII 逗号 + 非连词续写：将逗号归一为句号。
+        // 2.2b 竞品厂牌归一化（issue #3940 作用域收窄）：
+        // 仅当厂牌词出现在「身份归属声明句」内部时才统一归一化为 Google；
+        // MEMORY / USER PROFILE / 技能与工具文档等业务内容中的厂牌词（如 `百度 BD-09`、
+        // `deepseek-harness`）不再被全局改写，避免扭曲系统记忆与工具使用约定。
+        //
+        // 顺序铁律（PR #3941 第 4 点）：厂牌归一化必须在 pass3（pass2b 的逗号→句号改写）
+        // **之前**执行。`You are Claude Code, powered by DeepSeek.` 经 pass2 会得到
+        // `You are Antigravity, ... Coding, powered by DeepSeek.`，此时厂牌续写从句
+        // 与身份句仍处于同一个句读边界内；若先做逗号→句号改写，`powered by DeepSeek.`
+        // 会被切分成独立句子而漏判身份归属。此处基于原始句边界完成替换后，pass3 的
+        // 改写只影响标点，不再影响厂牌作用域。
+        let pass3_brands = Self::replace_brands_in_identity_sentences(&pass2);
+
+        // 2.2c 官方 AG 后紧跟 ASCII 逗号 + 非连词续写：将逗号归一为句号。
         // 例：`AG, a coding agent harness.` → `AG. a coding agent harness.`（上游 WAF 放行）
         // 保留 `AG, and you must ...` 这类功能续写。
         let pass2b =
-            RE_OFFICIAL_IDENTITY_APPOSITIVE.replace_all(&pass2, |caps: &regex::Captures| {
+            RE_OFFICIAL_IDENTITY_APPOSITIVE.replace_all(&pass3_brands, |caps: &regex::Captures| {
                 let next = caps
                     .get(5)
                     .map(|m| m.as_str().to_lowercase())
@@ -790,14 +803,8 @@ impl PromptSanitizer {
                 }
             });
 
-        // 2.3 竞品厂牌归一化（issue #3940 作用域收窄）：
-        // 仅当厂牌词出现在「身份归属声明句」内部时才统一归一化为 Google；
-        // MEMORY / USER PROFILE / 技能与工具文档等业务内容中的厂牌词（如 `百度 BD-09`、
-        // `deepseek-harness`）不再被全局改写，避免扭曲系统记忆与工具使用约定。
-        let pass3 = Self::replace_brands_in_identity_sentences(&pass2b);
-
-        // 2.4 防御性标点折叠（Issue #3915）：消除由于拼接或切词遗留的 `.,` / `. ,` / `。，` 畸形复合标点
-        let pass4 = RE_MALFORMED_PUNCTUATION.replace_all(&pass3, ". ");
+        // 2.3 防御性标点折叠（Issue #3915）：消除由于拼接或切词遗留的 `.,` / `. ,` / `。，` 畸形复合标点
+        let pass4 = RE_MALFORMED_PUNCTUATION.replace_all(&pass2b, ". ");
 
         let normalized = pass4.into_owned();
 
@@ -835,13 +842,31 @@ impl PromptSanitizer {
     }
 
     /// 判定一个句子是否为「身份归属声明句」（带 `is_identity_declaration` 的两道语义护栏）：
-    /// 命中广谱归属声明（且通过疑问句 / 跨子句校验）或已知客户端开场白即认定为身份声明。
+    /// 命中以下任一形态即认定为身份声明（PR #3941 第 4 点补全覆盖）：
+    /// 1. 已知客户端开场白（`You are Claude Code, ...`）；
+    /// 2. 广谱归属声明（且通过疑问句 / 跨子句校验）；
+    /// 3. 归一化后的官方身份句（含逗号续写形态）：经 pass0-pass2 改写后的句子以官方身份
+    ///    主体开头，其后逗号续写的从句（`... Coding, powered by DeepSeek`）属于同一身份句
+    ///    边界，必须继承原句的身份归属；
+    /// 4. 结构化声明行（`- Identity: ...` / `身份：...`），与 pass0 的
+    ///    `RE_STRUCTURED_IDENTITY_DECLARATION` 保持同一判定口径。
     fn sentence_is_identity_declaration(sentence: &str) -> bool {
         if RE_KNOWN_CLIENT_DECLARATION.is_match(sentence) {
             return true;
         }
         if let Some(caps) = RE_IDENTITY_DECLARATION.captures(sentence) {
-            return Self::is_identity_declaration(&caps);
+            if Self::is_identity_declaration(&caps) {
+                return true;
+            }
+        }
+        // 归一化后的官方身份句（含逗号续写）：句子主体即官方身份声明本身
+        let official_body = OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.');
+        if sentence.contains(official_body) {
+            return true;
+        }
+        // 结构化声明行（与 pass0 口径一致）
+        if RE_STRUCTURED_IDENTITY_DECLARATION.is_match(sentence) {
+            return true;
         }
         false
     }
@@ -3027,6 +3052,76 @@ mod tests {
         assert!(cleaned_code.contains("from anthropic import Anthropic"));
         assert!(cleaned_code.contains("# Supported by Tencent and Huawei"));
         assert!(cleaned_code.contains("client = openai.OpenAI()"));
+
+        // 6. 末尾无标点的结构化声明行同样被覆盖（pass3 作用域判定与 pass0 口径一致）
+        let raw_structured_tail = "# PROFILE\n- Identity: built by OpenAI";
+        let cleaned_structured_tail =
+            PromptSanitizer::normalize_system_identity(raw_structured_tail);
+        assert!(
+            !cleaned_structured_tail.to_lowercase().contains("openai"),
+            "结构化声明行厂牌漏网: {cleaned_structured_tail}"
+        );
+        assert!(cleaned_structured_tail.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+    }
+
+    #[test]
+    fn test_issue_3941_brand_scope_before_appositive_split() {
+        // PR #3941 第 4 点回归：已知客户端开场白 + 逗号续写厂牌。
+        // pass2 归一化后得到 `You are Antigravity, ... Coding, powered by DeepSeek.`，
+        // 厂牌替换必须在该句仍处于原始身份句边界内时完成；若先经逗号→句号改写
+        // （pass2b），`powered by DeepSeek.` 会被切分为独立句而漏判身份归属。
+        let raw = "You are Claude Code, powered by DeepSeek.";
+        let cleaned = PromptSanitizer::normalize_system_identity(raw);
+        assert!(
+            !cleaned.to_lowercase().contains("deepseek"),
+            "逗号续写厂牌漏网（pass2b 断句后脱离身份句作用域）: {cleaned}"
+        );
+        assert!(cleaned.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(
+            cleaned.contains("powered by Google"),
+            "厂牌未归一化为 Google: {cleaned}"
+        );
+
+        // 末尾无句号的同形态：续写从句落在尾部无标点切片上，同样必须继承身份归属
+        let raw_no_punct = "You are Claude Code, powered by DeepSeek";
+        let cleaned_no_punct = PromptSanitizer::normalize_system_identity(raw_no_punct);
+        assert!(
+            !cleaned_no_punct.to_lowercase().contains("deepseek"),
+            "无句号逗号续写厂牌漏网: {cleaned_no_punct}"
+        );
+
+        // 功能性续写（`, and ...`）不触发 pass2b 断句，厂牌仍须在身份句内归一化
+        let raw_and = "You are Claude Code, powered by DeepSeek, and you must call tools.";
+        let cleaned_and = PromptSanitizer::normalize_system_identity(raw_and);
+        assert!(
+            !cleaned_and.to_lowercase().contains("deepseek"),
+            "and 续写场景厂牌漏网: {cleaned_and}"
+        );
+        assert!(
+            cleaned_and.contains("and you must call tools."),
+            "功能续写被破坏: {cleaned_and}"
+        );
+
+        // 结构化声明（- Identity: built by OpenAI）：pass0 整体归一化，厂牌随句消失
+        let raw_structured = "# PROFILE\n- Identity: built by OpenAI";
+        let cleaned_structured = PromptSanitizer::normalize_system_identity(raw_structured);
+        assert!(
+            !cleaned_structured.to_lowercase().contains("openai"),
+            "结构化声明厂牌漏网: {cleaned_structured}"
+        );
+        assert!(cleaned_structured.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+
+        // 非身份业务内容仍然逐字保留（MEMORY / USER PROFILE / 工具文档）
+        let raw_business = concat!(
+            "=== MEMORY ===\n",
+            "User profile: 用 deepseek-coder 做代码评审，Qwen 用于中文长文。\n",
+            "Tool docs: `openai` SDK 的 retry 策略见 docs/rate-limits.md。\n"
+        );
+        let cleaned_business = PromptSanitizer::normalize_system_identity(raw_business);
+        assert_eq!(
+            cleaned_business, raw_business,
+            "MEMORY / USER PROFILE / 工具文档中的厂牌被误改"
+        );
     }
 
     // ============================ issue #3764：当前轮正文永久豁免 ============================
