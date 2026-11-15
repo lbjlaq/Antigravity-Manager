@@ -416,10 +416,7 @@ where
                             );
                             phase = StreamPhase::Transition;
                             last_activity = tokio::time::Instant::now();
-                            let hb = handler.heartbeat_frame();
-                            if !hb.is_empty() {
-                                yield Ok(hb);
-                            }
+                            yield Ok(handler.heartbeat_frame());
                             continue;
                         }
 
@@ -476,10 +473,7 @@ where
                         }
                         break;
                     }
-                    let hb = handler.heartbeat_frame();
-                    if !hb.is_empty() {
-                        yield Ok(hb);
-                    }
+                    yield Ok(handler.heartbeat_frame());
                 }
             }
         }
