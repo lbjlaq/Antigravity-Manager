@@ -33,8 +33,24 @@ export default function PromptRewriteSettings({
 }: PromptRewriteSettingsProps) {
     const { t } = useTranslation();
     const [editing, setEditing] = useState<PromptRewriteRule | null>(null);
+    const [newAllowItem, setNewAllowItem] = useState("");
     const rules = config.rules || [];
+    const allowlist = config.allowlist || [];
     const normalizeIdentity = config.normalize_identity !== false;
+    const interceptUnknownPrompts = config.intercept_unknown_prompts !== false;
+
+    const addAllowItem = () => {
+        const item = newAllowItem.trim();
+        if (!item) return;
+        if (!allowlist.includes(item)) {
+            onChange({ ...config, allowlist: [...allowlist, item] });
+        }
+        setNewAllowItem("");
+    };
+
+    const removeAllowItem = (index: number) => {
+        onChange({ ...config, allowlist: allowlist.filter((_, i) => i !== index) });
+    };
 
     const getRuleIssue = (rule: PromptRewriteRule): string | null => {
         const pattern = rule.pattern;
@@ -174,6 +190,109 @@ export default function PromptRewriteSettings({
                     />
                     <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-600 peer-checked:bg-blue-500"></div>
                 </label>
+            </div>
+
+            {/* 未知异常提示词拦截弹窗机制开关 */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200/80 dark:border-base-300 bg-white dark:bg-base-100 px-4 py-2.5">
+                <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                        {t("proxy.prompt_rewrite.intercept_unknown_prompts", {
+                            defaultValue: "未知提示词拦截弹窗",
+                        })}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {t("proxy.prompt_rewrite.intercept_unknown_prompts_hint", {
+                            defaultValue:
+                                "开启后，当下游客户端发送未识别的提示词首句时，自动在桌面前端唤起弹窗供您决策，防止上游返回假 429。",
+                        })}
+                    </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                        type="checkbox"
+                        checked={interceptUnknownPrompts}
+                        onChange={(e) =>
+                            onChange({ ...config, intercept_unknown_prompts: e.target.checked })
+                        }
+                        className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-600 peer-checked:bg-amber-500"></div>
+                </label>
+            </div>
+
+            {/* 放行白名单卡片 (Allowlist) */}
+            <div className="rounded-lg border border-gray-200/80 dark:border-base-300 bg-white dark:bg-base-100 p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                        <h5 className="text-xs font-bold text-gray-800 dark:text-gray-200">
+                            {t("proxy.prompt_rewrite.allowlist_title", { defaultValue: "放行白名单 (Allowlist)" })}
+                        </h5>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                            {t("proxy.prompt_rewrite.allowlist_subtitle", {
+                                defaultValue: "记录允许直接透传给上游的客户端提示词特征；命中白名单的请求零开销放行。",
+                            })}
+                        </p>
+                    </div>
+                    <span className="text-[11px] font-mono text-gray-400 bg-gray-100 dark:bg-base-200 px-2 py-0.5 rounded-full">
+                        {allowlist.length} 条白名单
+                    </span>
+                </div>
+
+                {allowlist.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-gray-200 dark:border-base-300 p-2.5 text-center text-xs text-gray-400 dark:text-gray-500">
+                        {t("proxy.prompt_rewrite.allowlist_empty", {
+                            defaultValue: "暂无放行白名单记录。当下游请求触发拦截并选择“放行并记住”时会自动沉淀在此处。",
+                        })}
+                    </div>
+                ) : (
+                    <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-gray-50/50 dark:bg-base-200/40 rounded-lg border border-gray-100 dark:border-base-300">
+                        {allowlist.map((item, index) => (
+                            <span
+                                key={index}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono bg-white dark:bg-base-100 text-gray-800 dark:text-base-content border border-gray-200 dark:border-base-300 shadow-2xs group"
+                            >
+                                <span className="max-w-[280px] truncate" title={item}>
+                                    {item}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => removeAllowItem(index)}
+                                    title={t("proxy.prompt_rewrite.allowlist_delete", { defaultValue: "从白名单移除" })}
+                                    className="text-gray-400 hover:text-rose-600 transition-colors"
+                                >
+                                    <X size={12} />
+                                </button>
+                            </span>
+                        ))}
+                    </div>
+                )}
+
+                {/* 手动添加白名单项 */}
+                <div className="flex items-center gap-2 pt-0.5">
+                    <input
+                        value={newAllowItem}
+                        onChange={(e) => setNewAllowItem(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                                e.preventDefault();
+                                addAllowItem();
+                            }
+                        }}
+                        placeholder={t("proxy.prompt_rewrite.allowlist_add_placeholder", {
+                            defaultValue: "输入要放行的提示词特征（如 You are my-custom-agent）...",
+                        })}
+                        className="flex-1 min-w-0 px-2.5 py-1.5 border border-gray-300 dark:border-base-300 rounded-md bg-white dark:bg-base-200 font-mono text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+                    />
+                    <button
+                        type="button"
+                        onClick={addAllowItem}
+                        disabled={!newAllowItem.trim()}
+                        className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-base-300 hover:bg-gray-100 dark:hover:bg-base-200 text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-40"
+                    >
+                        <Plus size={13} />
+                        {t("proxy.prompt_rewrite.allowlist_add", { defaultValue: "添加" })}
+                    </button>
+                </div>
             </div>
 
             {config.enabled && (

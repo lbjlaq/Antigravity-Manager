@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
-import { AlertTriangle, Clock, Sparkles, Check, Bookmark, ArrowRight, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Clock, Sparkles, Bookmark, ArrowRight, ShieldCheck } from 'lucide-react';
 import { request as invoke } from '../../utils/request';
 import { showToast } from '../common/ToastContainer';
 
@@ -56,8 +56,8 @@ export const PromptInterceptDialog: React.FC = () => {
                         clearInterval(timerRef.current);
                         timerRef.current = null;
                     }
-                    // 超时默认自动执行“在前面添加”
-                    handleResolve('prepend', true);
+                    // 超时默认自动执行“本次在前面添加”（不写盘保留）
+                    handleResolve('prepend_once', true);
                     return 0;
                 }
                 return prev - 1;
@@ -82,7 +82,7 @@ export const PromptInterceptDialog: React.FC = () => {
                     action,
                 });
                 if (isTimeout) {
-                    showToast(t('proxy.prompt_intercept.action_prepend') + ' (Timeout Default)', 'info');
+                    showToast(t('proxy.prompt_intercept.action_prepend_once') + ' (Timeout Default)', 'info');
                 }
             } catch (err) {
                 console.error('[PromptInterceptDialog] Failed to resolve intercept:', err);
@@ -165,66 +165,94 @@ export const PromptInterceptDialog: React.FC = () => {
                     </div>
                 </div>
 
-                {/* 五态处置操作按钮栏 */}
-                <div className="p-6 bg-base-200/30 border-t border-base-200 flex flex-col gap-3">
-                    {/* 推荐第一优先级：在前面添加 */}
-                    <button
-                        className="btn btn-primary w-full justify-between shadow-md hover:shadow-lg transition-all"
-                        onClick={() => handleResolve('prepend')}
-                        disabled={submitting}
-                    >
-                        <span className="flex items-center gap-2 font-bold">
-                            <Sparkles className="w-4 h-4" />
-                            {t('proxy.prompt_intercept.action_prepend')}
-                            <span className="badge badge-sm badge-warning font-normal ml-1">推荐</span>
-                        </span>
-                        <span className="text-xs font-normal opacity-80 hidden sm:inline">
-                            {t('proxy.prompt_intercept.action_prepend_desc')}
-                        </span>
-                    </button>
-
-                    {/* 记住类持久化处置 */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        <button
-                            className="btn btn-secondary btn-outline justify-between"
-                            onClick={() => handleResolve('replace_and_remember')}
-                            disabled={submitting}
-                        >
-                            <span className="flex items-center gap-1.5 font-semibold">
-                                <Bookmark className="w-3.5 h-3.5" />
-                                {t('proxy.prompt_intercept.action_replace_and_remember')}
+                {/* 六态处置操作按钮栏（前插、替换、放行 对称呈现“本次临时”与“记住持久化”） */}
+                <div className="p-5 bg-base-200/40 border-t border-base-200 flex flex-col gap-3">
+                    {/* 第一组：在前面添加（推荐方案，保留原提示词首句） */}
+                    <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-semibold text-base-content/75 px-0.5">
+                            <span className="flex items-center gap-1.5 text-primary">
+                                <Sparkles className="w-3.5 h-3.5" />
+                                方案 A：在前面添加官方声明（最稳健 · 推荐）
                             </span>
-                            <span className="text-[11px] opacity-70 hidden md:inline">存入规则</span>
-                        </button>
-                        <button
-                            className="btn btn-accent btn-outline justify-between"
-                            onClick={() => handleResolve('allow_and_remember')}
-                            disabled={submitting}
-                        >
-                            <span className="flex items-center gap-1.5 font-semibold">
-                                <Check className="w-3.5 h-3.5" />
-                                {t('proxy.prompt_intercept.action_allow_and_remember')}
+                            <span className="text-[11px] text-warning font-normal">
+                                超时默认选择本次生效
                             </span>
-                            <span className="text-[11px] opacity-70 hidden md:inline">存入白名单</span>
-                        </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button
+                                className="btn btn-primary justify-between shadow-sm hover:shadow"
+                                onClick={() => handleResolve('prepend_once')}
+                                disabled={submitting}
+                            >
+                                <span className="flex items-center gap-1.5 font-bold">
+                                    <Clock className="w-4 h-4" />
+                                    {t('proxy.prompt_intercept.action_prepend_once')}
+                                </span>
+                                <span className="badge badge-sm badge-warning font-normal">
+                                    默认 ({timeLeft}s)
+                                </span>
+                            </button>
+                            <button
+                                className="btn btn-primary btn-outline justify-between"
+                                onClick={() => handleResolve('prepend_and_remember')}
+                                disabled={submitting}
+                            >
+                                <span className="flex items-center gap-1.5 font-semibold">
+                                    <Bookmark className="w-3.5 h-3.5" />
+                                    {t('proxy.prompt_intercept.action_prepend_and_remember')}
+                                </span>
+                                <span className="text-[11px] opacity-75">存入规则</span>
+                            </button>
+                        </div>
                     </div>
 
-                    {/* 单次会话临时处置 */}
-                    <div className="grid grid-cols-2 gap-2.5 pt-1">
-                        <button
-                            className="btn btn-ghost btn-sm border border-base-300 hover:bg-base-300/50"
-                            onClick={() => handleResolve('replace_once')}
-                            disabled={submitting}
-                        >
-                            {t('proxy.prompt_intercept.action_replace_once')}
-                        </button>
-                        <button
-                            className="btn btn-ghost btn-sm border border-base-300 hover:bg-base-300/50"
-                            onClick={() => handleResolve('allow_once')}
-                            disabled={submitting}
-                        >
-                            {t('proxy.prompt_intercept.action_allow_once')}
-                        </button>
+                    {/* 第二组：替换首句与直接放行（网格布局） */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        {/* 替换组 */}
+                        <div className="space-y-1.5">
+                            <span className="text-[11px] font-medium text-base-content/60 px-0.5 block">
+                                方案 B：替换首句为官方身份
+                            </span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                                <button
+                                    className="btn btn-ghost btn-sm border border-base-300 hover:bg-base-300/50"
+                                    onClick={() => handleResolve('replace_once')}
+                                    disabled={submitting}
+                                >
+                                    {t('proxy.prompt_intercept.action_replace_once')}
+                                </button>
+                                <button
+                                    className="btn btn-secondary btn-outline btn-sm"
+                                    onClick={() => handleResolve('replace_and_remember')}
+                                    disabled={submitting}
+                                >
+                                    {t('proxy.prompt_intercept.action_replace_and_remember')}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* 放行组 */}
+                        <div className="space-y-1.5">
+                            <span className="text-[11px] font-medium text-base-content/60 px-0.5 block">
+                                方案 C：原样放行给上游
+                            </span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                                <button
+                                    className="btn btn-ghost btn-sm border border-base-300 hover:bg-base-300/50"
+                                    onClick={() => handleResolve('allow_once')}
+                                    disabled={submitting}
+                                >
+                                    {t('proxy.prompt_intercept.action_allow_once')}
+                                </button>
+                                <button
+                                    className="btn btn-accent btn-outline btn-sm"
+                                    onClick={() => handleResolve('allow_and_remember')}
+                                    disabled={submitting}
+                                >
+                                    {t('proxy.prompt_intercept.action_allow_and_remember')}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

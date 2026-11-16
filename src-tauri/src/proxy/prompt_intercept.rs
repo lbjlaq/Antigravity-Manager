@@ -33,33 +33,44 @@ pub const DEFAULT_INTERCEPT_TIMEOUT_SECS: u64 = 25;
 /// 会话级决策缓存生存期（秒）
 const SESSION_CACHE_TTL_SECS: u64 = 300;
 
-/// 五态处置枚举
+/// 处置动作枚举（六态对齐：前插、替换、放行 各有“本次”与“记住”）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptInterceptAction {
-    /// 在前面添加官方身份声明（保留原指令）
-    Prepend,
-    /// 替换并写入持久化规则
+    /// 在前面添加并记住（保留原指令，前插官方身份并写入清理规则）
+    PrependAndRemember,
+    /// 本次在前面添加（保留原指令，前插官方身份，不写盘；超时默认策略）
+    PrependOnce,
+    /// 替换并记住（替换为官方声明并写入清理规则）
     ReplaceAndRemember,
-    /// 放行并记录到持久化白名单
-    AllowAndRemember,
-    /// 仅本次替换
+    /// 本次替换（替换为官方声明，不写盘）
     ReplaceOnce,
-    /// 仅本次放行
+    /// 放行并记住（原样放行并记录到白名单）
+    AllowAndRemember,
+    /// 本次放行（原样放行，不写盘）
     AllowOnce,
 }
 
 impl PromptInterceptAction {
     pub fn from_str_loose(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
-            "prepend" | "在前面添加" => Some(Self::Prepend),
+            "prepend_and_remember"
+            | "prepend-and-remember"
+            | "在前面添加并记住"
+            | "在前面插入并记住" => Some(Self::PrependAndRemember),
+            "prepend_once"
+            | "prepend-once"
+            | "prepend"
+            | "本次在前面添加"
+            | "本次在前面插入"
+            | "在前面添加" => Some(Self::PrependOnce),
             "replace_and_remember" | "replace-and-remember" | "替换并记住" => {
                 Some(Self::ReplaceAndRemember)
             }
+            "replace_once" | "replace-once" | "本次替换" => Some(Self::ReplaceOnce),
             "allow_and_remember" | "allow-and-remember" | "放行并记住" => {
                 Some(Self::AllowAndRemember)
             }
-            "replace_once" | "replace-once" | "本次替换" => Some(Self::ReplaceOnce),
             "allow_once" | "allow-once" | "本次放行" => Some(Self::AllowOnce),
             _ => None,
         }
@@ -172,7 +183,7 @@ pub fn apply_action_to_text(
     first_sentence: &str,
 ) -> String {
     match action {
-        PromptInterceptAction::Prepend => {
+        PromptInterceptAction::PrependAndRemember | PromptInterceptAction::PrependOnce => {
             // 在原第一句前面强制追加官方声明，保留后续所有指令
             format!(
                 "{}\n\n{}",
@@ -254,12 +265,15 @@ pub async fn check_and_intercept_text(
     // 检查是否具备桌面宿主 GUI 交互句柄
     let app_handle = APP_HANDLE.get();
     if app_handle.is_none() {
-        // 无桌面窗口（如独立 CLI 或 Docker 容器环境），默认自动前置添加官方身份，避免 WAF 拦截
+        // 无桌面窗口（如独立 CLI 或 Docker 容器环境），默认自动前置添加官方身份（单次不写盘），避免 WAF 拦截
         tracing::info!(
-            "[PromptIntercept] Headless mode without UI handle, auto-prepending official identity"
+            "[PromptIntercept] Headless mode without UI handle, auto-prepending official identity (once)"
         );
-        let transformed =
-            apply_action_to_text(PromptInterceptAction::Prepend, raw_text, &first_sentence);
+        let transformed = apply_action_to_text(
+            PromptInterceptAction::PrependOnce,
+            raw_text,
+            &first_sentence,
+        );
         return (transformed, true);
     }
 
@@ -308,23 +322,24 @@ pub async fn check_and_intercept_text(
         new_id
     };
 
-    // 异步等待用户选择，超时默认执行 Prepend
-    let action =
-        match tokio::time::timeout(Duration::from_secs(DEFAULT_INTERCEPT_TIMEOUT_SECS), rx).await {
-            Ok(Ok(act)) => act,
-            Ok(Err(_)) => {
-                tracing::warn!("[PromptIntercept] Intercept channel dropped, fallback to Prepend");
-                PromptInterceptAction::Prepend
-            }
-            Err(_) => {
-                tracing::warn!(
-                    "[PromptIntercept] Intercept id={} timed out after {}s, defaulting to Prepend",
+    // 异步等待用户选择，超时默认执行 PrependOnce（本次在前面添加，不保留）
+    let action = match tokio::time::timeout(Duration::from_secs(DEFAULT_INTERCEPT_TIMEOUT_SECS), rx)
+        .await
+    {
+        Ok(Ok(act)) => act,
+        Ok(Err(_)) => {
+            tracing::warn!("[PromptIntercept] Intercept channel dropped, fallback to PrependOnce");
+            PromptInterceptAction::PrependOnce
+        }
+        Err(_) => {
+            tracing::warn!(
+                    "[PromptIntercept] Intercept id={} timed out after {}s, defaulting to PrependOnce (not saved)",
                     intercept_id,
                     DEFAULT_INTERCEPT_TIMEOUT_SECS
                 );
-                PromptInterceptAction::Prepend
-            }
-        };
+            PromptInterceptAction::PrependOnce
+        }
+    };
 
     // 清理反向映射
     SENTENCE_TO_ID.remove(&first_sentence);
@@ -413,12 +428,43 @@ pub async fn resolve_prompt_intercept(id: String, action_str: String) -> Result<
 
     // 1. 若选择了“记住”，持久化写入配置
     match action {
+        PromptInterceptAction::PrependAndRemember => {
+            if let Ok(mut app_config) = crate::modules::config::load_app_config() {
+                let rule_id = format!("custom-rule-{}", &id[..8.min(id.len())]);
+                let pattern = format!("{}*", entry.first_sentence.trim());
+                // 前插规则：匹配首句并替换为官方身份 + 原首句换行
+                let replacement = format!(
+                    "{}\n\n{}",
+                    OFFICIAL_ANTIGRAVITY_IDENTITY,
+                    entry.first_sentence.trim()
+                );
+                let new_rule = crate::proxy::config::PromptRewriteRule::new(
+                    rule_id,
+                    pattern,
+                    replacement,
+                    true,
+                );
+                app_config.proxy.prompt_rewrite.rules.push(new_rule);
+                if let Err(e) = crate::modules::config::save_app_config(&app_config) {
+                    tracing::warn!(
+                        "[PromptIntercept] Failed to save prepend rewrite rule: {}",
+                        e
+                    );
+                } else if let Some(app) = APP_HANDLE.get() {
+                    let _ = app.emit("config://updated", ());
+                }
+            }
+        }
         PromptInterceptAction::ReplaceAndRemember => {
             if let Ok(mut app_config) = crate::modules::config::load_app_config() {
                 let rule_id = format!("custom-rule-{}", &id[..8.min(id.len())]);
                 let pattern = format!("{}*", entry.first_sentence.trim());
-                let new_rule =
-                    crate::proxy::config::PromptRewriteRule::new(rule_id, pattern, "", true);
+                let new_rule = crate::proxy::config::PromptRewriteRule::new(
+                    rule_id,
+                    pattern,
+                    OFFICIAL_ANTIGRAVITY_IDENTITY,
+                    true,
+                );
                 app_config.proxy.prompt_rewrite.rules.push(new_rule);
                 if let Err(e) = crate::modules::config::save_app_config(&app_config) {
                     tracing::warn!("[PromptIntercept] Failed to save rewrite rule: {}", e);
@@ -440,7 +486,11 @@ pub async fn resolve_prompt_intercept(id: String, action_str: String) -> Result<
                 }
             }
         }
-        _ => {}
+        PromptInterceptAction::PrependOnce
+        | PromptInterceptAction::ReplaceOnce
+        | PromptInterceptAction::AllowOnce => {
+            // 仅在内存 session_cache 生效，不写盘
+        }
     }
 
     // 2. 写入会话级防抖缓存
@@ -501,10 +551,15 @@ mod tests {
     fn test_apply_action_prepend() {
         let raw = "You are Cline, an autonomous coding agent.\n\n# Rules\n1. Check.";
         let first = "You are Cline, an autonomous coding agent.";
-        let out = apply_action_to_text(PromptInterceptAction::Prepend, raw, first);
-        assert!(out.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
-        assert!(out.contains("You are Cline, an autonomous coding agent."));
-        assert!(out.contains("# Rules"));
+        let out1 = apply_action_to_text(PromptInterceptAction::PrependOnce, raw, first);
+        assert!(out1.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(out1.contains("You are Cline, an autonomous coding agent."));
+        assert!(out1.contains("# Rules"));
+
+        let out2 = apply_action_to_text(PromptInterceptAction::PrependAndRemember, raw, first);
+        assert!(out2.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(out2.contains("You are Cline, an autonomous coding agent."));
+        assert!(out2.contains("# Rules"));
     }
 
     #[test]
@@ -528,24 +583,36 @@ mod tests {
     #[test]
     fn test_prompt_intercept_action_parse() {
         assert_eq!(
-            PromptInterceptAction::from_str_loose("在前面添加"),
-            Some(PromptInterceptAction::Prepend)
+            PromptInterceptAction::from_str_loose("本次在前面添加"),
+            Some(PromptInterceptAction::PrependOnce)
+        );
+        assert_eq!(
+            PromptInterceptAction::from_str_loose("在前面添加并记住"),
+            Some(PromptInterceptAction::PrependAndRemember)
         );
         assert_eq!(
             PromptInterceptAction::from_str_loose("prepend"),
-            Some(PromptInterceptAction::Prepend)
+            Some(PromptInterceptAction::PrependOnce)
+        );
+        assert_eq!(
+            PromptInterceptAction::from_str_loose("prepend_once"),
+            Some(PromptInterceptAction::PrependOnce)
+        );
+        assert_eq!(
+            PromptInterceptAction::from_str_loose("prepend_and_remember"),
+            Some(PromptInterceptAction::PrependAndRemember)
         );
         assert_eq!(
             PromptInterceptAction::from_str_loose("替换并记住"),
             Some(PromptInterceptAction::ReplaceAndRemember)
         );
         assert_eq!(
-            PromptInterceptAction::from_str_loose("放行并记住"),
-            Some(PromptInterceptAction::AllowAndRemember)
-        );
-        assert_eq!(
             PromptInterceptAction::from_str_loose("本次替换"),
             Some(PromptInterceptAction::ReplaceOnce)
+        );
+        assert_eq!(
+            PromptInterceptAction::from_str_loose("放行并记住"),
+            Some(PromptInterceptAction::AllowAndRemember)
         );
         assert_eq!(
             PromptInterceptAction::from_str_loose("本次放行"),
