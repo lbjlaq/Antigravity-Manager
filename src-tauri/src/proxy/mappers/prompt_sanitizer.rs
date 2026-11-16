@@ -4298,4 +4298,21 @@ mod tests {
         // 围栏代码块内的内容不受任何影响
         assert!(out.contains("```\n`tools.opencode.session-move` in code\n```"));
     }
+
+    #[test]
+    fn test_issue_3969_edge_cases_mixed_case_and_unclosed_backticks() {
+        // 1. 测试大小写混写与多种分隔符
+        let mixed =
+            "Call `Tools.OpenCode.Session-Move` and `TOOLS.OPENCODE.SESSION_MOVE` on same line.";
+        let cleaned_mixed = PromptSanitizer::clean_text(mixed);
+        assert!(!cleaned_mixed.to_lowercase().contains("session-move"));
+        assert!(!cleaned_mixed.to_lowercase().contains("session_move"));
+        assert!(cleaned_mixed.contains("tools.opencode.session_relocate"));
+
+        // 2. 测试单侧未闭合的反引号（防退化与防崩）
+        let unclosed = "Notice: `tools.opencode.session-move without closing backtick";
+        let cleaned_unclosed = PromptSanitizer::clean_text(unclosed);
+        assert!(!cleaned_unclosed.contains("tools.opencode.session-move"));
+        assert!(cleaned_unclosed.contains("tools.opencode.session_relocate"));
+    }
 }
