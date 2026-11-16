@@ -530,6 +530,12 @@ impl PromptRewriteConfig {
                 true,
             ),
             PromptRewriteRule::new(
+                "preset-opencode-session-move",
+                "*tools.opencode.session*move*",
+                "tools.opencode.session_relocate",
+                true,
+            ),
+            PromptRewriteRule::new(
                 "preset-dsh-identity",
                 "You are an AI agent powered by DeepSeek Harness*",
                 "",

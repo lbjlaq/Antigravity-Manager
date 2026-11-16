@@ -56,6 +56,10 @@ use std::sync::{Arc, RwLock};
 static RE_CODE_BLOCK: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?ms)(```[\s\S]*?```|`[^`\r\n]+`)").unwrap());
 
+/// 多行围栏代码块保护正则：仅隔离 ```...``` 围栏代码块（行内反引号由清理规则与 WAF 规则正常匹配脱敏）
+static RE_FENCED_CODE_BLOCK: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?ms)```[\s\S]*?```").unwrap());
+
 /// 触发上游 Google WAF 拦截的高危客户端伪 Header 与特征声明正则（仅在非代码区域生效）：
 /// 1) 通用泛化匹配各类客户端注入的 `*-billing*` 伪 Header 行（如 `x-anthropic-billing-header:`, `x-billing:`, `x-client-billing:`, `anthropic-billing-header:` 等）
 /// 2) 匹配任何以 `x-` 开头且携带 Claude Code CLI 计费签名特征（`cc_version`, `cc_entrypoint`, `cch=`）的伪 Header
@@ -73,18 +77,20 @@ static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-/// 触发上游 Google WAF 伪 429 拦截的第三方 Agent 特征指令与规范特征正则（Issue #3965，仅在非代码区域生效）
+/// 触发上游 Google WAF 伪 429 拦截的第三方 Agent 特征指令与规范特征正则（Issue #3965, #3969，仅在非多行围栏代码区域生效）
 /// Google Cloud Code WAF 会对特定 Agent 模板中的高频特征指令进行启发式拦截，返回伪造的 429 RESOURCE_EXHAUSTED：
 /// 1) `Prefer read_file, edit_file, and write_file over cat/sed`
 /// 2) `Always read_file before edit_file`
 /// 3) `call read_file on its SKILL.md`
 /// 4) `Google model operational directives / guidelines`
+/// 5) `tools.opencode.session-move` / `tools.opencode.session_move` (Issue #3969, #3975)
 static RE_WAF_TRIGGER_AGENT_TOOL_GUIDELINES: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
         r"(?i)\bprefer\s+(?:the\s+)?read_file,\s*edit_file,?\s+and\s+write_file\s+over\s+cat/sed\b",
         r"|(?i)\balways\s+read_file\s+before\s+edit_file\b",
         r"|(?i)\bcall\s+read_file\s+on\s+(?:its\s+)?SKILL\.md\b",
-        r"|(?i)\bGoogle\s+model\s+operational\s+(?:directives|guidelines)\b"
+        r"|(?i)\bGoogle\s+model\s+operational\s+(?:directives|guidelines)\b",
+        r"|(?i)\btools\.opencode\.session[-_]move\b"
     ))
     .unwrap()
 });
@@ -634,13 +640,13 @@ impl PromptSanitizer {
         compiled
     }
 
-    /// 在代码块占位保护下按顺序应用规则；无命中返回 None，保持原文零改动。
+    /// 在多行围栏代码块占位保护下按顺序应用规则（行内反引号可被正常匹配重写）；无命中返回 None，保持原文零改动。
     fn rewrite_text_with_rules(text: &str, rules: &[CompiledPromptRewriteRule]) -> Option<String> {
         if rules.is_empty() {
             return None;
         }
         let mut placeholders: Vec<String> = Vec::new();
-        let protected = RE_CODE_BLOCK.replace_all(text, |caps: &regex::Captures| {
+        let protected = RE_FENCED_CODE_BLOCK.replace_all(text, |caps: &regex::Captures| {
             let idx = placeholders.len();
             placeholders.push(caps[0].to_string());
             format!("__PROMPT_SANITIZER_CODE_BLOCK_{}__", idx)
@@ -686,10 +692,10 @@ impl PromptSanitizer {
     }
 
     /// 对单段提示词文本进行通用、高精度的净化：
-    /// 1. 快速检查是否包含高危 WAF 拦截触发词（`billing`, `cc_version`, `cc_entrypoint`），未包含直接原样返回；
-    /// 2. 提取并保护所有代码块，使其免受任何正则影响；
+    /// 1. 快速检查是否包含高危 WAF 拦截触发词（`billing`, `cc_version`, `cc_entrypoint`, `session-move` 等），未包含直接原样返回；
+    /// 2. 提取并保护多行围栏代码块（```...```），使其免受任何正则误伤；行内反引号中的敏感指令照常中和；
     /// 3. 仅剥离触发 WAF 的客户端计费伪 Header，绝不修改任何会话 ID、XML 标签或 `=== ... ===` 分隔符；
-    /// 4. 完整恢复受保护的代码块；
+    /// 4. 完整恢复受保护的多行代码块；
     /// 5. 规范化换行，保留所有多行正文排版。
     pub fn clean_text(text: &str) -> String {
         // 快速前置检查：若文本不包含高危特征，直接原样返回，零开销
@@ -709,15 +715,18 @@ impl PromptSanitizer {
             || lower.contains("read_file")
             || lower.contains("edit_file")
             || lower.contains("operational directives")
-            || lower.contains("operational guidelines");
+            || lower.contains("operational guidelines")
+            || lower.contains("opencode")
+            || lower.contains("session-move")
+            || lower.contains("session_move");
 
         if !has_suspect {
             return text.to_string();
         }
 
-        // 步骤 1：保护代码块
+        // 步骤 1：保护多行围栏代码块（行内反引号指令如 `tools.opencode.session-move` 允许被 pass2_5 正常中和）
         let mut placeholders: Vec<String> = Vec::new();
-        let protected_text = RE_CODE_BLOCK.replace_all(text, |caps: &regex::Captures| {
+        let protected_text = RE_FENCED_CODE_BLOCK.replace_all(text, |caps: &regex::Captures| {
             let idx = placeholders.len();
             placeholders.push(caps[0].to_string());
             format!("__PROMPT_SANITIZER_CODE_BLOCK_{}__", idx)
@@ -736,7 +745,7 @@ impl PromptSanitizer {
             }
         });
 
-        // 步骤 3.5：中和触发上游 WAF 伪 429 拦截的第三方 Agent 工具指令特征（Issue #3965）
+        // 步骤 3.5：中和触发上游 WAF 伪 429 拦截的第三方 Agent 工具指令特征（Issue #3965, #3969）
         let pass2_5 =
             RE_WAF_TRIGGER_AGENT_TOOL_GUIDELINES.replace_all(&pass2, |caps: &regex::Captures| {
                 let matched = &caps[0];
@@ -749,6 +758,8 @@ impl PromptSanitizer {
                     "call read file on its SKILL.md".to_string()
                 } else if lower.contains("operational") {
                     "Model operational guidelines".to_string()
+                } else if lower.contains("session") {
+                    "tools.opencode.session_relocate".to_string()
                 } else {
                     matched.to_string()
                 }
@@ -4181,6 +4192,13 @@ mod tests {
             .unwrap_or_else(|| billing_raw.to_string());
         assert!(!rewritten_billing.contains("x-anthropic-billing-header"));
         assert!(rewritten_billing.contains("System prompt."));
+
+        // 5. OpenCode session-move 预设规则重写验证
+        let session_raw = "Use `tools.opencode.session-move` to transfer session.";
+        let rewritten_session = PromptSanitizer::rewrite_text_with_rules(session_raw, &compiled)
+            .unwrap_or_else(|| session_raw.to_string());
+        assert!(!rewritten_session.contains("tools.opencode.session-move"));
+        assert!(rewritten_session.contains("tools.opencode.session_relocate"));
     }
 
     // ============================ issue #3965：中和触发上游 WAF 伪 429 拦截的第三方 Agent 特征指令 ============================
@@ -4223,5 +4241,61 @@ mod tests {
         assert!(cleaned.contains(
             "# In-code comment: Prefer read_file, edit_file, and write_file over cat/sed."
         ));
+    }
+
+    // ============================ issue #3969 / #3975：中和 OpenCode 工具指令 (tools.opencode.session-move / session_move) ============================
+
+    #[test]
+    fn test_issue_3969_opencode_waf_trigger_session_move_neutralized() {
+        let raw = concat!(
+            "# Code Mode\n\n",
+            "You have access to the following tools:\n",
+            "- tools.opencode.session-move({ destination: string }): move session\n",
+            "- tools.opencode.session_move({ destination: string }): move session alternate\n\n",
+            "When you create a worktree outside the current working directory and intend to use it as your primary working directory, ",
+            "consider using `execute` to call `tools.opencode.session-move` and make the worktree the session's working directory.\n\n",
+            "Also consider `tools.opencode.session_move`.\n\n",
+            "```json\n",
+            "{\n",
+            "  \"sample\": \"tools.opencode.session-move in fenced code block must stay untouched\"\n",
+            "}\n",
+            "```\n"
+        );
+
+        let cleaned = PromptSanitizer::clean_text(raw);
+
+        // 1. 验证不论是纯文本还是行内反引号中的 tools.opencode.session-move / session_move 均已被彻底脱敏中和
+        let outside_code = cleaned.split("```json").next().unwrap();
+        assert!(
+            !outside_code.contains("tools.opencode.session-move"),
+            "纯文本与行内反引号中的 tools.opencode.session-move 必须被中和: {outside_code}"
+        );
+        assert!(
+            !outside_code.contains("tools.opencode.session_move"),
+            "纯文本与行内反引号中的 tools.opencode.session_move 必须被中和: {outside_code}"
+        );
+        assert!(outside_code.contains("tools.opencode.session_relocate"));
+        assert!(outside_code.contains("`tools.opencode.session_relocate`"));
+
+        // 2. 验证多行围栏代码块中的示例依然 100% 原样保留
+        assert!(cleaned
+            .contains("tools.opencode.session-move in fenced code block must stay untouched"));
+    }
+
+    #[test]
+    fn test_issue_3969_prompt_rewrite_rules_cover_inline_backticks() {
+        let input = "call `tools.opencode.session-move` now\n```\n`tools.opencode.session-move` in code\n```";
+        let out = apply_rules_for_test(
+            input,
+            &[(
+                "tools.opencode.session-move",
+                "tools.opencode.session_relocate",
+            )],
+        );
+
+        // 行内反引号内的敏感字符串必须能被用户规则正常替换
+        assert!(out.contains("call `tools.opencode.session_relocate` now"));
+        // 围栏代码块内的内容不受任何影响
+        assert!(out.contains("```\n`tools.opencode.session-move` in code\n```"));
     }
 }

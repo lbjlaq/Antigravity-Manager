@@ -172,6 +172,12 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         enabled: true,
     },
     {
+        id: "preset-opencode-session-move",
+        pattern: "*tools.opencode.session*move*",
+        replacement: "tools.opencode.session_relocate",
+        enabled: true,
+    },
+    {
         id: "preset-dsh-identity",
         pattern: "You are an AI agent powered by DeepSeek Harness*",
         replacement: "",
