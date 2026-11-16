@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::pin::Pin;
 use uuid::Uuid;
 
+use super::split_namespace_tool_name;
 use crate::proxy::mappers::error_classifier::{
     preview_payload, report_stream_error, StreamErrorReport,
 };
@@ -902,21 +903,6 @@ fn report_sse_json_parse(
             preview_payload(json_part)
         ),
     );
-}
-
-fn split_namespace_tool_name(qualified_name: &str) -> (String, Option<String>) {
-    let name = qualified_name.trim();
-    if name.starts_with("mcp__") {
-        return (name.to_string(), None);
-    }
-    if let Some(pos) = name.find("__") {
-        if pos > 0 {
-            let namespace = name[..pos].to_string();
-            let actual_name = name[pos + 2..].to_string();
-            return (actual_name, Some(namespace));
-        }
-    }
-    (name.to_string(), None)
 }
 
 fn openai_chat_error_frame(
@@ -2037,6 +2023,40 @@ mod tests {
             .iter()
             .any(|event| event["type"] == "response.output_item.done"
                 && event["item"]["call_id"] == call_id));
+    }
+
+    #[tokio::test]
+    async fn responses_mcp_tool_call_restores_namespace_fields() {
+        let (_, events) = collect_codex_stream_with_cache(
+            vec![json!({
+                "response": {"candidates": [{
+                    "finishReason": "STOP",
+                    "content": {"parts": [{
+                        "functionCall": {
+                            "name": "mcp__node_repl__js",
+                            "args": {"code": "1+1"}
+                        }
+                    }]}
+                }]}
+            })],
+            false,
+        )
+        .await;
+
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .expect("completed response");
+        let call = completed["response"]["output"]
+            .as_array()
+            .expect("output")
+            .iter()
+            .find(|item| item["type"] == "function_call")
+            .expect("function call");
+
+        assert_eq!(call["name"], "js");
+        assert_eq!(call["namespace"], "mcp__node_repl");
+        assert!(!call.to_string().contains("mcp__node_repl__js"));
     }
 
     #[tokio::test]

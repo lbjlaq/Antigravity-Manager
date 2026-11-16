@@ -10,8 +10,9 @@ use std::sync::Arc;
 use tracing::{debug, error, info}; // Import Engine trait for encode method
 
 use crate::proxy::mappers::openai::{
-    transform_openai_request_with_session, transform_openai_response_with_anchor, OpenAIContent,
-    OpenAIContentBlock, OpenAIRequest, OpenAIResponse,
+    split_namespace_tool_name, transform_openai_request_with_session,
+    transform_openai_response_with_anchor, OpenAIContent, OpenAIContentBlock, OpenAIRequest,
+    OpenAIResponse,
 };
 use crate::proxy::pipeline::timing::{TimingBuilderExt, TimingHeaders};
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
@@ -888,14 +889,19 @@ fn convert_chat_response_to_responses(
                 continue;
             };
             let call_id = tool_call.call_id.as_deref().unwrap_or(&tool_call.id);
-            output.push(json!({
+            let (actual_name, namespace) = split_namespace_tool_name(&function.name);
+            let mut item = json!({
                 "id": format!("fc_{}", uuid::Uuid::new_v4().simple()),
                 "type": "function_call",
                 "status": "completed",
                 "call_id": call_id,
-                "name": function.name,
+                "name": actual_name,
                 "arguments": function.arguments
-            }));
+            });
+            if let Some(namespace) = namespace {
+                item["namespace"] = json!(namespace);
+            }
+            output.push(item);
         }
     }
 
@@ -1564,6 +1570,48 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         assert!(response["output"][1]["content"][0]["text"]
             .as_str()
             .is_some_and(|text| !text.contains("Internal analysis")));
+    }
+
+    #[test]
+    fn responses_compat_restores_mcp_namespace_fields() {
+        let chat_response = serde_json::from_value(json!({
+            "id": "chatcmpl_mcp",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "gemini-4-hydrogen-high",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_mcp",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__node_repl__js",
+                            "arguments": "{\"code\":\"1+1\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        }))
+        .expect("valid OpenAI response fixture");
+
+        let response = convert_chat_response_to_responses(&chat_response, false);
+        let function_call = response["output"]
+            .as_array()
+            .and_then(|output| output.iter().find(|item| item["type"] == "function_call"))
+            .expect("function call output");
+
+        assert_eq!(function_call["name"], "js");
+        assert_eq!(function_call["namespace"], "mcp__node_repl");
+        assert!(!function_call.to_string().contains("mcp__node_repl__js"));
     }
 
     #[test]
@@ -8661,19 +8709,4 @@ async fn finalize_ws_events(
     send_ws_event(socket, ws_events, &completed_ev).await;
 
     json!(output_items)
-}
-
-fn split_namespace_tool_name(qualified_name: &str) -> (String, Option<String>) {
-    let name = qualified_name.trim();
-    if name.starts_with("mcp__") {
-        return (name.to_string(), None);
-    }
-    if let Some(pos) = name.find("__") {
-        if pos > 0 {
-            let namespace = name[..pos].to_string();
-            let actual_name = name[pos + 2..].to_string();
-            return (actual_name, Some(namespace));
-        }
-    }
-    (name.to_string(), None)
 }
