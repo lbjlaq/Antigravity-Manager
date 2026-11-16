@@ -25,6 +25,7 @@ pub struct GeminiStreamHandler {
     thinking_acc: Option<TurnAccumulator>,
     saw_image_data: bool,
     saw_finish_reason: bool,
+    saw_non_stop_finish_reason: bool,
     saw_function_call: bool,
     has_content: bool,
     has_thinking: bool,
@@ -56,6 +57,7 @@ impl GeminiStreamHandler {
             thinking_acc: Some(TurnAccumulator::with_anchor(causal_anchor)),
             saw_image_data: false,
             saw_finish_reason: false,
+            saw_non_stop_finish_reason: false,
             saw_function_call: false,
             has_content: false,
             has_thinking: false,
@@ -131,11 +133,16 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
 
         let mut chunk_has_finish_reason = false;
         for cand in &parts_snapshot {
-            if cand.get("finishReason").and_then(|v| v.as_str()).is_some()
-                || cand.get("finish_reason").and_then(|v| v.as_str()).is_some()
+            if let Some(fr) = cand
+                .get("finishReason")
+                .and_then(|v| v.as_str())
+                .or_else(|| cand.get("finish_reason").and_then(|v| v.as_str()))
             {
                 self.saw_finish_reason = true;
                 chunk_has_finish_reason = true;
+                if fr != "STOP" {
+                    self.saw_non_stop_finish_reason = true;
+                }
             }
             if let Some(parts) = cand
                 .get("content")
@@ -213,6 +220,10 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
 
     fn is_thinking_active(&self) -> bool {
         self.is_thinking_active
+    }
+
+    fn finalize_without_content(&self) -> bool {
+        self.saw_non_stop_finish_reason
     }
 
     fn emit_finalize(&mut self) -> Vec<Bytes> {
@@ -696,5 +707,67 @@ mod tests {
         assert!(output.contains("Normal completion"));
         assert!(output.contains(r#""finishReason":"STOP""#));
         assert!(!output.contains("MAX_TOKENS"));
+    }
+
+    #[tokio::test]
+    async fn test_gemini_stream_thinking_only_max_tokens_finalizes_cleanly_without_error() {
+        let thinking_json = serde_json::json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "thought": true, "text": "Deep thinking truncated..." }]
+                    },
+                    "finishReason": "MAX_TOKENS",
+                    "index": 0
+                }]
+            }
+        });
+
+        let items: Vec<Result<Bytes, String>> = vec![Ok(Bytes::from(format!(
+            "data: {}\n\n",
+            serde_json::to_string(&thinking_json).unwrap()
+        )))];
+
+        let handler = GeminiStreamHandler::new(
+            Some("trace_gemini_max_tokens".to_string()),
+            "session_gemini_max_tokens".to_string(),
+            "gemini-4-hydrogen-high".to_string(),
+            1,
+            "anchor".to_string(),
+            false,
+            None,
+            "acc@example.com".to_string(),
+            "gemini-4-hydrogen-high".to_string(),
+        );
+
+        let lifecycle_cfg = crate::proxy::pipeline::StreamLifecycleConfig::new(
+            "gemini",
+            "test_gemini_max_tokens",
+            "test".to_string(),
+        );
+
+        let mut stream = crate::proxy::pipeline::run_stream_lifecycle(
+            Box::pin(futures::stream::iter(items)),
+            handler,
+            lifecycle_cfg,
+        );
+
+        let mut all_chunks = Vec::new();
+        let mut got_err: Option<String> = None;
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(e) => got_err = Some(e),
+            }
+        }
+        let output = all_chunks.join("");
+
+        assert!(
+            got_err.is_none(),
+            "MAX_TOKENS after thinking must finalize cleanly, got: {:?}",
+            got_err
+        );
+        assert!(output.contains("Deep thinking truncated..."));
+        assert!(output.contains(r#""finishReason":"MAX_TOKENS""#));
     }
 }

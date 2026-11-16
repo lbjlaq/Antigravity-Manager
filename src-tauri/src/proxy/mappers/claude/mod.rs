@@ -341,7 +341,7 @@ fn process_sse_line(
         });
 
     if let Some(finish_reason) = finish_reason {
-        if state.has_thinking && !state.has_content {
+        if state.has_thinking && !state.has_content && finish_reason == "STOP" {
             tracing::warn!(
                 "[{}] Upstream emitted finishReason '{}' after thinking without content. Suppressing message_stop to allow native client retry.",
                 trace_id,
@@ -923,6 +923,74 @@ mod tests {
         assert!(
             error_propagated,
             "Must propagate Err when upstream finishes after thinking without text"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_thinking_only_with_finish_reason_max_tokens_emits_max_tokens_and_message_stop() {
+        use futures::StreamExt;
+
+        let mock_stream = async_stream::stream! {
+            let chunk1 = serde_json::json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "Reasoning hit token limit.", "thought": true }]
+                    }
+                }],
+                "modelVersion": "gemini-4-hydrogen-high",
+                "responseId": "msg_thinking_max_tokens"
+            });
+            let chunk2 = serde_json::json!({
+                "candidates": [{
+                    "finishReason": "MAX_TOKENS"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 50,
+                    "candidatesTokenCount": 120
+                }
+            });
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk1)));
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk2)));
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_thinking_max_tokens".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut all_chunks = Vec::new();
+        let mut got_err: Option<String> = None;
+        while let Some(result) = claude_stream.next().await {
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(e) => got_err = Some(e),
+            }
+        }
+        let output = all_chunks.join("");
+
+        assert!(
+            got_err.is_none(),
+            "MAX_TOKENS after thinking must not propagate stream error: {:?}",
+            got_err
+        );
+        assert!(output.contains("Reasoning hit token limit."));
+        assert!(
+            output.contains(r#""stop_reason":"max_tokens""#),
+            "Must emit stop_reason max_tokens, got: {}",
+            output
+        );
+        assert!(
+            output.contains("event: message_stop"),
+            "Must emit message_stop on MAX_TOKENS, got: {}",
+            output
         );
     }
 

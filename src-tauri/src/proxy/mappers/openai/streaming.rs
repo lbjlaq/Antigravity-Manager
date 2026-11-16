@@ -94,6 +94,7 @@ pub struct OpenAIChatStreamHandler {
     pub has_thinking: bool,
     pub is_thinking_active: bool,
     pub has_emitted_finish_reason: bool,
+    pub has_emitted_non_stop_finish_reason: bool,
     pub has_emitted_done: bool,
     pub is_structured_output: bool,
     pub fence_prefix_stripped: bool,
@@ -373,6 +374,9 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
                         }
                         if finish_reason.is_some() {
                             self.has_emitted_finish_reason = true;
+                            if raw_finish_reason.is_some_and(|f| f != "STOP") {
+                                self.has_emitted_non_stop_finish_reason = true;
+                            }
                         }
                         let delta = if !content_out.is_empty() {
                             json!({ "content": content_out })
@@ -433,6 +437,10 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
 
     fn is_terminal(&self) -> bool {
         self.has_emitted_done
+    }
+
+    fn finalize_without_content(&self) -> bool {
+        self.has_emitted_non_stop_finish_reason
     }
 
     fn emit_finalize(&mut self) -> Vec<Bytes> {
@@ -620,6 +628,7 @@ where
         has_thinking: false,
         is_thinking_active: false,
         has_emitted_finish_reason: false,
+        has_emitted_non_stop_finish_reason: false,
         has_emitted_done: false,
         is_structured_output,
         fence_prefix_stripped: false,
@@ -3243,5 +3252,66 @@ mod tests {
             accumulated_content
         );
         assert_eq!(parsed.unwrap(), json!({ "status": "ok", "count": 1 }));
+    }
+
+    #[tokio::test]
+    async fn test_openai_stream_thinking_only_max_tokens_emits_length_and_done_without_error() {
+        let thinking_chunk = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "text": "Reasoning hit token budget...", "thought": true }]
+                }
+            }]
+        });
+        let max_tokens_chunk = json!({
+            "candidates": [{
+                "finishReason": "MAX_TOKENS"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 80,
+                "candidatesTokenCount": 120,
+                "thoughtsTokenCount": 117
+            }
+        });
+
+        let items: Vec<Result<Bytes, String>> = vec![
+            Ok(Bytes::from(format!("data: {}\n\n", thinking_chunk))),
+            Ok(Bytes::from(format!("data: {}\n\n", max_tokens_chunk))),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ];
+
+        let mut openai_stream = create_openai_sse_stream_with_anchor(
+            Box::pin(stream::iter(items)),
+            "gemini-4-hydrogen-high".to_string(),
+            "session-max-tokens".to_string(),
+            1,
+            None,
+            false,
+            None,
+            false,
+        );
+
+        let mut all_chunks = Vec::new();
+        let mut got_err: Option<String> = None;
+        while let Some(result) = openai_stream.next().await {
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8_lossy(&bytes).to_string()),
+                Err(e) => got_err = Some(e),
+            }
+        }
+        let output = all_chunks.join("");
+
+        assert!(
+            got_err.is_none(),
+            "MAX_TOKENS after thinking must finalize cleanly without stream error, got: {:?}",
+            got_err
+        );
+        assert!(output.contains("Reasoning hit token budget..."));
+        assert!(output.contains(r#""finish_reason":"length""#));
+        assert!(
+            output.contains("data: [DONE]"),
+            "Must emit data: [DONE] after finish_reason=length, got: {}",
+            output
+        );
     }
 }
