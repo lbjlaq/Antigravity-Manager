@@ -916,7 +916,9 @@
             "update_dialog_title": "发现新版本可用",
             "update_confirm_desc": "检测到有新版本发布。是否立即下载更新？客户端将在下载完成后自动热重启以应用更新。",
             "current_version": "当前版本",
-            "latest_version_label": "最新版本"
+            "latest_version_label": "最新版本",
+            "brew_error_brew_beta_not_supported": "Homebrew 仅支持正式版更新，Beta 预览版请改用内置自动更新或手动下载",
+            "brew_beta_native_hint": "检测到当前通过 Homebrew 安装：Homebrew Cask 仅同步正式版，Beta 预览版将改用内置自动更新或手动下载（升级后 Caskroom 记录的版本可能与实际版本不一致）。"
         },
         "advanced_thinking": {
             "title": "高级思维与全局配置",

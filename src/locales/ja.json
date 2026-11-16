@@ -825,7 +825,9 @@
             "update_dialog_title": "新しいバージョンが利用可能です",
             "update_confirm_desc": "新しいバージョンが検出されました。今すぐアップデートをダウンロードしますか？ダウンロード完了後、アプリは自動的に再起動します。",
             "current_version": "現在のバージョン",
-            "latest_version_label": "最新バージョン"
+            "latest_version_label": "最新バージョン",
+            "brew_error_brew_beta_not_supported": "Homebrew は安定版のみをサポートしています。ベータ版は内蔵アップデーターまたは手動ダウンロードをご利用ください",
+            "brew_beta_native_hint": "Homebrew インストールを検出しました：Homebrew Cask は安定版のみを追跡するため、ベータ版では brew upgrade ではなく内蔵アップデーターまたは手動ダウンロードを使用します（更新後 Caskroom の記録バージョンと異なる場合があります）。"
         },
         "advanced_thinking": {
             "title": "推論とグローバル設定",

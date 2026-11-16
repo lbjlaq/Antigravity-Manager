@@ -712,14 +712,36 @@ pub fn is_appimage_running() -> bool {
     }
 }
 
+/// Validate whether Homebrew Cask upgrade is allowed for the given update channel.
+/// `Casks/antigravity-tools.rb` on `main` only tracks stable releases; Beta releases
+/// must use the native updater or direct download.
+pub fn validate_brew_upgrade_channel(channel: UpdateChannel) -> Result<(), String> {
+    if channel == UpdateChannel::Beta {
+        return Err("brew_beta_not_supported".to_string());
+    }
+    Ok(())
+}
+
 /// Execute `brew upgrade --cask antigravity-tools` with timeout (macOS only)
-#[cfg(not(target_os = "macos"))]
 pub async fn brew_upgrade_cask() -> Result<String, String> {
+    let channel = load_update_settings()
+        .map(|s| s.update_channel)
+        .unwrap_or_default();
+    brew_upgrade_cask_for_channel(channel).await
+}
+
+pub async fn brew_upgrade_cask_for_channel(channel: UpdateChannel) -> Result<String, String> {
+    validate_brew_upgrade_channel(channel)?;
+    brew_upgrade_cask_impl().await
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn brew_upgrade_cask_impl() -> Result<String, String> {
     Err("brew_not_supported".to_string())
 }
 
 #[cfg(target_os = "macos")]
-pub async fn brew_upgrade_cask() -> Result<String, String> {
+async fn brew_upgrade_cask_impl() -> Result<String, String> {
     logger::log_info("Starting Homebrew Cask upgrade for antigravity-tools...");
 
     // Find brew binary
@@ -847,5 +869,20 @@ mod tests {
 
         settings.auto_check = false;
         assert!(!should_check_for_updates(&settings));
+    }
+
+    #[test]
+    fn test_validate_brew_upgrade_channel_rejects_beta_and_allows_stable() {
+        assert_eq!(
+            validate_brew_upgrade_channel(UpdateChannel::Beta),
+            Err("brew_beta_not_supported".to_string())
+        );
+        assert_eq!(validate_brew_upgrade_channel(UpdateChannel::Stable), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn test_brew_upgrade_cask_for_channel_rejects_beta_before_running_brew() {
+        let result = brew_upgrade_cask_for_channel(UpdateChannel::Beta).await;
+        assert_eq!(result, Err("brew_beta_not_supported".to_string()));
     }
 }

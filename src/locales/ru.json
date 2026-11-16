@@ -825,7 +825,9 @@
             "update_dialog_title": "New Version Available",
             "update_confirm_desc": "A new version is available. Would you like to download and update now? The app will automatically restart once downloaded.",
             "current_version": "Current Version",
-            "latest_version_label": "Latest Version"
+            "latest_version_label": "Latest Version",
+            "brew_error_brew_beta_not_supported": "Homebrew поддерживает только стабильные версии. Для бета-версий используйте встроенное обновление или ручную загрузку",
+            "brew_beta_native_hint": "Обнаружена установка через Homebrew: Homebrew Cask отслеживает только стабильные релизы, поэтому бета-обновления используют встроенный обновитель или ручную загрузку вместо brew upgrade (запись версии в Caskroom может отличаться)."
         },
         "advanced_thinking": {
             "title": "Расширенное мышление и глобальная конфигурация",

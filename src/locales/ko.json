@@ -825,7 +825,9 @@
             "update_dialog_title": "새 버전을 사용할 수 있습니다",
             "update_confirm_desc": "새 버전이 감지되었습니다. 지금 업데이트를 다운로드하시겠습니까? 다운로드가 완료되면 앱이 자동으로 다시 시작됩니다.",
             "current_version": "현재 버전",
-            "latest_version_label": "최신 버전"
+            "latest_version_label": "최신 버전",
+            "brew_error_brew_beta_not_supported": "Homebrew는 안정 버전만 지원합니다. 베타 버전은 내장 업데이터 또는 수동 다운로드를 이용해 주세요",
+            "brew_beta_native_hint": "Homebrew 설치가 감지되었습니다: Homebrew Cask는 안정 버전만 추적하므로 베타 업데이트는 brew upgrade 대신 내장 업데이터 또는 수동 다운로드를 사용합니다(업데이트 후 Caskroom 버전 기록이 실제와 다를 수 있습니다)."
         },
         "advanced_thinking": {
             "title": "고급 사고 및 전역 설정",

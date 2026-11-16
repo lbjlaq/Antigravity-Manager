@@ -837,7 +837,9 @@
             "update_dialog_title": "New Version Available",
             "update_confirm_desc": "A new version is available. Would you like to download and update now? The app will automatically restart once downloaded.",
             "current_version": "Current Version",
-            "latest_version_label": "Latest Version"
+            "latest_version_label": "Latest Version",
+            "brew_error_brew_beta_not_supported": "O Homebrew suporta apenas versões estáveis. Para versões Beta, use o atualizador integrado ou o download manual",
+            "brew_beta_native_hint": "Instalação via Homebrew detectada: o Homebrew Cask acompanha apenas versões estáveis, portanto atualizações Beta usam o atualizador integrado ou download manual em vez de brew upgrade (o registro do Caskroom pode divergir depois)."
         },
         "advanced_thinking": {
             "title": "Pensamento Avançado e Configuração Global",

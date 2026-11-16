@@ -804,7 +804,9 @@
             "update_dialog_title": "發現新版本可用",
             "update_confirm_desc": "檢測到有新版本發布。是否立即下載更新？用戶端將在下載完成後自動熱重新啟動以套用更新。",
             "current_version": "目前版本",
-            "latest_version_label": "最新版本"
+            "latest_version_label": "最新版本",
+            "brew_error_brew_beta_not_supported": "Homebrew 僅支援正式版更新，Beta 預覽版請改用內建自動更新或手動下載",
+            "brew_beta_native_hint": "偵測到目前透過 Homebrew 安裝：Homebrew Cask 僅同步正式版，Beta 預覽版將改用內建自動更新或手動下載（升級後 Caskroom 記錄的版本可能與實際版本不一致）。"
         },
         "debug": {
             "debug_logging": "除錯日誌",

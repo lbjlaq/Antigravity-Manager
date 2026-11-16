@@ -809,7 +809,9 @@
             "update_dialog_title": "New Version Available",
             "update_confirm_desc": "A new version is available. Would you like to download and update now? The app will automatically restart once downloaded.",
             "current_version": "Current Version",
-            "latest_version_label": "Latest Version"
+            "latest_version_label": "Latest Version",
+            "brew_error_brew_beta_not_supported": "Homebrew only tracks Stable releases. Please use the built-in updater or download the Beta build manually",
+            "brew_beta_native_hint": "Homebrew installation detected: Homebrew Cask only tracks Stable releases, so Beta updates use the built-in updater or manual download instead of brew upgrade (Caskroom version records may differ afterward)."
         },
         "advanced_thinking": {
             "title": "التفكير المتقدم والتكوين العالمي",

@@ -214,7 +214,13 @@ function Settings() {
 
     useEffect(() => {
         if (config) {
-            setFormData(config);
+            setFormData(prev => ({
+                ...config,
+                auto_launch: prev.auto_launch ?? config.auto_launch,
+                auto_check_update: prev.auto_check_update ?? config.auto_check_update,
+                update_check_interval: prev.update_check_interval ?? config.update_check_interval,
+                update_channel: prev.update_channel ?? config.update_channel,
+            }));
         }
     }, [config]);
 
@@ -468,9 +474,13 @@ function Settings() {
         }
     };
 
+    const effectiveUpdateChannel = updateInfo?.channel ?? formData.update_channel ?? 'stable';
+    const isBetaUpdateChannel = effectiveUpdateChannel === 'beta';
+    const shouldUseBrewUpgrade = isBrewInstalled && !isBetaUpdateChannel;
+
     const handleConfirmUpdate = async () => {
         setIsUpdateConfirmOpen(false);
-        if (isBrewInstalled) {
+        if (shouldUseBrewUpgrade) {
             handleBrewUpgrade();
             return;
         }
@@ -1996,9 +2006,18 @@ function Settings() {
                                         </div>
                                     </div>
                                     {formData.update_channel === 'beta' && (
-                                        <p className="text-[11px] text-amber-600/90 dark:text-amber-400/90">
-                                            {t('settings.about.channel_beta_hint')}
-                                        </p>
+                                        <div className="flex flex-col items-center gap-1 text-center max-w-md">
+                                            <p className="text-[11px] text-amber-600/90 dark:text-amber-400/90">
+                                                {t('settings.about.channel_beta_hint')}
+                                            </p>
+                                            {isBrewInstalled && (
+                                                <p className="text-[11px] text-amber-700/90 dark:text-amber-300/90 leading-relaxed">
+                                                    {t('settings.about.brew_beta_native_hint', {
+                                                        defaultValue: 'Homebrew Cask only tracks Stable releases. Beta updates will use the built-in updater or manual download instead of brew upgrade.',
+                                                    })}
+                                                </p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
 
@@ -2027,7 +2046,7 @@ function Settings() {
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-2 flex-wrap justify-center">
-                                                        {isBrewInstalled ? (
+                                                        {shouldUseBrewUpgrade ? (
                                                             <button
                                                                 onClick={() => setIsBrewConfirmOpen(true)}
                                                                 disabled={isBrewUpgrading}
@@ -2245,6 +2264,13 @@ function Settings() {
                                 </div>
                             )}
                         </div>
+                        {isBrewInstalled && isBetaUpdateChannel && (
+                            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-lg p-2.5 text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                                {t('settings.about.brew_beta_native_hint', {
+                                    defaultValue: 'Homebrew Cask only tracks Stable releases. Beta updates will use the built-in updater or manual download instead of brew upgrade.',
+                                })}
+                            </div>
+                        )}
                     </div>
                 </ModalDialog>
 
