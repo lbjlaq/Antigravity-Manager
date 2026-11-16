@@ -317,6 +317,9 @@ fn inspect_gemini_candidate_parts(
 /// - 若正常产出正文或工具调用，全流程无任何额外开销；
 /// - 若发现仅产出思考后立即返回终止符，截留终止信号并在同一连接中自动续跑；
 /// - 续跑上限严格为 1 次，具有完备的熔断与兜底保障。
+type ContinuationStreamResult =
+    Result<Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>, String>;
+
 pub fn wrap_stream_with_empty_thinking_auto_heal<S, E>(
     stream: Pin<Box<S>>,
     ctx: ThinkingAutoHealContext,
@@ -325,12 +328,71 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display + Send + 'static,
 {
+    let original_body = ctx.original_body.clone();
+    let trace_id = ctx.trace_id.clone();
+    wrap_stream_with_empty_thinking_auto_heal_with_fetcher(
+        stream,
+        original_body,
+        trace_id,
+        move |heal_body| {
+            let upstream = ctx.upstream.clone();
+            let method = ctx.method;
+            let access_token = ctx.access_token.clone();
+            let query_string = ctx.query_string;
+            let extra_headers = ctx.extra_headers.clone();
+            let account_id = ctx.account_id.clone();
+            let budget = ctx.budget.clone();
+            async move {
+                let call_res = crate::proxy::pipeline::budget::scope_optional(
+                    budget,
+                    upstream.call_v1_internal_with_headers(
+                        method,
+                        &access_token,
+                        heal_body,
+                        query_string,
+                        extra_headers,
+                        account_id.as_deref(),
+                    ),
+                )
+                .await;
+
+                match call_res {
+                    Ok(call_success) if call_success.response.status().is_success() => {
+                        let mapped = call_success
+                            .response
+                            .bytes_stream()
+                            .map(|res| res.map_err(|e| format!("{:?}", e)));
+                        Ok(Box::pin(mapped)
+                            as Pin<
+                                Box<dyn Stream<Item = Result<Bytes, String>> + Send>,
+                            >)
+                    }
+                    Ok(call_fail) => Err(format!("HTTP {}", call_fail.response.status())),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+        },
+    )
+}
+
+fn wrap_stream_with_empty_thinking_auto_heal_with_fetcher<S, E, F, Fut>(
+    stream: Pin<Box<S>>,
+    original_body: Value,
+    trace_id: String,
+    fetcher: F,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+    F: FnOnce(Value) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ContinuationStreamResult> + Send + 'static,
+{
     let stream = async_stream::stream! {
         let mut buffer = BytesMut::new();
         let mut saw_thought = false;
         let mut saw_content = false;
         let mut saw_tool_call = false;
-        let mut saw_finish_reason = false;
+        let mut saw_stop_finish_reason = false;
         let mut finish_reason_val: Option<String> = None;
 
         let mut stream1 = stream;
@@ -355,7 +417,11 @@ where
                         if line.starts_with("data: ") {
                             let json_part = line.trim_start_matches("data: ").trim();
                             if json_part == "[DONE]" {
-                                if saw_content || saw_tool_call {
+                                let should_withhold_done = saw_thought
+                                    && !saw_content
+                                    && !saw_tool_call
+                                    && saw_stop_finish_reason;
+                                if !should_withhold_done {
                                     yield Ok(Bytes::from("data: [DONE]\n\n"));
                                 }
                                 continue;
@@ -369,7 +435,7 @@ where
                                     } else {
                                         &mut json
                                     };
-                                    let mut chunk_has_finish = false;
+                                    let mut chunk_has_stop_finish = false;
                                     let mut chunk_has_parts = false;
 
                                     if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
@@ -386,9 +452,13 @@ where
                                                 }
                                             }
                                             if let Some(fr) = cand.get("finishReason").and_then(|f| f.as_str()) {
-                                                chunk_has_finish = true;
-                                                saw_finish_reason = true;
                                                 finish_reason_val = Some(fr.to_string());
+                                                // 仅 `STOP` 属于思考后过早结束（dropout）；
+                                                // `MAX_TOKENS` / `SAFETY` 等硬截断或风控终结符必须原样透传给下游
+                                                if fr == "STOP" {
+                                                    chunk_has_stop_finish = true;
+                                                    saw_stop_finish_reason = true;
+                                                }
                                             }
                                         }
                                     }
@@ -396,7 +466,7 @@ where
                                     if saw_content || saw_tool_call {
                                         // 正常回复流程：已看到正文或工具调用，原样放行
                                         yield Ok(Bytes::from(format!("data: {}\n\n", json_part)));
-                                    } else if saw_thought && chunk_has_finish {
+                                    } else if saw_thought && chunk_has_stop_finish {
                                         // 思考空回复异常候选帧：
                                         // 若当前帧还包含思考部件，清洗剥离 finishReason 与 usageMetadata 后放行思考，不发射终止信号
                                         if chunk_has_parts {
@@ -450,40 +520,27 @@ where
         // 1. 存在思考块 (saw_thought)
         // 2. 无任何正文 (saw_content == false)
         // 3. 无任何工具调用 (saw_tool_call == false)
-        // 4. 上游正常返回了结束符 (saw_finish_reason == true)
-        if saw_thought && !saw_content && !saw_tool_call && saw_finish_reason {
+        // 4. 上游以 `STOP` 过早结束 (saw_stop_finish_reason == true；MAX_TOKENS 等不触发自愈)
+        if saw_thought && !saw_content && !saw_tool_call && saw_stop_finish_reason {
             tracing::warn!(
                 "[{}] [Stream-AutoHeal] 🚨 Detected empty thinking completion (thought present, 0 content, 0 tool_calls, finishReason={:?}). Triggering auto-heal continuation 1/1...",
-                ctx.trace_id, finish_reason_val
+                trace_id, finish_reason_val
             );
 
             // 发射 SSE 心跳注释保持客户端下游连接存活
             yield Ok(Bytes::from(": auto-healing empty thinking\n\n"));
 
-            let prompt = resolve_continuation_prompt(&ctx.original_body);
-            let heal_body = create_auto_heal_continuation_body(&ctx.original_body, prompt);
+            let prompt = resolve_continuation_prompt(&original_body);
+            let heal_body = create_auto_heal_continuation_body(&original_body, prompt);
 
-            let call_res = crate::proxy::pipeline::budget::scope_optional(
-                ctx.budget.clone(),
-                ctx.upstream.call_v1_internal_with_headers(
-                    ctx.method,
-                    &ctx.access_token,
-                    heal_body,
-                    ctx.query_string,
-                    ctx.extra_headers.clone(),
-                    ctx.account_id.as_deref(),
-                ),
-            )
-            .await;
-
-            match call_res {
-                Ok(call_success) if call_success.response.status().is_success() => {
+            match fetcher(heal_body).await {
+                Ok(mut stream2) => {
                     tracing::info!(
                         "[{}] [Stream-AutoHeal] ✓ Continuation request succeeded (HTTP 200), piping healed stream directly into client connection...",
-                        ctx.trace_id
+                        trace_id
                     );
-                    let mut stream2 = call_success.response.bytes_stream();
                     let mut stream2_saw_output = false;
+                    let mut stream2_saw_non_stop_finish = false;
                     let mut s2_buffer = BytesMut::new();
 
                     while let Some(chunk_res) = stream2.next().await {
@@ -512,6 +569,11 @@ where
                                                         if s2_content || s2_tool {
                                                             stream2_saw_output = true;
                                                         }
+                                                        if let Some(fr) = cand.get("finishReason").and_then(|f| f.as_str()) {
+                                                            if fr != "STOP" {
+                                                                stream2_saw_non_stop_finish = true;
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -521,17 +583,17 @@ where
                                 yield Ok(bytes);
                             }
                             Err(e) => {
-                                tracing::warn!("[{}] [Stream-AutoHeal] Stream 2 read error: {:?}", ctx.trace_id, e);
+                                tracing::warn!("[{}] [Stream-AutoHeal] Stream 2 read error: {}", trace_id, e);
                                 break;
                             }
                         }
                     }
 
-                    // 兜底防御：若续跑流依然未产出任何可视正文或工具调用，注入微小兜底避免客户端崩溃
-                    if !stream2_saw_output {
+                    // 兜底防御：若续跑流依然未产出任何可视正文或工具调用且未出现非 STOP 终结符，注入微小兜底避免客户端崩溃
+                    if !stream2_saw_output && !stream2_saw_non_stop_finish {
                         tracing::warn!(
                             "[{}] [Stream-AutoHeal] Continuation stream also returned 0 output. Injecting fallback message to prevent client disconnect.",
-                            ctx.trace_id
+                            trace_id
                         );
                         let fallback_text = "task ready";
                         let fallback_chunk = format!(
@@ -549,31 +611,10 @@ where
                         yield Ok(Bytes::from(fallback_chunk));
                     }
                 }
-                Ok(call_fail) => {
-                    let status = call_fail.response.status();
-                    tracing::error!(
-                        "[{}] [Stream-AutoHeal] Continuation request returned HTTP {}. Injecting fallback message.",
-                        ctx.trace_id, status
-                    );
-                    let fallback_text = "task ready";
-                    let fallback_chunk = format!(
-                        "data: {}\n\n",
-                        serde_json::to_string(&json!({
-                            "candidates": [{
-                                "content": {
-                                    "parts": [{ "text": fallback_text }],
-                                    "role": "model"
-                                },
-                                "finishReason": "STOP"
-                            }]
-                        })).unwrap_or_default()
-                    );
-                    yield Ok(Bytes::from(fallback_chunk));
-                }
                 Err(e) => {
                     tracing::error!(
                         "[{}] [Stream-AutoHeal] Continuation request failed: {}. Injecting fallback message.",
-                        ctx.trace_id, e
+                        trace_id, e
                     );
                     let fallback_text = "task ready";
                     let fallback_chunk = format!(
@@ -866,5 +907,153 @@ mod tests {
             &mut flags,
         );
         assert!(again.is_none());
+    }
+
+    async fn collect_wrapped_stream(
+        chunks: Vec<&str>,
+        continuation_chunks: Option<Vec<&'static str>>,
+    ) -> (String, usize) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+
+        let owned_chunks: Vec<Result<Bytes, String>> = chunks
+            .into_iter()
+            .map(|c| Ok(Bytes::from(c.to_string())))
+            .collect();
+        let stream1 = Box::pin(futures::stream::iter(owned_chunks));
+        let original_body = json!({
+            "request": {
+                "contents": [{ "role": "user", "parts": [{ "text": "Compare quicksort and mergesort" }] }]
+            }
+        });
+
+        let wrapped = wrap_stream_with_empty_thinking_auto_heal_with_fetcher(
+            stream1,
+            original_body,
+            "test-trace".to_string(),
+            move |_heal_body| {
+                let calls_inner = calls_clone.clone();
+                let cont = continuation_chunks.clone();
+                async move {
+                    calls_inner.fetch_add(1, Ordering::SeqCst);
+                    match cont {
+                        Some(lines) => {
+                            let iter = lines
+                                .into_iter()
+                                .map(|s| Ok::<Bytes, String>(Bytes::from_static(s.as_bytes())));
+                            Ok(Box::pin(futures::stream::iter(iter))
+                                as Pin<
+                                    Box<dyn Stream<Item = Result<Bytes, String>> + Send>,
+                                >)
+                        }
+                        None => Err("unexpected continuation call".to_string()),
+                    }
+                }
+            },
+        );
+
+        let collected = wrapped
+            .map(|r| String::from_utf8_lossy(&r.unwrap()).to_string())
+            .collect::<Vec<_>>()
+            .await
+            .join("");
+        (collected, calls.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn test_max_tokens_after_thinking_only_preserves_finish_reason_and_skips_auto_heal() {
+        let chunks = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking step 1\"}],\"role\":\"model\"}}]}\n\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking step 2\"}],\"role\":\"model\"},\"finishReason\":\"MAX_TOKENS\"}],\"usageMetadata\":{\"candidatesTokenCount\":500}}\n\n",
+            "data: [DONE]\n\n",
+        ];
+
+        let (output, heal_calls) = collect_wrapped_stream(chunks, None).await;
+        assert_eq!(heal_calls, 0, "MAX_TOKENS must NOT trigger auto-heal");
+        assert!(
+            output.contains("\"finishReason\":\"MAX_TOKENS\""),
+            "MAX_TOKENS finishReason must be preserved, got: {}",
+            output
+        );
+        assert!(
+            output.contains("\"usageMetadata\""),
+            "usageMetadata must be preserved, got: {}",
+            output
+        );
+        assert!(
+            output.contains("data: [DONE]"),
+            "[DONE] must be forwarded on MAX_TOKENS, got: {}",
+            output
+        );
+        assert!(
+            !output.contains("task ready"),
+            "task ready fallback must NOT be injected on MAX_TOKENS, got: {}",
+            output
+        );
+        assert!(
+            !output.contains(": auto-healing empty thinking"),
+            "auto-heal heartbeat must NOT be emitted on MAX_TOKENS, got: {}",
+            output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_after_thinking_only_triggers_auto_heal_once() {
+        let chunks = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking...\"}],\"role\":\"model\"}}]}\n\n",
+            "data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"candidatesTokenCount\":12}}\n\n",
+            "data: [DONE]\n\n",
+        ];
+        let cont = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ];
+
+        let (output, heal_calls) = collect_wrapped_stream(chunks, Some(cont)).await;
+        assert_eq!(
+            heal_calls, 1,
+            "STOP after thinking-only must trigger auto-heal"
+        );
+        assert!(output.contains(": auto-healing empty thinking"));
+        assert!(output.contains("\"text\":\"Hello\""));
+        assert!(!output.contains("task ready"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_auto_heal_stream2_max_tokens_does_not_inject_task_ready() {
+        let chunks = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking...\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ];
+        let cont = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"More thinking\"}],\"role\":\"model\"},\"finishReason\":\"MAX_TOKENS\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ];
+
+        let (output, heal_calls) = collect_wrapped_stream(chunks, Some(cont)).await;
+        assert_eq!(heal_calls, 1);
+        assert!(output.contains("\"finishReason\":\"MAX_TOKENS\""));
+        assert!(
+            !output.contains("task ready"),
+            "stream2 MAX_TOKENS already has terminal finishReason, must not inject task ready: {}",
+            output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_auto_heal_stream2_empty_stop_injects_task_ready() {
+        let chunks = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking...\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ];
+        let cont = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Still thinking\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ];
+
+        let (output, heal_calls) = collect_wrapped_stream(chunks, Some(cont)).await;
+        assert_eq!(heal_calls, 1);
+        assert!(output.contains("task ready"));
     }
 }
