@@ -172,6 +172,12 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         enabled: true,
     },
     {
+        id: "preset-claude-code-agent",
+        pattern: "You are an interactive agent that helps users with software engineering tasks*",
+        replacement: "",
+        enabled: true,
+    },
+    {
         id: "preset-opencode-session-move",
         pattern: "*tools.opencode.session*move*",
         replacement: "tools.opencode.session_relocate",
