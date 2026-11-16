@@ -378,6 +378,8 @@ pub fn get_auth_url_with_client(
         "https://www.googleapis.com/auth/userinfo.profile",
         "https://www.googleapis.com/auth/cclog",
         "https://www.googleapis.com/auth/experimentsandconfigs",
+        // Required by recent official AGY CLI releases (e.g. v1.5.x).
+        "https://www.googleapis.com/auth/aicode",
     ]
     .join(" ");
 
@@ -842,6 +844,32 @@ mod tests {
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
         assert!(url.contains("response_type=code"));
+    }
+
+    #[test]
+    fn test_get_auth_url_requests_aicode_scope() {
+        for client_key in [BUILTIN_ENTERPRISE_CLIENT_KEY, BUILTIN_GCP_CLIENT_KEY] {
+            let (auth_url, _) = get_auth_url_with_client(
+                "http://localhost:8080/callback",
+                "test-state",
+                Some(client_key),
+            )
+            .expect("OAuth authorization URL should be generated");
+
+            let parsed_url = url::Url::parse(&auth_url).expect("OAuth URL should be valid");
+            let scopes = parsed_url
+                .query_pairs()
+                .find(|(name, _)| name == "scope")
+                .map(|(_, value)| value.into_owned())
+                .expect("OAuth authorization URL should include scopes");
+
+            assert!(
+                scopes
+                    .split_whitespace()
+                    .any(|scope| scope == "https://www.googleapis.com/auth/aicode"),
+                "OAuth client {client_key} must request the aicode scope"
+            );
+        }
     }
 
     #[test]
