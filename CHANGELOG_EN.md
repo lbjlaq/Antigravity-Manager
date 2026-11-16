@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.14 (2026-11-16)**:
+        -   **[Comprehensive Upstream WAF Fake 429 Neutralization & Rule System Enhancement] (Fixes #3969, Ref #3975, Fixes #3972)**:
+            -   **Neutralize OpenCode Session-Move Directives**: Sanitized Google Cloud Code upstream WAF heuristic triggers targeting OpenCode session migration directives (`tools.opencode.session-move` and `tools.opencode.session_move`), ensuring safe renaming across plain text and inline backticks while strictly preserving multiline fenced code blocks, eliminating fake 429 RESOURCE_EXHAUSTED errors. (Fixes #3969, Ref #3975)
+            -   **Cover Inline Backticks in Rewrite Rules**: Refactored code block isolation from generic backtick matching to multiline fenced code block isolation (`RE_FENCED_CODE_BLOCK`), allowing custom and recommended preset rewrite rules to sanitize sensitive directives within inline backticks without blind spots. (Fixes #3969)
+            -   **Neutralize Claude Code Interactive Agent Preamble**: Sanitized and normalized the preamble sentence injected by standalone Claude Code CLI (`You are an interactive agent that helps users with software engineering tasks`) into official Antigravity identity, and added builtin preset `preset-claude-code-agent` to eliminate upstream WAF fake 429 blocks. (Fixes #3972)
+
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[Neutralize Upstream WAF Prompt Triggers & Decouple Model Quota Normalization] (Fixes #3965)**:
             -   **Neutralize Agent Tool Directives Against Fake 429**: High-precision neutralization for Google Cloud Code upstream WAF heuristic triggers targeting third-party agent templates (e.g. Kelivo, Hermes Agent) with tool guidelines (`Prefer read_file, edit_file, and write_file over cat/sed`), preserving fenced code blocks while completely eliminating fake 429 RESOURCE_EXHAUSTED upstream responses. (Fixes #3965)

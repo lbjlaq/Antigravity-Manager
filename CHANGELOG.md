@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.14 (2026-11-16)**:
+        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972)**:
+            -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975)
+            -   **提示词重写规则支持行内反引号**: 重构围栏代码块隔离逻辑，由通配代码正则精细化收敛为多行围栏代码块隔离（`RE_FENCED_CODE_BLOCK`），使行内反引号中的敏感指令能被自定义规则与官方预设规则正常命中清洗，消除规则盲区。(Fixes #3969)
+            -   **Claude Code 独立版交互式 Agent 特征中和**: 针对最新版 Claude Code CLI 默认注入的提示词特征首句（`You are an interactive agent that helps users with software engineering tasks`）引发上游 WAF 假 429 拦截的问题，将其无缝对齐至官方 Antigravity 身份并内置全新预设清理规则 `preset-claude-code-agent`，保障 Claude Code 与 Claude Agent SDK 原生交互畅通无阻。(Fixes #3972)
+
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[上游 WAF 特征提示词中和与模型配额归一化修复] (Fixes #3965)**:
             -   **中和第三方 Agent 工具指令特征防伪 429**: 针对 Google Cloud Code 上游 WAF 针对特定第三方 Agent 模板（如 Kelivo、Hermes Agent 等）的启发式指令拦截（`Prefer read_file, edit_file, and write_file over cat/sed` 等模式），在单趟保护代码块的前提下对非代码区域进行高精度中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3965)
