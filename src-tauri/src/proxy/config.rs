@@ -530,6 +530,12 @@ impl PromptRewriteConfig {
                 true,
             ),
             PromptRewriteRule::new(
+                "preset-claude-code-agent",
+                "You are an interactive agent that helps users with software engineering tasks*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
                 "preset-opencode-session-move",
                 "*tools.opencode.session*move*",
                 "tools.opencode.session_relocate",

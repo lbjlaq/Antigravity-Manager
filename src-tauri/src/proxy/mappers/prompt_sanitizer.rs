@@ -72,7 +72,8 @@ static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
         r"|^\s*x-[a-z0-9_-]+:\s*[^\r\n]*(?:cc_version|cc_entrypoint|cc_workload|cc_is_subagent|cc_prev_req|cc_prompt_id|cc_turn_origin|cch=)[^\r\n]*(\r?\n)?",
         r"|(?i)x-anthropic-billing-header:\s*[^\r\n]*",
         r"|(?i)You are a Claude agent, built on Anthropic's Claude Agent SDK\.(\r?\n)?",
-        r"|(?i)You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK\.(\r?\n)?"
+        r"|(?i)You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK\.(\r?\n)?",
+        r"|(?i)You are an interactive agent that helps users with software engineering tasks\.[^\r\n]*(\r?\n)?"
     ))
     .unwrap()
 });
@@ -333,6 +334,7 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
         r"(?i)\b(?:you\s+are|you're)\s+(?:",
         r"claude\s+code[\s,，]+(?:anthropic's\s+)?official\s+cli\s+for\s+claude(?:[\s,，]+running\s+within\s+(?:the\s+)?claude\s+agent\s+sdk)?",
+        r"|(?:an?\s+)?interactive\s+(?:agent|cli\s+tool)(?:\s+that\s+helps\s+users\s+with\s+software\s+engineering\s+tasks)?",
         r"|opencode(?:\s*,\s*an?\s+interactive\s+cli\s+tool(?:\s+that\s+helps\s+users\s+with\s+software\s+engineering\s+tasks)?)?",
         r"|(?:an?\s+)?personal\s+assistant\s+running\s+(?:inside|in|within)\s+openclaw",
         r"|openclaw",
@@ -468,6 +470,8 @@ const IDENTITY_FAST_MARKERS: &[&str] = &[
     // 知名第三方客户端与平台特征指纹
     "claude code",
     "claude agent",
+    "interactive agent",
+    "software engineering",
     "opencode",
     "openclaw",
     "cursor",
@@ -535,6 +539,9 @@ const CLAUDE_CODE_CLI_IDENTITY: &str = "You are Claude Code, Anthropic's officia
 /// Claude Code CLI 在 Claude Agent SDK 运行时注入的身份声明（整串等值匹配）
 const CLAUDE_AGENT_SDK_CLI_IDENTITY: &str =
     "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.";
+/// Claude Code 最新独立版注入的交互式 Agent 声明
+const CLAUDE_INTERACTIVE_AGENT_IDENTITY: &str =
+    "You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.";
 
 /// Claude Desktop 注入的单行计费元数据前缀（issue #3452：与大量工具组合会触发上游 429）。
 /// 判定**不区分 model** —— 任何客户端注入的风险元数据都必须清洗。
@@ -718,7 +725,9 @@ impl PromptSanitizer {
             || lower.contains("operational guidelines")
             || lower.contains("opencode")
             || lower.contains("session-move")
-            || lower.contains("session_move");
+            || lower.contains("session_move")
+            || lower.contains("interactive agent")
+            || lower.contains("software engineering tasks");
 
         if !has_suspect {
             return text.to_string();
@@ -1069,6 +1078,7 @@ impl PromptSanitizer {
     /// 2. 物理剔除清洗后产生的纯空文本 Part（避免上游 400/429 报错）；
     /// 3. 清洗后若存在思考块，强制保序确保思考块严格位于首位 (Index 0)；
     /// 4. `scope_of` 按 part 下标裁定清洗强度（System / Anchored / Content）。
+    ///
     /// 客户端身份归一化：已知客户端身份（Claude Agent SDK / Claude Code CLI）对齐为官方 Antigravity 身份。
     pub fn normalize_client_identity(text: &str) -> &str {
         if !Self::normalize_identity_enabled() {
@@ -1077,6 +1087,10 @@ impl PromptSanitizer {
         if text == CLAUDE_AGENT_SDK_IDENTITY
             || text == CLAUDE_CODE_CLI_IDENTITY
             || text == CLAUDE_AGENT_SDK_CLI_IDENTITY
+            || text == CLAUDE_INTERACTIVE_AGENT_IDENTITY
+            || text.starts_with(
+                "You are an interactive agent that helps users with software engineering tasks",
+            )
         {
             OFFICIAL_ANTIGRAVITY_IDENTITY
         } else {
@@ -4199,6 +4213,14 @@ mod tests {
             .unwrap_or_else(|| session_raw.to_string());
         assert!(!rewritten_session.contains("tools.opencode.session-move"));
         assert!(rewritten_session.contains("tools.opencode.session_relocate"));
+
+        // 6. Claude Code 独立版 interactive agent 预设规则整行清除
+        let cc_raw = "You are an interactive agent that helps users with software engineering tasks. Use the instructions below.\nNext line.";
+        let rewritten_cc = PromptSanitizer::rewrite_text_with_rules(cc_raw, &compiled)
+            .unwrap_or_else(|| cc_raw.to_string());
+        assert!(!rewritten_cc
+            .contains("interactive agent that helps users with software engineering tasks"));
+        assert!(rewritten_cc.contains("Next line."));
     }
 
     // ============================ issue #3965：中和触发上游 WAF 伪 429 拦截的第三方 Agent 特征指令 ============================
@@ -4314,5 +4336,40 @@ mod tests {
         let cleaned_unclosed = PromptSanitizer::clean_text(unclosed);
         assert!(!cleaned_unclosed.contains("tools.opencode.session-move"));
         assert!(cleaned_unclosed.contains("tools.opencode.session_relocate"));
+    }
+
+    // ============================ issue #3972：中和 Claude Code 独立版 interactive agent 触发 WAF 伪 429 ============================
+
+    #[test]
+    fn test_issue_3972_claude_code_interactive_agent_normalized_and_sanitized() {
+        let raw = concat!(
+            "You are an interactive agent that helps users with software engineering tasks. ",
+            "Use the instructions below and the tools available to you to assist the user.\n\n",
+            "# Rules\n",
+            "Rule 1: Always check tests."
+        );
+
+        // 1. 验证身份归一化管线将其对齐为官方 Antigravity 身份
+        let normalized = PromptSanitizer::normalize_system_identity(raw);
+        assert!(normalized.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(!normalized.contains(
+            "You are an interactive agent that helps users with software engineering tasks"
+        ));
+        assert!(normalized.contains(
+            "Use the instructions below and the tools available to you to assist the user."
+        ));
+
+        // 2. 验证单独传入作为 client identity 块时也能被归一化
+        let standalone = "You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.";
+        assert_eq!(
+            PromptSanitizer::normalize_client_identity(standalone),
+            OFFICIAL_ANTIGRAVITY_IDENTITY
+        );
+
+        // 3. 验证 clean_text 在仅有 Header 轨时能够剔除该行
+        let cleaned = PromptSanitizer::clean_text(raw);
+        assert!(!cleaned.contains(
+            "You are an interactive agent that helps users with software engineering tasks"
+        ));
     }
 }
