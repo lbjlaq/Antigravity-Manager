@@ -608,6 +608,9 @@ pub fn run() {
             // Initialize log bridge with app handle for debug console
             modules::log_bridge::init_log_bridge(app.handle().clone());
 
+            // Initialize prompt intercept with app handle
+            proxy::prompt_intercept::init_prompt_intercept(app.handle().clone());
+
             // 为主窗口显式设置应用图标（强制触发 Win32 WM_SETICON，防止透明/覆盖标题栏窗口在任务栏丢失图标）
             #[cfg(not(target_os = "macos"))]
             if let Some(window) = app.get_webview_window("main") {
@@ -921,6 +924,7 @@ pub fn run() {
             commands::proxy::check_hub_update,
             commands::proxy::get_effective_first_byte_timeouts,
             commands::proxy::get_effective_timeout_config,
+            commands::proxy::resolve_prompt_intercept,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
             // Proxy Pool Binding commands

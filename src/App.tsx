@@ -14,6 +14,7 @@ import UserToken from './pages/UserToken';
 import { ApiKeyFun } from './pages/ApiKeyFun';
 import { UpdateNotification } from './components/UpdateNotification';
 import SuggestionDeleteThinkingModal from './components/common/SuggestionDeleteThinkingModal';
+import PromptInterceptDialog from './components/proxy/PromptInterceptDialog';
 import DebugConsole from './components/debug/DebugConsole';
 import { useEffect, useState } from 'react';
 import { useConfigStore, normalizeLanguageCode } from './stores/useConfigStore';
@@ -371,6 +372,7 @@ function App() {
       <ZoomManager />
       <DebugConsole />
       <SuggestionDeleteThinkingModal />
+      <PromptInterceptDialog />
       {showUpdateNotification && (
         <UpdateNotification onClose={() => setShowUpdateNotification(false)} />
       )}

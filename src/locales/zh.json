@@ -1842,6 +1842,25 @@
             "hint_escape": "支持转义：\\n 换行、\\t 制表符、\\\\ 反斜杠、\\* 字面星号。",
             "hint_order": "规则按从上到下顺序执行；只作用于首个真实 user 提问前的提示词块，代码块自动豁免。"
         },
+        "prompt_intercept": {
+            "title": "未识别客户端提示词拦截",
+            "subtitle": "检测到下游客户端携带未匹配规则的身份或提示词，已为您临时挂起请求以防上游假 429 报错。",
+            "detected_sentence": "检测到的首句身份 / 指令",
+            "official_identity": "官方 Antigravity 身份声明",
+            "timeout_warning": "倒计时 {{seconds}}s（超时默认自动“在前面添加”）",
+            "target_model": "请求模型",
+            "client_ip": "来源 IP",
+            "action_prepend": "在前面添加",
+            "action_prepend_desc": "保留原首句，强制在其前面追加官方 Antigravity 声明（推荐）",
+            "action_replace_and_remember": "替换并记住",
+            "action_replace_and_remember_desc": "替换首句为官方声明，并永久存入重写规则",
+            "action_allow_and_remember": "放行并记住",
+            "action_allow_and_remember_desc": "原样放行给上游，并永久将其加入白名单",
+            "action_replace_once": "本次替换",
+            "action_replace_once_desc": "仅对本次请求替换首句（不修改配置）",
+            "action_allow_once": "本次放行",
+            "action_allow_once_desc": "仅对本次请求原样放行（不修改配置）"
+        },
         "multimodal": {
             "banner_title": "多模态交互与长程保鲜治理 (Pipeline First)",
             "banner_desc": "针对长程多模态 Agent（如 Codex、Claude Code、Cursor）频繁查看截图或文档的场景，提供协议无关的多模态历史保鲜滑窗与物理内存防爆治理，彻底根治会话历史因累积图片过多引发的 400 阻断崩溃与 Token 急速膨胀。",

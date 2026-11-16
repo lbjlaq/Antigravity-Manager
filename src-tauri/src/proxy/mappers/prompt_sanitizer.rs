@@ -3965,6 +3965,8 @@ mod tests {
         PromptRewriteConfig {
             enabled: true,
             normalize_identity: true,
+            intercept_unknown_prompts: true,
+            allowlist: Vec::new(),
             rules: rules
                 .into_iter()
                 .enumerate()
@@ -4172,6 +4174,8 @@ mod tests {
         let preset_config = PromptRewriteConfig {
             enabled: true,
             normalize_identity: true,
+            intercept_unknown_prompts: true,
+            allowlist: Vec::new(),
             rules: PromptRewriteConfig::recommended_preset_rules(),
         };
 

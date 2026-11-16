@@ -160,6 +160,10 @@ export interface PromptRewriteConfig {
     enabled: boolean;
     /** 是否启用内置身份归一化（默认 true） */
     normalize_identity?: boolean;
+    /** 是否开启未知异常提示词拦截弹窗机制（默认 true） */
+    intercept_unknown_prompts?: boolean;
+    /** 记住的放行白名单 */
+    allowlist?: string[];
     rules: PromptRewriteRule[];
 }
 

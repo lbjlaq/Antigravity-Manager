@@ -1482,12 +1482,20 @@ impl UpstreamClient {
             crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
                 inner,
             );
+            crate::proxy::prompt_intercept::check_and_intercept_payload(inner, Some(method), None)
+                .await;
             crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(inner);
         } else {
             crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(&mut body);
             crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
                 &mut body,
             );
+            crate::proxy::prompt_intercept::check_and_intercept_payload(
+                &mut body,
+                Some(method),
+                None,
+            )
+            .await;
             crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut body);
         }
         if method == "countTokens" {

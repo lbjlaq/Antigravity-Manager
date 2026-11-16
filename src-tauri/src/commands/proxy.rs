@@ -1165,6 +1165,12 @@ pub async fn detect_remote_hub_fingerprint(
     Ok(fp)
 }
 
+/// 响应并释放未知提示词拦截挂起
+#[tauri::command]
+pub async fn resolve_prompt_intercept(id: String, action: String) -> Result<(), String> {
+    crate::proxy::prompt_intercept::resolve_prompt_intercept(id, action).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

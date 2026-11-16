@@ -515,6 +515,12 @@ pub struct PromptRewriteConfig {
     /// 是否启用内置身份归一化（默认 true）。关闭后保留客户端原始身份句，只执行用户自定义规则。
     #[serde(default = "default_true")]
     pub normalize_identity: bool,
+    /// 是否开启未知异常提示词拦截弹窗机制（默认 true）
+    #[serde(default = "default_true")]
+    pub intercept_unknown_prompts: bool,
+    /// 记住的放行白名单（存入允许通过的模式）
+    #[serde(default)]
+    pub allowlist: Vec<String>,
     #[serde(default = "PromptRewriteConfig::recommended_preset_rules")]
     pub rules: Vec<PromptRewriteRule>,
 }
@@ -575,6 +581,8 @@ impl Default for PromptRewriteConfig {
         Self {
             enabled: true,
             normalize_identity: true,
+            intercept_unknown_prompts: true,
+            allowlist: Vec::new(),
             rules: Self::recommended_preset_rules(),
         }
     }

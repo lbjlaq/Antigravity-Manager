@@ -1848,6 +1848,25 @@
             "hint_escape": "Escapes: \\n newline, \\t tab, \\\\ backslash, \\* literal star.",
             "hint_order": "Rules run top to bottom; only prompt blocks before the first real user message are touched, code blocks are exempt."
         },
+        "prompt_intercept": {
+            "title": "Unrecognized Client Prompt Intercepted",
+            "subtitle": "An unmapped client identity or directive was detected. The request has been suspended to prevent upstream fake 429 errors.",
+            "detected_sentence": "Detected First Sentence / Directive",
+            "official_identity": "Official Antigravity Identity Declaration",
+            "timeout_warning": "Auto-default in {{seconds}}s (defaults to Prepend)",
+            "target_model": "Target Model",
+            "client_ip": "Client IP",
+            "action_prepend": "Prepend",
+            "action_prepend_desc": "Keep original text and prepend official Antigravity identity (Recommended)",
+            "action_replace_and_remember": "Replace & Remember",
+            "action_replace_and_remember_desc": "Replace with official identity and save to persistent rewrite rules",
+            "action_allow_and_remember": "Allow & Remember",
+            "action_allow_and_remember_desc": "Pass as-is to upstream and save to persistent allowlist",
+            "action_replace_once": "Replace Once",
+            "action_replace_once_desc": "Replace with official identity for this request only",
+            "action_allow_once": "Allow Once",
+            "action_allow_once_desc": "Pass as-is to upstream for this request only"
+        },
         "multimodal": {
             "banner_title": "Multimodal Interaction & Longevity Governance (Pipeline First)",
             "banner_desc": "Designed for long-horizon multimodal agents (Codex, Claude Code, Cursor) that frequently inspect screenshots and files. Provides protocol-agnostic sliding-window freshness and memory explosion safeguards, preventing 400 errors and token inflation from accumulated historical images.",

@@ -23,6 +23,7 @@ import { getAccountTier, type Account } from '../../types/account';
 import { isAccountAbnormal } from '../../utils/accountStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isArgonModel } from '../../utils/modelCategory';
+import PromptInterceptDialog from '../proxy/PromptInterceptDialog';
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
 import { useConfigStore } from '../../stores/useConfigStore';
 
@@ -1086,6 +1087,7 @@ export default function MiniView() {
                         <Power size={13} />
                     </button>
                 </div>
+            <PromptInterceptDialog />
         </div>
     );
 }
