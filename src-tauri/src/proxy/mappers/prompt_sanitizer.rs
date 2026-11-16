@@ -73,25 +73,28 @@ static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
         r"|(?i)x-anthropic-billing-header:\s*[^\r\n]*",
         r"|(?i)You are a Claude agent, built on Anthropic's Claude Agent SDK\.(\r?\n)?",
         r"|(?i)You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK\.(\r?\n)?",
-        r"|(?i)You are an interactive agent that helps users with software engineering tasks\.[^\r\n]*(\r?\n)?"
+        r"|(?i)You are an interactive agent that helps users with software engineering tasks\.[^\r\n]*(\r?\n)?",
+        r"|(?i)You are an agent working with the user toward their goals[^\r\n]*(\r?\n)?"
     ))
     .unwrap()
 });
 
-/// 触发上游 Google WAF 伪 429 拦截的第三方 Agent 特征指令与规范特征正则（Issue #3965, #3969，仅在非多行围栏代码区域生效）
+/// 触发上游 Google WAF 伪 429 拦截的第三方 Agent 特征指令与规范特征正则（Issue #3965, #3969, #3972，仅在非多行围栏代码区域生效）
 /// Google Cloud Code WAF 会对特定 Agent 模板中的高频特征指令进行启发式拦截，返回伪造的 429 RESOURCE_EXHAUSTED：
 /// 1) `Prefer read_file, edit_file, and write_file over cat/sed`
 /// 2) `Always read_file before edit_file`
 /// 3) `call read_file on its SKILL.md`
 /// 4) `Google model operational directives / guidelines`
 /// 5) `tools.opencode.session-move` / `tools.opencode.session_move` (Issue #3969, #3975)
+/// 6) `the user did not write` (Issue #3972)
 static RE_WAF_TRIGGER_AGENT_TOOL_GUIDELINES: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
         r"(?i)\bprefer\s+(?:the\s+)?read_file,\s*edit_file,?\s+and\s+write_file\s+over\s+cat/sed\b",
         r"|(?i)\balways\s+read_file\s+before\s+edit_file\b",
         r"|(?i)\bcall\s+read_file\s+on\s+(?:its\s+)?SKILL\.md\b",
         r"|(?i)\bGoogle\s+model\s+operational\s+(?:directives|guidelines)\b",
-        r"|(?i)\btools\.opencode\.session[-_]move\b"
+        r"|(?i)\btools\.opencode\.session[-_]move\b",
+        r"|(?i)\bthe\s+user\s+did\s+not\s+write\b"
     ))
     .unwrap()
 });
@@ -335,6 +338,7 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         r"(?i)\b(?:you\s+are|you're)\s+(?:",
         r"claude\s+code[\s,，]+(?:anthropic's\s+)?official\s+cli\s+for\s+claude(?:[\s,，]+running\s+within\s+(?:the\s+)?claude\s+agent\s+sdk)?",
         r"|(?:an?\s+)?interactive\s+(?:agent|cli\s+tool)(?:\s+that\s+helps\s+users\s+with\s+software\s+engineering\s+tasks)?",
+        r"|(?:an?\s+)?agent\s+working\s+with\s+(?:the\s+)?user\s+toward\s+(?:their\s+)?goals(?:\s*,\s*using\s+(?:your\s+)?own\s+judgment\s+along\s+the\s+way)?",
         r"|opencode(?:\s*,\s*an?\s+interactive\s+cli\s+tool(?:\s+that\s+helps\s+users\s+with\s+software\s+engineering\s+tasks)?)?",
         r"|(?:an?\s+)?personal\s+assistant\s+running\s+(?:inside|in|within)\s+openclaw",
         r"|openclaw",
@@ -472,6 +476,8 @@ const IDENTITY_FAST_MARKERS: &[&str] = &[
     "claude agent",
     "interactive agent",
     "software engineering",
+    "toward their goals",
+    "working with the user",
     "opencode",
     "openclaw",
     "cursor",
@@ -542,6 +548,9 @@ const CLAUDE_AGENT_SDK_CLI_IDENTITY: &str =
 /// Claude Code 最新独立版注入的交互式 Agent 声明
 const CLAUDE_INTERACTIVE_AGENT_IDENTITY: &str =
     "You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.";
+/// Claude Code 最新目标导向 Agent 声明
+const CLAUDE_GOALS_AGENT_IDENTITY: &str =
+    "You are an agent working with the user toward their goals, using your own judgment along the way.";
 
 /// Claude Desktop 注入的单行计费元数据前缀（issue #3452：与大量工具组合会触发上游 429）。
 /// 判定**不区分 model** —— 任何客户端注入的风险元数据都必须清洗。
@@ -727,7 +736,10 @@ impl PromptSanitizer {
             || lower.contains("session-move")
             || lower.contains("session_move")
             || lower.contains("interactive agent")
-            || lower.contains("software engineering tasks");
+            || lower.contains("software engineering tasks")
+            || lower.contains("toward their goals")
+            || lower.contains("working with the user")
+            || lower.contains("user did not write");
 
         if !has_suspect {
             return text.to_string();
@@ -769,6 +781,12 @@ impl PromptSanitizer {
                     "Model operational guidelines".to_string()
                 } else if lower.contains("session") {
                     "tools.opencode.session_relocate".to_string()
+                } else if lower.contains("user did not write") {
+                    if matched.starts_with('T') {
+                        "The operator did not author".to_string()
+                    } else {
+                        "the operator did not author".to_string()
+                    }
                 } else {
                     matched.to_string()
                 }
@@ -1088,9 +1106,12 @@ impl PromptSanitizer {
             || text == CLAUDE_CODE_CLI_IDENTITY
             || text == CLAUDE_AGENT_SDK_CLI_IDENTITY
             || text == CLAUDE_INTERACTIVE_AGENT_IDENTITY
-            || text.starts_with(
-                "You are an interactive agent that helps users with software engineering tasks",
-            )
+            || text == CLAUDE_GOALS_AGENT_IDENTITY
+            || (!text.contains('\n')
+                && (text.starts_with(
+                    "You are an interactive agent that helps users with software engineering tasks",
+                ) || text
+                    .starts_with("You are an agent working with the user toward their goals")))
         {
             OFFICIAL_ANTIGRAVITY_IDENTITY
         } else {
@@ -4221,6 +4242,21 @@ mod tests {
         assert!(!rewritten_cc
             .contains("interactive agent that helps users with software engineering tasks"));
         assert!(rewritten_cc.contains("Next line."));
+
+        // 7. Claude Code 目标导向 agent 预设规则整行清除
+        let cc_goals = "You are an agent working with the user toward their goals, using your own judgment along the way.\nNext line.";
+        let rewritten_goals = PromptSanitizer::rewrite_text_with_rules(cc_goals, &compiled)
+            .unwrap_or_else(|| cc_goals.to_string());
+        assert!(!rewritten_goals.contains("toward their goals"));
+        assert!(rewritten_goals.contains("Next line."));
+
+        // 8. Claude Code "the user did not write" 短语预设规则精准替换（不误删同行其余内容）
+        let cc_write = "Keep code that the user did not write intact.\nNext line.";
+        let rewritten_write = PromptSanitizer::rewrite_text_with_rules(cc_write, &compiled)
+            .unwrap_or_else(|| cc_write.to_string());
+        assert!(!rewritten_write.contains("the user did not write"));
+        assert!(rewritten_write.contains("Keep code that the operator did not author intact."));
+        assert!(rewritten_write.contains("Next line."));
     }
 
     // ============================ issue #3965：中和触发上游 WAF 伪 429 拦截的第三方 Agent 特征指令 ============================
@@ -4371,5 +4407,102 @@ mod tests {
         assert!(!cleaned.contains(
             "You are an interactive agent that helps users with software engineering tasks"
         ));
+    }
+
+    #[test]
+    fn test_issue_3972_claude_code_goals_agent_normalized_and_sanitized() {
+        let goals_raw = "You are an agent working with the user toward their goals, using your own judgment along the way.\n\n# Rules\nBe helpful.";
+
+        // 1. System 轨归一化：首句替换为官方身份，后续段落完整保留
+        let goals_normalized = PromptSanitizer::normalize_system_identity(goals_raw);
+        assert!(goals_normalized.starts_with(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(!goals_normalized.contains("toward their goals"));
+        assert!(goals_normalized.contains("# Rules\nBe helpful."));
+
+        // 2. 单行客户端身份块命中等值/前缀对齐；多行复合块绝不能截断后续指令
+        assert_eq!(
+            PromptSanitizer::normalize_client_identity(
+                "You are an agent working with the user toward their goals, using your own judgment along the way."
+            ),
+            OFFICIAL_ANTIGRAVITY_IDENTITY
+        );
+        assert_eq!(
+            PromptSanitizer::normalize_client_identity(goals_raw),
+            goals_raw
+        );
+
+        // 3. Header 轨清洗：剔除指纹行且保留 # Rules
+        let goals_cleaned = PromptSanitizer::clean_text(goals_raw);
+        assert!(!goals_cleaned.contains("toward their goals"));
+        assert!(goals_cleaned.contains("# Rules\nBe helpful."));
+
+        // 4. 整包 Gemini 报文清洗验证（含多行 systemInstruction + 围栏代码块豁免）
+        let mut payload = serde_json::json!({
+            "request": {
+                "systemInstruction": {
+                    "parts": [
+                        { "text": goals_raw },
+                        { "text": "```\nYou are an agent working with the user toward their goals, using your own judgment along the way.\n```" }
+                    ]
+                },
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "hi" }] }
+                ]
+            }
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys_parts = payload["request"]["systemInstruction"]["parts"]
+            .as_array()
+            .unwrap();
+        let joined = sys_parts
+            .iter()
+            .filter_map(|p| p["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("# Rules\nBe helpful."));
+        assert!(joined.contains("```\nYou are an agent working with the user toward their goals"));
+        // 非代码部分必须被清洗
+        let first_part = sys_parts[0]["text"].as_str().unwrap();
+        assert!(!first_part.contains("toward their goals"));
+    }
+
+    #[test]
+    fn test_issue_3972_user_did_not_write_neutralized_with_fenced_code_exemption() {
+        let raw = concat!(
+            "Do not delete sections that the user did not write unless asked.\n",
+            "The user did not write this boilerplate.\n",
+            "```\n",
+            "# Fenced code stays verbatim:\n",
+            "\"the user did not write\"\n",
+            "```"
+        );
+
+        let cleaned = PromptSanitizer::clean_text(raw);
+        assert!(!cleaned.contains("that the user did not write"));
+        assert!(cleaned.contains("that the operator did not author unless asked."));
+        assert!(cleaned.contains("The operator did not author this boilerplate."));
+        assert!(
+            cleaned.contains("```\n# Fenced code stays verbatim:\n\"the user did not write\"\n```")
+        );
+
+        // 验证多轮后 contents 中的 <system-reminder> 同样走 Header 轨中和
+        let mut payload = serde_json::json!({
+            "request": {
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "hello" }] },
+                    { "role": "model", "parts": [{ "text": "hi" }] },
+                    { "role": "user", "parts": [{ "text": "<system-reminder>\nDo not edit lines the user did not write.\n</system-reminder>\nPlease check foo.rs" }] }
+                ]
+            }
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let last_user_text = payload["request"]["contents"][2]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(!last_user_text
+            .to_lowercase()
+            .contains("the user did not write"));
+        assert!(last_user_text.contains("the operator did not author"));
+        assert!(last_user_text.contains("Please check foo.rs"));
     }
 }

@@ -178,6 +178,18 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         enabled: true,
     },
     {
+        id: "preset-claude-code-goals",
+        pattern: "You are an agent working with the user toward their goals*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-claude-user-did-not-write",
+        pattern: "the user did not write",
+        replacement: "the operator did not author",
+        enabled: true,
+    },
+    {
         id: "preset-opencode-session-move",
         pattern: "*tools.opencode.session*move*",
         replacement: "tools.opencode.session_relocate",

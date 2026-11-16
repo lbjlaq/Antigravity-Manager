@@ -536,6 +536,18 @@ impl PromptRewriteConfig {
                 true,
             ),
             PromptRewriteRule::new(
+                "preset-claude-code-goals",
+                "You are an agent working with the user toward their goals*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-claude-user-did-not-write",
+                "the user did not write",
+                "the operator did not author",
+                true,
+            ),
+            PromptRewriteRule::new(
                 "preset-opencode-session-move",
                 "*tools.opencode.session*move*",
                 "tools.opencode.session_relocate",
