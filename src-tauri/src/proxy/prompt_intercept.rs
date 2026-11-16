@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -316,7 +316,16 @@ pub async fn check_and_intercept_text(
             tracing::warn!("[PromptIntercept] Failed to emit intercept event: {}", e);
         }
 
-        // 唤起并置顶主窗口
+        // 唤起、解最小化并置顶主窗口
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = crate::modules::lightweight::exit_lightweight_mode(app);
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
         let _ = app.emit("tray://show-window", ());
 
         new_id
