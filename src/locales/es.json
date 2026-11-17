@@ -1757,9 +1757,9 @@
             "sanitize_tools_desc_title": "Sanitización de Descripciones de Herramientas",
             "sanitize_tools_desc_hint": "Filtra términos sensibles y reglas en tools[].description mientras congela nombres y parámetros para evitar fallos en herramientas.",
             "scope_label": "Ámbito de Regla",
-            "scope_all": "🌐 Todo",
-            "scope_prompt": "💬 Prompt",
-            "scope_tools": "🛠️ Herramientas"
+            "scope_all": "Todo",
+            "scope_prompt": "Prompt",
+            "scope_tools": "Herramientas"
         }
     },
     "monitor": {

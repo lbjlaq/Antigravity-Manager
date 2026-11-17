@@ -1760,9 +1760,9 @@
             "sanitize_tools_desc_title": "التعقيم الآمن لوصف الأدوات",
             "sanitize_tools_desc_hint": "تنقية الكلمات الحساسة والقواعد المخصصة في tools[].description مع تجميد أسماء الأدوات وهيكلها لمنع تعطل الاستدعاء.",
             "scope_label": "نطاق القاعدة",
-            "scope_all": "🌐 الكل",
-            "scope_prompt": "💬 المطالبة",
-            "scope_tools": "🛠️ الأدوات"
+            "scope_all": "الكل",
+            "scope_prompt": "المطالبة",
+            "scope_tools": "الأدوات"
         }
     },
     "monitor": {

@@ -281,17 +281,17 @@ export default function PromptRewriteSettings({
                                 >
                                     <option value="all">
                                         {t("proxy.prompt_rewrite.scope_all", {
-                                            defaultValue: "🌐 全部",
+                                            defaultValue: "全部",
                                         })}
                                     </option>
                                     <option value="prompt">
                                         {t("proxy.prompt_rewrite.scope_prompt", {
-                                            defaultValue: "💬 提示词",
+                                            defaultValue: "提示词",
                                         })}
                                     </option>
                                     <option value="tools">
                                         {t("proxy.prompt_rewrite.scope_tools", {
-                                            defaultValue: "🛠️ 工具",
+                                            defaultValue: "工具",
                                         })}
                                     </option>
                                 </select>
@@ -439,17 +439,17 @@ export default function PromptRewriteSettings({
                                     >
                                         <option value="all">
                                             {t("proxy.prompt_rewrite.scope_all", {
-                                                defaultValue: "🌐 全部 (系统提示词 + 工具声明描述)",
+                                                defaultValue: "全部",
                                             })}
                                         </option>
                                         <option value="prompt">
                                             {t("proxy.prompt_rewrite.scope_prompt", {
-                                                defaultValue: "💬 仅系统提示词 (System / Developer Prompt)",
+                                                defaultValue: "提示词",
                                             })}
                                         </option>
                                         <option value="tools">
                                             {t("proxy.prompt_rewrite.scope_tools", {
-                                                defaultValue: "🛠️ 仅工具声明描述 (tools[].description)",
+                                                defaultValue: "工具",
                                             })}
                                         </option>
                                     </select>

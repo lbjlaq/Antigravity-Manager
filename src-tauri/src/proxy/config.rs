@@ -585,65 +585,75 @@ impl PromptRewriteConfig {
     /// 官方推荐的内置风控预设规则集（经过生产环境与 WAF 实测验证）
     pub fn recommended_preset_rules() -> Vec<PromptRewriteRule> {
         vec![
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-opencode",
                 "You are an AI agent running in OpenCode*",
                 "",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-claude-code-agent",
                 "You are an interactive agent that helps users with software engineering tasks*",
                 "",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-opencode-session-move",
                 "*tools.opencode.session*move*",
                 "tools.opencode.session_relocate",
+                PromptRewriteScope::All,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-dsh-identity",
                 "You are an AI agent powered by DeepSeek Harness*",
                 "",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-dsh-model",
                 "You are a coding agent powered by *gemini*",
                 "",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new("preset-workbuddy", "*WorkBuddy*", "", true),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope("preset-workbuddy", "*WorkBuddy*", "", PromptRewriteScope::All, true),
+            PromptRewriteRule::with_scope(
                 "preset-workbuddy-powered-by",
                 "*This conversation is powered by *",
                 "Selected model: ",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-codex-desktop-context",
                 "*# Codex desktop context*",
                 "# Desktop application context",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-codex-as-role",
                 "*as Codex:*",
                 "as an assistant:",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-codex-intro",
                 "*the codex cli is an open*source project*",
                 "",
+                PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::new(
+            PromptRewriteRule::with_scope(
                 "preset-anthropic-billing",
                 "*x-anthropic-billing-header:*",
                 "",
+                PromptRewriteScope::Prompt,
                 true,
             ),
         ]

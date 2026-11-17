@@ -1785,9 +1785,9 @@
             "sanitize_tools_desc_title": "工具宣告描述安全脫敏",
             "sanitize_tools_desc_hint": "對 tools[].description 深度執行敏感詞與自訂規則過濾，嚴格保留工具名稱與參數結構，防止工具調用報錯或失效。",
             "scope_label": "規則作用範圍",
-            "scope_all": "🌐 全部",
-            "scope_prompt": "💬 提示詞",
-            "scope_tools": "🛠️ 工具"
+            "scope_all": "全部",
+            "scope_prompt": "提示詞",
+            "scope_tools": "工具"
         },
         "multimodal": {
             "banner_title": "多模態交互與長程保鮮治理 (Pipeline First)",

@@ -1793,9 +1793,9 @@
             "sanitize_tools_desc_title": "Higienização de Descrições de Ferramentas",
             "sanitize_tools_desc_hint": "Filtra termos sensíveis e regras personalizadas em tools[].description mantendo intactos nomes e parâmetros para evitar falhas em ferramentas.",
             "scope_label": "Escopo da Regra",
-            "scope_all": "🌐 Tudo",
-            "scope_prompt": "💬 Prompt",
-            "scope_tools": "🛠️ Ferramentas"
+            "scope_all": "Tudo",
+            "scope_prompt": "Prompt",
+            "scope_tools": "Ferramentas"
         }
     },
     "monitor": {

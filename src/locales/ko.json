@@ -1757,9 +1757,9 @@
             "sanitize_tools_desc_title": "도구 설명 안전 마스킹",
             "sanitize_tools_desc_hint": "도구 이름과 매개변수 구조를 엄격히 보존하면서 tools[].description의 민감 키워드와 사용자 규칙을 필터링하여 도구 오류를 방지합니다.",
             "scope_label": "규칙 적용 범위",
-            "scope_all": "🌐 전체",
-            "scope_prompt": "💬 프롬프트",
-            "scope_tools": "🛠️ 도구"
+            "scope_all": "전체",
+            "scope_prompt": "프롬프트",
+            "scope_tools": "도구"
         }
     },
     "monitor": {

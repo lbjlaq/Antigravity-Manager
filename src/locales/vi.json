@@ -1808,9 +1808,9 @@
             "sanitize_tools_desc_title": "Khử khuẩn an toàn mô tả công cụ",
             "sanitize_tools_desc_hint": "Lọc sạch từ khóa nhạy cảm và quy tắc tùy chỉnh trong tools[].description, giữ nguyên tên và tham số để tránh lỗi gọi công cụ.",
             "scope_label": "Phạm vi quy tắc",
-            "scope_all": "🌐 Tất cả",
-            "scope_prompt": "💬 Chỉ dẫn",
-            "scope_tools": "🛠️ Công cụ"
+            "scope_all": "Tất cả",
+            "scope_prompt": "Chỉ dẫn",
+            "scope_tools": "Công cụ"
         }
     },
     "monitor": {
