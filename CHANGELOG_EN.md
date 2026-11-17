@@ -4,6 +4,11 @@
 
 *   **Version History**:
     *   **v5.0.4-beta.14 (2026-11-17)**:
+        -   **[End-to-End Support for GCP PAYGO Tier & Restore Project ID Commands] (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)**:
+            -   **Align Protobuf Field 8 enabledCreditTypes & Field Ordering**: Injects or preserves `enabledCreditTypes: ["GOOGLE_ONE_AI"]` for custom GCP / PAYGO accounts while strictly stripping it for consumer accounts based on reverse-engineered binary specifications; enforces official Protobuf 1..8 top-level key ordering. (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **Smart x-goog-user-project Attribution Egress**: Retains `x-goog-user-project` header for custom GCP projects to avoid 403 permission failures while stripping it for consumer accounts. (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **PAYGO Recognition & Advanced Canary Pool Integration**: Retains raw subscription tier (`GCP_GE_PAYGO_TIER`) and integrates `ENTERPRISE` and `PAYGO` accounts into advanced canary model routing; expands circuit breaker models. (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **Restore Project ID Management Commands**: Fully restores Tauri commands and Axum Web API endpoints for dynamic project ID updates and auto-fetching. (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
         -   **[Restore Codex Responses MCP Namespace Fields] (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)**:
             -   **Restore MCP Tool Call name / namespace Structure**: Fixed an issue where Codex failed with `unsupported call: mcp__...` when invoking MCP namespace tools through the Responses API. Accurately splits and restores `name` and `namespace` fields across non-streaming, streaming SSE, and WebSocket channels (splitting `mcp__*` tools at the last delimiter) while preserving behavior for plain tools and non-MCP namespaces. (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
         -   **[OAuth Authorization Scope Alignment for AGY CLI 1.5.x] (Refs #3974, PR #3978, Thanks to @ThermalEng)**:

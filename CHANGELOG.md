@@ -4,6 +4,11 @@
 
 *   **版本演进**:
     *   **v5.0.4-beta.14 (2026-11-17)**:
+        -   **[GCP PAYGO 层级端到端支持与 Project ID 命令恢复] (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)**:
+            -   **对齐 Protobuf 字段 8 enabledCreditTypes 与严格键序**: 根据官方二进制逆向结果，为 GCP 自费/PAYGO 项目请求自动对齐或保留 `enabledCreditTypes: ["GOOGLE_ONE_AI"]`，消费级账号严格剥离；严格遵循官方 Protobuf 1..8 顶层键序。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **计费归属 Header 智能透传与隔离**: 对自定义 GCP 项目保留 `x-goog-user-project: <project_id>` 避免 403 鉴权失败，对消费级账号彻底剥离该请求头避免非法归属报错。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **识别 PAYGO 订阅与模型池金丝雀路由**: 识别 `raw_tier`（`GCP_GE_PAYGO_TIER`）并向池中纳入 `ENTERPRISE` 与 `PAYGO` 账号；在断路器中扩展 `gemini-3.8-flash` 等新模型。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **复原 Project ID 管理指令**: 完整复原 Tauri IPC 与 Axum Web API 双端的项目 ID 动态修改与自动获取命令。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
         -   **[Codex Responses MCP 工具命名空间字段恢复] (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)**:
             -   **恢复 MCP 工具调用的 name / namespace 结构**: 修复了 Codex 通过 Responses API 接入网关并调用 MCP namespace 工具时报错 `unsupported call: mcp__...` 的问题；在非流式、流式 SSE 与 WebSocket 通道统一准确拆分 `name` 与 `namespace` 字段（按末尾分隔符还原 `mcp__*` 命名空间），并向下兼容普通工具与非 MCP 命名空间。(Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
         -   **[OAuth 授权作用域补齐与 AGY CLI 1.5.x 兼容] (Refs #3974, PR #3978, Thanks to @ThermalEng)**:
