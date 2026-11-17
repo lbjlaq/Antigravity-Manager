@@ -627,7 +627,13 @@ impl PromptRewriteConfig {
                 PromptRewriteScope::Prompt,
                 true,
             ),
-            PromptRewriteRule::with_scope("preset-workbuddy", "*WorkBuddy*", "", PromptRewriteScope::All, true),
+            PromptRewriteRule::with_scope(
+                "preset-workbuddy",
+                "*WorkBuddy*",
+                "",
+                PromptRewriteScope::All,
+                true,
+            ),
             PromptRewriteRule::with_scope(
                 "preset-workbuddy-powered-by",
                 "*This conversation is powered by *",

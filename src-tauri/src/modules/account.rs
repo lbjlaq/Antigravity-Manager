@@ -5349,8 +5349,8 @@ pub fn remove_account_forbidden_model(
 
     if let Some(target) = model {
         let target_lower = target.trim().to_lowercase();
-        let target_base = crate::proxy::common::model_mapping::strip_tier_suffix(&target_lower)
-            .to_lowercase();
+        let target_base =
+            crate::proxy::common::model_mapping::strip_tier_suffix(&target_lower).to_lowercase();
         let target_img_base =
             crate::proxy::common::model_mapping::strip_image_variant_suffix(&target_lower)
                 .to_lowercase();

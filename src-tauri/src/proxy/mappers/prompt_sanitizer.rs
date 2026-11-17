@@ -117,12 +117,10 @@ static RE_WORKBUDDY_POWERED_BY: Lazy<Regex> = Lazy::new(|| {
 /// 触发上游 Google WAF 伪 429 拦截的 Codex 桌面端特定上下文与角色前缀正则（Issue #3982）
 /// 1) `# Codex desktop context` -> `# Desktop application context`
 /// 2) `as Codex:` -> `as an assistant:`
-static RE_CODEX_DESKTOP_CONTEXT: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?im)^[ \t]*#[ \t]*codex\s+desktop\s+context[ \t]*(\r?)$").unwrap()
-});
+static RE_CODEX_DESKTOP_CONTEXT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?im)^[ \t]*#[ \t]*codex\s+desktop\s+context[ \t]*(\r?)$").unwrap());
 
-static RE_CODEX_ROLE_PREFIX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bas\s+codex:").unwrap());
+static RE_CODEX_ROLE_PREFIX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bas\s+codex:").unwrap());
 
 /// 触发上游 Google WAF 伪 429 拦截的 DSH（DeepSeek Harness）浏览器上下文声明正则（Issue #3983）
 /// Google Cloud Code WAF 针对该字面串触发启发式拦截，返回伪造的 429 RESOURCE_EXHAUSTED。
@@ -755,12 +753,18 @@ impl PromptSanitizer {
 
     /// System 轨：身份归一化之前应用用户清理规则（过滤出 Prompt 或 All 作用域规则）。
     fn apply_prompt_rewrite_rules(text: &str) -> String {
-        Self::apply_prompt_rewrite_rules_with_scope(text, crate::proxy::config::PromptRewriteScope::Prompt)
+        Self::apply_prompt_rewrite_rules_with_scope(
+            text,
+            crate::proxy::config::PromptRewriteScope::Prompt,
+        )
     }
 
     /// Tools 轨：工具描述清洗时应用用户清理规则（过滤出 Tools 或 All 作用域规则）。
     fn apply_tools_rewrite_rules(text: &str) -> String {
-        Self::apply_prompt_rewrite_rules_with_scope(text, crate::proxy::config::PromptRewriteScope::Tools)
+        Self::apply_prompt_rewrite_rules_with_scope(
+            text,
+            crate::proxy::config::PromptRewriteScope::Tools,
+        )
     }
 
     fn apply_prompt_rewrite_rules_with_scope(
@@ -2172,7 +2176,10 @@ impl PromptSanitizer {
                                 let rewritten = Self::apply_tools_rewrite_rules(&cleaned);
                                 if rewritten != desc {
                                     if let Some(obj) = decl.as_object_mut() {
-                                        obj.insert("description".to_string(), Value::String(rewritten));
+                                        obj.insert(
+                                            "description".to_string(),
+                                            Value::String(rewritten),
+                                        );
                                         cleaned_count += 1;
                                     }
                                 }
@@ -4761,21 +4768,26 @@ mod tests {
     #[test]
     fn test_issue_3982_workbuddy_powered_by_lf_and_crlf_neutralized() {
         // 1. Unix LF (\n)
-        let lf_input = "This conversation is powered by gemini-4-hydrogen\n# Rules\nRule 1: Be helpful.";
+        let lf_input =
+            "This conversation is powered by gemini-4-hydrogen\n# Rules\nRule 1: Be helpful.";
         let lf_cleaned = PromptSanitizer::clean_text(lf_input);
         assert!(lf_cleaned.starts_with("Selected model: gemini-4-hydrogen\n# Rules"));
         assert!(!lf_cleaned.contains("This conversation is powered by"));
 
         // 2. Windows CRLF (\r\n)
-        let crlf_input = "This conversation is powered by gemini-4-hydrogen\r\n# Rules\r\nRule 1: Be helpful.";
+        let crlf_input =
+            "This conversation is powered by gemini-4-hydrogen\r\n# Rules\r\nRule 1: Be helpful.";
         let crlf_cleaned = PromptSanitizer::clean_text(crlf_input);
         assert!(crlf_cleaned.starts_with("Selected model: gemini-4-hydrogen\r\n# Rules"));
         assert!(!crlf_cleaned.contains("This conversation is powered by"));
 
         // 3. 模型带前缀/路径符号（如 gemini-3.8-flash-high / custom/model:1）
-        let complex_model = "  this conversation is powered by custom.org/gemini-3.8-flash:latest  \r\nNext line";
+        let complex_model =
+            "  this conversation is powered by custom.org/gemini-3.8-flash:latest  \r\nNext line";
         let cleaned_complex = PromptSanitizer::clean_text(complex_model);
-        assert!(cleaned_complex.starts_with("Selected model: custom.org/gemini-3.8-flash:latest\r\n"));
+        assert!(
+            cleaned_complex.starts_with("Selected model: custom.org/gemini-3.8-flash:latest\r\n")
+        );
 
         // 4. 围栏代码块中的 powered by 绝对不被修改
         let code_input = "This conversation is powered by gemini-4\n```text\nThis conversation is powered by gemini-4\n```";
@@ -4789,21 +4801,32 @@ mod tests {
         // 1. 测试 # Codex desktop context 在 LF 与 CRLF 下的替换
         let lf_input = "# Codex desktop context\nInstructions here.";
         let lf_cleaned = PromptSanitizer::clean_text(lf_input);
-        assert_eq!(lf_cleaned, "# Desktop application context\nInstructions here.");
+        assert_eq!(
+            lf_cleaned,
+            "# Desktop application context\nInstructions here."
+        );
 
         let crlf_input = "#   Codex desktop context  \r\nInstructions here.";
         let crlf_cleaned = PromptSanitizer::clean_text(crlf_input);
-        assert_eq!(crlf_cleaned, "# Desktop application context\r\nInstructions here.");
+        assert_eq!(
+            crlf_cleaned,
+            "# Desktop application context\r\nInstructions here."
+        );
 
         // 2. 测试 as Codex: 替换为 as an assistant:
         let role_input = "When instructed as Codex: provide code immediately.";
         let role_cleaned = PromptSanitizer::clean_text(role_input);
-        assert_eq!(role_cleaned, "When instructed as an assistant: provide code immediately.");
+        assert_eq!(
+            role_cleaned,
+            "When instructed as an assistant: provide code immediately."
+        );
 
         // 3. 围栏代码块内保护
         let fenced_input = "# Codex desktop context\n```\n# Codex desktop context\nas Codex:\n```";
         let fenced_cleaned = PromptSanitizer::clean_text(fenced_input);
-        assert!(fenced_cleaned.starts_with("# Desktop application context\n```\n# Codex desktop context\nas Codex:\n```"));
+        assert!(fenced_cleaned.starts_with(
+            "# Desktop application context\n```\n# Codex desktop context\nas Codex:\n```"
+        ));
     }
 
     #[test]
@@ -4816,7 +4839,8 @@ mod tests {
         );
 
         // 围栏代码块保护
-        let fenced = "Text\n```\nThe browser provides no implicit DOM, route, or screenshot context.\n```";
+        let fenced =
+            "Text\n```\nThe browser provides no implicit DOM, route, or screenshot context.\n```";
         let cleaned_fenced = PromptSanitizer::clean_text(fenced);
         assert_eq!(cleaned_fenced, fenced);
     }
@@ -4830,9 +4854,27 @@ mod tests {
             sideload_mode: crate::proxy::config::PromptSideloadMode::Off,
             sanitize_tools_description: true,
             rules: vec![
-                PromptRewriteRule::with_scope("r-all", "sensitive_all", "clean_all", crate::proxy::config::PromptRewriteScope::All, true),
-                PromptRewriteRule::with_scope("r-prompt", "sensitive_prompt", "clean_prompt", crate::proxy::config::PromptRewriteScope::Prompt, true),
-                PromptRewriteRule::with_scope("r-tool", "sensitive_tool", "clean_tool", crate::proxy::config::PromptRewriteScope::Tools, true),
+                PromptRewriteRule::with_scope(
+                    "r-all",
+                    "sensitive_all",
+                    "clean_all",
+                    crate::proxy::config::PromptRewriteScope::All,
+                    true,
+                ),
+                PromptRewriteRule::with_scope(
+                    "r-prompt",
+                    "sensitive_prompt",
+                    "clean_prompt",
+                    crate::proxy::config::PromptRewriteScope::Prompt,
+                    true,
+                ),
+                PromptRewriteRule::with_scope(
+                    "r-tool",
+                    "sensitive_tool",
+                    "clean_tool",
+                    crate::proxy::config::PromptRewriteScope::Tools,
+                    true,
+                ),
             ],
         };
         PromptSanitizer::update_prompt_rewrite_config(&config);
@@ -4857,14 +4899,36 @@ mod tests {
 
         PromptSanitizer::sanitize_gemini_payload(&mut body);
 
-        let sys_text = body["systemInstruction"]["parts"][0]["text"].as_str().unwrap();
-        assert!(sys_text.contains("clean_all"), "All scope should apply to prompt");
-        assert!(sys_text.contains("clean_prompt"), "Prompt scope should apply to prompt");
-        assert!(sys_text.contains("sensitive_tool"), "Tools scope must NOT apply to prompt");
+        let sys_text = body["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(
+            sys_text.contains("clean_all"),
+            "All scope should apply to prompt"
+        );
+        assert!(
+            sys_text.contains("clean_prompt"),
+            "Prompt scope should apply to prompt"
+        );
+        assert!(
+            sys_text.contains("sensitive_tool"),
+            "Tools scope must NOT apply to prompt"
+        );
 
-        let tool_desc = body["tools"][0]["functionDeclarations"][0]["description"].as_str().unwrap();
-        assert!(tool_desc.contains("clean_all"), "All scope should apply to tools");
-        assert!(tool_desc.contains("clean_tool"), "Tools scope should apply to tools");
-        assert!(tool_desc.contains("sensitive_prompt"), "Prompt scope must NOT apply to tools");
+        let tool_desc = body["tools"][0]["functionDeclarations"][0]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            tool_desc.contains("clean_all"),
+            "All scope should apply to tools"
+        );
+        assert!(
+            tool_desc.contains("clean_tool"),
+            "Tools scope should apply to tools"
+        );
+        assert!(
+            tool_desc.contains("sensitive_prompt"),
+            "Prompt scope must NOT apply to tools"
+        );
     }
 }

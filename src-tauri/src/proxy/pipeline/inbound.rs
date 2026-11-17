@@ -2305,9 +2305,13 @@ impl InboundThinkingPipeline {
         }
 
         // 判定是否属于官方纯净 Antigravity 默认声明（无额外复杂指令）
-        let is_pure_official = trimmed == crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY
-            || (trimmed.starts_with(crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY)
-                && trimmed.len() <= crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY.len() + 64);
+        let is_pure_official = trimmed
+            == crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY
+            || (trimmed.starts_with(
+                crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY,
+            ) && trimmed.len()
+                <= crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY.len()
+                    + 64);
 
         let should_sideload = match mode {
             crate::proxy::config::PromptSideloadMode::Always => !is_pure_official,
@@ -2355,7 +2359,10 @@ impl InboundThinkingPipeline {
             // 确保首轮必须是 user 角色，在其 parts 头部注入权威 XML 容器
             let is_first_user = contents_arr[0].get("role").and_then(Value::as_str) == Some("user");
             if is_first_user {
-                if let Some(parts) = contents_arr[0].get_mut("parts").and_then(Value::as_array_mut) {
+                if let Some(parts) = contents_arr[0]
+                    .get_mut("parts")
+                    .and_then(Value::as_array_mut)
+                {
                     let wrapped_directive = format!(
                         "<system-instruction priority=\"critical\" role=\"developer\">\n{}\n</system-instruction>",
                         trimmed
