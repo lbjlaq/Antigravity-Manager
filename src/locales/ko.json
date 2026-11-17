@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "자동 가져오기",
         "fetching_project_id": "가져오는 중...",
         "auto_fetch_success": "Project ID를 자동으로 가져왔습니다: {{projectId}}",
-        "auto_fetch_failed": "업스트림에서 연결된 Project ID를 찾을 수 없습니다"
+        "auto_fetch_failed": "업스트림에서 연결된 Project ID를 찾을 수 없습니다",
+        "unfreeze_model_tooltip": "클릭하여 이 모델의 403 동결 해제"
     },
     "settings": {
         "save": "설정 저장",

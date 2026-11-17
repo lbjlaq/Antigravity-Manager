@@ -37,6 +37,7 @@ interface AccountState {
     updateAccountPriority: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>;
     updateAccountProjectId: (accountId: string, projectId: string) => Promise<void>;
     autoFetchAccountProjectId: (accountId: string) => Promise<string>;
+    removeForbiddenModel: (accountId: string, model?: string) => Promise<boolean>;
 }
 
 const ACCOUNTS_CACHE_KEY = 'antigravity_accounts_cache';
@@ -482,6 +483,29 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             set({ accounts: updatedAccounts });
         } catch (error) {
             console.error('[AccountStore] Update label failed:', error);
+            throw error;
+        }
+    },
+
+    removeForbiddenModel: async (accountId: string, model?: string) => {
+        try {
+            const res = await accountService.removeAccountForbiddenModel(accountId, model);
+            // 乐观更新前端状态
+            set(state => ({
+                accounts: state.accounts.map(acc => {
+                    if (acc.id !== accountId) return acc;
+                    if (!model) {
+                        return { ...acc, forbidden_models: [] };
+                    }
+                    const updated = (acc.forbidden_models || []).filter(
+                        m => m.toLowerCase() !== model.toLowerCase()
+                    );
+                    return { ...acc, forbidden_models: updated };
+                }),
+            }));
+            return res;
+        } catch (error) {
+            console.error('[AccountStore] Remove forbidden model failed:', error);
             throw error;
         }
     },

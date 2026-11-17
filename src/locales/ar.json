@@ -526,7 +526,8 @@
         "auto_fetch_project_id": "جلب تلقائي",
         "fetching_project_id": "جارٍ الجلب...",
         "auto_fetch_success": "تم جلب Project ID بنجاح: {{projectId}}",
-        "auto_fetch_failed": "لم يتم العثور على Project ID مرتبط"
+        "auto_fetch_failed": "لم يتم العثور على Project ID مرتبط",
+        "unfreeze_model_tooltip": "انقر لإلغاء تجميد هذا النموذج (إزالة حالة 403)"
     },
     "settings": {
         "save": "حفظ الإعدادات",

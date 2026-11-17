@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Tự động lấy",
         "fetching_project_id": "Đang lấy...",
         "auto_fetch_success": "Đã tự động lấy Project ID thành công: {{projectId}}",
-        "auto_fetch_failed": "Không tìm thấy Project ID liên kết trên máy chủ"
+        "auto_fetch_failed": "Không tìm thấy Project ID liên kết trên máy chủ",
+        "unfreeze_model_tooltip": "Nhấp để bỏ đóng băng mô hình này (xóa trạng thái 403)"
     },
     "settings": {
         "save": "Lưu Cài đặt",

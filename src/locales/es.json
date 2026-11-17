@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Obtención automática",
         "fetching_project_id": "Obteniendo...",
         "auto_fetch_success": "Project ID obtenido con éxito: {{projectId}}",
-        "auto_fetch_failed": "No se encontró ningún Project ID asociado en el origen"
+        "auto_fetch_failed": "No se encontró ningún Project ID asociado en el origen",
+        "unfreeze_model_tooltip": "Haga clic para descongelar este modelo (elimina el estado 403)"
     },
     "settings": {
         "save": "Guardar Configuración",

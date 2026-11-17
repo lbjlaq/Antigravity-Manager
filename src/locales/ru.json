@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Автополучение",
         "fetching_project_id": "Получение...",
         "auto_fetch_success": "Project ID успешно получен: {{projectId}}",
-        "auto_fetch_failed": "Связанный Project ID не найден на сервере"
+        "auto_fetch_failed": "Связанный Project ID не найден на сервере",
+        "unfreeze_model_tooltip": "Нажмите, чтобы разморозить эту модель (сброс 403)"
     },
     "settings": {
         "save": "Сохранить настройки",

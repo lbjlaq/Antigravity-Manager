@@ -617,7 +617,8 @@
             "error_too_long": "Tag length cannot exceed 15 characters",
             "error_max_limit": "Maximum 8 tags allowed",
             "error_duplicate": "Tag already exists"
-        }
+        },
+        "unfreeze_model_tooltip": "Click to unfreeze this model (clears 403 status)"
     },
     "settings": {
         "save": "Save Settings",

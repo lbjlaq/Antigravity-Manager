@@ -532,7 +532,8 @@
         "auto_fetch_project_id": "Obter automaticamente",
         "fetching_project_id": "Obtendo...",
         "auto_fetch_success": "Project ID obtido com sucesso: {{projectId}}",
-        "auto_fetch_failed": "Nenhum Project ID associado encontrado no upstream"
+        "auto_fetch_failed": "Nenhum Project ID associado encontrado no upstream",
+        "unfreeze_model_tooltip": "Clique para descongelar este modelo (remove o status 403)"
     },
     "settings": {
         "save": "Salvar Configurações",

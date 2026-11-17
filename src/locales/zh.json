@@ -615,7 +615,8 @@
             "error_too_long": "标签长度不能超过 15 个字符",
             "error_max_limit": "最多只能添加 8 个标签",
             "error_duplicate": "该标签已存在"
-        }
+        },
+        "unfreeze_model_tooltip": "点击解除该模型的 403 冻结"
     },
     "settings": {
         "save": "保存设置",

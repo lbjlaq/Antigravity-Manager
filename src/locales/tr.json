@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Otomatik Al",
         "fetching_project_id": "Alınıyor...",
         "auto_fetch_success": "Project ID başarıyla alındı: {{projectId}}",
-        "auto_fetch_failed": "Yukarı akışta ilişkili bir Project ID bulunamadı"
+        "auto_fetch_failed": "Yukarı akışta ilişkili bir Project ID bulunamadı",
+        "unfreeze_model_tooltip": "Bu modelin 403 dondurmasını kaldırmak için tıklayın"
     },
     "settings": {
         "save": "Ayarları Kaydet",

@@ -282,3 +282,8 @@ export async function updateAccountProjectId(accountId: string, projectId: strin
 export async function autoFetchAccountProjectId(accountId: string): Promise<string> {
     return await invoke('auto_fetch_account_project_id', { accountId });
 }
+
+// 解除 403 模型冻结
+export async function removeAccountForbiddenModel(accountId: string, model?: string): Promise<boolean> {
+    return await invoke('remove_account_forbidden_model', { accountId, model: model || null });
+}

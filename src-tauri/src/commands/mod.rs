@@ -127,6 +127,21 @@ pub async fn release_account_qos_jail(
     Ok(())
 }
 
+/// 手动解除账号指定模型的 403 冻结
+#[tauri::command]
+pub async fn remove_account_forbidden_model(
+    app: tauri::AppHandle,
+    account_id: String,
+    model: Option<String>,
+) -> Result<bool, String> {
+    let res = crate::modules::account::remove_account_forbidden_model(&account_id, model.as_deref())?;
+    let _ = crate::commands::proxy::reload_proxy_accounts(
+        app.state::<crate::commands::proxy::ProxyServiceState>(),
+    )
+    .await;
+    Ok(res)
+}
+
 /// 添加账号
 #[tauri::command]
 pub async fn add_account(
