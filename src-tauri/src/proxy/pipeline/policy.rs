@@ -303,6 +303,18 @@ impl UpstreamClassification {
                 && lower.contains("tool_choice")
                 && lower.contains("forces tool use"))
     }
+
+    /// 是否为账号不支持所请求的思考档位
+    /// (400 "Thinking level is unsupported: THINKING_LEVEL_XHIGH")。
+    ///
+    /// `fetchAvailableModels` 对所有账号都把 `-xhigh` 声明为扩展档 `thinkingLevel: 100`，
+    /// 但部分账号在生成时拒绝该档位，目录本身无法区分哪些账号会拒绝。
+    pub fn is_unsupported_thinking_level(status: u16, body: &str) -> bool {
+        status == 400
+            && body
+                .to_lowercase()
+                .contains("thinking level is unsupported")
+    }
 }
 
 /// 404「单模型不可用」的统一处置（协议无关）
@@ -415,6 +427,27 @@ mod tests {
             400,
             "Normal 400 bad request"
         ));
+    }
+
+    #[test]
+    fn test_is_unsupported_thinking_level() {
+        let err_body = r#"{"error":{"code":400,"message":"Thinking level is unsupported: THINKING_LEVEL_XHIGH","status":"INVALID_ARGUMENT"}}"#;
+        assert!(UpstreamClassification::is_unsupported_thinking_level(
+            400, err_body
+        ));
+        // 非 400 不触发（避免与 503 过载降级重叠）
+        assert!(!UpstreamClassification::is_unsupported_thinking_level(
+            503, err_body
+        ));
+        assert!(!UpstreamClassification::is_unsupported_thinking_level(
+            400,
+            "Normal 400 bad request"
+        ));
+        // 分类本身不变：仍是普通客户端错误，不会被当成模型不存在而触发换号熔断
+        assert_eq!(
+            UpstreamClassification::classify(400, err_body, None),
+            UpstreamClassification::OtherClientError(400)
+        );
     }
 
     #[test]

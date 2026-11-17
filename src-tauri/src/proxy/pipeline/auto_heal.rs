@@ -152,6 +152,8 @@ pub struct AutoHealFlags {
     pub retried_with_capacity_promoted: bool,
     /// 已因 400 图像解码失败剔除过损坏图片
     pub retried_with_image_omitted: bool,
+    /// 已因 400 "Thinking level is unsupported" 把扩展思考档钳制为 HIGH
+    pub retried_with_thinking_level_clamped: bool,
 }
 
 /// 一次自愈的执行结果
@@ -168,9 +170,10 @@ pub struct AutoHealOutcome {
 /// 四个适配器过去各写一份同样的判断与改写：
 /// 1. 503/529 过载 → 降级思考预算（保住 prefix cache）；
 /// 2. 400 tool_choice/thinking 冲突 → 剥离 thinkingConfig；
-/// 3. 400 图像解码失败 → 剔除损坏图片并降级为文本占位。
+/// 3. 400 账号不支持扩展思考档（`THINKING_LEVEL_XHIGH`）→ 钳制为 HIGH；
+/// 4. 400 图像解码失败 → 剔除损坏图片并降级为文本占位。
 ///
-/// 三者的共同点：**都是对已转换完成的 Gemini 报文做原地修复，且必须在同账号重试**
+/// 共同点：**都是对已转换完成的 Gemini 报文做原地修复，且必须在同账号重试**
 /// （换号只会让同一份坏载荷再失败一次，并浪费轮换预算）。
 ///
 /// 返回 `Some` 表示已在同一账号上完成修复，调用方应 `continue` 重试；
@@ -250,7 +253,29 @@ pub fn try_auto_heal(
         });
     }
 
-    // 3. 图像解码/处理失败：剔除损坏图片（降级为文本占位）后重试
+    // 3. 账号不支持扩展思考档（400 "Thinking level is unsupported: THINKING_LEVEL_XHIGH"）：
+    //    官方目录对所有账号都把 -xhigh 声明为 thinkingLevel 100，但部分账号生成时拒绝。
+    //    同账号钳制为 HIGH（-xhigh 模型降为 -high）重试一次，避免整轮对话以 400 结束；
+    //    支持 XHIGH 的账号永远不会收到这个 400，因此不受影响。
+    if crate::proxy::pipeline::UpstreamClassification::is_unsupported_thinking_level(
+        status_code,
+        error_text,
+    ) && !flags.retried_with_thinking_level_clamped
+        && InboundThinkingPipeline::try_clamp_thinking_level(body)
+    {
+        flags.retried_with_thinking_level_clamped = true;
+        *degraded = Some(body.clone());
+        tracing::warn!(
+            "[AutoHeal] upstream 400 thinking level unsupported: clamped extended thinkingLevel to HIGH and retrying on same account err={}",
+            crate::proxy::upstream::client::strip_internal_markers(error_text)
+        );
+        return Some(AutoHealOutcome {
+            kind: "clamp_unsupported_thinking_level",
+            delay_ms: 50,
+        });
+    }
+
+    // 4. 图像解码/处理失败：剔除损坏图片（降级为文本占位）后重试
     if classification.is_image_processing_error() && !flags.retried_with_image_omitted {
         let purged =
             crate::proxy::mappers::common_utils::purge_corrupted_images_from_gemini_payload(body);
@@ -827,6 +852,70 @@ mod tests {
             &mut flags,
         );
         assert!(again.is_none());
+    }
+
+    #[test]
+    fn test_auto_heal_clamps_unsupported_thinking_level_once() {
+        let err = r#"{"error":{"code":400,"message":"Thinking level is unsupported: THINKING_LEVEL_XHIGH","status":"INVALID_ARGUMENT"}}"#;
+        let classification =
+            crate::proxy::pipeline::UpstreamClassification::classify(400, err, None);
+        let mut body = json!({
+            "model": "gemini-4-hydrogen-xhigh",
+            "generationConfig": {
+                "thinkingConfig": { "includeThoughts": true, "thinkingLevel": 100 }
+            }
+        });
+        let mut degraded = None;
+        let mut flags = AutoHealFlags::default();
+        let out = try_auto_heal(
+            &classification,
+            400,
+            err,
+            &mut body,
+            &mut degraded,
+            &mut flags,
+        );
+        assert_eq!(
+            out.map(|o| o.kind),
+            Some("clamp_unsupported_thinking_level")
+        );
+        assert!(flags.retried_with_thinking_level_clamped);
+        let retried = degraded.as_ref().expect("same-account retry body");
+        assert_eq!(retried["model"], "gemini-4-hydrogen-high");
+        assert_eq!(
+            retried["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+
+        // 单次上限：同一请求第二次 400 交回原错误策略
+        let again = try_auto_heal(
+            &classification,
+            400,
+            err,
+            &mut body,
+            &mut degraded,
+            &mut flags,
+        );
+        assert!(again.is_none());
+
+        // 已是 HIGH 的请求收到同样的 400：没有可钳制的档位，不重试
+        let mut high = json!({
+            "model": "gemini-4-hydrogen-high",
+            "generationConfig": { "thinkingConfig": { "thinkingLevel": "HIGH" } }
+        });
+        let mut degraded_high = None;
+        let mut fresh = AutoHealFlags::default();
+        assert!(try_auto_heal(
+            &classification,
+            400,
+            err,
+            &mut high,
+            &mut degraded_high,
+            &mut fresh,
+        )
+        .is_none());
+        assert!(degraded_high.is_none());
+        assert!(!fresh.retried_with_thinking_level_clamped);
     }
 
     #[test]

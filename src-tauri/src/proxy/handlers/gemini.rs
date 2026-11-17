@@ -373,6 +373,9 @@ pub async fn handle_generate(
                     &mut wb,
                 );
             }
+            if heal_flags.retried_with_thinking_level_clamped {
+                crate::proxy::pipeline::InboundThinkingPipeline::try_clamp_thinking_level(&mut wb);
+            }
             wb
         };
         // [Signature-Retry] 400 签名错误后的重试：由流水线统一清除签名（包含客户端自带的 thoughtSignature）
@@ -1058,8 +1061,8 @@ pub async fn handle_generate(
             retry_after.as_deref(),
         );
 
-        // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：
-        // 三者均是对已转出的 Gemini 报文的原地修复，统一在同账号重试（换号只会重蹈覆车）。
+        // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 思考档位不支持 / 400 损坏图片：
+        // 都是对已转出的 Gemini 报文的原地修复，统一在同账号重试（换号只会重蹈覆车）。
         if let Some(heal) = crate::proxy::pipeline::try_auto_heal(
             &classification,
             status_code,
