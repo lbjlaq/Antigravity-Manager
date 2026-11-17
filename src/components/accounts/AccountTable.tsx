@@ -42,6 +42,7 @@ import {
     BookCopy,
     Check,
     Trash2,
+    X,
 } from 'lucide-react';
 import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -503,13 +504,23 @@ function AccountRowContent({
                         )}
                         {account.forbidden_models && account.forbidden_models.length > 0 && (
                             account.forbidden_models.map((fm) => (
-                                <span
+                                <button
                                     key={fm}
-                                    className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-rose-200/50 dark:border-rose-900/30"
-                                    title={t('accounts.forbidden_model_tooltip', '该模型已被 403 冻结')}
+                                    type="button"
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                            await useAccountStore.getState().removeForbiddenModel(account.id, fm);
+                                        } catch (err) {
+                                            console.error('Failed to unfreeze model:', err);
+                                        }
+                                    }}
+                                    className="group px-2 py-0.5 rounded-md bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-rose-200/50 dark:border-rose-900/30 transition-colors cursor-pointer"
+                                    title={t('accounts.unfreeze_model_tooltip', '点击解除该模型的 403 冻结')}
                                 >
-                                    ❄️ {fm}
-                                </span>
+                                    <span>❄️ {fm}</span>
+                                    <X className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 group-hover:text-rose-700 dark:group-hover:text-rose-300" />
+                                </button>
                             ))
                         )}
                         <QoSStatusBadge

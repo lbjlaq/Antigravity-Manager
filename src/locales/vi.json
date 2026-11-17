@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Tự động lấy",
         "fetching_project_id": "Đang lấy...",
         "auto_fetch_success": "Đã tự động lấy Project ID thành công: {{projectId}}",
-        "auto_fetch_failed": "Không tìm thấy Project ID liên kết trên máy chủ"
+        "auto_fetch_failed": "Không tìm thấy Project ID liên kết trên máy chủ",
+        "unfreeze_model_tooltip": "Nhấp để bỏ đóng băng mô hình này (xóa trạng thái 403)"
     },
     "settings": {
         "save": "Lưu Cài đặt",
@@ -1781,8 +1782,6 @@
             "enabled": "Đã bật",
             "empty": "Chưa có quy tắc dọn dẹp nào. Thêm một quy tắc bên dưới.",
             "add_rule": "Thêm quy tắc dọn dẹp",
-            "load_presets": "Tải mẫu đề xuất chính thức",
-            "load_presets_confirm": "Thao tác này sẽ thêm các quy tắc mẫu WAF được đề xuất chính thức trong khi vẫn giữ các quy tắc tùy chỉnh hiện tại của bạn. Tiếp tục?",
             "match": "Khớp mẫu",
             "replace": "Thay thế bằng",
             "match_placeholder": "Mẫu khớp, ví dụ: You are *",
@@ -1799,7 +1798,20 @@
             "hint_empty": "Để trống thay thế = xóa văn bản khớp",
             "hint_wildcard": "Hỗ trợ ký tự đại diện * (khớp với ký tự bất kỳ trên cùng một dòng); xuống dòng dùng \\n.",
             "hint_escape": "Hỗ trợ ký tự thoát: \\n xuống dòng, \\t tab, \\\\ dấu gạch chéo ngược, \\* dấu sao nguyên bản.",
-            "hint_order": "Quy tắc thực thi theo thứ tự từ trên xuống dưới; chỉ tác động đến các khối lời nhắc trước tin nhắn người dùng thực tế đầu tiên, các khối mã tự động được miễn trừ."
+            "hint_order": "Quy tắc thực thi theo thứ tự từ trên xuống dưới; chỉ tác động đến các khối lời nhắc trước tin nhắn người dùng thực tế đầu tiên, các khối mã tự động được miễn trừ.",
+            "sideload_mode_title": "Nạp ẩn chỉ dẫn hệ thống (Sideloading)",
+            "sideload_mode_hint": "Đóng gói an toàn các chỉ thị vào ngữ cảnh người dùng đầu tiên để tối đa hóa tái sử dụng KV Cache, khôi phục danh tính chính thức để vượt qua mã lỗi 429 giả từ WAF.",
+            "sideload_mode_auto": "Tự động thông minh (Khuyên dùng)",
+            "sideload_mode_always": "Luôn nạp ẩn",
+            "sideload_mode_off": "Tắt",
+            "sanitize_tools_desc_title": "Khử khuẩn an toàn mô tả công cụ",
+            "sanitize_tools_desc_hint": "Lọc sạch từ khóa nhạy cảm và quy tắc tùy chỉnh trong tools[].description, giữ nguyên tên và tham số để tránh lỗi gọi công cụ.",
+            "scope_label": "Phạm vi quy tắc",
+            "scope_all": "Tất cả",
+            "scope_prompt": "Chỉ dẫn",
+            "scope_tools": "Công cụ",
+            "restore_presets": "Khôi phục cài đặt mặc định",
+            "restore_presets_confirm": "Thao tác này sẽ khôi phục các quy tắc về các cài đặt chính thức mới nhất (tổng cộng 11 quy tắc). Tiếp tục?"
         }
     },
     "monitor": {

@@ -143,6 +143,9 @@ export interface GlobalSystemPromptConfig {
     content: string;
 }
 
+/** 提示词与工具清洗规则的作用范围 */
+export type PromptRewriteScope = 'all' | 'prompt' | 'tools';
+
 /** 风控提示词清理规则（行式：匹配内容 → 替换为） */
 export interface PromptRewriteRule {
     /** 稳定 ID */
@@ -151,6 +154,8 @@ export interface PromptRewriteRule {
     pattern: string;
     /** 替换内容：留空表示删除匹配内容 */
     replacement: string;
+    /** 规则作用范围：'all' (全部) | 'prompt' (仅系统提示词) | 'tools' (仅工具声明描述) */
+    scope?: PromptRewriteScope;
     /** 是否启用 */
     enabled: boolean;
 }
@@ -160,6 +165,10 @@ export interface PromptRewriteConfig {
     enabled: boolean;
     /** 是否启用内置身份归一化（默认 true） */
     normalize_identity?: boolean;
+    /** 系统提示词隐身侧载模式：'auto' (非官方身份自动侧载) | 'always' (总是侧载) | 'off' (关闭) */
+    sideload_mode?: 'auto' | 'always' | 'off';
+    /** 是否对 tools[].description 深度执行脱敏与自定义规则清洗（默认 true） */
+    sanitize_tools_description?: boolean;
     rules: PromptRewriteRule[];
 }
 
@@ -169,36 +178,84 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         id: "preset-opencode",
         pattern: "You are an AI agent running in OpenCode*",
         replacement: "",
+        scope: "prompt",
+        enabled: true,
+    },
+    {
+        id: "preset-claude-code-agent",
+        pattern: "You are an interactive agent that helps users with software engineering tasks*",
+        replacement: "",
+        scope: "prompt",
+        enabled: true,
+    },
+    {
+        id: "preset-opencode-session-move",
+        pattern: "*tools.opencode.session*move*",
+        replacement: "tools.opencode.session_relocate",
+        scope: "all",
         enabled: true,
     },
     {
         id: "preset-dsh-identity",
         pattern: "You are an AI agent powered by DeepSeek Harness*",
         replacement: "",
+        scope: "prompt",
         enabled: true,
     },
     {
         id: "preset-dsh-model",
         pattern: "You are a coding agent powered by *gemini*",
         replacement: "",
+        scope: "prompt",
+        enabled: true,
+    },
+    {
+        id: "preset-dsh-browser-context",
+        pattern: "*The browser provides no implicit DOM, route, or screenshot context*",
+        replacement: "The browser exposes no DOM tree, route list, or page screenshot context",
+        scope: "prompt",
         enabled: true,
     },
     {
         id: "preset-workbuddy",
         pattern: "*WorkBuddy*",
         replacement: "",
+        scope: "all",
+        enabled: true,
+    },
+    {
+        id: "preset-workbuddy-powered-by",
+        pattern: "*This conversation is powered by *",
+        replacement: "Selected model: ",
+        scope: "prompt",
+        enabled: true,
+    },
+    {
+        id: "preset-codex-desktop-context",
+        pattern: "*# Codex desktop context*",
+        replacement: "# Desktop application context",
+        scope: "prompt",
+        enabled: true,
+    },
+    {
+        id: "preset-codex-as-role",
+        pattern: "*as Codex:*",
+        replacement: "as an assistant:",
+        scope: "prompt",
         enabled: true,
     },
     {
         id: "preset-codex-intro",
         pattern: "*the codex cli is an open*source project*",
         replacement: "",
+        scope: "prompt",
         enabled: true,
     },
     {
         id: "preset-anthropic-billing",
         pattern: "*x-anthropic-billing-header:*",
         replacement: "",
+        scope: "prompt",
         enabled: true,
     },
 ];

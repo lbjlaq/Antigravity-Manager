@@ -532,7 +532,8 @@
         "auto_fetch_project_id": "Obter automaticamente",
         "fetching_project_id": "Obtendo...",
         "auto_fetch_success": "Project ID obtido com sucesso: {{projectId}}",
-        "auto_fetch_failed": "Nenhum Project ID associado encontrado no upstream"
+        "auto_fetch_failed": "Nenhum Project ID associado encontrado no upstream",
+        "unfreeze_model_tooltip": "Clique para descongelar este modelo (remove o status 403)"
     },
     "settings": {
         "save": "Salvar Configurações",
@@ -1766,8 +1767,6 @@
             "enabled": "Ativado",
             "empty": "Nenhuma regra de limpeza ainda. Adicione uma abaixo.",
             "add_rule": "Adicionar regra de limpeza",
-            "load_presets": "Carregar predefinições recomendadas",
-            "load_presets_confirm": "Isso adicionará as regras predefinidas de WAF recomendadas oficialmente mantendo suas regras personalizadas. Continuar?",
             "match": "Correspondência",
             "replace": "Substituir por",
             "match_placeholder": "Texto para corresponder, ex.: You are *",
@@ -1784,7 +1783,20 @@
             "hint_empty": "Substituição vazia = excluir o texto correspondente",
             "hint_wildcard": "Suporta * (qualquer caractere na mesma linha); use \\n para nova linha.",
             "hint_escape": "Escapes: \\n nova linha, \\t tabulação, \\\\ barra invertida, \\* asterisco literal.",
-            "hint_order": "As regras são executadas de cima para baixo; apenas blocos de prompt antes da primeira mensagem real do usuário são afetados, blocos de código são isentos."
+            "hint_order": "As regras são executadas de cima para baixo; apenas blocos de prompt antes da primeira mensagem real do usuário são afetados, blocos de código são isentos.",
+            "sideload_mode_title": "Carregamento Oculto de Prompt do Sistema",
+            "sideload_mode_hint": "Injeta com segurança instruções do cliente no contexto inicial do usuário para maximizar o reuso de KV Cache e restaurar a identidade oficial evitando falsos 429 do WAF.",
+            "sideload_mode_auto": "Automático Inteligente (Recomendado)",
+            "sideload_mode_always": "Sempre Ocultar",
+            "sideload_mode_off": "Desativado",
+            "sanitize_tools_desc_title": "Higienização de Descrições de Ferramentas",
+            "sanitize_tools_desc_hint": "Filtra termos sensíveis e regras personalizadas em tools[].description mantendo intactos nomes e parâmetros para evitar falhas em ferramentas.",
+            "scope_label": "Escopo da Regra",
+            "scope_all": "Tudo",
+            "scope_prompt": "Prompt",
+            "scope_tools": "Ferramentas",
+            "restore_presets": "Restaurar Padrões",
+            "restore_presets_confirm": "Isso restaurará as regras para os padrões oficiais mais recentes (11 regras no total). Continuar?"
         }
     },
     "monitor": {

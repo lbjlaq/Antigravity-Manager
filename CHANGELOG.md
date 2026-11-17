@@ -3,6 +3,32 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.14 (2026-11-17)**:
+        -   **[上游 WAF 伪 429 拦截全面中和与隐身侧载架构] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, Fixes #3982, Fixes #3983, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui, @ALight777, @CommentOut64)**:
+            -   **系统提示词隐身侧载（Prompt Stealth Sideloading）与根节点单次锚定**: 针对上游 Google Cloud Code WAF 针对非官方身份及复杂 Agent 提示词实施特征哈希扫描并秒级返回伪 429 RESOURCE_EXHAUSTED 的机制，设计并在 Pipeline 层落地隐身侧载架构。将第三方系统提示词无损打包为 `<system-instruction priority="critical" role="developer">` 安全嵌入首轮对话上下文，出站官方 `systemInstruction` 恢复纯净默认 Antigravity 身份；采用 Sticky Root 单次锚定机制，多轮对话历史绝不重复注入，实现 100% 缓存前缀字节级不可变与最大化复用 KV Cache。
+            -   **工具声明安全脱敏与全域自定义规则应用**: 对 `tools[].description` 深度执行隐私脱敏与敏感特征中和，并全面应用用户自定义与预设风控重写规则；严格冻结 `tools[].name` 与 `parameters` 结构不变，完全杜绝模型工具调用参数报错或第三方生态插件失效。
+            -   **规则作用域隔离选择器（Scope）与预设一键恢复**: 提示词清洗与重写规则全面升级作用域控制，支持「全部 / 提示词 / 工具」三态纯文本快捷切换；校准官方推荐预设规则归属（9 条专属提示词，2 条全域），并将预设操作收敛为单一明确的「恢复默认预设」按钮，支持已有预设智能覆盖更新与 12 种语言国际化对齐。
+            -   **DSH 浏览器上下文声明中和与规则预设**: 针对 DeepSeek Harness (DSH) 客户端默认系统提示词中的特定单句（`The browser provides no implicit DOM, route, or screenshot context.`）触发上游 WAF 字面拦截并秒回伪 429 的问题，在清洗引擎中精准改写为语义等价变体（`The browser exposes no DOM tree, route list, or page screenshot context`），并同步作为推荐预设规则 `preset-dsh-browser-context` 提供，在侧载与直连双通道下实现全免伪 429。(Fixes #3983, Thanks to @CommentOut64)
+            -   **WorkBuddy 与 Codex 引导特征中和与 CRLF 支持**: 针对 WorkBuddy 注入的模型声明首行（`This conversation is powered by <model>`）及 Codex 桌面端上下文标记（`# Codex desktop context`、`as Codex:`）触发 WAF 假 429 的问题，实现精准中和（改写为 `Selected model: <model>`、`# Desktop application context`、`as an assistant:`），并全面兼容 Unix LF 与 Windows CRLF 换行格式，完整保留所有工具定义与调用能力。(Fixes #3982, Thanks to @ALight777)
+            -   **Pi Agent 内置 codemode 工具指令中和**: 针对 Pi Agent 启用内置 `codemode` 工具时触发上游 WAF 假 429 的问题，在请求前 20,000 字符动态窗口内安全中和 `codemode` 描述与提示词关键字（`codem0de`），同时 100% 保护工具名称、参数结构与多行代码块。(Fixes #3981, Thanks to @muzisuisuisui)
+            -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
+            -   **提示词重写规则支持行内反引号**: 重构代码块隔离逻辑，由通配代码正则精细化收敛为多行围栏代码块隔离（`RE_FENCED_CODE_BLOCK`），使行内反引号中的敏感指令能被自定义规则与官方预设规则正常命中清洗，消除规则盲区。(Fixes #3969, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
+            -   **Claude Code 独立版交互式 Agent 特征中和**: 针对最新版 Claude Code CLI 默认注入的提示词特征首句（`You are an interactive agent that helps users with software engineering tasks`）引发上游 WAF 假 429 拦截的问题，将其无缝对齐至官方 Antigravity 身份并内置全新预设清理规则 `preset-claude-code-agent`，保障 Claude Code 与 Claude Agent SDK 原生交互畅通无阻。(Fixes #3972, PR #3976, Thanks to @cubelikeplayDaniel)
+        -   **[账号模型 403 冻结误判消除与前端手动解冻]**:
+            -   **模型 Scope 提取防邮箱误判**: 修复了 Google 返回账号级错误（如 `not eligible for Gemini Code Assist ... email gemini-code-assist-user-feedback@google.com`）时，因正则扫描将含有 `@` 的客服邮箱误识别为模型名并错误冻结全家族模型的问题；`clean_model_token` 严格过滤邮箱格式，并显式忽略 `not eligible` / `code assist` 等账号级非模型限定报错。
+            -   **支持前端一键解除模型 403 冻结**: 在表格与卡片视图上的每个 `❄️ {model}` 冻结标签增加一键清除交互与关闭按钮，提供 `remove_account_forbidden_model` Tauri 指令，用户可手动针对单模型或全量解除误冻结，并补齐 12 国语言悬浮提示。
+        -   **[GCP PAYGO 层级端到端支持与 Project ID 命令恢复] (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)**:
+            -   **对齐 Protobuf 字段 8 enabledCreditTypes 与严格键序**: 根据官方二进制逆向结果，为 GCP 自费/PAYGO 项目请求自动对齐或保留 `enabledCreditTypes: ["GOOGLE_ONE_AI"]`，消费级账号严格剥离；严格遵循官方 Protobuf 1..8 顶层键序。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **计费归属 Header 智能透传与隔离**: 对自定义 GCP 项目保留 `x-goog-user-project: <project_id>` 避免 403 鉴权失败，对消费级账号彻底剥离该请求头避免非法归属报错。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **识别 PAYGO 订阅与模型池金丝雀路由**: 识别 `raw_tier`（`GCP_GE_PAYGO_TIER`）并向池中纳入 `ENTERPRISE` 与 `PAYGO` 账号；在断路器中扩展 `gemini-3.8-flash` 等新模型。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+            -   **复原 Project ID 管理指令**: 完整复原 Tauri IPC 与 Axum Web API 双端的项目 ID 动态修改与自动获取命令。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
+        -   **[Codex Responses MCP 工具命名空间字段恢复] (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)**:
+            -   **恢复 MCP 工具调用的 name / namespace 结构**: 修复了 Codex 通过 Responses API 接入网关并调用 MCP namespace 工具时报错 `unsupported call: mcp__...` 的问题；在非流式、流式 SSE 与 WebSocket 通道统一准确拆分 `name` 与 `namespace` 字段（按末尾分隔符还原 `mcp__*` 命名空间），并向下兼容普通工具与非 MCP 命名空间。(Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
+        -   **[OAuth 授权作用域补齐与 AGY CLI 1.5.x 兼容] (Refs #3974, PR #3978, Thanks to @ThermalEng)**:
+            -   **新增 aicode OAuth Scope**: 在 Google OAuth 授权地址中补齐官方 AGY CLI 1.5.x 所需的 `https://www.googleapis.com/auth/aicode` scope，根除因权限缺失导致的 `Sign-in update needed` 警告与高级功能权限校验拒绝。(Refs #3974, PR #3978, Thanks to @ThermalEng)
+        -   **[Homebrew 安装实例切换 Beta 通道更新回退] (Fixes #3973, Thanks to @Starfie1d1272)**:
+            -   **Beta 通道自动降级原生自动更新**: 修复了通过 Homebrew Cask 安装的应用在切换到 Beta 更新通道后，因 Homebrew 官方源只维护稳定版导致触发 `brew upgrade` 报错已是最新而无法更新的问题；当检测到更新目标为测试版时，自动回退并切换为原生应用内下载与自动更新，并给出友好提示。(Fixes #3973, Thanks to @Starfie1d1272)
+
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[上游 WAF 特征提示词中和与模型配额归一化修复] (Fixes #3965)**:
             -   **中和第三方 Agent 工具指令特征防伪 429**: 针对 Google Cloud Code 上游 WAF 针对特定第三方 Agent 模板（如 Kelivo、Hermes Agent 等）的启发式指令拦截（`Prefer read_file, edit_file, and write_file over cat/sed` 等模式），在单趟保护代码块的前提下对非代码区域进行高精度中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3965)

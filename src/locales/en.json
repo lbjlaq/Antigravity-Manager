@@ -617,7 +617,8 @@
             "error_too_long": "Tag length cannot exceed 15 characters",
             "error_max_limit": "Maximum 8 tags allowed",
             "error_duplicate": "Tag already exists"
-        }
+        },
+        "unfreeze_model_tooltip": "Click to unfreeze this model (clears 403 status)"
     },
     "settings": {
         "save": "Save Settings",
@@ -907,6 +908,7 @@
             "brew_error_brew_timeout": "Homebrew upgrade timed out (3min). Try running manually: brew upgrade --cask antigravity-tools",
             "brew_error_brew_already_latest": "Already up to date, no upgrade needed",
             "brew_error_brew_not_supported": "Homebrew update is not supported on this platform",
+            "brew_beta_notice": "Homebrew only supports stable releases. A beta release was detected, switched to native auto-updater.",
             "update_check_failed": "Update check failed",
             "support_btn": "Support Author",
             "support_title": "Donation & Support",
@@ -1828,8 +1830,6 @@
             "enabled": "Enabled",
             "empty": "No cleanup rules yet. Add one below.",
             "add_rule": "Add cleanup rule",
-            "load_presets": "Load Recommended Presets",
-            "load_presets_confirm": "This will append official recommended WAF preset rules while keeping your existing custom rules. Continue?",
             "match": "Match",
             "replace": "Replace with",
             "match_placeholder": "Match text, e.g. You are *",
@@ -1846,7 +1846,20 @@
             "hint_empty": "Empty replacement = delete the matched text",
             "hint_wildcard": "Supports * (any characters on the same line); use \\n for a newline.",
             "hint_escape": "Escapes: \\n newline, \\t tab, \\\\ backslash, \\* literal star.",
-            "hint_order": "Rules run top to bottom; only prompt blocks before the first real user message are touched, code blocks are exempt."
+            "hint_order": "Rules run top to bottom; only prompt blocks before the first real user message are touched, code blocks are exempt.",
+            "sideload_mode_title": "System Prompt Stealth Sideloading",
+            "sideload_mode_hint": "Safely wraps client instructions into root user context to maximize KV Cache reuse, restoring official Antigravity identity to evade upstream WAF fake 429.",
+            "sideload_mode_auto": "Smart Auto (Recommended)",
+            "sideload_mode_always": "Always Sideload",
+            "sideload_mode_off": "Disabled",
+            "sanitize_tools_desc_title": "Sanitize Tool Descriptions",
+            "sanitize_tools_desc_hint": "Deeply filters sensitive keywords and custom rules in tools[].description while freezing tool names and schemas to prevent tool call errors.",
+            "scope_label": "Rule Scope",
+            "scope_all": "All",
+            "scope_prompt": "Prompt",
+            "scope_tools": "Tools",
+            "restore_presets": "Restore Default Presets",
+            "restore_presets_confirm": "This will restore the rules to the latest official presets (11 rules in total). Continue?"
         },
         "multimodal": {
             "banner_title": "Multimodal Interaction & Longevity Governance (Pipeline First)",

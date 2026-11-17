@@ -24,7 +24,7 @@ function createRule(): PromptRewriteRule {
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    return { id, pattern: "", replacement: "", enabled: true };
+    return { id, pattern: "", replacement: "", scope: 'all', enabled: true };
 }
 
 export default function PromptRewriteSettings({
@@ -77,22 +77,16 @@ export default function PromptRewriteSettings({
         onChange({ ...config, rules: rules.filter((_, i) => i !== index) });
     };
 
-    const loadRecommendedPresets = () => {
-        if (rules.length > 0) {
-            const confirmed = window.confirm(
-                t("proxy.prompt_rewrite.load_presets_confirm", {
-                    defaultValue: "这将在保留现有自定义规则的同时，自动补齐官方推荐的风控预设规则，是否继续？",
-                })
-            );
-            if (!confirmed) return;
-        }
-        const existingPatterns = new Set(rules.map((r) => r.pattern.trim()));
-        const toAdd = RECOMMENDED_PROMPT_REWRITE_PRESETS.filter(
-            (p) => !existingPatterns.has(p.pattern.trim())
+    const restoreDefaultPresets = () => {
+        const confirmed = window.confirm(
+            t("proxy.prompt_rewrite.restore_presets_confirm", {
+                defaultValue: "这将把风控清理规则恢复为官方最新的默认预设（共 11 条），是否确定继续？",
+            })
         );
+        if (!confirmed) return;
         onChange({
             ...config,
-            rules: [...rules, ...toAdd],
+            rules: [...RECOMMENDED_PROMPT_REWRITE_PRESETS],
         });
     };
 
@@ -176,6 +170,76 @@ export default function PromptRewriteSettings({
                 </label>
             </div>
 
+            {/* 系统提示词隐身侧载模式 */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200/80 dark:border-base-300 bg-white dark:bg-base-100 px-4 py-2.5">
+                <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                        {t("proxy.prompt_rewrite.sideload_mode_title", {
+                            defaultValue: "系统提示词隐身侧载",
+                        })}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {t("proxy.prompt_rewrite.sideload_mode_hint", {
+                            defaultValue:
+                                "将客户端复杂指令安全注入首轮用户上下文并最大化复用 KV Cache，出站还原纯净官方 Antigravity 身份规避 WAF 假 429。",
+                        })}
+                    </p>
+                </div>
+                <div className="shrink-0 flex items-center">
+                    <select
+                        value={config.sideload_mode || 'auto'}
+                        onChange={(e) =>
+                            onChange({
+                                ...config,
+                                sideload_mode: e.target.value as 'auto' | 'always' | 'off',
+                            })
+                        }
+                        className="select select-xs border-gray-300 dark:border-base-300 bg-gray-50 dark:bg-base-200 text-xs rounded-md font-medium text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    >
+                        <option value="auto">
+                            {t("proxy.prompt_rewrite.sideload_mode_auto", { defaultValue: "智能侧载 (推荐)" })}
+                        </option>
+                        <option value="always">
+                            {t("proxy.prompt_rewrite.sideload_mode_always", { defaultValue: "始终侧载" })}
+                        </option>
+                        <option value="off">
+                            {t("proxy.prompt_rewrite.sideload_mode_off", { defaultValue: "关闭侧载" })}
+                        </option>
+                    </select>
+                </div>
+            </div>
+
+            {/* 工具声明描述脱敏开关 */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200/80 dark:border-base-300 bg-white dark:bg-base-100 px-4 py-2.5">
+                <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                        {t("proxy.prompt_rewrite.sanitize_tools_desc_title", {
+                            defaultValue: "工具声明描述安全脱敏",
+                        })}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {t("proxy.prompt_rewrite.sanitize_tools_desc_hint", {
+                            defaultValue:
+                                "对 tools[].description 深度执行敏感词与自定义规则过滤，严格保留工具名称与参数结构，防止工具调用报错或失效。",
+                        })}
+                    </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                        type="checkbox"
+                        checked={config.sanitize_tools_description !== false}
+                        onChange={(e) =>
+                            onChange({
+                                ...config,
+                                sanitize_tools_description: e.target.checked,
+                            })
+                        }
+                        className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-600 peer-checked:bg-purple-500"></div>
+                </label>
+            </div>
+
             {config.enabled && (
                 <div className="space-y-2">
                     {rules.length === 0 && (
@@ -197,6 +261,34 @@ export default function PromptRewriteSettings({
                                 <span className="w-5 shrink-0 text-right text-[10px] font-mono text-gray-400">
                                     {index + 1}.
                                 </span>
+                                <select
+                                    value={rule.scope || 'all'}
+                                    onChange={(e) =>
+                                        updateRule(index, {
+                                            scope: e.target.value as 'all' | 'prompt' | 'tools',
+                                        })
+                                    }
+                                    className="shrink-0 px-2 py-1.5 border border-gray-300 dark:border-base-300 rounded-md bg-gray-50 dark:bg-base-200 text-[11px] font-medium text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none cursor-pointer"
+                                    title={t("proxy.prompt_rewrite.scope_label", {
+                                        defaultValue: "规则作用范围",
+                                    })}
+                                >
+                                    <option value="all">
+                                        {t("proxy.prompt_rewrite.scope_all", {
+                                            defaultValue: "全部",
+                                        })}
+                                    </option>
+                                    <option value="prompt">
+                                        {t("proxy.prompt_rewrite.scope_prompt", {
+                                            defaultValue: "提示词",
+                                        })}
+                                    </option>
+                                    <option value="tools">
+                                        {t("proxy.prompt_rewrite.scope_tools", {
+                                            defaultValue: "工具",
+                                        })}
+                                    </option>
+                                </select>
                                 <input
                                     value={rule.pattern}
                                     onChange={(e) =>
@@ -270,12 +362,12 @@ export default function PromptRewriteSettings({
                         </button>
                         <button
                             type="button"
-                            onClick={loadRecommendedPresets}
+                            onClick={restoreDefaultPresets}
                             className="py-2 rounded-lg border border-dashed border-amber-300 dark:border-amber-700/50 text-xs font-semibold text-amber-600 dark:text-amber-400 hover:border-amber-500 hover:bg-amber-50/60 dark:hover:bg-amber-900/20 transition-colors flex items-center justify-center gap-1.5"
                         >
                             <Sparkles size={14} />
-                            {t("proxy.prompt_rewrite.load_presets", {
-                                defaultValue: "载入官方推荐预设",
+                            {t("proxy.prompt_rewrite.restore_presets", {
+                                defaultValue: "恢复默认预设",
                             })}
                         </button>
                     </div>
@@ -323,6 +415,39 @@ export default function PromptRewriteSettings({
                                 </button>
                             </div>
                             <div className="p-5 space-y-4 overflow-y-auto">
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1.5">
+                                        {t("proxy.prompt_rewrite.scope_label", {
+                                            defaultValue: "规则作用范围",
+                                        })}
+                                    </label>
+                                    <select
+                                        value={editing!.scope || 'all'}
+                                        onChange={(e) =>
+                                            setEditing({
+                                                ...editing!,
+                                                scope: e.target.value as 'all' | 'prompt' | 'tools',
+                                            })
+                                        }
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-base-300 rounded-lg bg-white dark:bg-base-200 text-xs font-medium text-gray-900 dark:text-base-content focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none cursor-pointer"
+                                    >
+                                        <option value="all">
+                                            {t("proxy.prompt_rewrite.scope_all", {
+                                                defaultValue: "全部",
+                                            })}
+                                        </option>
+                                        <option value="prompt">
+                                            {t("proxy.prompt_rewrite.scope_prompt", {
+                                                defaultValue: "提示词",
+                                            })}
+                                        </option>
+                                        <option value="tools">
+                                            {t("proxy.prompt_rewrite.scope_tools", {
+                                                defaultValue: "工具",
+                                            })}
+                                        </option>
+                                    </select>
+                                </div>
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1.5">
                                         {t("proxy.prompt_rewrite.match", {

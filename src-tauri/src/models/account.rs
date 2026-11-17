@@ -373,6 +373,11 @@ pub(crate) fn clean_model_token(token: &str) -> Option<String> {
     if token.is_empty() {
         return None;
     }
+    // 防误提取：含 `@` 的 token 是邮箱地址（如 gemini-code-assist-user-feedback@google.com），
+    // 绝不能当作模型名。
+    if token.contains('@') {
+        return None;
+    }
     // 大小写无关地校验是否包含已知模型家族
     let token_lower = token.to_lowercase();
     if MODEL_FAMILIES.iter().any(|f| token_lower.contains(f)) {
@@ -395,6 +400,10 @@ pub(crate) fn forbidden_model_scope(reason: &str) -> Option<String> {
         || lower.contains("location is not supported")
         || lower.contains("location not allowed")
         || lower.contains("quota project")
+        // 账号级资格不符（如 "not eligible for Gemini Code Assist"），不是模型级 403。
+        // 防止 "please email gemini-code-assist-user-feedback@google.com" 被误提取为模型名。
+        || lower.contains("not eligible")
+        || lower.contains("code assist")
     {
         return None;
     }
@@ -1536,6 +1545,25 @@ mod tests {
         );
         assert_eq!(
             forbidden_model_scope("VALIDATION_REQUIRED: verify your account"),
+            None
+        );
+        // 关键防护：账号级 "not eligible for Gemini Code Assist" 绝不能提取模型 scope，
+        // 否则 "gemini-code-assist-user-feedback@google.com" 邮箱地址会被误写入 forbidden_models。
+        assert_eq!(
+            forbidden_model_scope(
+                "Your account is not eligible for Gemini Code\n\t\tAssist at this time. If you believe this is an error,\n\t\tplease email gemini-code-assist-user-feedback@google.com."
+            ),
+            None
+        );
+        assert_eq!(
+            forbidden_model_scope(
+                "Your current account is not eligible for Gemini Code Assist for individuals because it is not currently available in your location."
+            ),
+            None
+        );
+        // clean_model_token 应拒绝含 @ 的邮箱地址
+        assert_eq!(
+            clean_model_token("gemini-code-assist-user-feedback@google.com"),
             None
         );
     }

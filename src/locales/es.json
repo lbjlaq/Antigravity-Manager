@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Obtención automática",
         "fetching_project_id": "Obteniendo...",
         "auto_fetch_success": "Project ID obtenido con éxito: {{projectId}}",
-        "auto_fetch_failed": "No se encontró ningún Project ID asociado en el origen"
+        "auto_fetch_failed": "No se encontró ningún Project ID asociado en el origen",
+        "unfreeze_model_tooltip": "Haga clic para descongelar este modelo (elimina el estado 403)"
     },
     "settings": {
         "save": "Guardar Configuración",
@@ -1730,8 +1731,6 @@
             "enabled": "Activado",
             "empty": "Aún no hay reglas de limpieza. Añade una abajo.",
             "add_rule": "Añadir regla de limpieza",
-            "load_presets": "Cargar ajustes preestablecidos recomendados",
-            "load_presets_confirm": "¿Deseas añadir las reglas preestablecidas de WAF recomendadas oficialmente manteniendo tus reglas personalizadas actuales?",
             "match": "Coincidencia",
             "replace": "Reemplazar con",
             "match_placeholder": "Texto coincidente, ej.: You are *",
@@ -1748,7 +1747,20 @@
             "hint_empty": "Reemplazo vacío = eliminar el texto coincidente",
             "hint_wildcard": "Admite * (cualquier carácter en la misma línea); usa \\n para saltos de línea.",
             "hint_escape": "Secuencias de escape: \\n salto de línea, \\t tabulador, \\\\ barra invertida, \\* asterisco literal.",
-            "hint_order": "Las reglas se ejecutan de arriba a abajo; solo se modifican los avisos previos al primer mensaje real del usuario. Los bloques de código están exentos."
+            "hint_order": "Las reglas se ejecutan de arriba a abajo; solo se modifican los avisos previos al primer mensaje real del usuario. Los bloques de código están exentos.",
+            "sideload_mode_title": "Carga Oculta de Prompt del Sistema",
+            "sideload_mode_hint": "Inyecta de forma segura instrucciones en el contexto inicial del usuario para maximizar la reutilización de KV Cache y restaurar la identidad oficial evadiendo falsos 429 del WAF.",
+            "sideload_mode_auto": "Automático Inteligente (Recomendado)",
+            "sideload_mode_always": "Siempre Ocultar",
+            "sideload_mode_off": "Desactivado",
+            "sanitize_tools_desc_title": "Sanitización de Descripciones de Herramientas",
+            "sanitize_tools_desc_hint": "Filtra términos sensibles y reglas en tools[].description mientras congela nombres y parámetros para evitar fallos en herramientas.",
+            "scope_label": "Ámbito de Regla",
+            "scope_all": "Todo",
+            "scope_prompt": "Prompt",
+            "scope_tools": "Herramientas",
+            "restore_presets": "Restaurar Preajustes",
+            "restore_presets_confirm": "Esto restaurará las reglas a los preajustes oficiales más recientes (11 reglas en total). ¿Continuar?"
         }
     },
     "monitor": {

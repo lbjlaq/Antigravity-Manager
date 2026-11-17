@@ -5330,6 +5330,63 @@ pub fn clear_account_forbidden_and_validation(
     Ok(true)
 }
 
+/// 手动移除账号指定模型的 403 冻结（或传入 None 清空该账号所有 forbidden_models）
+pub fn remove_account_forbidden_model(
+    account_id: &str,
+    model: Option<&str>,
+) -> Result<bool, String> {
+    let _lock = ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+    let mut account = load_account(account_id)?;
+
+    if account.forbidden_models.is_empty() {
+        return Ok(false);
+    }
+
+    let before_len = account.forbidden_models.len();
+
+    if let Some(target) = model {
+        let target_lower = target.trim().to_lowercase();
+        let target_base =
+            crate::proxy::common::model_mapping::strip_tier_suffix(&target_lower).to_lowercase();
+        let target_img_base =
+            crate::proxy::common::model_mapping::strip_image_variant_suffix(&target_lower)
+                .to_lowercase();
+
+        account.forbidden_models.retain(|scope| {
+            let s_lower = scope.trim().to_lowercase();
+            if s_lower == target_lower
+                || crate::models::account::model_scope_matches(&s_lower, &target_lower)
+                || crate::models::account::model_scope_matches(&s_lower, &target_base)
+                || crate::models::account::model_scope_matches(&s_lower, &target_img_base)
+                || is_gemini_dynamic_rewrite_pair(&s_lower, &target_lower)
+            {
+                return false;
+            }
+            true
+        });
+    } else {
+        account.forbidden_models.clear();
+    }
+
+    if account.forbidden_models.len() == before_len {
+        return Ok(false);
+    }
+
+    save_account(&account)?;
+
+    crate::proxy::server::trigger_account_reload(account_id);
+    crate::modules::logger::log_info(&format!(
+        "🔓 [Manual] Removed forbidden model {:?} for account {}",
+        model, account.email
+    ));
+    crate::modules::log_bridge::emit_accounts_refreshed();
+
+    Ok(true)
+}
+
 pub fn mark_account_validation_blocked(
     account_id: &str,
     block_until: i64,

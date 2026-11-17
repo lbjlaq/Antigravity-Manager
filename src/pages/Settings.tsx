@@ -46,7 +46,7 @@ function Settings() {
     const { config, loadConfig, saveConfig, updateLanguage, updateTheme } = useConfigStore();
     const { enable, disable, isEnabled } = useDebugConsole();
     const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
-    const [appVersion, setAppVersion] = useState<string>('5.0.4-beta.13');
+    const [appVersion, setAppVersion] = useState<string>('5.0.4-beta.14');
     const [formData, setFormData] = useState<AppConfig>({
         language: 'zh',
         theme: 'system',
@@ -470,7 +470,10 @@ function Settings() {
 
     const handleConfirmUpdate = async () => {
         setIsUpdateConfirmOpen(false);
-        if (isBrewInstalled) {
+        // If installed via Homebrew and updating to a stable release, use Homebrew upgrade.
+        // For Beta updates, fallback to native auto-updater because Homebrew Cask only tracks stable.
+        const shouldUseBrew = isBrewInstalled && updateInfo?.channel !== 'beta';
+        if (shouldUseBrew) {
             handleBrewUpgrade();
             return;
         }
@@ -2027,7 +2030,7 @@ function Settings() {
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-2 flex-wrap justify-center">
-                                                        {isBrewInstalled ? (
+                                                        {isBrewInstalled && updateInfo.channel !== 'beta' ? (
                                                             <button
                                                                 onClick={() => setIsBrewConfirmOpen(true)}
                                                                 disabled={isBrewUpgrading}
@@ -2063,6 +2066,13 @@ function Settings() {
                                                             <ExternalLink className="w-3.5 h-3.5" />
                                                         </a>
                                                     </div>
+                                                    {isBrewInstalled && updateInfo.channel === 'beta' && (
+                                                        <p className="text-[11px] text-amber-600/90 dark:text-amber-400/90 max-w-md text-center">
+                                                            {t('settings.about.brew_beta_notice', {
+                                                                defaultValue: 'Homebrew 仅支持稳定版更新，检测到测试版更新，已为您切换为原生自动更新。'
+                                                            })}
+                                                        </p>
+                                                    )}
                                                 </div>
                                             ) : (
                                                 <div className="text-sm text-green-600 dark:text-green-400 font-medium">

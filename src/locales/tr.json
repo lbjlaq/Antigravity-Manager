@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "Otomatik Al",
         "fetching_project_id": "Alınıyor...",
         "auto_fetch_success": "Project ID başarıyla alındı: {{projectId}}",
-        "auto_fetch_failed": "Yukarı akışta ilişkili bir Project ID bulunamadı"
+        "auto_fetch_failed": "Yukarı akışta ilişkili bir Project ID bulunamadı",
+        "unfreeze_model_tooltip": "Bu modelin 403 dondurmasını kaldırmak için tıklayın"
     },
     "settings": {
         "save": "Ayarları Kaydet",
@@ -1783,8 +1784,6 @@
             "enabled": "Etkin",
             "empty": "Henüz temizleme kuralı yok. Aşağıdan ekleyin.",
             "add_rule": "Temizleme kuralı ekle",
-            "load_presets": "Önerilen Hazır Ayarları Yükle",
-            "load_presets_confirm": "Bu işlem mevcut özel kurallarınızı koruyarak resmi önerilen WAF hazır ayarlarını ekleyecektir. Devam edilsin mi?",
             "match": "Eşleşme",
             "replace": "Şununla değiştir",
             "match_placeholder": "Eşleşme metni, örn: You are *",
@@ -1801,7 +1800,20 @@
             "hint_empty": "Boş değiştirme = eşleşen metni sil",
             "hint_wildcard": "* desteği (aynı satırdaki herhangi bir karakter); yeni satır için \\n kullanın.",
             "hint_escape": "Kaçış karakterleri: \\n yeni satır, \\t sekme, \\\\ ters eğik çizgi, \\* yıldız işareti.",
-            "hint_order": "Kurallar yukarıdan aşağıya doğru çalıştırılır; yalnızca ilk gerçek kullanıcı mesajından önceki istem blokları işlenir, kod blokları muaftır."
+            "hint_order": "Kurallar yukarıdan aşağıya doğru çalıştırılır; yalnızca ilk gerçek kullanıcı mesajından önceki istem blokları işlenir, kod blokları muaftır.",
+            "sideload_mode_title": "Sistem İstemi Gizli Yan Yükleme",
+            "sideload_mode_hint": "KV Cache yeniden kullanımını en üst düzeye çıkarmak ve WAF sahte 429 engellerini aşmak için resmi kimliği geri yükleyerek istemci talimatlarını güvenle kullanıcı bağlamına sarar.",
+            "sideload_mode_auto": "Akıllı Otomatik (Önerilen)",
+            "sideload_mode_always": "Her Zaman Yükle",
+            "sideload_mode_off": "Devre Dışı",
+            "sanitize_tools_desc_title": "Araç Açıklamalarını Güvenli Temizleme",
+            "sanitize_tools_desc_hint": "Araç çağırma hatalarını önlemek için ad ve parametre yapılarını dondururken tools[].description içindeki hassas ifadeleri temizler.",
+            "scope_label": "Kural Kapsamı",
+            "scope_all": "Tümü",
+            "scope_prompt": "İstemi",
+            "scope_tools": "Araçlar",
+            "restore_presets": "Varsayılan Hazır Ayarları Geri Yükle",
+            "restore_presets_confirm": "Bu işlem kuralları en son resmi varsayılan hazır ayarlara (toplam 11 kural) geri yükleyecektir. Devam edilsin mi?"
         }
     },
     "monitor": {

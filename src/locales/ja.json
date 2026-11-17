@@ -528,7 +528,8 @@
         "auto_fetch_project_id": "自動取得",
         "fetching_project_id": "取得中...",
         "auto_fetch_success": "Project ID を自動取得しました: {{projectId}}",
-        "auto_fetch_failed": "上流で関連付けられた Project ID が見つかりませんでした"
+        "auto_fetch_failed": "上流で関連付けられた Project ID が見つかりませんでした",
+        "unfreeze_model_tooltip": "クリックしてこのモデルの403凍結を解除"
     },
     "settings": {
         "save": "設定を保存",
@@ -1730,8 +1731,6 @@
             "enabled": "有効",
             "empty": "クリーンアップルールがまだありません。下部から追加してください。",
             "add_rule": "クリーンアップルールを追加",
-            "load_presets": "公式推奨プリセットを読み込む",
-            "load_presets_confirm": "現在のカスタムルールを保持したまま、公式推奨の WAF プリセットルールを追加します。続行しますか？",
             "match": "一致パターン",
             "replace": "置換後",
             "match_placeholder": "一致パターン（例：You are *）",
@@ -1748,7 +1747,20 @@
             "hint_empty": "置換後が空欄 = 一致テキストを削除",
             "hint_wildcard": "ワイルドカード *（同一行内の任意の文字に一致）に対応。改行は \\n を使用してください。",
             "hint_escape": "エスケープ対応：\\n 改行、\\t タブ、\\\\ バックスラッシュ、\\* 文字通りのアスタリスク。",
-            "hint_order": "ルールは上から順に実行されます。最初の実際の user プロンプト前のプロンプトブロックにのみ適用され、コードブロックは自動的に除外されます。"
+            "hint_order": "ルールは上から順に実行されます。最初の実際の user プロンプト前のプロンプトブロックにのみ適用され、コードブロックは自動的に除外されます。",
+            "sideload_mode_title": "システムプロンプトのステルスサイドロード",
+            "sideload_mode_hint": "クライアントの指示を初回ユーザー文脈に安全に組み込みKVキャッシュの再利用を最大化しつつ、公式IDに正規化してWAFの偽429を回避します。",
+            "sideload_mode_auto": "スマート自動 (推奨)",
+            "sideload_mode_always": "常時サイドロード",
+            "sideload_mode_off": "無効",
+            "sanitize_tools_desc_title": "ツール説明の安全サニタイズ",
+            "sanitize_tools_desc_hint": "tools[].description内の機密キーワードやカスタムルールを無害化し、ツール名とパラメータスキーマを厳密に保持してエラーを防ぎます。",
+            "scope_label": "ルールの適用範囲",
+            "scope_all": "全体",
+            "scope_prompt": "プロンプト",
+            "scope_tools": "ツール",
+            "restore_presets": "デフォルトプリセットを復元",
+            "restore_presets_confirm": "ルールを公式の最新推奨プリセット（全11件）に復元します。よろしいですか？"
         }
     },
     "monitor": {

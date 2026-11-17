@@ -527,7 +527,8 @@
         "auto_fetch_project_id": "自動獲取",
         "fetching_project_id": "獲取中...",
         "auto_fetch_success": "成功自動獲取 Project ID: {{projectId}}",
-        "auto_fetch_failed": "未能在上游找到關聯的 Project ID"
+        "auto_fetch_failed": "未能在上游找到關聯的 Project ID",
+        "unfreeze_model_tooltip": "點擊解除該模型的 403 凍結"
     },
     "settings": {
         "save": "儲存設定",
@@ -1758,8 +1759,6 @@
             "enabled": "啟用",
             "empty": "還沒有清理規則，點擊下方新增。",
             "add_rule": "新增清理規則",
-            "load_presets": "載入官方推薦預設",
-            "load_presets_confirm": "這將在保留現有自訂規則的同時，自動補齊官方推薦的風控預設規則，是否繼續？",
             "match": "符合內容",
             "replace": "替換為",
             "match_placeholder": "符合內容，例如：You are *",
@@ -1776,7 +1775,20 @@
             "hint_empty": "替換為留空 = 刪除符合內容",
             "hint_wildcard": "支援萬用字元 *（符合同一行內任意字元）；跨行請寫 \\n。",
             "hint_escape": "支援跳脫：\\n 換行、\\t 製表符、\\\\ 反斜線、\\* 字面星號。",
-            "hint_order": "規則按由上而下順序執行；只作用於首個真實 user 提問前的提示詞區塊，程式碼區塊自動豁免。"
+            "hint_order": "規則按由上而下順序執行；只作用於首個真實 user 提問前的提示詞區塊，程式碼區塊自動豁免。",
+            "sideload_mode_title": "系統提示詞隱身側載",
+            "sideload_mode_hint": "將客戶端複雜指令安全注入首輪使用者上下文並最大化複用 KV Cache，出站還原純淨官方 Antigravity 身份規避 WAF 假 429。",
+            "sideload_mode_auto": "智慧側載 (推薦)",
+            "sideload_mode_always": "始終側載",
+            "sideload_mode_off": "關閉側載",
+            "sanitize_tools_desc_title": "工具宣告描述安全脫敏",
+            "sanitize_tools_desc_hint": "對 tools[].description 深度執行敏感詞與自訂規則過濾，嚴格保留工具名稱與參數結構，防止工具調用報錯或失效。",
+            "scope_label": "規則作用範圍",
+            "scope_all": "全部",
+            "scope_prompt": "提示詞",
+            "scope_tools": "工具",
+            "restore_presets": "恢復預設規則",
+            "restore_presets_confirm": "這將把風控清理規則恢復為官方最新的預設規則（共 11 條），是否確定繼續？"
         },
         "multimodal": {
             "banner_title": "多模態交互與長程保鮮治理 (Pipeline First)",
