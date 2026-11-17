@@ -1784,7 +1784,14 @@
             "hint_empty": "Substituição vazia = excluir o texto correspondente",
             "hint_wildcard": "Suporta * (qualquer caractere na mesma linha); use \\n para nova linha.",
             "hint_escape": "Escapes: \\n nova linha, \\t tabulação, \\\\ barra invertida, \\* asterisco literal.",
-            "hint_order": "As regras são executadas de cima para baixo; apenas blocos de prompt antes da primeira mensagem real do usuário são afetados, blocos de código são isentos."
+            "hint_order": "As regras são executadas de cima para baixo; apenas blocos de prompt antes da primeira mensagem real do usuário são afetados, blocos de código são isentos.",
+            "sideload_mode_title": "Carregamento Oculto de Prompt do Sistema",
+            "sideload_mode_hint": "Injeta com segurança instruções do cliente no contexto inicial do usuário mantendo 100% de acerto no KV Cache e restaurando a identidade oficial para evitar falsos 429 do WAF.",
+            "sideload_mode_auto": "Automático Inteligente (Recomendado)",
+            "sideload_mode_always": "Sempre Ocultar",
+            "sideload_mode_off": "Desativado",
+            "sanitize_tools_desc_title": "Higienização de Descrições de Ferramentas",
+            "sanitize_tools_desc_hint": "Filtra termos sensíveis e regras personalizadas em tools[].description mantendo intactos nomes e parâmetros para evitar falhas em ferramentas."
         }
     },
     "monitor": {

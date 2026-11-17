@@ -1847,7 +1847,14 @@
             "hint_empty": "Empty replacement = delete the matched text",
             "hint_wildcard": "Supports * (any characters on the same line); use \\n for a newline.",
             "hint_escape": "Escapes: \\n newline, \\t tab, \\\\ backslash, \\* literal star.",
-            "hint_order": "Rules run top to bottom; only prompt blocks before the first real user message are touched, code blocks are exempt."
+            "hint_order": "Rules run top to bottom; only prompt blocks before the first real user message are touched, code blocks are exempt.",
+            "sideload_mode_title": "System Prompt Stealth Sideloading",
+            "sideload_mode_hint": "Safely wraps client instructions into the root user context preserving 100% KV Cache hit rate, restoring official Antigravity identity to evade upstream WAF fake 429.",
+            "sideload_mode_auto": "Smart Auto (Recommended)",
+            "sideload_mode_always": "Always Sideload",
+            "sideload_mode_off": "Disabled",
+            "sanitize_tools_desc_title": "Sanitize Tool Descriptions",
+            "sanitize_tools_desc_hint": "Deeply filters sensitive keywords and custom rules in tools[].description while freezing tool names and schemas to prevent tool call errors."
         },
         "multimodal": {
             "banner_title": "Multimodal Interaction & Longevity Governance (Pipeline First)",

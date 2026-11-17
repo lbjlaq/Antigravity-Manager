@@ -1748,7 +1748,14 @@
             "hint_empty": "Reemplazo vacío = eliminar el texto coincidente",
             "hint_wildcard": "Admite * (cualquier carácter en la misma línea); usa \\n para saltos de línea.",
             "hint_escape": "Secuencias de escape: \\n salto de línea, \\t tabulador, \\\\ barra invertida, \\* asterisco literal.",
-            "hint_order": "Las reglas se ejecutan de arriba a abajo; solo se modifican los avisos previos al primer mensaje real del usuario. Los bloques de código están exentos."
+            "hint_order": "Las reglas se ejecutan de arriba a abajo; solo se modifican los avisos previos al primer mensaje real del usuario. Los bloques de código están exentos.",
+            "sideload_mode_title": "Carga Oculta de Prompt del Sistema",
+            "sideload_mode_hint": "Inyecta de forma segura instrucciones en el contexto inicial del usuario manteniendo el 100% de aciertos de KV Cache y restaurando la identidad oficial para evadir falsos 429 del WAF.",
+            "sideload_mode_auto": "Automático Inteligente (Recomendado)",
+            "sideload_mode_always": "Siempre Ocultar",
+            "sideload_mode_off": "Desactivado",
+            "sanitize_tools_desc_title": "Sanitización de Descripciones de Herramientas",
+            "sanitize_tools_desc_hint": "Filtra términos sensibles y reglas en tools[].description mientras congela nombres y parámetros para evitar fallos en herramientas."
         }
     },
     "monitor": {
