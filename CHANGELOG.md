@@ -4,6 +4,10 @@
 
 *   **版本演进**:
     *   **v5.0.4-beta.14 (2026-11-17)**:
+        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)**:
+            -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
+            -   **提示词重写规则支持行内反引号**: 重构代码块隔离逻辑，由通配代码正则精细化收敛为多行围栏代码块隔离（`RE_FENCED_CODE_BLOCK`），使行内反引号中的敏感指令能被自定义规则与官方预设规则正常命中清洗，消除规则盲区。(Fixes #3969, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
+            -   **Claude Code 独立版交互式 Agent 特征中和**: 针对最新版 Claude Code CLI 默认注入的提示词特征首句（`You are an interactive agent that helps users with software engineering tasks`）引发上游 WAF 假 429 拦截的问题，将其无缝对齐至官方 Antigravity 身份并内置全新预设清理规则 `preset-claude-code-agent`，保障 Claude Code 与 Claude Agent SDK 原生交互畅通无阻。(Fixes #3972, PR #3976, Thanks to @cubelikeplayDaniel)
         -   **[GCP PAYGO 层级端到端支持与 Project ID 命令恢复] (Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)**:
             -   **对齐 Protobuf 字段 8 enabledCreditTypes 与严格键序**: 根据官方二进制逆向结果，为 GCP 自费/PAYGO 项目请求自动对齐或保留 `enabledCreditTypes: ["GOOGLE_ONE_AI"]`，消费级账号严格剥离；严格遵循官方 Protobuf 1..8 顶层键序。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
             -   **计费归属 Header 智能透传与隔离**: 对自定义 GCP 项目保留 `x-goog-user-project: <project_id>` 避免 403 鉴权失败，对消费级账号彻底剥离该请求头避免非法归属报错。(Fixes #3960, PR #3970, Thanks to @cubelikeplayDaniel, @BLACK-BIRTHDAY)
