@@ -24,7 +24,7 @@ function createRule(): PromptRewriteRule {
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    return { id, pattern: "", replacement: "", enabled: true };
+    return { id, pattern: "", replacement: "", scope: 'all', enabled: true };
 }
 
 export default function PromptRewriteSettings({
@@ -267,6 +267,34 @@ export default function PromptRewriteSettings({
                                 <span className="w-5 shrink-0 text-right text-[10px] font-mono text-gray-400">
                                     {index + 1}.
                                 </span>
+                                <select
+                                    value={rule.scope || 'all'}
+                                    onChange={(e) =>
+                                        updateRule(index, {
+                                            scope: e.target.value as 'all' | 'prompt' | 'tools',
+                                        })
+                                    }
+                                    className="shrink-0 px-2 py-1.5 border border-gray-300 dark:border-base-300 rounded-md bg-gray-50 dark:bg-base-200 text-[11px] font-medium text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none cursor-pointer"
+                                    title={t("proxy.prompt_rewrite.scope_label", {
+                                        defaultValue: "规则作用范围",
+                                    })}
+                                >
+                                    <option value="all">
+                                        {t("proxy.prompt_rewrite.scope_all", {
+                                            defaultValue: "🌐 全部",
+                                        })}
+                                    </option>
+                                    <option value="prompt">
+                                        {t("proxy.prompt_rewrite.scope_prompt", {
+                                            defaultValue: "💬 提示词",
+                                        })}
+                                    </option>
+                                    <option value="tools">
+                                        {t("proxy.prompt_rewrite.scope_tools", {
+                                            defaultValue: "🛠️ 工具",
+                                        })}
+                                    </option>
+                                </select>
                                 <input
                                     value={rule.pattern}
                                     onChange={(e) =>
@@ -393,6 +421,39 @@ export default function PromptRewriteSettings({
                                 </button>
                             </div>
                             <div className="p-5 space-y-4 overflow-y-auto">
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1.5">
+                                        {t("proxy.prompt_rewrite.scope_label", {
+                                            defaultValue: "规则作用范围",
+                                        })}
+                                    </label>
+                                    <select
+                                        value={editing!.scope || 'all'}
+                                        onChange={(e) =>
+                                            setEditing({
+                                                ...editing!,
+                                                scope: e.target.value as 'all' | 'prompt' | 'tools',
+                                            })
+                                        }
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-base-300 rounded-lg bg-white dark:bg-base-200 text-xs font-medium text-gray-900 dark:text-base-content focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none cursor-pointer"
+                                    >
+                                        <option value="all">
+                                            {t("proxy.prompt_rewrite.scope_all", {
+                                                defaultValue: "🌐 全部 (系统提示词 + 工具声明描述)",
+                                            })}
+                                        </option>
+                                        <option value="prompt">
+                                            {t("proxy.prompt_rewrite.scope_prompt", {
+                                                defaultValue: "💬 仅系统提示词 (System / Developer Prompt)",
+                                            })}
+                                        </option>
+                                        <option value="tools">
+                                            {t("proxy.prompt_rewrite.scope_tools", {
+                                                defaultValue: "🛠️ 仅工具声明描述 (tools[].description)",
+                                            })}
+                                        </option>
+                                    </select>
+                                </div>
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1.5">
                                         {t("proxy.prompt_rewrite.match", {

@@ -141,6 +141,7 @@ const MAX_PROMPT_REWRITE_REPLACEMENT_CHARS: usize = 16384;
 struct CompiledPromptRewriteRule {
     regex: Regex,
     replacement: String,
+    scope: crate::proxy::config::PromptRewriteScope,
 }
 
 /// 用户自定义清理规则运行时表（配置热更新时整体替换，读路径克隆 Arc）。
@@ -685,6 +686,7 @@ impl PromptSanitizer {
                 Ok(regex) => compiled.push(CompiledPromptRewriteRule {
                     regex,
                     replacement: decode_rewrite_replacement(&rule.replacement),
+                    scope: rule.scope,
                 }),
                 Err(err) => {
                     tracing::warn!(
@@ -744,8 +746,20 @@ impl PromptSanitizer {
         Some(restored)
     }
 
-    /// System 轨：身份归一化之前应用用户清理规则。
+    /// System 轨：身份归一化之前应用用户清理规则（过滤出 Prompt 或 All 作用域规则）。
     fn apply_prompt_rewrite_rules(text: &str) -> String {
+        Self::apply_prompt_rewrite_rules_with_scope(text, crate::proxy::config::PromptRewriteScope::Prompt)
+    }
+
+    /// Tools 轨：工具描述清洗时应用用户清理规则（过滤出 Tools 或 All 作用域规则）。
+    fn apply_tools_rewrite_rules(text: &str) -> String {
+        Self::apply_prompt_rewrite_rules_with_scope(text, crate::proxy::config::PromptRewriteScope::Tools)
+    }
+
+    fn apply_prompt_rewrite_rules_with_scope(
+        text: &str,
+        target_scope: crate::proxy::config::PromptRewriteScope,
+    ) -> String {
         let rules = PROMPT_REWRITE_RUNTIME
             .read()
             .map(|guard| Arc::clone(&*guard))
@@ -753,7 +767,17 @@ impl PromptSanitizer {
         if rules.is_empty() {
             return text.to_string();
         }
-        Self::rewrite_text_with_rules(text, &rules).unwrap_or_else(|| text.to_string())
+        let filtered: Vec<CompiledPromptRewriteRule> = rules
+            .iter()
+            .filter(|r| {
+                r.scope == crate::proxy::config::PromptRewriteScope::All || r.scope == target_scope
+            })
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            return text.to_string();
+        }
+        Self::rewrite_text_with_rules(text, &filtered).unwrap_or_else(|| text.to_string())
     }
 
     fn byte_index_after_n_chars(s: &str, max_chars: usize) -> usize {
@@ -2132,8 +2156,8 @@ impl PromptSanitizer {
                                     &desc,
                                     &mut tools_codemode_budget,
                                 );
-                                // 同时在工具描述中叠加应用用户自定义 PromptRewriteRules
-                                let rewritten = Self::apply_prompt_rewrite_rules(&cleaned);
+                                // 同时在工具描述中叠加应用用户自定义 PromptRewriteRules (过滤 tools / all 范围)
+                                let rewritten = Self::apply_tools_rewrite_rules(&cleaned);
                                 if rewritten != desc {
                                     if let Some(obj) = decl.as_object_mut() {
                                         obj.insert("description".to_string(), Value::String(rewritten));
@@ -4176,6 +4200,7 @@ mod tests {
                         id: format!("test-{index}"),
                         pattern: pattern.to_string(),
                         replacement: replacement.to_string(),
+                        scope: crate::proxy::config::PromptRewriteScope::All,
                         enabled: true,
                     },
                 )
@@ -4767,5 +4792,52 @@ mod tests {
         let fenced_input = "# Codex desktop context\n```\n# Codex desktop context\nas Codex:\n```";
         let fenced_cleaned = PromptSanitizer::clean_text(fenced_input);
         assert!(fenced_cleaned.starts_with("# Desktop application context\n```\n# Codex desktop context\nas Codex:\n```"));
+    }
+
+    #[test]
+    fn test_prompt_rewrite_rule_scope_separation() {
+        use crate::proxy::config::PromptRewriteRule;
+        let config = PromptRewriteConfig {
+            enabled: true,
+            normalize_identity: false,
+            sideload_mode: crate::proxy::config::PromptSideloadMode::Off,
+            sanitize_tools_description: true,
+            rules: vec![
+                PromptRewriteRule::with_scope("r-all", "sensitive_all", "clean_all", crate::proxy::config::PromptRewriteScope::All, true),
+                PromptRewriteRule::with_scope("r-prompt", "sensitive_prompt", "clean_prompt", crate::proxy::config::PromptRewriteScope::Prompt, true),
+                PromptRewriteRule::with_scope("r-tool", "sensitive_tool", "clean_tool", crate::proxy::config::PromptRewriteScope::Tools, true),
+            ],
+        };
+        PromptSanitizer::update_prompt_rewrite_config(&config);
+
+        let mut body = json!({
+            "systemInstruction": {
+                "parts": [
+                    { "text": "This has sensitive_all, sensitive_prompt, and sensitive_tool in prompt." }
+                ]
+            },
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "test_func",
+                            "description": "Tool has sensitive_all, sensitive_prompt, and sensitive_tool in desc."
+                        }
+                    ]
+                }
+            ]
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut body);
+
+        let sys_text = body["systemInstruction"]["parts"][0]["text"].as_str().unwrap();
+        assert!(sys_text.contains("clean_all"), "All scope should apply to prompt");
+        assert!(sys_text.contains("clean_prompt"), "Prompt scope should apply to prompt");
+        assert!(sys_text.contains("sensitive_tool"), "Tools scope must NOT apply to prompt");
+
+        let tool_desc = body["tools"][0]["functionDeclarations"][0]["description"].as_str().unwrap();
+        assert!(tool_desc.contains("clean_all"), "All scope should apply to tools");
+        assert!(tool_desc.contains("clean_tool"), "Tools scope should apply to tools");
+        assert!(tool_desc.contains("sensitive_prompt"), "Prompt scope must NOT apply to tools");
     }
 }

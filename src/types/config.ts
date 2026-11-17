@@ -143,6 +143,9 @@ export interface GlobalSystemPromptConfig {
     content: string;
 }
 
+/** 提示词与工具清洗规则的作用范围 */
+export type PromptRewriteScope = 'all' | 'prompt' | 'tools';
+
 /** 风控提示词清理规则（行式：匹配内容 → 替换为） */
 export interface PromptRewriteRule {
     /** 稳定 ID */
@@ -151,6 +154,8 @@ export interface PromptRewriteRule {
     pattern: string;
     /** 替换内容：留空表示删除匹配内容 */
     replacement: string;
+    /** 规则作用范围：'all' (全部) | 'prompt' (仅系统提示词) | 'tools' (仅工具声明描述) */
+    scope?: PromptRewriteScope;
     /** 是否启用 */
     enabled: boolean;
 }

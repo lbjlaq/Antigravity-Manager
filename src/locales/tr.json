@@ -1808,7 +1808,11 @@
             "sideload_mode_always": "Her Zaman Yükle",
             "sideload_mode_off": "Devre Dışı",
             "sanitize_tools_desc_title": "Araç Açıklamalarını Güvenli Temizleme",
-            "sanitize_tools_desc_hint": "Araç çağırma hatalarını önlemek için ad ve parametre yapılarını dondururken tools[].description içindeki hassas ifadeleri temizler."
+            "sanitize_tools_desc_hint": "Araç çağırma hatalarını önlemek için ad ve parametre yapılarını dondururken tools[].description içindeki hassas ifadeleri temizler.",
+            "scope_label": "Kural Kapsamı",
+            "scope_all": "🌐 Tümü",
+            "scope_prompt": "💬 İstemi",
+            "scope_tools": "🛠️ Araçlar"
         }
     },
     "monitor": {

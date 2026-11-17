@@ -475,6 +475,24 @@ impl Default for GlobalSystemPromptConfig {
     }
 }
 
+/// 提示词与工具清洗规则的作用范围
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptRewriteScope {
+    /// 全域生效：同时作用于系统提示词与工具描述（默认）
+    All,
+    /// 仅系统提示词生效
+    Prompt,
+    /// 仅工具声明描述生效
+    Tools,
+}
+
+impl Default for PromptRewriteScope {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
 /// 风控提示词清理规则（行式：匹配内容 → 替换为）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PromptRewriteRule {
@@ -487,6 +505,9 @@ pub struct PromptRewriteRule {
     /// 替换内容：留空表示删除匹配内容；支持 `\n` / `\t` / `\\` 转义
     #[serde(default)]
     pub replacement: String,
+    /// 规则作用范围：All (全部) | Prompt (仅提示词) | Tools (仅工具描述)
+    #[serde(default)]
+    pub scope: PromptRewriteScope,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -502,6 +523,23 @@ impl PromptRewriteRule {
             id: id.into(),
             pattern: pattern.into(),
             replacement: replacement.into(),
+            scope: PromptRewriteScope::All,
+            enabled,
+        }
+    }
+
+    pub fn with_scope(
+        id: impl Into<String>,
+        pattern: impl Into<String>,
+        replacement: impl Into<String>,
+        scope: PromptRewriteScope,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            pattern: pattern.into(),
+            replacement: replacement.into(),
+            scope,
             enabled,
         }
     }

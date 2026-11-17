@@ -1823,7 +1823,11 @@
             "sideload_mode_always": "Всегда сайдлоадить",
             "sideload_mode_off": "Отключено",
             "sanitize_tools_desc_title": "Безопасная очистка описаний инструментов",
-            "sanitize_tools_desc_hint": "Глубоко фильтрует ключевые слова и правила в tools[].description, сохраняя имена и параметры для стабильной работы инструментов."
+            "sanitize_tools_desc_hint": "Глубоко фильтрует ключевые слова и правила в tools[].description, сохраняя имена и параметры для стабильной работы инструментов.",
+            "scope_label": "Область действия",
+            "scope_all": "🌐 Все",
+            "scope_prompt": "💬 Промпт",
+            "scope_tools": "🛠️ Инструменты"
         }
     },
     "monitor": {

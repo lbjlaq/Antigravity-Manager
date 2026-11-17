@@ -1854,7 +1854,11 @@
             "sideload_mode_always": "Always Sideload",
             "sideload_mode_off": "Disabled",
             "sanitize_tools_desc_title": "Sanitize Tool Descriptions",
-            "sanitize_tools_desc_hint": "Deeply filters sensitive keywords and custom rules in tools[].description while freezing tool names and schemas to prevent tool call errors."
+            "sanitize_tools_desc_hint": "Deeply filters sensitive keywords and custom rules in tools[].description while freezing tool names and schemas to prevent tool call errors.",
+            "scope_label": "Rule Scope",
+            "scope_all": "🌐 All",
+            "scope_prompt": "💬 Prompt",
+            "scope_tools": "🛠️ Tools"
         },
         "multimodal": {
             "banner_title": "Multimodal Interaction & Longevity Governance (Pipeline First)",

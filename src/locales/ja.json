@@ -1755,7 +1755,11 @@
             "sideload_mode_always": "常時サイドロード",
             "sideload_mode_off": "無効",
             "sanitize_tools_desc_title": "ツール説明の安全サニタイズ",
-            "sanitize_tools_desc_hint": "tools[].description内の機密キーワードやカスタムルールを無害化し、ツール名とパラメータスキーマを厳密に保持してエラーを防ぎます。"
+            "sanitize_tools_desc_hint": "tools[].description内の機密キーワードやカスタムルールを無害化し、ツール名とパラメータスキーマを厳密に保持してエラーを防ぎます。",
+            "scope_label": "ルールの適用範囲",
+            "scope_all": "🌐 全体",
+            "scope_prompt": "💬 プロンプト",
+            "scope_tools": "🛠️ ツール"
         }
     },
     "monitor": {
