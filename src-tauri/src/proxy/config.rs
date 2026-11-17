@@ -663,6 +663,13 @@ impl PromptRewriteConfig {
                 true,
             ),
             PromptRewriteRule::with_scope(
+                "preset-pi-codemode",
+                "*codemode*",
+                "codem0de",
+                PromptRewriteScope::All,
+                true,
+            ),
+            PromptRewriteRule::with_scope(
                 "preset-anthropic-billing",
                 "*x-anthropic-billing-header:*",
                 "",
