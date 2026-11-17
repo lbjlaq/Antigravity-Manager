@@ -3,11 +3,16 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
-    *   **v5.0.4-beta.14 (2026-11-16)**:
+    *   **v5.0.4-beta.14 (2026-11-17)**:
         -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972)**:
             -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975)
             -   **提示词重写规则支持行内反引号**: 重构围栏代码块隔离逻辑，由通配代码正则精细化收敛为多行围栏代码块隔离（`RE_FENCED_CODE_BLOCK`），使行内反引号中的敏感指令能被自定义规则与官方预设规则正常命中清洗，消除规则盲区。(Fixes #3969)
-            -   **Claude Code 独立版交互式 Agent 特征中和**: 针对最新版 Claude Code CLI 默认注入的提示词特征首句（`You are an interactive agent that helps users with software engineering tasks`）引发上游 WAF 假 429 拦截的问题，将其无缝对齐至官方 Antigravity 身份并内置全新预设清理规则 `preset-claude-code-agent`，保障 Claude Code 与 Claude Agent SDK 原生交互畅通无阻。(Fixes #3972)
+            -   **Claude Code 独立版交互式与目标导向 Agent 特征中和**: 针对最新版 Claude Code CLI 默认注入的提示词特征（`You are an interactive agent...`、`You are an agent working with the user toward their goals...` 以及 `the user did not write` 规范）引发上游 WAF 假 429 拦截的问题，将其无缝对齐至官方 Antigravity 身份并内置全新预设清理规则 `preset-claude-code-agent`，保障 Claude Code 与 Claude Agent SDK 原生交互畅通无阻。(Fixes #3972)
+        -   **[Gemini 4 Hydrogen 思考流中断与 Auto-heal 误触发修复] (Fixes #3971, Thanks to @13400398qwe)**:
+            -   **避免 MAX_TOKENS 截断误触发空思考 Auto-heal**: 深度思考模型在达到输出上限截断时（`finish_reason: "MAX_TOKENS"`），跳过针对空思考块的自动修复续写，防止陷入死循环或输出错乱，保留真实的截断原因。(Fixes #3971, Thanks to @13400398qwe)
+            -   **纯思考流非 STOP 优雅终止**: 修复当推理模型仍在思考且未吐出最终文本/工具调用时遭遇非 STOP 结束导致抛出异常 EOF 的缺陷，在保证流完整性的同时规范关闭 SSE 流。(Fixes #3971, Thanks to @13400398qwe)
+        -   **[Homebrew Beta 通道更新路由修复] (Fixes #3973, Thanks to @Starfie1d1272)**:
+            -   **路由至原生测试版更新器**: 解决通过 Homebrew 安装的用户在切换至 Beta 测试通道后点击「检查更新」仍调用 `brew upgrade` 导致被强制降级回稳定版的问题，精准路由至内置应用级更新流。(Fixes #3973, Thanks to @Starfie1d1272)
 
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[上游 WAF 特征提示词中和与模型配额归一化修复] (Fixes #3965)**:

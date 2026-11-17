@@ -3,11 +3,16 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
-    *   **v5.0.4-beta.14 (2026-11-16)**:
+    *   **v5.0.4-beta.14 (2026-11-17)**:
         -   **[Comprehensive Upstream WAF Fake 429 Neutralization & Rule System Enhancement] (Fixes #3969, Ref #3975, Fixes #3972)**:
             -   **Neutralize OpenCode Session-Move Directives**: Sanitized Google Cloud Code upstream WAF heuristic triggers targeting OpenCode session migration directives (`tools.opencode.session-move` and `tools.opencode.session_move`), ensuring safe renaming across plain text and inline backticks while strictly preserving multiline fenced code blocks, eliminating fake 429 RESOURCE_EXHAUSTED errors. (Fixes #3969, Ref #3975)
             -   **Cover Inline Backticks in Rewrite Rules**: Refactored code block isolation from generic backtick matching to multiline fenced code block isolation (`RE_FENCED_CODE_BLOCK`), allowing custom and recommended preset rewrite rules to sanitize sensitive directives within inline backticks without blind spots. (Fixes #3969)
-            -   **Neutralize Claude Code Interactive Agent Preamble**: Sanitized and normalized the preamble sentence injected by standalone Claude Code CLI (`You are an interactive agent that helps users with software engineering tasks`) into official Antigravity identity, and added builtin preset `preset-claude-code-agent` to eliminate upstream WAF fake 429 blocks. (Fixes #3972)
+            -   **Neutralize Claude Code Interactive and Goals Agent Preambles**: Sanitized and normalized preamble patterns injected by standalone Claude Code CLI (`You are an interactive agent...`, `You are an agent working with the user toward their goals...`, and `the user did not write` directives) into official Antigravity identity, and added builtin preset `preset-claude-code-agent` to eliminate upstream WAF fake 429 blocks. (Fixes #3972)
+        -   **[Gemini 4 Hydrogen Thinking Stream Interruption & Auto-Heal Fix] (Fixes #3971, Thanks to @13400398qwe)**:
+            -   **Avoid Spurious Auto-Heal on MAX_TOKENS Truncation**: When reasoning models hit maximum output tokens (`finish_reason: "MAX_TOKENS"`), skip auto-healing empty thinking blocks to avoid infinite continuation loops or broken outputs while preserving the accurate truncation status. (Fixes #3971, Thanks to @13400398qwe)
+            -   **Graceful Stream Finalization for Thinking-Only Non-STOP**: Allowed clean SSE stream finalization when a reasoning model finishes in non-STOP states before emitting final text or tool calls, eliminating unexpected EOF drops. (Fixes #3971, Thanks to @13400398qwe)
+        -   **[Homebrew Beta Channel Updater Routing Fix] (Fixes #3973, Thanks to @Starfie1d1272)**:
+            -   **Route to Native Beta Updater**: Fixed an issue where Homebrew-installed users switching to the Beta channel triggered `brew upgrade` on "Check for updates" which forced a downgrade to the stable channel, routing them to the native updater instead. (Fixes #3973, Thanks to @Starfie1d1272)
 
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[Neutralize Upstream WAF Prompt Triggers & Decouple Model Quota Normalization] (Fixes #3965)**:
