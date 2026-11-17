@@ -124,6 +124,13 @@ static RE_CODEX_DESKTOP_CONTEXT: Lazy<Regex> = Lazy::new(|| {
 static RE_CODEX_ROLE_PREFIX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bas\s+codex:").unwrap());
 
+/// 触发上游 Google WAF 伪 429 拦截的 DSH（DeepSeek Harness）浏览器上下文声明正则（Issue #3983）
+/// Google Cloud Code WAF 针对该字面串触发启发式拦截，返回伪造的 429 RESOURCE_EXHAUSTED。
+/// 改写为语义等价的变体 `The browser exposes no DOM tree, route list, or page screenshot context.`
+static RE_DSH_BROWSER_CONTEXT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bthe\s+browser\s+provides\s+no\s+implicit\s+dom,\s*route,?\s+or\s+screenshot\s+context\b").unwrap()
+});
+
 /// 连续多余空行收拢正则（剥离元数据后若产生 3 个及以上连续换行，收拢为 2 个换行以保持自然段落）
 static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -894,7 +901,8 @@ impl PromptSanitizer {
             || lower.contains("software engineering tasks")
             || lower.contains("powered by")
             || lower.contains("codex desktop context")
-            || lower.contains("as codex:");
+            || lower.contains("as codex:")
+            || lower.contains("no implicit dom");
 
         if !has_suspect {
             return text.to_string();
@@ -946,18 +954,22 @@ impl PromptSanitizer {
         let pass2_56 =
             RE_CODEX_DESKTOP_CONTEXT.replace_all(&pass2_55, "# Desktop application context$1");
         let pass2_57 = RE_CODEX_ROLE_PREFIX.replace_all(&pass2_56, "as an assistant:");
+        let pass2_58 = RE_DSH_BROWSER_CONTEXT.replace_all(
+            &pass2_57,
+            "The browser exposes no DOM tree, route list, or page screenshot context",
+        );
 
         // 步骤 3.6：仅在当前请求前 20,000 字符窗口内将 Pi agent `codemode` 中和为 `codem0de`
         let pass2_6: std::borrow::Cow<'_, str> = if has_codemode_in_budget {
             let codemode_byte_limit = Self::byte_limit_accounting_for_placeholders(
-                &pass2_57,
+                &pass2_58,
                 &placeholders,
                 codemode_budget,
             );
             let scan_end = codemode_byte_limit
-                + Self::byte_index_after_n_chars(&pass2_57[codemode_byte_limit..], 16);
+                + Self::byte_index_after_n_chars(&pass2_58[codemode_byte_limit..], 16);
             let prefix_replaced =
-                RE_PI_CODEMODE.replace_all(&pass2_57[..scan_end], |caps: &regex::Captures| {
+                RE_PI_CODEMODE.replace_all(&pass2_58[..scan_end], |caps: &regex::Captures| {
                     let m = caps.get(0).unwrap();
                     if m.start() < codemode_byte_limit {
                         format!("{}0{}", &caps[1], &caps[2])
@@ -965,13 +977,13 @@ impl PromptSanitizer {
                         m.as_str().to_string()
                     }
                 });
-            if scan_end < pass2_57.len() {
-                std::borrow::Cow::Owned(format!("{}{}", prefix_replaced, &pass2_57[scan_end..]))
+            if scan_end < pass2_58.len() {
+                std::borrow::Cow::Owned(format!("{}{}", prefix_replaced, &pass2_58[scan_end..]))
             } else {
                 std::borrow::Cow::Owned(prefix_replaced.into_owned())
             }
         } else {
-            std::borrow::Cow::Borrowed(pass2_57.as_ref())
+            std::borrow::Cow::Borrowed(pass2_58.as_ref())
         };
 
         // 步骤 4：单趟无递归还原受保护的代码块
@@ -4792,6 +4804,21 @@ mod tests {
         let fenced_input = "# Codex desktop context\n```\n# Codex desktop context\nas Codex:\n```";
         let fenced_cleaned = PromptSanitizer::clean_text(fenced_input);
         assert!(fenced_cleaned.starts_with("# Desktop application context\n```\n# Codex desktop context\nas Codex:\n```"));
+    }
+
+    #[test]
+    fn test_issue_3983_dsh_browser_context_neutralized() {
+        let input = "System directive:\nThe browser provides no implicit DOM, route, or screenshot context.\nPlease proceed.";
+        let cleaned = PromptSanitizer::clean_text(input);
+        assert_eq!(
+            cleaned,
+            "System directive:\nThe browser exposes no DOM tree, route list, or page screenshot context.\nPlease proceed."
+        );
+
+        // 围栏代码块保护
+        let fenced = "Text\n```\nThe browser provides no implicit DOM, route, or screenshot context.\n```";
+        let cleaned_fenced = PromptSanitizer::clean_text(fenced);
+        assert_eq!(cleaned_fenced, fenced);
     }
 
     #[test]

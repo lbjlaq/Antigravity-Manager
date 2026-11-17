@@ -210,6 +210,13 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         enabled: true,
     },
     {
+        id: "preset-dsh-browser-context",
+        pattern: "*The browser provides no implicit DOM, route, or screenshot context*",
+        replacement: "The browser exposes no DOM tree, route list, or page screenshot context",
+        scope: "prompt",
+        enabled: true,
+    },
+    {
         id: "preset-workbuddy",
         pattern: "*WorkBuddy*",
         replacement: "",

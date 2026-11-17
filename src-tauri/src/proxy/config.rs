@@ -620,6 +620,13 @@ impl PromptRewriteConfig {
                 PromptRewriteScope::Prompt,
                 true,
             ),
+            PromptRewriteRule::with_scope(
+                "preset-dsh-browser-context",
+                "*The browser provides no implicit DOM, route, or screenshot context*",
+                "The browser exposes no DOM tree, route list, or page screenshot context",
+                PromptRewriteScope::Prompt,
+                true,
+            ),
             PromptRewriteRule::with_scope("preset-workbuddy", "*WorkBuddy*", "", PromptRewriteScope::All, true),
             PromptRewriteRule::with_scope(
                 "preset-workbuddy-powered-by",
