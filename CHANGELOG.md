@@ -4,7 +4,8 @@
 
 *   **版本演进**:
     *   **v5.0.4-beta.14 (2026-11-17)**:
-        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui)**:
+        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, Fixes #3982, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui, @ALight777)**:
+            -   **WorkBuddy 与 Codex 引导特征中和与 CRLF 支持**: 针对 WorkBuddy 注入的模型声明首行（`This conversation is powered by <model>`）及 Codex 桌面端上下文标记（`# Codex desktop context`、`as Codex:`）触发 WAF 假 429 的问题，实现精准中和（改写为 `Selected model: <model>`、`# Desktop application context`、`as an assistant:`），并全面兼容 Unix LF 与 Windows CRLF 换行格式，完整保留所有工具定义与调用能力。(Fixes #3982, Thanks to @ALight777)
             -   **Pi Agent 内置 codemode 工具指令中和**: 针对 Pi Agent 启用内置 `codemode` 工具时触发上游 WAF 假 429 的问题，在请求前 20,000 字符动态窗口内安全中和 `codemode` 描述与提示词关键字（`codem0de`），同时 100% 保护工具名称、参数结构与多行代码块。(Fixes #3981, Thanks to @muzisuisuisui)
             -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
             -   **提示词重写规则支持行内反引号**: 重构代码块隔离逻辑，由通配代码正则精细化收敛为多行围栏代码块隔离（`RE_FENCED_CODE_BLOCK`），使行内反引号中的敏感指令能被自定义规则与官方预设规则正常命中清洗，消除规则盲区。(Fixes #3969, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
