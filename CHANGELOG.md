@@ -4,7 +4,8 @@
 
 *   **版本演进**:
     *   **v5.0.4-beta.14 (2026-11-17)**:
-        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)**:
+        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui)**:
+            -   **Pi Agent 内置 codemode 工具指令中和**: 针对 Pi Agent 启用内置 `codemode` 工具时触发上游 WAF 假 429 的问题，在请求前 20,000 字符动态窗口内安全中和 `codemode` 描述与提示词关键字（`codem0de`），同时 100% 保护工具名称、参数结构与多行代码块。(Fixes #3981, Thanks to @muzisuisuisui)
             -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
             -   **提示词重写规则支持行内反引号**: 重构代码块隔离逻辑，由通配代码正则精细化收敛为多行围栏代码块隔离（`RE_FENCED_CODE_BLOCK`），使行内反引号中的敏感指令能被自定义规则与官方预设规则正常命中清洗，消除规则盲区。(Fixes #3969, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
             -   **Claude Code 独立版交互式 Agent 特征中和**: 针对最新版 Claude Code CLI 默认注入的提示词特征首句（`You are an interactive agent that helps users with software engineering tasks`）引发上游 WAF 假 429 拦截的问题，将其无缝对齐至官方 Antigravity 身份并内置全新预设清理规则 `preset-claude-code-agent`，保障 Claude Code 与 Claude Agent SDK 原生交互畅通无阻。(Fixes #3972, PR #3976, Thanks to @cubelikeplayDaniel)
