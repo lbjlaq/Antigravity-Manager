@@ -3,6 +3,10 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.14 (2026-11-17)**:
+        -   **[Codex Responses MCP 工具命名空间字段恢复] (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)**:
+            -   **恢复 MCP 工具调用的 name / namespace 结构**: 修复了 Codex 通过 Responses API 接入网关并调用 MCP namespace 工具时报错 `unsupported call: mcp__...` 的问题；在非流式、流式 SSE 与 WebSocket 通道统一准确拆分 `name` 与 `namespace` 字段（按末尾分隔符还原 `mcp__*` 命名空间），并向下兼容普通工具与非 MCP 命名空间。(Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
+
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[上游 WAF 特征提示词中和与模型配额归一化修复] (Fixes #3965)**:
             -   **中和第三方 Agent 工具指令特征防伪 429**: 针对 Google Cloud Code 上游 WAF 针对特定第三方 Agent 模板（如 Kelivo、Hermes Agent 等）的启发式指令拦截（`Prefer read_file, edit_file, and write_file over cat/sed` 等模式），在单趟保护代码块的前提下对非代码区域进行高精度中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3965)

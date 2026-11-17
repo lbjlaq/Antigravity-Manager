@@ -3,6 +3,10 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.14 (2026-11-17)**:
+        -   **[Restore Codex Responses MCP Namespace Fields] (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)**:
+            -   **Restore MCP Tool Call name / namespace Structure**: Fixed an issue where Codex failed with `unsupported call: mcp__...` when invoking MCP namespace tools through the Responses API. Accurately splits and restores `name` and `namespace` fields across non-streaming, streaming SSE, and WebSocket channels (splitting `mcp__*` tools at the last delimiter) while preserving behavior for plain tools and non-MCP namespaces. (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
+
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[Neutralize Upstream WAF Prompt Triggers & Decouple Model Quota Normalization] (Fixes #3965)**:
             -   **Neutralize Agent Tool Directives Against Fake 429**: High-precision neutralization for Google Cloud Code upstream WAF heuristic triggers targeting third-party agent templates (e.g. Kelivo, Hermes Agent) with tool guidelines (`Prefer read_file, edit_file, and write_file over cat/sed`), preserving fenced code blocks while completely eliminating fake 429 RESOURCE_EXHAUSTED upstream responses. (Fixes #3965)
