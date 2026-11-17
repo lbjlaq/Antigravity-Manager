@@ -176,6 +176,76 @@ export default function PromptRewriteSettings({
                 </label>
             </div>
 
+            {/* 系统提示词隐身侧载模式 */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200/80 dark:border-base-300 bg-white dark:bg-base-100 px-4 py-2.5">
+                <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                        {t("proxy.prompt_rewrite.sideload_mode_title", {
+                            defaultValue: "系统提示词隐身侧载",
+                        })}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {t("proxy.prompt_rewrite.sideload_mode_hint", {
+                            defaultValue:
+                                "将客户端复杂指令安全注入首轮用户上下文并维持 100% KV Cache 命中，出站还原纯净官方 Antigravity 身份规避 WAF 假 429。",
+                        })}
+                    </p>
+                </div>
+                <div className="shrink-0 flex items-center">
+                    <select
+                        value={config.sideload_mode || 'auto'}
+                        onChange={(e) =>
+                            onChange({
+                                ...config,
+                                sideload_mode: e.target.value as 'auto' | 'always' | 'off',
+                            })
+                        }
+                        className="select select-xs border-gray-300 dark:border-base-300 bg-gray-50 dark:bg-base-200 text-xs rounded-md font-medium text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    >
+                        <option value="auto">
+                            {t("proxy.prompt_rewrite.sideload_mode_auto", { defaultValue: "智能侧载 (推荐)" })}
+                        </option>
+                        <option value="always">
+                            {t("proxy.prompt_rewrite.sideload_mode_always", { defaultValue: "始终侧载" })}
+                        </option>
+                        <option value="off">
+                            {t("proxy.prompt_rewrite.sideload_mode_off", { defaultValue: "关闭侧载" })}
+                        </option>
+                    </select>
+                </div>
+            </div>
+
+            {/* 工具声明描述脱敏开关 */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200/80 dark:border-base-300 bg-white dark:bg-base-100 px-4 py-2.5">
+                <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                        {t("proxy.prompt_rewrite.sanitize_tools_desc_title", {
+                            defaultValue: "工具声明描述安全脱敏",
+                        })}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {t("proxy.prompt_rewrite.sanitize_tools_desc_hint", {
+                            defaultValue:
+                                "对 tools[].description 深度执行敏感词与自定义规则过滤，严格保留工具名称与参数结构，防止工具调用报错或失效。",
+                        })}
+                    </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                        type="checkbox"
+                        checked={config.sanitize_tools_description !== false}
+                        onChange={(e) =>
+                            onChange({
+                                ...config,
+                                sanitize_tools_description: e.target.checked,
+                            })
+                        }
+                        className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-600 peer-checked:bg-purple-500"></div>
+                </label>
+            </div>
+
             {config.enabled && (
                 <div className="space-y-2">
                     {rules.length === 0 && (
