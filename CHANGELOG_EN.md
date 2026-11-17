@@ -6,6 +6,8 @@
     *   **v5.0.4-beta.14 (2026-11-17)**:
         -   **[Restore Codex Responses MCP Namespace Fields] (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)**:
             -   **Restore MCP Tool Call name / namespace Structure**: Fixed an issue where Codex failed with `unsupported call: mcp__...` when invoking MCP namespace tools through the Responses API. Accurately splits and restores `name` and `namespace` fields across non-streaming, streaming SSE, and WebSocket channels (splitting `mcp__*` tools at the last delimiter) while preserving behavior for plain tools and non-MCP namespaces. (Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
+        -   **[OAuth Authorization Scope Alignment for AGY CLI 1.5.x] (Refs #3974, PR #3978, Thanks to @ThermalEng)**:
+            -   **Add aicode OAuth Scope**: Requested `https://www.googleapis.com/auth/aicode` scope during Google OAuth authorization flows, addressing `Sign-in update needed` warnings and permission-denied errors on newer AGY CLI releases. (Refs #3974, PR #3978, Thanks to @ThermalEng)
 
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[Neutralize Upstream WAF Prompt Triggers & Decouple Model Quota Normalization] (Fixes #3965)**:
