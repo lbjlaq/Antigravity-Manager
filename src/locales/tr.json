@@ -1801,7 +1801,7 @@
             "hint_escape": "Kaçış karakterleri: \\n yeni satır, \\t sekme, \\\\ ters eğik çizgi, \\* yıldız işareti.",
             "hint_order": "Kurallar yukarıdan aşağıya doğru çalıştırılır; yalnızca ilk gerçek kullanıcı mesajından önceki istem blokları işlenir, kod blokları muaftır.",
             "sideload_mode_title": "Sistem İstemi Gizli Yan Yükleme",
-            "sideload_mode_hint": "%100 KV Cache isabet oranını koruyarak ve WAF sahte 429 engellerini aşmak için resmi kimliği geri yükleyerek istemci talimatlarını güvenle kullanıcı bağlamına sarar.",
+            "sideload_mode_hint": "KV Cache yeniden kullanımını en üst düzeye çıkarmak ve WAF sahte 429 engellerini aşmak için resmi kimliği geri yükleyerek istemci talimatlarını güvenle kullanıcı bağlamına sarar.",
             "sideload_mode_auto": "Akıllı Otomatik (Önerilen)",
             "sideload_mode_always": "Her Zaman Yükle",
             "sideload_mode_off": "Devre Dışı",

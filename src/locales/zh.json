@@ -1841,7 +1841,7 @@
             "hint_escape": "支持转义：\\n 换行、\\t 制表符、\\\\ 反斜杠、\\* 字面星号。",
             "hint_order": "规则按从上到下顺序执行；只作用于首个真实 user 提问前的提示词块，代码块自动豁免。",
             "sideload_mode_title": "系统提示词隐身侧载",
-            "sideload_mode_hint": "将客户端复杂指令安全注入首轮用户上下文并维持 100% KV Cache 命中，出站还原纯净官方 Antigravity 身份规避 WAF 假 429。",
+            "sideload_mode_hint": "将客户端复杂指令安全注入首轮用户上下文并最大化复用 KV Cache，出站还原纯净官方 Antigravity 身份规避 WAF 假 429。",
             "sideload_mode_auto": "智能侧载 (推荐)",
             "sideload_mode_always": "始终侧载",
             "sideload_mode_off": "关闭侧载",

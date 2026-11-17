@@ -1799,7 +1799,7 @@
             "hint_escape": "Hỗ trợ ký tự thoát: \\n xuống dòng, \\t tab, \\\\ dấu gạch chéo ngược, \\* dấu sao nguyên bản.",
             "hint_order": "Quy tắc thực thi theo thứ tự từ trên xuống dưới; chỉ tác động đến các khối lời nhắc trước tin nhắn người dùng thực tế đầu tiên, các khối mã tự động được miễn trừ.",
             "sideload_mode_title": "Nạp ẩn chỉ dẫn hệ thống (Sideloading)",
-            "sideload_mode_hint": "Đóng gói an toàn các chỉ thị vào ngữ cảnh người dùng đầu tiên giữ 100% tỉ lệ trúng KV Cache, khôi phục danh tính chính thức để vượt qua mã lỗi 429 giả từ WAF.",
+            "sideload_mode_hint": "Đóng gói an toàn các chỉ thị vào ngữ cảnh người dùng đầu tiên để tối đa hóa tái sử dụng KV Cache, khôi phục danh tính chính thức để vượt qua mã lỗi 429 giả từ WAF.",
             "sideload_mode_auto": "Tự động thông minh (Khuyên dùng)",
             "sideload_mode_always": "Luôn nạp ẩn",
             "sideload_mode_off": "Tắt",

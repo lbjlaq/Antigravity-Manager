@@ -1784,7 +1784,7 @@
             "hint_escape": "Escapes: \\n nova linha, \\t tabulação, \\\\ barra invertida, \\* asterisco literal.",
             "hint_order": "As regras são executadas de cima para baixo; apenas blocos de prompt antes da primeira mensagem real do usuário são afetados, blocos de código são isentos.",
             "sideload_mode_title": "Carregamento Oculto de Prompt do Sistema",
-            "sideload_mode_hint": "Injeta com segurança instruções do cliente no contexto inicial do usuário mantendo 100% de acerto no KV Cache e restaurando a identidade oficial para evitar falsos 429 do WAF.",
+            "sideload_mode_hint": "Injeta com segurança instruções do cliente no contexto inicial do usuário para maximizar o reuso de KV Cache e restaurar a identidade oficial evitando falsos 429 do WAF.",
             "sideload_mode_auto": "Automático Inteligente (Recomendado)",
             "sideload_mode_always": "Sempre Ocultar",
             "sideload_mode_off": "Desativado",

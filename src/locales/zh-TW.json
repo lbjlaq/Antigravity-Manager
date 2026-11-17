@@ -1776,7 +1776,7 @@
             "hint_escape": "支援跳脫：\\n 換行、\\t 製表符、\\\\ 反斜線、\\* 字面星號。",
             "hint_order": "規則按由上而下順序執行；只作用於首個真實 user 提問前的提示詞區塊，程式碼區塊自動豁免。",
             "sideload_mode_title": "系統提示詞隱身側載",
-            "sideload_mode_hint": "將客戶端複雜指令安全注入首輪使用者上下文並維持 100% KV Cache 命中，出站還原純淨官方 Antigravity 身份規避 WAF 假 429。",
+            "sideload_mode_hint": "將客戶端複雜指令安全注入首輪使用者上下文並最大化複用 KV Cache，出站還原純淨官方 Antigravity 身份規避 WAF 假 429。",
             "sideload_mode_auto": "智慧側載 (推薦)",
             "sideload_mode_always": "始終側載",
             "sideload_mode_off": "關閉側載",

@@ -181,7 +181,7 @@ export default function PromptRewriteSettings({
                     <p className="text-[10px] text-gray-500 dark:text-gray-400">
                         {t("proxy.prompt_rewrite.sideload_mode_hint", {
                             defaultValue:
-                                "将客户端复杂指令安全注入首轮用户上下文并维持 100% KV Cache 命中，出站还原纯净官方 Antigravity 身份规避 WAF 假 429。",
+                                "将客户端复杂指令安全注入首轮用户上下文并最大化复用 KV Cache，出站还原纯净官方 Antigravity 身份规避 WAF 假 429。",
                         })}
                     </p>
                 </div>
