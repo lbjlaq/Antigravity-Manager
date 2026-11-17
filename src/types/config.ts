@@ -202,6 +202,24 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         enabled: true,
     },
     {
+        id: "preset-workbuddy-powered-by",
+        pattern: "*This conversation is powered by *",
+        replacement: "Selected model: ",
+        enabled: true,
+    },
+    {
+        id: "preset-codex-desktop-context",
+        pattern: "*# Codex desktop context*",
+        replacement: "# Desktop application context",
+        enabled: true,
+    },
+    {
+        id: "preset-codex-as-role",
+        pattern: "*as Codex:*",
+        replacement: "as an assistant:",
+        enabled: true,
+    },
+    {
         id: "preset-codex-intro",
         pattern: "*the codex cli is an open*source project*",
         replacement: "",

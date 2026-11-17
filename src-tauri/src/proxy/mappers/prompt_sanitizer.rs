@@ -104,6 +104,26 @@ const PI_CODEMODE_SCAN_MAX_CHARS: usize = 20_000;
 /// （保留原始大小写前缀/后缀，将 `o` 替换为 `0`：`codemode` -> `codem0de`）。
 static RE_PI_CODEMODE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(codem)o(de)\b").unwrap());
 
+/// 触发上游 Google WAF 伪 429 拦截的 WorkBuddy 模型声明首行正则（Issue #3982）
+/// 示例: `This conversation is powered by gemini-4-hydrogen`
+/// 严谨捕获末尾的 `\r?$`，确保 Windows CRLF 换行环境 100% 命中，并保留原换行格式。
+static RE_WORKBUDDY_POWERED_BY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?im)^[ \t]*this\s+conversation\s+is\s+powered\s+by\s+([A-Za-z0-9_.:/-]+)[ \t]*(\r?)$",
+    )
+    .unwrap()
+});
+
+/// 触发上游 Google WAF 伪 429 拦截的 Codex 桌面端特定上下文与角色前缀正则（Issue #3982）
+/// 1) `# Codex desktop context` -> `# Desktop application context`
+/// 2) `as Codex:` -> `as an assistant:`
+static RE_CODEX_DESKTOP_CONTEXT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?im)^[ \t]*#[ \t]*codex\s+desktop\s+context[ \t]*(\r?)$").unwrap()
+});
+
+static RE_CODEX_ROLE_PREFIX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bas\s+codex:").unwrap());
+
 /// 连续多余空行收拢正则（剥离元数据后若产生 3 个及以上连续换行，收拢为 2 个换行以保持自然段落）
 static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -817,7 +837,10 @@ impl PromptSanitizer {
             || lower.contains("session-move")
             || lower.contains("session_move")
             || lower.contains("interactive agent")
-            || lower.contains("software engineering tasks");
+            || lower.contains("software engineering tasks")
+            || lower.contains("powered by")
+            || lower.contains("codex desktop context")
+            || lower.contains("as codex:");
 
         if !has_suspect {
             return text.to_string();
@@ -864,17 +887,23 @@ impl PromptSanitizer {
                 }
             });
 
+        // 步骤 3.55：中和 WorkBuddy / Codex 引发 WAF 伪 429 的特定声明与上下文标记（Issue #3982）
+        let pass2_55 = RE_WORKBUDDY_POWERED_BY.replace_all(&pass2_5, "Selected model: $1$2");
+        let pass2_56 =
+            RE_CODEX_DESKTOP_CONTEXT.replace_all(&pass2_55, "# Desktop application context$1");
+        let pass2_57 = RE_CODEX_ROLE_PREFIX.replace_all(&pass2_56, "as an assistant:");
+
         // 步骤 3.6：仅在当前请求前 20,000 字符窗口内将 Pi agent `codemode` 中和为 `codem0de`
         let pass2_6: std::borrow::Cow<'_, str> = if has_codemode_in_budget {
             let codemode_byte_limit = Self::byte_limit_accounting_for_placeholders(
-                &pass2_5,
+                &pass2_57,
                 &placeholders,
                 codemode_budget,
             );
             let scan_end = codemode_byte_limit
-                + Self::byte_index_after_n_chars(&pass2_5[codemode_byte_limit..], 16);
+                + Self::byte_index_after_n_chars(&pass2_57[codemode_byte_limit..], 16);
             let prefix_replaced =
-                RE_PI_CODEMODE.replace_all(&pass2_5[..scan_end], |caps: &regex::Captures| {
+                RE_PI_CODEMODE.replace_all(&pass2_57[..scan_end], |caps: &regex::Captures| {
                     let m = caps.get(0).unwrap();
                     if m.start() < codemode_byte_limit {
                         format!("{}0{}", &caps[1], &caps[2])
@@ -882,13 +911,13 @@ impl PromptSanitizer {
                         m.as_str().to_string()
                     }
                 });
-            if scan_end < pass2_5.len() {
-                std::borrow::Cow::Owned(format!("{}{}", prefix_replaced, &pass2_5[scan_end..]))
+            if scan_end < pass2_57.len() {
+                std::borrow::Cow::Owned(format!("{}{}", prefix_replaced, &pass2_57[scan_end..]))
             } else {
                 std::borrow::Cow::Owned(prefix_replaced.into_owned())
             }
         } else {
-            std::borrow::Cow::Borrowed(pass2_5.as_ref())
+            std::borrow::Cow::Borrowed(pass2_57.as_ref())
         };
 
         // 步骤 4：单趟无递归还原受保护的代码块
@@ -4650,5 +4679,55 @@ mod tests {
         let cleaned2 = PromptSanitizer::clean_text(&input2);
         assert!(cleaned2.starts_with("within_20k codem0de "));
         assert!(cleaned2.ends_with("tail_after_20k codemode"));
+    }
+
+    // ============================ Issue #3982: WorkBuddy / Codex 提示词脱敏与 CRLF 支持 ============================
+
+    #[test]
+    fn test_issue_3982_workbuddy_powered_by_lf_and_crlf_neutralized() {
+        // 1. Unix LF (\n)
+        let lf_input = "This conversation is powered by gemini-4-hydrogen\n# Rules\nRule 1: Be helpful.";
+        let lf_cleaned = PromptSanitizer::clean_text(lf_input);
+        assert!(lf_cleaned.starts_with("Selected model: gemini-4-hydrogen\n# Rules"));
+        assert!(!lf_cleaned.contains("This conversation is powered by"));
+
+        // 2. Windows CRLF (\r\n)
+        let crlf_input = "This conversation is powered by gemini-4-hydrogen\r\n# Rules\r\nRule 1: Be helpful.";
+        let crlf_cleaned = PromptSanitizer::clean_text(crlf_input);
+        assert!(crlf_cleaned.starts_with("Selected model: gemini-4-hydrogen\r\n# Rules"));
+        assert!(!crlf_cleaned.contains("This conversation is powered by"));
+
+        // 3. 模型带前缀/路径符号（如 gemini-3.8-flash-high / custom/model:1）
+        let complex_model = "  this conversation is powered by custom.org/gemini-3.8-flash:latest  \r\nNext line";
+        let cleaned_complex = PromptSanitizer::clean_text(complex_model);
+        assert!(cleaned_complex.starts_with("Selected model: custom.org/gemini-3.8-flash:latest\r\n"));
+
+        // 4. 围栏代码块中的 powered by 绝对不被修改
+        let code_input = "This conversation is powered by gemini-4\n```text\nThis conversation is powered by gemini-4\n```";
+        let code_cleaned = PromptSanitizer::clean_text(code_input);
+        assert!(code_cleaned.contains("Selected model: gemini-4"));
+        assert!(code_cleaned.contains("```text\nThis conversation is powered by gemini-4\n```"));
+    }
+
+    #[test]
+    fn test_issue_3982_codex_desktop_context_and_role_neutralized() {
+        // 1. 测试 # Codex desktop context 在 LF 与 CRLF 下的替换
+        let lf_input = "# Codex desktop context\nInstructions here.";
+        let lf_cleaned = PromptSanitizer::clean_text(lf_input);
+        assert_eq!(lf_cleaned, "# Desktop application context\nInstructions here.");
+
+        let crlf_input = "#   Codex desktop context  \r\nInstructions here.";
+        let crlf_cleaned = PromptSanitizer::clean_text(crlf_input);
+        assert_eq!(crlf_cleaned, "# Desktop application context\r\nInstructions here.");
+
+        // 2. 测试 as Codex: 替换为 as an assistant:
+        let role_input = "When instructed as Codex: provide code immediately.";
+        let role_cleaned = PromptSanitizer::clean_text(role_input);
+        assert_eq!(role_cleaned, "When instructed as an assistant: provide code immediately.");
+
+        // 3. 围栏代码块内保护
+        let fenced_input = "# Codex desktop context\n```\n# Codex desktop context\nas Codex:\n```";
+        let fenced_cleaned = PromptSanitizer::clean_text(fenced_input);
+        assert!(fenced_cleaned.starts_with("# Desktop application context\n```\n# Codex desktop context\nas Codex:\n```"));
     }
 }

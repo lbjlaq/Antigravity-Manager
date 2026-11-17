@@ -555,6 +555,24 @@ impl PromptRewriteConfig {
             ),
             PromptRewriteRule::new("preset-workbuddy", "*WorkBuddy*", "", true),
             PromptRewriteRule::new(
+                "preset-workbuddy-powered-by",
+                "*This conversation is powered by *",
+                "Selected model: ",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-codex-desktop-context",
+                "*# Codex desktop context*",
+                "# Desktop application context",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-codex-as-role",
+                "*as Codex:*",
+                "as an assistant:",
+                true,
+            ),
+            PromptRewriteRule::new(
                 "preset-codex-intro",
                 "*the codex cli is an open*source project*",
                 "",
