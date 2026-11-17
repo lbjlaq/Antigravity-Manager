@@ -21,21 +21,25 @@ pub fn get_quota_endpoint_health() -> &'static crate::proxy::upstream::client::E
     &QUOTA_ENDPOINT_HEALTH
 }
 
-// Quota API endpoints (fallback order: Daily → Sandbox → Prod)
+// Quota API endpoints (fallback order: Daily → Sandbox)
 //
 // [FIX Issue #3525] Daily 优先，与官方 Antigravity language_server 的出站端点一致。
-// Daily 为官方主力端点；Sandbox 为快速沙箱备用；Prod 为深层兜底。
-const QUOTA_API_ENDPOINTS: [&str; 3] = [
+// Daily 为官方主力端点；Sandbox 为快速沙箱备用。
+//
+// 配额读数必须来自与推理相同的 host（`V1_INTERNAL_BASE_URL_FALLBACKS`）。
+// Prod (`cloudcode-pa.googleapis.com`) 已在 6a4806e 从推理端点中移除，但它对同一账号
+// 返回的 Gemini 配额与 Daily / Sandbox 不一致（耗尽账号报 100%，可用账号报 0%）。
+// `EndpointHealthTracker` 会把 Prod 当作健康主端点排在 Sandbox 之前，
+// 所以只要 Daily 失败一次，账号页的额度就会在两套数字之间跳变。
+const QUOTA_API_ENDPOINTS: [&str; 2] = [
     "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
     "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
-    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
 
-// Quota Summary API endpoints (weekly + 5h grouped quota, fallback order: Daily → Sandbox → Prod)
-const QUOTA_SUMMARY_ENDPOINTS: [&str; 3] = [
+// Quota Summary API endpoints (weekly + 5h grouped quota, fallback order: Daily → Sandbox)
+const QUOTA_SUMMARY_ENDPOINTS: [&str; 2] = [
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
     "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
-    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
 ];
 
 /// Critical retry threshold: considered near recovery when quota reaches 95%
@@ -1734,35 +1738,81 @@ mod tests {
             std::time::Duration::from_secs(60),
         );
 
-        // 默认顺序为 Daily -> Sandbox -> Prod
+        let quota_api_order = vec![
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+        ];
+        let quota_summary_order = vec![
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
+        ];
+
+        // 默认顺序：loadCodeAssist 为 Daily 优先；配额接口为 Daily -> Sandbox
         assert_eq!(
             tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
             "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
         );
         assert_eq!(
-            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS)[0],
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS),
+            quota_api_order
         );
         assert_eq!(
-            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS),
+            quota_summary_order
         );
 
         // 标记 Daily 故障（如日常请求中发生超时或连接失败）
         tracker.mark_failure("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist");
 
-        // 所有相关接口自动跳过 Daily，优先尝试健康的主端点 Prod（沙箱备用端点永远排在主端点之后）
+        // loadCodeAssist 仍会跳到健康的主端点 Prod（沙箱备用端点永远排在主端点之后）
         assert_eq!(
             tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
             "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
         );
+        // 配额接口没有 Prod 可跳：冷却中的 Daily 先探活，Sandbox 兜底，顺序不变
         assert_eq!(
-            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS)[0],
-            "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS),
+            quota_api_order
         );
         assert_eq!(
-            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
-            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS),
+            quota_summary_order
+        );
+    }
+
+    /// 配额读数必须来自推理实际使用的 host。Prod 已在 6a4806e 从推理端点移除，
+    /// 而它报告的 Gemini 配额与 Daily / Sandbox 不一致；两份列表一旦再次分叉，这里会失败。
+    #[test]
+    fn test_quota_endpoints_only_use_inference_hosts() {
+        use crate::proxy::upstream::client::{
+            extract_endpoint_host, V1_INTERNAL_BASE_URL_FALLBACKS,
+        };
+
+        let inference_hosts: Vec<&str> = V1_INTERNAL_BASE_URL_FALLBACKS
+            .iter()
+            .map(|url| extract_endpoint_host(url))
+            .collect();
+
+        let mut graded = 0;
+        for endpoint in QUOTA_API_ENDPOINTS
+            .iter()
+            .chain(QUOTA_SUMMARY_ENDPOINTS.iter())
+        {
+            let host = extract_endpoint_host(endpoint);
+            assert!(
+                inference_hosts.contains(&host),
+                "quota endpoint {} uses host {}, which inference never calls (inference hosts: {:?})",
+                endpoint,
+                host,
+                inference_hosts
+            );
+            graded += 1;
+        }
+
+        assert!(graded > 0, "no quota endpoints were graded");
+        assert_eq!(
+            graded,
+            QUOTA_API_ENDPOINTS.len() + QUOTA_SUMMARY_ENDPOINTS.len()
         );
     }
 
