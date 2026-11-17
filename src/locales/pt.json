@@ -1795,7 +1795,9 @@
             "scope_label": "Escopo da Regra",
             "scope_all": "Tudo",
             "scope_prompt": "Prompt",
-            "scope_tools": "Ferramentas"
+            "scope_tools": "Ferramentas",
+            "reset_presets": "Redefinir para Padrões",
+            "reset_presets_confirm": "Isso limpará as regras atuais e redefinirá estritamente para os padrões oficiais mais recentes. Continuar?"
         }
     },
     "monitor": {

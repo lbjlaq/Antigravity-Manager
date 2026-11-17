@@ -1787,7 +1787,9 @@
             "scope_label": "規則作用範圍",
             "scope_all": "全部",
             "scope_prompt": "提示詞",
-            "scope_tools": "工具"
+            "scope_tools": "工具",
+            "reset_presets": "重設為預設規則",
+            "reset_presets_confirm": "這將清空當前規則並完全重設為官方最新的推薦預設規則，是否確定？"
         },
         "multimodal": {
             "banner_title": "多模態交互與長程保鮮治理 (Pipeline First)",

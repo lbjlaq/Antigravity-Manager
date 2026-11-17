@@ -1858,7 +1858,9 @@
             "scope_label": "Rule Scope",
             "scope_all": "All",
             "scope_prompt": "Prompt",
-            "scope_tools": "Tools"
+            "scope_tools": "Tools",
+            "reset_presets": "Reset to Default Presets",
+            "reset_presets_confirm": "This will clear current rules and reset strictly to the latest official presets. Continue?"
         },
         "multimodal": {
             "banner_title": "Multimodal Interaction & Longevity Governance (Pipeline First)",

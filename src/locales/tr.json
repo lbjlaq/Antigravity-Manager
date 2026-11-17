@@ -1812,7 +1812,9 @@
             "scope_label": "Kural Kapsamı",
             "scope_all": "Tümü",
             "scope_prompt": "İstemi",
-            "scope_tools": "Araçlar"
+            "scope_tools": "Araçlar",
+            "reset_presets": "Varsayılanlara Sıfırla",
+            "reset_presets_confirm": "Bu işlem mevcut kuralları temizleyecek ve en son resmi hazır ayarlara sıfırlayacaktır. Devam edilsin mi?"
         }
     },
     "monitor": {

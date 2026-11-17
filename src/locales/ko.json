@@ -1759,7 +1759,9 @@
             "scope_label": "규칙 적용 범위",
             "scope_all": "전체",
             "scope_prompt": "프롬프트",
-            "scope_tools": "도구"
+            "scope_tools": "도구",
+            "reset_presets": "기본 프리셋으로 초기화",
+            "reset_presets_confirm": "현재 규칙을 지우고 최신 공식 프리셋으로 초기화합니다. 계속하시겠습니까?"
         }
     },
     "monitor": {

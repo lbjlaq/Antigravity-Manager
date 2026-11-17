@@ -1759,7 +1759,9 @@
             "scope_label": "ルールの適用範囲",
             "scope_all": "全体",
             "scope_prompt": "プロンプト",
-            "scope_tools": "ツール"
+            "scope_tools": "ツール",
+            "reset_presets": "デフォルトプリセットにリセット",
+            "reset_presets_confirm": "現在のルールをクリアし、最新の公式推奨プリセットにリセットします。よろしいですか？"
         }
     },
     "monitor": {

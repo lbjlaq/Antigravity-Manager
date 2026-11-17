@@ -1810,7 +1810,9 @@
             "scope_label": "Phạm vi quy tắc",
             "scope_all": "Tất cả",
             "scope_prompt": "Chỉ dẫn",
-            "scope_tools": "Công cụ"
+            "scope_tools": "Công cụ",
+            "reset_presets": "Đặt lại về cài đặt mặc định",
+            "reset_presets_confirm": "Thao tác này sẽ xóa các quy tắc hiện tại và đặt lại chính xác về các cài đặt chính thức mới nhất. Tiếp tục?"
         }
     },
     "monitor": {

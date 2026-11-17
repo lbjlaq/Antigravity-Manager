@@ -81,18 +81,41 @@ export default function PromptRewriteSettings({
         if (rules.length > 0) {
             const confirmed = window.confirm(
                 t("proxy.prompt_rewrite.load_presets_confirm", {
-                    defaultValue: "这将在保留现有自定义规则的同时，自动补齐官方推荐的风控预设规则，是否继续？",
+                    defaultValue: "这将在保留现有自定义规则的同时，自动更新并补齐官方推荐的风控预设规则及其作用范围，是否继续？",
                 })
             );
             if (!confirmed) return;
         }
-        const existingPatterns = new Set(rules.map((r) => r.pattern.trim()));
+        const presetMap = new Map(RECOMMENDED_PROMPT_REWRITE_PRESETS.map((p) => [p.pattern.trim(), p]));
+        // 1. 对于已存在的预设规则，同步校准其最新 scope 与属性
+        const updatedRules = rules.map((r) => {
+            const preset = presetMap.get(r.pattern.trim());
+            if (preset && !r.scope) {
+                return { ...r, scope: preset.scope };
+            }
+            return r;
+        });
+        const existingPatterns = new Set(updatedRules.map((r) => r.pattern.trim()));
+        // 2. 补齐尚未加入的官方预设
         const toAdd = RECOMMENDED_PROMPT_REWRITE_PRESETS.filter(
             (p) => !existingPatterns.has(p.pattern.trim())
         );
         onChange({
             ...config,
-            rules: [...rules, ...toAdd],
+            rules: [...updatedRules, ...toAdd],
+        });
+    };
+
+    const resetToRecommendedPresets = () => {
+        const confirmed = window.confirm(
+            t("proxy.prompt_rewrite.reset_presets_confirm", {
+                defaultValue: "这将清空当前规则并完全重置为官方最新的推荐预设规则，是否确定？",
+            })
+        );
+        if (!confirmed) return;
+        onChange({
+            ...config,
+            rules: [...RECOMMENDED_PROMPT_REWRITE_PRESETS],
         });
     };
 
@@ -355,7 +378,7 @@ export default function PromptRewriteSettings({
                         );
                     })}
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <button
                             type="button"
                             onClick={addRule}
@@ -373,7 +396,17 @@ export default function PromptRewriteSettings({
                         >
                             <Sparkles size={14} />
                             {t("proxy.prompt_rewrite.load_presets", {
-                                defaultValue: "载入官方推荐预设",
+                                defaultValue: "载入/同步官方预设",
+                            })}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={resetToRecommendedPresets}
+                            className="py-2 rounded-lg border border-dashed border-rose-300 dark:border-rose-700/50 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:border-rose-500 hover:bg-rose-50/60 dark:hover:bg-rose-900/20 transition-colors flex items-center justify-center gap-1.5"
+                        >
+                            <Trash2 size={14} />
+                            {t("proxy.prompt_rewrite.reset_presets", {
+                                defaultValue: "重置为默认预设",
                             })}
                         </button>
                     </div>
