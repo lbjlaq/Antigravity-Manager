@@ -1766,8 +1766,6 @@
             "enabled": "Ativado",
             "empty": "Nenhuma regra de limpeza ainda. Adicione uma abaixo.",
             "add_rule": "Adicionar regra de limpeza",
-            "load_presets": "Carregar predefinições recomendadas",
-            "load_presets_confirm": "Isso adicionará as regras predefinidas de WAF recomendadas oficialmente mantendo suas regras personalizadas. Continuar?",
             "match": "Correspondência",
             "replace": "Substituir por",
             "match_placeholder": "Texto para corresponder, ex.: You are *",
@@ -1796,8 +1794,8 @@
             "scope_all": "Tudo",
             "scope_prompt": "Prompt",
             "scope_tools": "Ferramentas",
-            "reset_presets": "Redefinir para Padrões",
-            "reset_presets_confirm": "Isso limpará as regras atuais e redefinirá estritamente para os padrões oficiais mais recentes. Continuar?"
+            "restore_presets": "Restaurar Padrões",
+            "restore_presets_confirm": "Isso restaurará as regras para os padrões oficiais mais recentes (11 regras no total). Continuar?"
         }
     },
     "monitor": {

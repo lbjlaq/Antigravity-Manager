@@ -1758,8 +1758,6 @@
             "enabled": "啟用",
             "empty": "還沒有清理規則，點擊下方新增。",
             "add_rule": "新增清理規則",
-            "load_presets": "載入官方推薦預設",
-            "load_presets_confirm": "這將在保留現有自訂規則的同時，自動補齊官方推薦的風控預設規則，是否繼續？",
             "match": "符合內容",
             "replace": "替換為",
             "match_placeholder": "符合內容，例如：You are *",
@@ -1788,8 +1786,8 @@
             "scope_all": "全部",
             "scope_prompt": "提示詞",
             "scope_tools": "工具",
-            "reset_presets": "重設為預設規則",
-            "reset_presets_confirm": "這將清空當前規則並完全重設為官方最新的推薦預設規則，是否確定？"
+            "restore_presets": "恢復預設規則",
+            "restore_presets_confirm": "這將把風控清理規則恢復為官方最新的預設規則（共 11 條），是否確定繼續？"
         },
         "multimodal": {
             "banner_title": "多模態交互與長程保鮮治理 (Pipeline First)",

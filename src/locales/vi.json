@@ -1781,8 +1781,6 @@
             "enabled": "Đã bật",
             "empty": "Chưa có quy tắc dọn dẹp nào. Thêm một quy tắc bên dưới.",
             "add_rule": "Thêm quy tắc dọn dẹp",
-            "load_presets": "Tải mẫu đề xuất chính thức",
-            "load_presets_confirm": "Thao tác này sẽ thêm các quy tắc mẫu WAF được đề xuất chính thức trong khi vẫn giữ các quy tắc tùy chỉnh hiện tại của bạn. Tiếp tục?",
             "match": "Khớp mẫu",
             "replace": "Thay thế bằng",
             "match_placeholder": "Mẫu khớp, ví dụ: You are *",
@@ -1811,8 +1809,8 @@
             "scope_all": "Tất cả",
             "scope_prompt": "Chỉ dẫn",
             "scope_tools": "Công cụ",
-            "reset_presets": "Đặt lại về cài đặt mặc định",
-            "reset_presets_confirm": "Thao tác này sẽ xóa các quy tắc hiện tại và đặt lại chính xác về các cài đặt chính thức mới nhất. Tiếp tục?"
+            "restore_presets": "Khôi phục cài đặt mặc định",
+            "restore_presets_confirm": "Thao tác này sẽ khôi phục các quy tắc về các cài đặt chính thức mới nhất (tổng cộng 11 quy tắc). Tiếp tục?"
         }
     },
     "monitor": {

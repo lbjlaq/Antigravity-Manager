@@ -1730,8 +1730,6 @@
             "enabled": "Activado",
             "empty": "Aún no hay reglas de limpieza. Añade una abajo.",
             "add_rule": "Añadir regla de limpieza",
-            "load_presets": "Cargar ajustes preestablecidos recomendados",
-            "load_presets_confirm": "¿Deseas añadir las reglas preestablecidas de WAF recomendadas oficialmente manteniendo tus reglas personalizadas actuales?",
             "match": "Coincidencia",
             "replace": "Reemplazar con",
             "match_placeholder": "Texto coincidente, ej.: You are *",
@@ -1760,8 +1758,8 @@
             "scope_all": "Todo",
             "scope_prompt": "Prompt",
             "scope_tools": "Herramientas",
-            "reset_presets": "Restablecer a Preajustes",
-            "reset_presets_confirm": "Esto borrará las reglas actuales y restablecerá a los preajustes oficiales más recientes. ¿Continuar?"
+            "restore_presets": "Restaurar Preajustes",
+            "restore_presets_confirm": "Esto restaurará las reglas a los preajustes oficiales más recientes (11 reglas en total). ¿Continuar?"
         }
     },
     "monitor": {

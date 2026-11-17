@@ -1730,8 +1730,6 @@
             "enabled": "有効",
             "empty": "クリーンアップルールがまだありません。下部から追加してください。",
             "add_rule": "クリーンアップルールを追加",
-            "load_presets": "公式推奨プリセットを読み込む",
-            "load_presets_confirm": "現在のカスタムルールを保持したまま、公式推奨の WAF プリセットルールを追加します。続行しますか？",
             "match": "一致パターン",
             "replace": "置換後",
             "match_placeholder": "一致パターン（例：You are *）",
@@ -1760,8 +1758,8 @@
             "scope_all": "全体",
             "scope_prompt": "プロンプト",
             "scope_tools": "ツール",
-            "reset_presets": "デフォルトプリセットにリセット",
-            "reset_presets_confirm": "現在のルールをクリアし、最新の公式推奨プリセットにリセットします。よろしいですか？"
+            "restore_presets": "デフォルトプリセットを復元",
+            "restore_presets_confirm": "ルールを公式の最新推奨プリセット（全11件）に復元します。よろしいですか？"
         }
     },
     "monitor": {

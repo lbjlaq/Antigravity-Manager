@@ -1783,8 +1783,6 @@
             "enabled": "Etkin",
             "empty": "Henüz temizleme kuralı yok. Aşağıdan ekleyin.",
             "add_rule": "Temizleme kuralı ekle",
-            "load_presets": "Önerilen Hazır Ayarları Yükle",
-            "load_presets_confirm": "Bu işlem mevcut özel kurallarınızı koruyarak resmi önerilen WAF hazır ayarlarını ekleyecektir. Devam edilsin mi?",
             "match": "Eşleşme",
             "replace": "Şununla değiştir",
             "match_placeholder": "Eşleşme metni, örn: You are *",
@@ -1813,8 +1811,8 @@
             "scope_all": "Tümü",
             "scope_prompt": "İstemi",
             "scope_tools": "Araçlar",
-            "reset_presets": "Varsayılanlara Sıfırla",
-            "reset_presets_confirm": "Bu işlem mevcut kuralları temizleyecek ve en son resmi hazır ayarlara sıfırlayacaktır. Devam edilsin mi?"
+            "restore_presets": "Varsayılan Hazır Ayarları Geri Yükle",
+            "restore_presets_confirm": "Bu işlem kuralları en son resmi varsayılan hazır ayarlara (toplam 11 kural) geri yükleyecektir. Devam edilsin mi?"
         }
     },
     "monitor": {
