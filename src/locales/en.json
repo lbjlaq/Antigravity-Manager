@@ -907,6 +907,7 @@
             "brew_error_brew_timeout": "Homebrew upgrade timed out (3min). Try running manually: brew upgrade --cask antigravity-tools",
             "brew_error_brew_already_latest": "Already up to date, no upgrade needed",
             "brew_error_brew_not_supported": "Homebrew update is not supported on this platform",
+            "brew_beta_notice": "Homebrew only supports stable releases. A beta release was detected, switched to native auto-updater.",
             "update_check_failed": "Update check failed",
             "support_btn": "Support Author",
             "support_title": "Donation & Support",

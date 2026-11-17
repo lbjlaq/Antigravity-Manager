@@ -150,6 +150,11 @@ static PROMPT_REWRITE_RUNTIME: Lazy<RwLock<Arc<Vec<CompiledPromptRewriteRule>>>>
 /// 内置身份归一化总开关（默认开启，可在“风控提示词清理方案”中关闭）。
 static NORMALIZE_IDENTITY_ENABLED: AtomicBool = AtomicBool::new(true);
 
+/// 系统提示词隐身侧载模式原子存储 (0: Auto, 1: Always, 2: Off)
+static PROMPT_SIDELOAD_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// 工具描述清洗开关原子存储
+static SANITIZE_TOOLS_DESCRIPTION: AtomicBool = AtomicBool::new(true);
+
 /// 解析身份归一化总开关：配置值 && 未被环境变量关闭。
 /// 环境变量 `ABV_NORMALIZE_IDENTITY=off|0|false|no` 作为 headless/CLI 的强制关闭开关。
 fn normalize_identity_effective(config_value: bool, env_value: Option<&str>) -> bool {
@@ -600,22 +605,47 @@ impl PromptSanitizer {
         NORMALIZE_IDENTITY_ENABLED.load(Ordering::Relaxed)
     }
 
+    /// 当前系统提示词隐身侧载模式
+    pub fn sideload_mode() -> crate::proxy::config::PromptSideloadMode {
+        match PROMPT_SIDELOAD_MODE.load(Ordering::Relaxed) {
+            1 => crate::proxy::config::PromptSideloadMode::Always,
+            2 => crate::proxy::config::PromptSideloadMode::Off,
+            _ => crate::proxy::config::PromptSideloadMode::Auto,
+        }
+    }
+
+    /// 是否对工具声明执行清洗与自定义规则
+    pub fn sanitize_tools_description_enabled() -> bool {
+        SANITIZE_TOOLS_DESCRIPTION.load(Ordering::Relaxed)
+    }
+
     /// 热更新风控提示词清理规则（配置保存/启动时调用）。
     pub fn update_prompt_rewrite_config(config: &PromptRewriteConfig) {
         let env_value = std::env::var("ABV_NORMALIZE_IDENTITY").ok();
         let effective =
             normalize_identity_effective(config.normalize_identity, env_value.as_deref());
         NORMALIZE_IDENTITY_ENABLED.store(effective, Ordering::Relaxed);
+
+        let sideload_val = match config.sideload_mode {
+            crate::proxy::config::PromptSideloadMode::Always => 1,
+            crate::proxy::config::PromptSideloadMode::Off => 2,
+            crate::proxy::config::PromptSideloadMode::Auto => 0,
+        };
+        PROMPT_SIDELOAD_MODE.store(sideload_val, Ordering::Relaxed);
+        SANITIZE_TOOLS_DESCRIPTION.store(config.sanitize_tools_description, Ordering::Relaxed);
+
         let compiled = Self::compile_prompt_rewrite_rules(config);
         let count = compiled.len();
         if let Ok(mut guard) = PROMPT_REWRITE_RUNTIME.write() {
             *guard = Arc::new(compiled);
         }
         tracing::info!(
-            "[Prompt-Sanitizer] Prompt rewrite rules loaded: enabled={}, active={}, normalize_identity={}",
+            "[Prompt-Sanitizer] Prompt rewrite rules loaded: enabled={}, active={}, normalize_identity={}, sideload_mode={:?}, sanitize_tools={}",
             config.enabled,
             count,
-            effective
+            effective,
+            config.sideload_mode,
+            config.sanitize_tools_description
         );
     }
 
@@ -2084,27 +2114,31 @@ impl PromptSanitizer {
 
         // 3. 清洗工具声明 (tools 中的 functionDeclarations 描述文本)
         //    防御性剥离伪 Header 与独立指纹声明，严禁触碰工具名称 (name) 与参数 Schema (parameters)
-        if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
-            let mut tools_codemode_budget = PI_CODEMODE_SCAN_MAX_CHARS;
-            for tool in tools.iter_mut() {
-                if let Some(decls) = tool
-                    .get_mut("functionDeclarations")
-                    .and_then(Value::as_array_mut)
-                {
-                    for decl in decls.iter_mut() {
-                        let desc_opt = decl
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .map(|s| s.to_string());
-                        if let Some(desc) = desc_opt {
-                            let cleaned = Self::clean_text_with_codemode_limit(
-                                &desc,
-                                &mut tools_codemode_budget,
-                            );
-                            if cleaned != desc {
-                                if let Some(obj) = decl.as_object_mut() {
-                                    obj.insert("description".to_string(), Value::String(cleaned));
-                                    cleaned_count += 1;
+        if Self::sanitize_tools_description_enabled() {
+            if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
+                let mut tools_codemode_budget = PI_CODEMODE_SCAN_MAX_CHARS;
+                for tool in tools.iter_mut() {
+                    if let Some(decls) = tool
+                        .get_mut("functionDeclarations")
+                        .and_then(Value::as_array_mut)
+                    {
+                        for decl in decls.iter_mut() {
+                            let desc_opt = decl
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .map(|s| s.to_string());
+                            if let Some(desc) = desc_opt {
+                                let cleaned = Self::clean_text_with_codemode_limit(
+                                    &desc,
+                                    &mut tools_codemode_budget,
+                                );
+                                // 同时在工具描述中叠加应用用户自定义 PromptRewriteRules
+                                let rewritten = Self::apply_prompt_rewrite_rules(&cleaned);
+                                if rewritten != desc {
+                                    if let Some(obj) = decl.as_object_mut() {
+                                        obj.insert("description".to_string(), Value::String(rewritten));
+                                        cleaned_count += 1;
+                                    }
                                 }
                             }
                         }
@@ -4132,6 +4166,8 @@ mod tests {
         PromptRewriteConfig {
             enabled: true,
             normalize_identity: true,
+            sideload_mode: crate::proxy::config::PromptSideloadMode::Off,
+            sanitize_tools_description: true,
             rules: rules
                 .into_iter()
                 .enumerate()
@@ -4339,6 +4375,8 @@ mod tests {
         let preset_config = PromptRewriteConfig {
             enabled: true,
             normalize_identity: true,
+            sideload_mode: crate::proxy::config::PromptSideloadMode::Off,
+            sanitize_tools_description: true,
             rules: PromptRewriteConfig::recommended_preset_rules(),
         };
 

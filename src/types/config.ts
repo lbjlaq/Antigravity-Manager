@@ -160,6 +160,10 @@ export interface PromptRewriteConfig {
     enabled: boolean;
     /** 是否启用内置身份归一化（默认 true） */
     normalize_identity?: boolean;
+    /** 系统提示词隐身侧载模式：'auto' (非官方身份自动侧载) | 'always' (总是侧载) | 'off' (关闭) */
+    sideload_mode?: 'auto' | 'always' | 'off';
+    /** 是否对 tools[].description 深度执行脱敏与自定义规则清洗（默认 true） */
+    sanitize_tools_description?: boolean;
     rules: PromptRewriteRule[];
 }
 

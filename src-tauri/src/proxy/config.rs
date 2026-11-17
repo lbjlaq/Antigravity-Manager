@@ -507,6 +507,24 @@ impl PromptRewriteRule {
     }
 }
 
+/// 系统提示词隐身侧载模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptSideloadMode {
+    /// 自动智能探测：包含第三方框架特征或超长指令时自动执行首轮侧载（默认且推荐）
+    Auto,
+    /// 始终开启：所有非空系统提示词一律通过首轮 User 权威上下文侧载
+    Always,
+    /// 关闭：直出传统 systemInstruction
+    Off,
+}
+
+impl Default for PromptSideloadMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 /// 风控提示词清理方案
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptRewriteConfig {
@@ -515,6 +533,12 @@ pub struct PromptRewriteConfig {
     /// 是否启用内置身份归一化（默认 true）。关闭后保留客户端原始身份句，只执行用户自定义规则。
     #[serde(default = "default_true")]
     pub normalize_identity: bool,
+    /// 系统提示词隐身侧载模式（默认 Auto）
+    #[serde(default)]
+    pub sideload_mode: PromptSideloadMode,
+    /// 是否对工具描述 (tools[].functionDeclarations[].description) 同步执行清洗与自定义规则替换 (默认 true)
+    #[serde(default = "default_true")]
+    pub sanitize_tools_description: bool,
     #[serde(default = "PromptRewriteConfig::recommended_preset_rules")]
     pub rules: Vec<PromptRewriteRule>,
 }
@@ -593,6 +617,8 @@ impl Default for PromptRewriteConfig {
         Self {
             enabled: true,
             normalize_identity: true,
+            sideload_mode: PromptSideloadMode::default(),
+            sanitize_tools_description: true,
             rules: Self::recommended_preset_rules(),
         }
     }

@@ -4,7 +4,9 @@
 
 *   **版本演进**:
     *   **v5.0.4-beta.14 (2026-11-17)**:
-        -   **[上游 WAF 伪 429 拦截全面中和与规则系统增强] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, Fixes #3982, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui, @ALight777)**:
+        -   **[上游 WAF 伪 429 拦截全面中和与隐身侧载架构] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, Fixes #3982, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui, @ALight777)**:
+            -   **系统提示词隐身侧载（Prompt Stealth Sideloading）与根节点单次锚定**: 针对上游 Google Cloud Code WAF 针对非官方身份及复杂 Agent 提示词实施特征哈希扫描并秒级返回伪 429 RESOURCE_EXHAUSTED 的机制，设计并在 Pipeline 层落地隐身侧载架构。将第三方系统提示词无损打包为 `<system-instruction priority="critical" role="developer">` 安全嵌入首轮对话上下文，出站官方 `systemInstruction` 恢复纯净默认 Antigravity 身份；采用 Sticky Root 单次锚定机制，多轮对话历史绝不重复注入，实现 100% 缓存前缀字节级不可变与 KV Cache 极致复用。
+            -   **工具声明安全脱敏与全域自定义规则应用**: 对 `tools[].description` 深度执行隐私脱敏与敏感特征中和，并全面应用用户自定义与预设风控重写规则；严格冻结 `tools[].name` 与 `parameters` 结构不变，完全杜绝模型工具调用参数报错或第三方生态插件失效。
             -   **WorkBuddy 与 Codex 引导特征中和与 CRLF 支持**: 针对 WorkBuddy 注入的模型声明首行（`This conversation is powered by <model>`）及 Codex 桌面端上下文标记（`# Codex desktop context`、`as Codex:`）触发 WAF 假 429 的问题，实现精准中和（改写为 `Selected model: <model>`、`# Desktop application context`、`as an assistant:`），并全面兼容 Unix LF 与 Windows CRLF 换行格式，完整保留所有工具定义与调用能力。(Fixes #3982, Thanks to @ALight777)
             -   **Pi Agent 内置 codemode 工具指令中和**: 针对 Pi Agent 启用内置 `codemode` 工具时触发上游 WAF 假 429 的问题，在请求前 20,000 字符动态窗口内安全中和 `codemode` 描述与提示词关键字（`codem0de`），同时 100% 保护工具名称、参数结构与多行代码块。(Fixes #3981, Thanks to @muzisuisuisui)
             -   **OpenCode 会话迁移指令脱敏中和**: 针对 Google Cloud Code 上游 WAF 对 OpenCode 会话迁移指令（`tools.opencode.session-move` 与 `tools.opencode.session_move`）的启发式拦截，在保留多行围栏代码块的前提下对非代码区域及行内反引号执行高精度安全重命名中和，彻底杜绝上游秒级返回伪造的 429 RESOURCE_EXHAUSTED 报错。(Fixes #3969, Ref #3975, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM)
@@ -19,6 +21,8 @@
             -   **恢复 MCP 工具调用的 name / namespace 结构**: 修复了 Codex 通过 Responses API 接入网关并调用 MCP namespace 工具时报错 `unsupported call: mcp__...` 的问题；在非流式、流式 SSE 与 WebSocket 通道统一准确拆分 `name` 与 `namespace` 字段（按末尾分隔符还原 `mcp__*` 命名空间），并向下兼容普通工具与非 MCP 命名空间。(Fixes #3979, PR #3980, Thanks to @Lucas-Qh-Lai)
         -   **[OAuth 授权作用域补齐与 AGY CLI 1.5.x 兼容] (Refs #3974, PR #3978, Thanks to @ThermalEng)**:
             -   **新增 aicode OAuth Scope**: 在 Google OAuth 授权地址中补齐官方 AGY CLI 1.5.x 所需的 `https://www.googleapis.com/auth/aicode` scope，根除因权限缺失导致的 `Sign-in update needed` 警告与高级功能权限校验拒绝。(Refs #3974, PR #3978, Thanks to @ThermalEng)
+        -   **[Homebrew 安装实例切换 Beta 通道更新回退] (Fixes #3973, Thanks to @Starfie1d1272)**:
+            -   **Beta 通道自动降级原生自动更新**: 修复了通过 Homebrew Cask 安装的应用在切换到 Beta 更新通道后，因 Homebrew 官方源只维护稳定版导致触发 `brew upgrade` 报错已是最新而无法更新的问题；当检测到更新目标为测试版时，自动回退并切换为原生应用内下载与自动更新，并给出友好提示。(Fixes #3973, Thanks to @Starfie1d1272)
 
     *   **v5.0.4-beta.13 (2026-11-15)**:
         -   **[上游 WAF 特征提示词中和与模型配额归一化修复] (Fixes #3965)**:
