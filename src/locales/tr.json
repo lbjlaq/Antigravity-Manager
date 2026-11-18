@@ -529,7 +529,17 @@
         "fetching_project_id": "Alınıyor...",
         "auto_fetch_success": "Project ID başarıyla alındı: {{projectId}}",
         "auto_fetch_failed": "Yukarı akışta ilişkili bir Project ID bulunamadı",
-        "unfreeze_model_tooltip": "Bu modelin 403 dondurmasını kaldırmak için tıklayın"
+        "unfreeze_model_tooltip": "Bu modelin 403 dondurmasını kaldırmak için tıklayın",
+        "google_appeal_form": "Google Resmi İtiraz Formu",
+        "appeal_form_fallback_tip": "Yukarı akış doğrudan bir kilit açma bağlantısı döndürmedi. Google Cloud Code resmi formu üzerinden inceleme talep edebilirsiniz.",
+        "clear_lock_title": "Hesabı Havuza Geri Yükle (Sahte 403'ü Temizle / Yeniden Sına)",
+        "clear_lock_desc": "Desteklenmeyen proxy konumu (Location not supported) veya ağ sorunları nedeniyle 403 alındıysa, desteklenen bir proxy seçip kilidi kaldırın.",
+        "clear_403_and_retry": "403 Kilidini Temizle ve Yeniden Sına",
+        "clearing_and_probing": "Kilit temizleniyor ve hesap sınanıyor...",
+        "clear_forbidden_success": "403 kilidi başarıyla temizlendi, yeniden sınanıyor...",
+        "warmup_success": "Hesap sınaması başarılı! Havuza geri yüklendi.",
+        "warmup_failed_warning": "Kilit temizlendi ancak sınama tam geçmedi. Lütfen proxy'nizi kontrol edin.",
+        "clear_forbidden_failed": "403 durumu temizlenemedi"
     },
     "settings": {
         "save": "Ayarları Kaydet",

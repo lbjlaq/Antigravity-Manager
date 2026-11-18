@@ -182,16 +182,18 @@ pub fn get_upstream_proxy_url() -> Option<String> {
 }
 
 /// Check for updates with improved strategy:
-/// 1. Check updater.json (Source of Truth for Auto-Update)
-/// 2. Fallback to GitHub API (Informational)
-/// Check for updates with improved strategy:
 /// 1. Check updater.json based on selected channel (Stable vs Beta)
 /// 2. Fallback to GitHub API (Release or Pre-release)
 pub async fn check_for_updates() -> Result<UpdateInfo, String> {
     let settings = load_update_settings().unwrap_or_default();
-    let mut info = check_for_updates_internal(settings.update_channel).await?;
+    check_for_updates_with_channel(settings.update_channel).await
+}
+
+/// Check for updates for an explicit channel (allows instant channel switching verification)
+pub async fn check_for_updates_with_channel(channel: UpdateChannel) -> Result<UpdateInfo, String> {
+    let mut info = check_for_updates_internal(channel).await?;
     info.proxy_url = get_upstream_proxy_url();
-    info.channel = Some(settings.update_channel);
+    info.channel = Some(channel);
     Ok(info)
 }
 

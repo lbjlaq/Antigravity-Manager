@@ -528,7 +528,17 @@
         "fetching_project_id": "獲取中...",
         "auto_fetch_success": "成功自動獲取 Project ID: {{projectId}}",
         "auto_fetch_failed": "未能在上游找到關聯的 Project ID",
-        "unfreeze_model_tooltip": "點擊解除該模型的 403 凍結"
+        "unfreeze_model_tooltip": "點擊解除該模型的 403 凍結",
+        "google_appeal_form": "Google 官方申訴表單",
+        "appeal_form_fallback_tip": "上游未返回直接解封連結，您可透過 Google Cloud Code 官方服務申訴表單申請人工複核。",
+        "clear_lock_title": "恢復帳號入池 (清除假 403 / 重新測活)",
+        "clear_lock_desc": "若此前因代理節點地區不支援 (Location not supported) 或網路波動被標記 403，更換好美國/原生節點後可一鍵清除鎖定並重新啟用。",
+        "clear_403_and_retry": "清除 403 標記並重新測活",
+        "clearing_and_probing": "正在解除鎖定並重新測活...",
+        "clear_forbidden_success": "已成功清除 403 鎖定狀態，正在重新測活...",
+        "warmup_success": "帳號重新測活成功！已恢復正常",
+        "warmup_failed_warning": "鎖定已清除，但測活仍未完全通過，請檢查代理節點",
+        "clear_forbidden_failed": "解除 403 狀態失敗"
     },
     "settings": {
         "save": "儲存設定",

@@ -529,7 +529,17 @@
         "fetching_project_id": "Obteniendo...",
         "auto_fetch_success": "Project ID obtenido con éxito: {{projectId}}",
         "auto_fetch_failed": "No se encontró ningún Project ID asociado en el origen",
-        "unfreeze_model_tooltip": "Haga clic para descongelar este modelo (elimina el estado 403)"
+        "unfreeze_model_tooltip": "Haga clic para descongelar este modelo (elimina el estado 403)",
+        "google_appeal_form": "Formulario oficial de apelación de Google",
+        "appeal_form_fallback_tip": "El upstream no devolvió un enlace directo. Puede solicitar una revisión manual a través del formulario oficial de Google Cloud Code.",
+        "clear_lock_title": "Restaurar cuenta al grupo (Limpiar falso 403 / Probar de nuevo)",
+        "clear_lock_desc": "Si se bloqueó por ubicación de proxy no admitida (Location not supported) o red, cambie a un proxy admitido y desbloquee.",
+        "clear_403_and_retry": "Limpiar bloqueo 403 y reprobar",
+        "clearing_and_probing": "Limpiando bloqueo y probando cuenta...",
+        "clear_forbidden_success": "Bloqueo 403 limpiado con éxito, probando cuenta...",
+        "warmup_success": "¡Reprueba de cuenta exitosa! Restaurada al grupo activo.",
+        "warmup_failed_warning": "Bloqueo eliminado, pero la prueba no pasó por completo. Verifique su proxy.",
+        "clear_forbidden_failed": "Error al limpiar el estado 403"
     },
     "settings": {
         "save": "Guardar Configuración",

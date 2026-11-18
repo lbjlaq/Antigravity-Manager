@@ -1350,11 +1350,20 @@ pub struct NativeUpdateMetadata {
     pub raw_json: serde_json::Value,
 }
 
-/// 检测 GitHub releases 更新
+/// 检测 GitHub releases 更新（支持可选显式指定更新通道）
 #[tauri::command]
-pub async fn check_for_updates() -> Result<UpdateInfo, String> {
-    modules::logger::log_info("收到前端触发的更新检查请求");
-    crate::modules::update_checker::check_for_updates().await
+pub async fn check_for_updates(
+    channel: Option<crate::modules::update_checker::UpdateChannel>,
+) -> Result<UpdateInfo, String> {
+    modules::logger::log_info(&format!(
+        "收到前端触发的更新检查请求 (channel={:?})",
+        channel
+    ));
+    if let Some(target_channel) = channel {
+        crate::modules::update_checker::check_for_updates_with_channel(target_channel).await
+    } else {
+        crate::modules::update_checker::check_for_updates().await
+    }
 }
 
 /// 基于动态通道和端点进行原生更新检查，支持预发布版 (Beta) 与正式版自动更新分离

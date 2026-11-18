@@ -142,6 +142,7 @@ function Settings() {
     const [isBrewConfirmOpen, setIsBrewConfirmOpen] = useState(false);
     const [isBrewSuccessOpen, setIsBrewSuccessOpen] = useState(false);
     const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
+    const [preferNativeUpdate, setPreferNativeUpdate] = useState(false);
 
     // UI Zoom state
     const [uiZoom, setUiZoom] = useState<number>(() => getStoredZoom());
@@ -432,7 +433,7 @@ function Settings() {
         }
     };
 
-    const handleCheckUpdate = async () => {
+    const handleCheckUpdate = async (explicitChannel?: 'stable' | 'beta') => {
         setIsCheckingUpdate(true);
         setUpdateInfo(null);
         try {
@@ -443,7 +444,7 @@ function Settings() {
                 download_url: string;
                 source?: string;
                 channel?: 'stable' | 'beta';
-            }>('check_for_updates');
+            }>('check_for_updates', explicitChannel ? { channel: explicitChannel } : undefined);
 
             setUpdateInfo({
                 hasUpdate: result.has_update,
@@ -470,9 +471,9 @@ function Settings() {
 
     const handleConfirmUpdate = async () => {
         setIsUpdateConfirmOpen(false);
-        // If installed via Homebrew and updating to a stable release, use Homebrew upgrade.
-        // For Beta updates, fallback to native auto-updater because Homebrew Cask only tracks stable.
-        const shouldUseBrew = isBrewInstalled && updateInfo?.channel !== 'beta';
+        // If installed via Homebrew, user didn't choose native update, and updating to a stable release, use Homebrew upgrade.
+        // For Beta updates or when user switches to native update, use native auto-updater because Homebrew Cask only tracks stable.
+        const shouldUseBrew = isBrewInstalled && !preferNativeUpdate && updateInfo?.channel !== 'beta';
         if (shouldUseBrew) {
             handleBrewUpgrade();
             return;
@@ -827,6 +828,69 @@ function Settings() {
                                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.general.update_check_interval_desc')}</p>
                                     </div>
                                 )}
+
+                                {/* 更新通道选择 */}
+                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
+                                    <div>
+                                        <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.about.update_channel')}</div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                            {formData.update_channel === 'beta'
+                                                ? t('settings.about.channel_beta_hint')
+                                                : t('settings.about.channel_stable_desc', { defaultValue: '稳定版本，推荐日常生产使用' })}
+                                        </p>
+                                    </div>
+                                    <div className="inline-flex p-1 bg-gray-200/80 dark:bg-base-300 rounded-xl border border-gray-300/60 dark:border-base-100">
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await invoke('save_update_settings', {
+                                                        settings: {
+                                                            update_channel: 'stable',
+                                                        }
+                                                    });
+                                                    setFormData(prev => ({ ...prev, update_channel: 'stable' }));
+                                                    showToast(`${t('settings.about.update_channel')}: ${t('settings.about.channel_stable')}`, 'info');
+                                                    handleCheckUpdate('stable');
+                                                } catch (err) {
+                                                    showToast(`${t('common.error')}: ${err}`, 'error');
+                                                }
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                                (formData.update_channel || 'stable') === 'stable'
+                                                    ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm'
+                                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                            }`}
+                                        >
+                                            {t('settings.about.channel_stable')}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await invoke('save_update_settings', {
+                                                        settings: {
+                                                            update_channel: 'beta',
+                                                        }
+                                                    });
+                                                    setFormData(prev => ({ ...prev, update_channel: 'beta' }));
+                                                    showToast(`${t('settings.about.update_channel')}: ${t('settings.about.channel_beta')}`, 'info');
+                                                    handleCheckUpdate('beta');
+                                                } catch (err) {
+                                                    showToast(`${t('common.error')}: ${err}`, 'error');
+                                                }
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
+                                                formData.update_channel === 'beta'
+                                                    ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm'
+                                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                            }`}
+                                        >
+                                            <span>{t('settings.about.channel_beta')}</span>
+                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                        </button>
+                                    </div>
+                                </div>
                             </>
 
                             {/* 轻量模式 (释放内存) */}
@@ -1981,8 +2045,8 @@ function Settings() {
                                                             }
                                                         });
                                                         setFormData(prev => ({ ...prev, update_channel: 'beta' }));
-                                                        setUpdateInfo(null);
                                                         showToast(`${t('settings.about.update_channel')}: ${t('settings.about.channel_beta')}`, 'info');
+                                                        handleCheckUpdate('beta');
                                                     } catch (err) {
                                                         showToast(`${t('common.error')}: ${err}`, 'error');
                                                     }
@@ -2008,7 +2072,7 @@ function Settings() {
                                 {/* Check for Updates */}
                                 <div className="flex flex-col items-center gap-3">
                                     <button
-                                        onClick={handleCheckUpdate}
+                                        onClick={() => handleCheckUpdate()}
                                         disabled={isCheckingUpdate}
                                         className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white rounded-lg transition-all flex items-center gap-2 shadow-sm hover:shadow-md disabled:cursor-not-allowed"
                                     >
@@ -2030,7 +2094,7 @@ function Settings() {
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-2 flex-wrap justify-center">
-                                                        {isBrewInstalled && updateInfo.channel !== 'beta' ? (
+                                                        {isBrewInstalled && !preferNativeUpdate && updateInfo.channel !== 'beta' ? (
                                                             <button
                                                                 onClick={() => setIsBrewConfirmOpen(true)}
                                                                 disabled={isBrewUpgrading}
@@ -2066,6 +2130,17 @@ function Settings() {
                                                             <ExternalLink className="w-3.5 h-3.5" />
                                                         </a>
                                                     </div>
+                                                    {isBrewInstalled && updateInfo.channel !== 'beta' && (
+                                                        <div className="flex items-center justify-center">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setPreferNativeUpdate(!preferNativeUpdate)}
+                                                                className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                                                            >
+                                                                {preferNativeUpdate ? t('settings.about.brew_switch_to_brew') : t('settings.about.brew_switch_to_native')}
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                     {isBrewInstalled && updateInfo.channel === 'beta' && (
                                                         <p className="text-[11px] text-amber-600/90 dark:text-amber-400/90 max-w-md text-center">
                                                             {t('settings.about.brew_beta_notice', {

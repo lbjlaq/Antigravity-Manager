@@ -618,7 +618,17 @@
             "error_max_limit": "Maximum 8 tags allowed",
             "error_duplicate": "Tag already exists"
         },
-        "unfreeze_model_tooltip": "Click to unfreeze this model (clears 403 status)"
+        "unfreeze_model_tooltip": "Click to unfreeze this model (clears 403 status)",
+        "google_appeal_form": "Google Official Appeal Form",
+        "appeal_form_fallback_tip": "Upstream did not return a direct unblock link. You can submit an appeal via Google Cloud Code official appeal form for manual review.",
+        "clear_lock_title": "Restore Account to Pool (Clear False 403 / Re-probe)",
+        "clear_lock_desc": "If previously locked with 403 due to unsupported proxy location (Location not supported) or network issues, switch to a supported proxy and click to clear the lock.",
+        "clear_403_and_retry": "Clear 403 Lock & Re-probe",
+        "clearing_and_probing": "Clearing lock and probing account...",
+        "clear_forbidden_success": "403 lock cleared successfully, re-probing account...",
+        "warmup_success": "Account re-probe succeeded! Restored to active pool.",
+        "warmup_failed_warning": "Lock cleared, but probe did not fully pass. Please check your proxy node.",
+        "clear_forbidden_failed": "Failed to clear 403 status"
     },
     "settings": {
         "save": "Save Settings",
@@ -909,6 +919,8 @@
             "brew_error_brew_already_latest": "Already up to date, no upgrade needed",
             "brew_error_brew_not_supported": "Homebrew update is not supported on this platform",
             "brew_beta_notice": "Homebrew only supports stable releases. A beta release was detected, switched to native auto-updater.",
+            "brew_switch_to_native": "Switch to In-App Online Update",
+            "brew_switch_to_brew": "Switch to Homebrew Update",
             "update_check_failed": "Update check failed",
             "support_btn": "Support Author",
             "support_title": "Donation & Support",

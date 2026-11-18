@@ -527,7 +527,17 @@
         "fetching_project_id": "جارٍ الجلب...",
         "auto_fetch_success": "تم جلب Project ID بنجاح: {{projectId}}",
         "auto_fetch_failed": "لم يتم العثور على Project ID مرتبط",
-        "unfreeze_model_tooltip": "انقر لإلغاء تجميد هذا النموذج (إزالة حالة 403)"
+        "unfreeze_model_tooltip": "انقر لإلغاء تجميد هذا النموذج (إزالة حالة 403)",
+        "google_appeal_form": "نموذج الاستئناف الرسمي من Google",
+        "appeal_form_fallback_tip": "لم يُرجع الخادم رابطًا مباشرًا لإلغاء القفل. يمكنك تقديم طلب مراجعة يدوي عبر نموذج Google Cloud Code الرسمي.",
+        "clear_lock_title": "استعادة الحساب إلى المجموعة (مسح 403 الزائف / إعادة الفحص)",
+        "clear_lock_desc": "إذا تم قفله بسبب موقع وكيل غير مدعوم (Location not supported) أو تقلبات الشبكة، قم بالتبديل إلى وكيل مدعوم وأزل القفل.",
+        "clear_403_and_retry": "مسح قفل 403 وإعادة الفحص",
+        "clearing_and_probing": "جارٍ مسح القفل وفحص الحساب...",
+        "clear_forbidden_success": "تم مسح قفل 403 بنجاح، جارٍ إعادة الفحص...",
+        "warmup_success": "نجح فحص الحساب! تم استعادته إلى المجموعة النشطة.",
+        "warmup_failed_warning": "تمت إزالة القفل، لكن الفحص لم يكتمل بنجاح. يرجى التحقق من الخادم الوكيل.",
+        "clear_forbidden_failed": "فشل مسح حالة 403"
     },
     "settings": {
         "save": "حفظ الإعدادات",

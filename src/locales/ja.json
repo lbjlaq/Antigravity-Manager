@@ -529,7 +529,17 @@
         "fetching_project_id": "取得中...",
         "auto_fetch_success": "Project ID を自動取得しました: {{projectId}}",
         "auto_fetch_failed": "上流で関連付けられた Project ID が見つかりませんでした",
-        "unfreeze_model_tooltip": "クリックしてこのモデルの403凍結を解除"
+        "unfreeze_model_tooltip": "クリックしてこのモデルの403凍結を解除",
+        "google_appeal_form": "Google 公式異議申し立てフォーム",
+        "appeal_form_fallback_tip": "上流から直接の解除リンクが返されませんでした。Google Cloud Code 公式フォームから手動審査を申請できます。",
+        "clear_lock_title": "アカウントのプール復帰 (偽の403解除 / 再検証)",
+        "clear_lock_desc": "プロキシ地域の非対応（Location not supported）やネットワーク変動で403と判定された場合、適切なプロキシに変更後にロックを解除できます。",
+        "clear_403_and_retry": "403ロック解除と再検証",
+        "clearing_and_probing": "ロックを解除してアカウントを再検証中...",
+        "clear_forbidden_success": "403ロックが正常に解除されました。再検証中...",
+        "warmup_success": "アカウントの再検証に成功しました！正常に復帰しました。",
+        "warmup_failed_warning": "ロックは解除されましたが、検証に完全にはパスしませんでした。プロキシを確認してください。",
+        "clear_forbidden_failed": "403状態の解除に失敗しました"
     },
     "settings": {
         "save": "設定を保存",

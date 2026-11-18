@@ -529,7 +529,17 @@
         "fetching_project_id": "Đang lấy...",
         "auto_fetch_success": "Đã tự động lấy Project ID thành công: {{projectId}}",
         "auto_fetch_failed": "Không tìm thấy Project ID liên kết trên máy chủ",
-        "unfreeze_model_tooltip": "Nhấp để bỏ đóng băng mô hình này (xóa trạng thái 403)"
+        "unfreeze_model_tooltip": "Nhấp để bỏ đóng băng mô hình này (xóa trạng thái 403)",
+        "google_appeal_form": "Biểu mẫu kháng nghị chính thức của Google",
+        "appeal_form_fallback_tip": "Máy chủ không trả về liên kết trực tiếp. Bạn có thể gửi yêu cầu xem xét qua biểu mẫu chính thức của Google Cloud Code.",
+        "clear_lock_title": "Khôi phục tài khoản vào nhóm (Xóa 403 giả / Kiểm tra lại)",
+        "clear_lock_desc": "Nếu bị khóa 403 do vị trí proxy không được hỗ trợ (Location not supported), hãy đổi proxy được hỗ trợ và mở khóa.",
+        "clear_403_and_retry": "Xóa khóa 403 & Kiểm tra lại",
+        "clearing_and_probing": "Đang xóa khóa và kiểm tra tài khoản...",
+        "clear_forbidden_success": "Đã xóa khóa 403 thành công, đang kiểm tra lại...",
+        "warmup_success": "Kiểm tra lại tài khoản thành công! Đã khôi phục hoạt động.",
+        "warmup_failed_warning": "Đã xóa khóa nhưng kiểm tra chưa hoàn toàn thành công. Vui lòng kiểm tra proxy.",
+        "clear_forbidden_failed": "Xóa trạng thái 403 thất bại"
     },
     "settings": {
         "save": "Lưu Cài đặt",

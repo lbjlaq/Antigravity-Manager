@@ -616,7 +616,17 @@
             "error_max_limit": "最多只能添加 8 个标签",
             "error_duplicate": "该标签已存在"
         },
-        "unfreeze_model_tooltip": "点击解除该模型的 403 冻结"
+        "unfreeze_model_tooltip": "点击解除该模型的 403 冻结",
+        "google_appeal_form": "Google 官方申诉表单",
+        "appeal_form_fallback_tip": "上游未返回直接解封链接，您可通过 Google Cloud Code 官方服务申诉表单申请人工复核。",
+        "clear_lock_title": "恢复账号入池 (清除假 403 / 重新测活)",
+        "clear_lock_desc": "若此前因代理节点地区不支持 (Location not supported) 或网络波动被标记 403，更换好美国/原生节点后可一键清除锁定并重新激活。",
+        "clear_403_and_retry": "清除 403 标记并重新测活",
+        "clearing_and_probing": "正在解除锁定并重新测活...",
+        "clear_forbidden_success": "已成功清除 403 锁定状态，正在重新测活...",
+        "warmup_success": "账号重新测活成功！已恢复正常",
+        "warmup_failed_warning": "锁定已清除，但测活仍未完全通过，请检查代理节点",
+        "clear_forbidden_failed": "解除 403 状态失败"
     },
     "settings": {
         "save": "保存设置",
@@ -907,6 +917,8 @@
             "brew_error_brew_already_latest": "已是最新版本，无需升级",
             "brew_error_brew_not_supported": "当前系统不支持 Homebrew 更新",
             "brew_beta_notice": "Homebrew 仅支持稳定版更新，检测到测试版更新，已为您切换为原生自动更新。",
+            "brew_switch_to_native": "改用应用内在线更新",
+            "brew_switch_to_brew": "改用 Homebrew 更新",
             "update_check_failed": "检测更新失败",
             "support_btn": "支持作者",
             "support_title": "赞助支持",

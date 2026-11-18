@@ -3270,15 +3270,27 @@ async fn admin_get_update_settings() -> impl IntoResponse {
     }
 }
 
-async fn admin_check_for_updates() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let info = crate::modules::update_checker::check_for_updates()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
+#[derive(Debug, Deserialize)]
+struct AdminCheckForUpdatesPayload {
+    channel: Option<crate::modules::update_checker::UpdateChannel>,
+}
+
+async fn admin_check_for_updates(
+    payload: Option<Json<AdminCheckForUpdatesPayload>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let target_channel = payload.and_then(|p| p.0.channel);
+    let info_result = if let Some(ch) = target_channel {
+        crate::modules::update_checker::check_for_updates_with_channel(ch).await
+    } else {
+        crate::modules::update_checker::check_for_updates().await
+    };
+
+    let info = info_result.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(Json(info))
 }
 

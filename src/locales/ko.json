@@ -529,7 +529,17 @@
         "fetching_project_id": "가져오는 중...",
         "auto_fetch_success": "Project ID를 자동으로 가져왔습니다: {{projectId}}",
         "auto_fetch_failed": "업스트림에서 연결된 Project ID를 찾을 수 없습니다",
-        "unfreeze_model_tooltip": "클릭하여 이 모델의 403 동결 해제"
+        "unfreeze_model_tooltip": "클릭하여 이 모델의 403 동결 해제",
+        "google_appeal_form": "Google 공식 이의 신청 양식",
+        "appeal_form_fallback_tip": "업스트림에서 직접 차단 해제 링크를 반환하지 않았습니다. Google Cloud Code 공식 이의 신청 양식을 통해 수동 검토를 요청할 수 있습니다.",
+        "clear_lock_title": "계정 풀 복원 (가짜 403 해제 / 재검증)",
+        "clear_lock_desc": "프록시 위치 미지원(Location not supported) 또는 네트워크 변동으로 403 잠금이 걸린 경우, 적절한 프록시로 변경 후 잠금을 해제할 수 있습니다.",
+        "clear_403_and_retry": "403 잠금 해제 및 재검증",
+        "clearing_and_probing": "잠금 해제 및 계정 재검증 중...",
+        "clear_forbidden_success": "403 잠금이 성공적으로 해제되었습니다. 재검증 중...",
+        "warmup_success": "계정 재검증 성공! 정상적으로 복원되었습니다.",
+        "warmup_failed_warning": "잠금은 해제되었으나 검증이 완료되지 않았습니다. 프록시 노드를 확인하세요.",
+        "clear_forbidden_failed": "403 상태 해제 실패"
     },
     "settings": {
         "save": "설정 저장",
