@@ -3462,6 +3462,9 @@ mod tests {
         let _lock = crate::proxy::config::TEST_CONFIG_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+            &crate::proxy::config::PromptRewriteConfig::default(),
+        );
 
         let req = OpenAIRequest {
             model: "gemini-3.8-flash-high".to_string(),
@@ -3475,7 +3478,7 @@ mod tests {
                 "type": "function",
                 "function": {
                     "name": "pi_tool",
-                    "description": "Execute code with codemode in Pi agent.",
+                    "description": "Execute code with codemode and my_codemode_helper in Pi agent.",
                     "parameters": {
                         "type": "object",
                         "properties": {}
@@ -3494,13 +3497,14 @@ mod tests {
         assert!(sys_str
             .contains(crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY));
 
-        // 验证 tools 中 functionDeclarations 的 description 被清洗（codemode -> codem0de）
+        // 验证 tools 中 functionDeclarations 的 description 被清洗（codemode -> codem0de），
+        // 且下划线标识符及整行上下文不被误伤
         let tools = result["request"]["tools"].as_array().unwrap();
         let desc = tools[0]["functionDeclarations"][0]["description"]
             .as_str()
             .unwrap();
-        assert!(!desc.contains("codemode"));
-        assert!(desc.contains("codem0de"));
+        assert!(!desc.contains(" with codemode "));
+        assert!(desc.contains("Execute code with codem0de and my_codemode_helper in Pi agent."));
 
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
             &crate::proxy::config::PromptRewriteConfig::default(),
