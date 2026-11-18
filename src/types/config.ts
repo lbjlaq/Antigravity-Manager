@@ -252,6 +252,13 @@ export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
         enabled: true,
     },
     {
+        id: "preset-pi-codemode",
+        pattern: "*codemode*",
+        replacement: "codem0de",
+        scope: "all",
+        enabled: true,
+    },
+    {
         id: "preset-anthropic-billing",
         pattern: "*x-anthropic-billing-header:*",
         replacement: "",

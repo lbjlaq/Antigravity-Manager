@@ -1050,11 +1050,6 @@ pub fn transform_openai_request_with_session(
         { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
     ]);
 
-    // [PIPELINE] 统一清洗提示词与风控伪 Header（含 [undefined] 深度清理，见 PromptSanitizer）
-    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
-        &mut inner_request,
-    );
-
     // 4. Handle Tools (Merged Cleaning)
     let _is_codex_style = request.model.contains("codex")
         || request.model.contains("realtime")
@@ -1253,6 +1248,12 @@ pub fn transform_openai_request_with_session(
             }
         }
     }
+
+    // [PIPELINE] 统一清洗提示词、工具描述与风控伪 Header（含 [undefined] 深度清理，见 PromptSanitizer）
+    // 必须在 contents、tools、systemInstruction 全部装载进 inner_request 后执行，确保无一遗漏
+    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+        &mut inner_request,
+    );
 
     // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范
     // [FIX session-1M] sessionId 混入对话指纹与代数:
@@ -1457,6 +1458,23 @@ mod tests {
 
     #[test]
     fn prompt_log_identity_cleanup_only_changes_system_instructions() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // 隔离测试 systemInstruction 字段本身的身份声明清洗与前后缀/XML 保留能力，
+        // 显式将 sideload_mode 置为 Off；其在 Auto 模式下的隐身侧载行为由专门的侧载单元测试覆盖。
+        let cfg = crate::proxy::config::PromptRewriteConfig {
+            enabled: true,
+            normalize_identity: true,
+            sideload_mode: crate::proxy::config::PromptSideloadMode::Off,
+            sanitize_tools_description: true,
+            rules: vec![],
+        };
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+            &cfg,
+        );
+
         // 身份声明归一化由协议无关的流水线节点承担（`PromptSanitizer::sanitize_gemini_payload`），
         // 适配层只产出原样系统提示词。当前契约：
         //   · systemInstruction 与注入区（首个 model 之前、当前轮之前）→ System 轨归一化；
@@ -1508,6 +1526,10 @@ mod tests {
                 "tool 回执必须逐字保留: {contents}"
             );
         }
+
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+            &crate::proxy::config::PromptRewriteConfig::default(),
+        );
     }
     fn tiered_request_body(model: &str, effort: Option<&str>) -> Value {
         let mut raw = json!({
@@ -3432,6 +3454,56 @@ mod tests {
         assert_eq!(
             fc_part["thoughtSignature"], valid_gemini_sig,
             "OpenAI adapter and pipeline must recover real tool signature from SignatureCache"
+        );
+    }
+
+    #[test]
+    fn test_transform_openai_request_sanitizes_tools_and_system_instruction_directly() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash-high".to_string(),
+            instructions: Some("You are Codex, an AI coding assistant.".to_string()),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIContent::String("Hello".to_string())),
+                ..Default::default()
+            }],
+            tools: Some(vec![json!({
+                "type": "function",
+                "function": {
+                    "name": "pi_tool",
+                    "description": "Execute code with codemode in Pi agent.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            })]),
+            ..Default::default()
+        };
+
+        let (result, _, _, _) =
+            transform_openai_request(&req, "test-proj", "gemini-3.8-flash-high", None);
+
+        // 验证 systemInstruction 被原生拟态归一化为官方 Antigravity 身份
+        let sys_str = result["request"]["systemInstruction"].to_string();
+        assert!(!sys_str.contains("You are Codex"));
+        assert!(sys_str
+            .contains(crate::proxy::mappers::prompt_sanitizer::OFFICIAL_ANTIGRAVITY_IDENTITY));
+
+        // 验证 tools 中 functionDeclarations 的 description 被清洗（codemode -> codem0de）
+        let tools = result["request"]["tools"].as_array().unwrap();
+        let desc = tools[0]["functionDeclarations"][0]["description"]
+            .as_str()
+            .unwrap();
+        assert!(!desc.contains("codemode"));
+        assert!(desc.contains("codem0de"));
+
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+            &crate::proxy::config::PromptRewriteConfig::default(),
         );
     }
 }

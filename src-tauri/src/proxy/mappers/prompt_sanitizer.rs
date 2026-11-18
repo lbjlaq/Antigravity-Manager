@@ -385,6 +385,7 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         r"|kilocode(?:\s*,\s*an?\s+ai\s+coding\s+assistant)?",
         r"|dsh(?:\s*,\s*an?\s+automated\s+software\s+development\s+harness)?",
         r"|devin(?:\s*,\s*an?\s+autonomous\s+software\s+engineer)?",
+        r"|codex(?:\s*,\s*(?:an?\s+)?(?:ai\s+)?(?:coding\s+)?(?:assistant|agent))?",
         r"|(?:[\w'\-]+(?:code|studio|claw)|[\w'\-]+\s+(?:code|studio|claw)|pi)(?:\s+(?:ai\s+)?(?:coding\s+)?(?:agent|assistant))?",
         r")\b",
         r"([.,，。!?！？;；]?)"
@@ -4289,6 +4290,9 @@ mod tests {
 
     #[test]
     fn test_prompt_rewrite_scope_is_pre_user_system_track_only() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         PromptSanitizer::update_prompt_rewrite_config(&rewrite_config(vec![(
             "WAF-MARKER",
             "CLEANED",
@@ -4847,10 +4851,13 @@ mod tests {
 
     #[test]
     fn test_prompt_rewrite_rule_scope_separation() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use crate::proxy::config::PromptRewriteRule;
         let config = PromptRewriteConfig {
             enabled: true,
-            normalize_identity: false,
+            normalize_identity: true,
             sideload_mode: crate::proxy::config::PromptSideloadMode::Off,
             sanitize_tools_description: true,
             rules: vec![
@@ -4930,5 +4937,7 @@ mod tests {
             tool_desc.contains("sensitive_prompt"),
             "Prompt scope must NOT apply to tools"
         );
+
+        PromptSanitizer::update_prompt_rewrite_config(&PromptRewriteConfig::default());
     }
 }
