@@ -31,6 +31,7 @@ interface AccountState {
     importFromCustomDb: (path: string) => Promise<void>;
     syncAccountFromDb: () => Promise<void>;
     toggleProxyStatus: (accountId: string, enable: boolean, reason?: string) => Promise<void>;
+    clearAccountForbidden: (accountId: string) => Promise<void>;
     warmUpAccounts: () => Promise<string>;
     warmUpAccount: (accountId: string) => Promise<string>;
     updateAccountLabel: (accountId: string, label: string) => Promise<void>;
@@ -364,6 +365,16 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             await get().fetchAccounts();
         } catch (error) {
             console.error('[AccountStore] Toggle proxy status failed:', error);
+            throw error;
+        }
+    },
+
+    clearAccountForbidden: async (accountId: string) => {
+        try {
+            await accountService.clearAccountForbidden(accountId);
+            await get().fetchAccounts();
+        } catch (error) {
+            console.error('[AccountStore] Clear account forbidden failed:', error);
             throw error;
         }
     },

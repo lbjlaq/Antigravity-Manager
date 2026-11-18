@@ -920,6 +920,7 @@ pub fn run() {
             commands::should_check_updates,
             commands::update_last_check_time,
             commands::toggle_proxy_status,
+            commands::clear_account_forbidden,
             // Proxy service commands
             commands::proxy::start_proxy_service,
             commands::proxy::stop_proxy_service,

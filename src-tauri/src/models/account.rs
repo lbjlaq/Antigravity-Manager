@@ -352,6 +352,17 @@ pub(crate) fn classify_lock_reason(reason: &str) -> AccountLockKind {
     AccountLockKind::Manual
 }
 
+/// 判定是否属于上游地区不支持（假 403 / 代理出口 IP 地区限制错误）。
+/// 该类错误属于网络/代理出口层面的地区问题，不能被定性为账号本身的封禁或模型权限失效。
+pub fn is_location_unsupported_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    lower.contains("user location is not supported")
+        || lower.contains("location not supported")
+        || lower.contains("location is not supported")
+        || lower.contains("location not allowed")
+        || lower.contains("unsupported_location")
+}
+
 pub const MODEL_FAMILIES: [&str; 7] = ["claude", "gpt", "gemini", "o1", "o3", "o4", "imagen"];
 
 /// 从任意文本 token 中清洗并提取有效的模型 ID。
@@ -1399,6 +1410,22 @@ mod tests {
             AccountBanInfo::classify_upstream(403, temporary_lock).is_none(),
             "临时锁定不得当成永久封禁"
         );
+    }
+
+    #[test]
+    fn test_is_location_unsupported_error() {
+        assert!(is_location_unsupported_error(
+            "User location is not supported"
+        ));
+        assert!(is_location_unsupported_error("Location not supported"));
+        assert!(is_location_unsupported_error(
+            "Forbidden: location is not supported for the API use"
+        ));
+        assert!(is_location_unsupported_error("UNSUPPORTED_LOCATION"));
+        assert!(is_location_unsupported_error("User location not allowed"));
+        assert!(!is_location_unsupported_error("TOS_VIOLATION"));
+        assert!(!is_location_unsupported_error("RESOURCE_EXHAUSTED"));
+        assert!(!is_location_unsupported_error("VALIDATION_REQUIRED"));
     }
 
     #[test]

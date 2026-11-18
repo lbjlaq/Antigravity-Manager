@@ -195,6 +195,10 @@ export async function toggleProxyStatus(accountId: string, enable: boolean, reas
     return await invoke('toggle_proxy_status', { accountId, enable, reason });
 }
 
+export async function clearAccountForbidden(accountId: string): Promise<void> {
+    return await invoke('clear_account_forbidden', { accountId });
+}
+
 /**
  * 重新排序账号列表
  * @param accountIds 按新顺序排列的账号ID数组

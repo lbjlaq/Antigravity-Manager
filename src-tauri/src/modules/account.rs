@@ -4607,6 +4607,59 @@ pub fn toggle_proxy_status_with_intent(
     Ok(())
 }
 
+/// 清除账号的系统 403 锁定及模型级冻结（用户手动强制解除或重新测活前调用）。
+/// 注意：若账号已被上游确认永久封禁（banned = true），则拒绝清除，必须走官方申诉流程。
+pub fn clear_account_forbidden_lock(account_id: &str) -> Result<(), String> {
+    let _lock = ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+    let mut account = load_account(account_id)?;
+
+    if account.banned {
+        return Err(format!(
+            "Account is permanently banned by upstream ({}); submit an appeal instead",
+            account.banned_code.as_deref().unwrap_or("BANNED")
+        ));
+    }
+
+    // 清除 quota 中的 403 标记
+    if let Some(ref mut q) = account.quota {
+        q.is_forbidden = false;
+        q.forbidden_reason = None;
+    }
+
+    // 清除账号级 proxy_disabled 锁定（仅清除系统 403 / 验证原因，保留用户意图）
+    account.manual_proxy_disabled = false;
+    account.proxy_disabled = false;
+    account.proxy_disabled_reason = None;
+    account.proxy_disabled_at = None;
+    account.validation_blocked_until = None;
+    account.validation_blocked_reason = None;
+
+    // 清空模型级 403 冻结列表
+    account.forbidden_models.clear();
+
+    save_account(&account)?;
+
+    // 同步更新索引
+    let mut index = load_account_index()?;
+    if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+        summary.proxy_disabled = false;
+        let _ = save_account_index(&index);
+    }
+
+    crate::proxy::server::trigger_account_reload(account_id);
+    crate::modules::log_bridge::emit_accounts_refreshed();
+
+    crate::modules::logger::log_info(&format!(
+        "🔓 [Unlock] Successfully cleared 403 system lock for account {}",
+        account.email
+    ));
+
+    Ok(())
+}
+
 /// Find account ID by email (from index)
 pub fn find_account_id_by_email(email: &str) -> Option<String> {
     load_account_index()
@@ -4693,6 +4746,15 @@ pub fn mark_account_forbidden_with_models(
     target_model: Option<&str>,
     alt_model: Option<&str>,
 ) -> Result<ForbiddenApplyResult, String> {
+    // 假 403 守卫：如果报错原因属于出口 IP 地区不支持，严禁标记账号禁用或模型冻结
+    if crate::models::account::is_location_unsupported_error(reason) {
+        crate::modules::logger::log_warn(&format!(
+            "🌐 [Location] Account {} encountered location-unsupported 403; skipping account lock: {}",
+            account_id, reason
+        ));
+        return Ok(ForbiddenApplyResult::ModelLocked(String::new()));
+    }
+
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;

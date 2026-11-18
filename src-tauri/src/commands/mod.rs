@@ -1549,6 +1549,32 @@ pub async fn toggle_proxy_status(
     Ok(())
 }
 
+/// 清除账号的 403 系统锁及模型级冻结状态并同步内存池
+#[tauri::command]
+pub async fn clear_account_forbidden(
+    app: tauri::AppHandle,
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    account_id: String,
+) -> Result<(), String> {
+    modules::logger::log_info(&format!("清除账号 403 锁定: {}", account_id));
+
+    // 1. 调用模块清除 403 系统锁
+    modules::account::clear_account_forbidden_lock(&account_id)?;
+
+    // 2. 同步清理内存池状态并重载
+    for tm in proxy_state.active_token_managers().await {
+        tm.prepare_manual_enable(&account_id);
+        tm.reload_account(&account_id)
+            .await
+            .map_err(|e| format!("同步账号失败: {}", e))?;
+    }
+
+    // 3. 更新托盘菜单
+    crate::modules::tray::update_tray_menus(&app);
+
+    Ok(())
+}
+
 /// 预热所有可用账号
 #[tauri::command]
 pub async fn warm_up_all_accounts() -> Result<String, String> {

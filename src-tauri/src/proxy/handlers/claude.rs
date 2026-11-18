@@ -2917,8 +2917,13 @@ pub async fn handle_messages(
 
         // [FIX] 403 时设置 is_forbidden 状态，避免账号被重复选中
         if status_code == 403 {
-            // Check for VALIDATION_REQUIRED error - temporarily block account
-            if error_text.contains("VALIDATION_REQUIRED")
+            // 地区不支持属于出口 IP / 代理问题，不能判定为账号封禁
+            if crate::models::account::is_location_unsupported_error(&error_text) {
+                tracing::warn!(
+                    "[Claude] 403 detected on account {} but identified as location unsupported, skipping forbidden mark",
+                    email
+                );
+            } else if error_text.contains("VALIDATION_REQUIRED")
                 || error_text.contains("verify your account")
                 || error_text.contains("validation_url")
             {

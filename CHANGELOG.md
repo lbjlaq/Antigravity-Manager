@@ -4,6 +4,10 @@
 
 *   **版本演进**:
     *   **v5.0.4-beta.16 (2026-11-18)**:
+        -   **[出口 IP 地区不支持假 403 误杀防御与一键解封测活] (Ref #3995)**:
+            -   **地区不支持 403 账号级保护**: 针对代理节点临时漂移或地区不支持（`Location not supported` / `UNSUPPORTED_LOCATION`）被上游下发 403 的场景，在 OpenAI / Claude / Gemini 适配器与账号模型冻结层增加特征拦截守卫，将其准确识别为代理网络层问题，严禁无差别将账号标记为 `proxy_disabled` 或模型锁定，避免优质账号被永久误杀。(Ref #3995)
+            -   **一键清除 403 锁定与自动测活**: 新增 `clear_account_forbidden` 后端指令与状态复位引擎，解除系统 403 与临时冻结；在前端错误弹窗（`AccountErrorDialog`）为受限账号提供「清除 403 标记并重新测活」通道，告别手动修改本地配置文件的繁琐操作。(Ref #3995)
+            -   **缺失验证链接 403 兜底 Google 官方申诉表单**: 针对上游仅返回 `TOS_VIOLATION` 或账号封锁但未携带动态验证 URL 的情况，弹窗自动兜底提供 Google Cloud Code 官方服务申诉表单（`https://forms.gle/hGzM9MEUv2azZsrb9`），为用户建立清晰明确的解封自救指引。(Ref #3995)
         -   **[Windows 轻量模式主窗口恢复 RwLock 死锁修复] (Fixes #3993, PR #3996, Thanks to @koeria)**:
             -   **跳过主窗口初始化自动恢复避免同线程重入死锁**: 在 `tauri-plugin-window-state` 初始化时配置 `.skip_initial_state("main")`，禁止窗口在 `WebviewWindow::build` 内部由 `on_window_ready` 同步触发状态恢复。根除 Windows 平台下 `SetWindowPos` 派发 `WM_WINDOWPOSCHANGED` 同步重入 tao 事件循环并在尚未释放 `WindowManager` / `PluginStore` 锁时再次申请非重入读写锁导致的托盘和 UI 无响应死锁。(Fixes #3993, PR #3996, Thanks to @koeria)
             -   **轻量模式窗口重建后异步解耦恢复状态**: 启动窗口状态恢复显式收敛至 `setup` 构造完成后执行；轻量模式下销毁再建时，通过独立工作线程跳板派发至主线程队列（规避 `run_on_main_thread` 在当前主线程内就地执行无法让渡托盘与单实例回调插件锁的问题），确保窗口状态恢复与单实例激活路径彻底解耦锁持有生命周期。(Fixes #3993, PR #3996, Thanks to @koeria)

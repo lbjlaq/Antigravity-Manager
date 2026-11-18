@@ -1,4 +1,4 @@
-import { Ban, Lock, Clock, ExternalLink, Copy, FileText, Terminal, ChevronDown, ChevronRight } from 'lucide-react';
+import { Ban, Lock, Clock, ExternalLink, Copy, FileText, Terminal, ChevronDown, ChevronRight, RefreshCw, CheckCircle2, Globe } from 'lucide-react';
 import { Account } from '../../types/account';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { formatDate } from '../../utils/format';
@@ -7,6 +7,9 @@ import ModalDialog from '../common/ModalDialog';
 import { useState } from 'react';
 import { showToast } from '../common/ToastContainer';
 import { copyToClipboard } from '../../utils/clipboard';
+import { useAccountStore } from '../../stores/useAccountStore';
+
+const GOOGLE_APPEAL_FORM_URL = 'https://forms.gle/hGzM9MEUv2azZsrb9';
 
 interface AccountErrorDialogProps {
     account: Account | null;
@@ -16,7 +19,9 @@ interface AccountErrorDialogProps {
 export default function AccountErrorDialog({ account, onClose }: AccountErrorDialogProps) {
     const [showRaw, setShowRaw] = useState(false);
     const [showGuide, setShowGuide] = useState(false);
+    const [isClearing, setIsClearing] = useState(false);
     const { t } = useTranslation();
+    const { clearAccountForbidden, warmUpAccount } = useAccountStore();
     if (!account) return null;
 
     const isForbidden = !!account.quota?.is_forbidden;
@@ -145,11 +150,40 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     };
 
     const message = extractErrorMessage(rawReason);
-    const { url: actionUrl, label: actionLabel } = extractActionInfo(rawReason);
+    let { url: actionUrl, label: actionLabel } = extractActionInfo(rawReason);
 
     // 识别错误类型
     const isViolation = isBanned || rawReason.toLowerCase().includes('terms of service') || rawReason.toLowerCase().includes('violation');
     const isVerificationNeeded = !isViolation && (rawReason.toLowerCase().includes('verify your account') || !!account.validation_url);
+    const isLocationError = rawReason.toLowerCase().includes('location') && rawReason.toLowerCase().includes('support');
+
+    // 如果是违规/封禁或系统 403 锁定，但上游报文没有携带任何验证链接，兜底使用 Google 官方申诉表单
+    const isFallbackAppealUrl = !actionUrl && (isViolation || isForbidden || isBanned);
+    if (isFallbackAppealUrl) {
+        actionUrl = GOOGLE_APPEAL_FORM_URL;
+        actionLabel = t('accounts.google_appeal_form', 'Google 官方申诉表单');
+    }
+
+    // 清除 403 锁定并重新测活
+    const handleClearAndWarmUp = async () => {
+        if (!account) return;
+        setIsClearing(true);
+        try {
+            await clearAccountForbidden(account.id);
+            showToast(t('accounts.clear_forbidden_success', '已成功清除 403 锁定状态，正在重新测活...'), 'success');
+            try {
+                await warmUpAccount(account.id);
+                showToast(t('accounts.warmup_success', '账号重新测活成功！已恢复正常'), 'success');
+            } catch (warmUpErr) {
+                showToast(t('accounts.warmup_failed_warning', '锁定已清除，但测活仍未完全通过，请检查代理节点'), 'info');
+            }
+            onClose();
+        } catch (err) {
+            showToast(String(err) || t('accounts.clear_forbidden_failed', '解除 403 状态失败'), 'error');
+        } finally {
+            setIsClearing(false);
+        }
+    };
 
     // 复制功能：使用带降级方案的 clipboard 工具，成功后才提示。
     const handleCopyUrl = async (url: string) => {
@@ -286,6 +320,12 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                     {/* Action Buttons for Verification / Appeal */}
                     {actionUrl && !showRaw && (
                         <>
+                            {isFallbackAppealUrl && (
+                                <div className="mt-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                                    <Globe className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                                    <span>{t('accounts.appeal_form_fallback_tip', '上游未返回直接解封链接，您可通过 Google Cloud Code 官方服务申诉表单申请人工复核。')}</span>
+                                </div>
+                            )}
                             <div className="mt-3 flex gap-2">
                                 <a
                                     href={actionUrl}
@@ -302,7 +342,7 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                                     title={actionUrl}
                                 >
                                     <Copy className="w-3 h-3" />
-                                    {isViolation ? t('accounts.copy_appeal_url', '复制申诉链接') : t('accounts.copy_validation_url', '复制验证链接')}
+                                    {isViolation || isFallbackAppealUrl ? t('accounts.copy_appeal_url', '复制申诉链接') : t('accounts.copy_validation_url', '复制验证链接')}
                                 </button>
                             </div>
                             {/* 完整链接明文展示：即使剪贴板受限，也能手动选择完整链接 */}
@@ -310,6 +350,29 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                                 {actionUrl}
                             </div>
                         </>
+                    )}
+
+                    {/* 一键清除 403 锁定与重新测活 (假 403 / 地区限制 / 恢复试探) */}
+                    {(isForbidden || isLocationError || (isProxyDisabled && !isBanned)) && !isBanned && !showRaw && (
+                        <div className="mt-4 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/40">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                                    <span>{t('accounts.clear_lock_title', '恢复账号入池 (清除假 403 / 重新测活)')}</span>
+                                </div>
+                            </div>
+                            <p className="text-[11px] text-emerald-700 dark:text-emerald-400/90 leading-relaxed mb-3">
+                                {t('accounts.clear_lock_desc', '若此前因代理节点地区不支持 (Location not supported) 或网络波动被标记 403，更换好美国/原生节点后可一键清除锁定并重新激活。')}
+                            </p>
+                            <button
+                                onClick={handleClearAndWarmUp}
+                                disabled={isClearing}
+                                className="w-full flex items-center justify-center gap-2 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-lg transition-all shadow-sm active:scale-[0.98]"
+                            >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isClearing ? 'animate-spin' : ''}`} />
+                                {isClearing ? t('accounts.clearing_and_probing', '正在解除锁定并重新测活...') : t('accounts.clear_403_and_retry', '清除 403 标记并重新测活')}
+                            </button>
+                        </div>
                     )}
 
                     {/* Terminal Fix Guide */}
