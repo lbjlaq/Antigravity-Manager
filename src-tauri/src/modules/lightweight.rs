@@ -66,7 +66,21 @@ pub fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         }
 
         // 5. 恢复窗口状态（记忆的位置和尺寸）
-        let _ = window.restore_state(StateFlags::all().difference(StateFlags::VISIBLE));
+        // main 已设置 skip_initial_state，插件不再于构建期间自动恢复，需在此手动恢复。
+        // Fixes #3993: Windows 上 SetWindowPos 会同步回派 WM_WINDOWPOSCHANGED 并重入 Tauri 的
+        // 非可重入 RwLock，因此必须在 build() 返回之后经 run_on_main_thread 执行，不得嵌套在构建内。
+        #[cfg(target_os = "windows")]
+        {
+            let window_for_restore = window.clone();
+            let flags = StateFlags::all().difference(StateFlags::VISIBLE);
+            let _ = app.run_on_main_thread(move || {
+                let _ = window_for_restore.restore_state(flags);
+            });
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = window.restore_state(StateFlags::all().difference(StateFlags::VISIBLE));
+        }
 
         tracing::info!("[Lightweight] 主窗口重建完成");
         Ok(window)
