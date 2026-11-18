@@ -3,6 +3,14 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.16 (2026-11-18)**:
+        -   **[Windows 轻量模式主窗口恢复 RwLock 死锁修复] (Fixes #3993, PR #3996, Thanks to @koeria)**:
+            -   **跳过主窗口初始化自动恢复避免同线程重入死锁**: 在 `tauri-plugin-window-state` 初始化时配置 `.skip_initial_state("main")`，禁止窗口在 `WebviewWindow::build` 内部由 `on_window_ready` 同步触发状态恢复。根除 Windows 平台下 `SetWindowPos` 派发 `WM_WINDOWPOSCHANGED` 同步重入 tao 事件循环并在尚未释放 `WindowManager` / `PluginStore` 锁时再次申请非重入读写锁导致的托盘和 UI 无响应死锁。(Fixes #3993, PR #3996, Thanks to @koeria)
+            -   **轻量模式窗口重建后异步解耦恢复状态**: 启动窗口状态恢复显式收敛至 `setup` 构造完成后执行；轻量模式下销毁再建时，通过独立工作线程跳板派发至主线程队列（规避 `run_on_main_thread` 在当前主线程内就地执行无法让渡托盘与单实例回调插件锁的问题），确保窗口状态恢复与单实例激活路径彻底解耦锁持有生命周期。(Fixes #3993, PR #3996, Thanks to @koeria)
+        -   **[系统提示词隐身侧载跨轮次幂等加固与前缀换行规范化] (Fixes #3994)**:
+            -   **隐身侧载全 Parts 容器扫描与防重复注入**: 增强 `InboundThinkingPipeline::sideload_system_instruction_if_needed` 中的已注入状态判定逻辑，由单一检查 `contents[0].parts[0]` 开头放宽为全面扫描 `contents[0].parts` 中所有文本块，避免多轮会话或客户端重组 parts 时重复插入 `<system-instruction>` 容器破坏 Google 上游前缀哈希。(Fixes #3994)
+            -   **侧载指令字节级确定性换行对齐**: 在侧载封装前对系统指令执行确定性换行规范化（`replace("\r\n", "\n")`），消除跨平台 Windows CRLF 与 Unix LF 混用导致的前缀微小字节偏移，确保在开启隐身侧载模式下连续多轮对话达成 90%+ 的极致 KV Cache 复用率。(Fixes #3994)
+
     *   **v5.0.4-beta.15 (2026-11-18)**:
         -   **[配额查询端点对齐与耗尽模型 0% 兜底判定修复] (Fixes #3987, PR #3988, PR #3989, Thanks to @vecyang1)**:
             -   **配额接口移除 Prod 端点对齐推理链路**: 从 `QUOTA_API_ENDPOINTS` 与 `QUOTA_SUMMARY_ENDPOINTS` 中移除推理链路早已弃用的 `cloudcode-pa.googleapis.com`（Prod），统一收敛为 `Daily -> Sandbox` 并新增跨模块主机集合一致性单测断言，根治 Daily 瞬态波动回退至 Prod 读取失真 Gemini 配额导致面板额度在 `100% / 0%` 间反复跳变及误调度已耗尽账号触发 `429 QUOTA_EXHAUSTED` 的问题。(Fixes #3987, PR #3988, Thanks to @vecyang1)
