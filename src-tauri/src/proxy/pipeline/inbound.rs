@@ -2136,6 +2136,66 @@ impl InboundThinkingPipeline {
         degraded
     }
 
+    /// 400 "Thinking level is unsupported" 自愈：把账号不支持的扩展思考档位钳制为 `HIGH`。
+    ///
+    /// 只处理扩展档：数字 `> 3`（如官方 `-xhigh` 的 `100`）或字符串 `XHIGH` / `X-HIGH`。
+    /// 钳制成功时，同时把 `-xhigh` 模型名降为 `-high`，让重试请求与一次普通 High 请求完全一致。
+    /// `HIGH` / `MEDIUM` / `LOW` 与 `thinkingBudget` 一律不动；没有扩展档时返回 `false`
+    /// 且不改模型名，调用方据此放弃重试，不会把无关的 400 变成循环。
+    pub fn try_clamp_thinking_level(body: &mut Value) -> bool {
+        let is_extended = |level: &Value| -> bool {
+            if let Some(n) = level.as_i64() {
+                return n > 3;
+            }
+            level.as_str().is_some_and(|s| {
+                let norm = s.trim().to_ascii_lowercase().replace('_', "-");
+                norm == "xhigh" || norm == "x-high" || norm.parse::<i64>().is_ok_and(|n| n > 3)
+            })
+        };
+
+        let clamp_gc = |gc: &mut Value| -> bool {
+            let mut changed = false;
+            for tc_key in ["thinkingConfig", "thinking_config"] {
+                let Some(tc) = gc.get_mut(tc_key).and_then(Value::as_object_mut) else {
+                    continue;
+                };
+                for level_key in ["thinkingLevel", "thinking_level"] {
+                    if tc.get(level_key).is_some_and(|v| is_extended(v)) {
+                        tc.insert(level_key.to_string(), json!("HIGH"));
+                        changed = true;
+                    }
+                }
+            }
+            changed
+        };
+
+        let mut clamped = false;
+        for gc_key in ["generationConfig", "generation_config"] {
+            if let Some(gc) = body.get_mut(gc_key) {
+                clamped |= clamp_gc(gc);
+            }
+            if let Some(gc) = body.get_mut("request").and_then(|r| r.get_mut(gc_key)) {
+                clamped |= clamp_gc(gc);
+            }
+        }
+        if !clamped {
+            return false;
+        }
+
+        let lower_model = |m_val: &mut Value| {
+            if let Some(prefix) = m_val.as_str().and_then(|m| m.strip_suffix("-xhigh")) {
+                *m_val = json!(format!("{}-high", prefix));
+            }
+        };
+        if let Some(m) = body.get_mut("model") {
+            lower_model(m);
+        }
+        if let Some(m) = body.get_mut("request").and_then(|r| r.get_mut("model")) {
+            lower_model(m);
+        }
+        true
+    }
+
     /// [FIX 503] 当 Gemini 上游返回 503 (MODEL_CAPACITY_EXHAUSTED) 时，
     /// 说明 medium / low / tiered 算力池已枯竭，原地将模型升档至 high 算力通道并调整 thinkingLevel 为 HIGH。
     pub fn try_promote_to_high_capacity(body: &mut Value) -> bool {
@@ -3184,6 +3244,86 @@ mod tests {
             body7["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "HIGH"
         );
+    }
+
+    #[test]
+    fn test_try_clamp_thinking_level() {
+        // 1. 官方 -xhigh 扩展档 100 -> "HIGH"，模型降为 -high（与普通 High 请求一致）
+        let mut body = json!({
+            "model": "gemini-4-hydrogen-xhigh",
+            "generationConfig": {
+                "maxOutputTokens": 65536,
+                "thinkingConfig": { "includeThoughts": true, "thinkingLevel": 100 }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_clamp_thinking_level(&mut body));
+        assert_eq!(body["model"], "gemini-4-hydrogen-high");
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], 65536);
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            true
+        );
+
+        // 2. 字符串 "XHIGH" + request 嵌套 + tiered 变体
+        let mut nested = json!({
+            "request": {
+                "model": "gemini-4-hydrogen-tiered-xhigh",
+                "generationConfig": { "thinkingConfig": { "thinkingLevel": "XHIGH" } }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_clamp_thinking_level(
+            &mut nested
+        ));
+        assert_eq!(nested["request"]["model"], "gemini-4-hydrogen-tiered-high");
+        assert_eq!(
+            nested["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+
+        // 3. 已是 HIGH：不是扩展档，返回 false 且模型名不动（不会把无关 400 变成重试循环）
+        let mut high = json!({
+            "model": "gemini-4-hydrogen-xhigh",
+            "generationConfig": { "thinkingConfig": { "thinkingLevel": "HIGH" } }
+        });
+        assert!(!InboundThinkingPipeline::try_clamp_thinking_level(
+            &mut high
+        ));
+        assert_eq!(high["model"], "gemini-4-hydrogen-xhigh");
+        assert_eq!(
+            high["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+
+        // 4. 标准档 3 / 预算通道均不动
+        let mut three = json!({
+            "generationConfig": { "thinkingConfig": { "thinkingLevel": 3 } }
+        });
+        assert!(!InboundThinkingPipeline::try_clamp_thinking_level(
+            &mut three
+        ));
+        assert_eq!(
+            three["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            3
+        );
+        let mut budget = json!({
+            "generationConfig": { "thinkingConfig": { "thinkingBudget": 24576 } }
+        });
+        assert!(!InboundThinkingPipeline::try_clamp_thinking_level(
+            &mut budget
+        ));
+        assert_eq!(
+            budget["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            24576
+        );
+
+        // 5. 幂等：钳制后再调用返回 false
+        assert!(!InboundThinkingPipeline::try_clamp_thinking_level(
+            &mut body
+        ));
     }
 
     #[test]

@@ -2641,6 +2641,11 @@ pub async fn handle_chat_completions(
                 }
                 (b, s, c, p)
             };
+        if heal_flags.retried_with_thinking_level_clamped {
+            crate::proxy::pipeline::InboundThinkingPipeline::try_clamp_thinking_level(
+                &mut gemini_body,
+            );
+        }
         let session_id = store_key.clone();
         // [Signature-Retry] 400 签名错误后的重试：流水线统一去签名
         if retried_without_thinking {
@@ -4759,6 +4764,11 @@ pub async fn handle_completions(
                 }
                 (b, r, m, p)
             };
+        if heal_flags.retried_with_thinking_level_clamped {
+            crate::proxy::pipeline::InboundThinkingPipeline::try_clamp_thinking_level(
+                &mut gemini_body,
+            );
+        }
         let session_id = session_id_str.clone();
         // [Signature-Retry] 400 签名错误后的重试：流水线统一去签名
         if retried_without_thinking {

@@ -1922,6 +1922,9 @@ pub async fn handle_messages(
                     &mut b,
                 );
             }
+            if heal_flags.retried_with_thinking_level_clamped {
+                crate::proxy::pipeline::InboundThinkingPipeline::try_clamp_thinking_level(&mut b);
+            }
             (b, timing)
         };
 
