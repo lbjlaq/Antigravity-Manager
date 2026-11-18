@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.15 (2026-11-18)**:
+        -   **[配额查询端点对齐与耗尽模型 0% 兜底判定修复] (Fixes #3987, PR #3988, PR #3989, Thanks to @vecyang1)**:
+            -   **配额接口移除 Prod 端点对齐推理链路**: 从 `QUOTA_API_ENDPOINTS` 与 `QUOTA_SUMMARY_ENDPOINTS` 中移除推理链路早已弃用的 `cloudcode-pa.googleapis.com`（Prod），统一收敛为 `Daily -> Sandbox` 并新增跨模块主机集合一致性单测断言，根治 Daily 瞬态波动回退至 Prod 读取失真 Gemini 配额导致面板额度在 `100% / 0%` 间反复跳变及误调度已耗尽账号触发 `429 QUOTA_EXHAUSTED` 的问题。(Fixes #3987, PR #3988, Thanks to @vecyang1)
+            -   **识别 Protobuf 省略零值字段的已耗尽 `quotaInfo`**: 新增 `model_quota_percentage` 解析逻辑，当 `fetchAvailableModels` 下发的 `quotaInfo` 携带非空 `resetTime` 但因 Protobuf v3 默认零值省略机制缺失 `remainingFraction` 时精准判定为 `0%`（对缺失 `quotaInfo` 或无有效 `resetTime` 的模型仍维持回退分组配额），防止同轮 `retrieveUserQuotaSummary` 失败时将已耗尽模型误判为 `100%` 并丢失重置时间。(Ref #3987, PR #3989, Thanks to @vecyang1)
+        -   **[扩展思考档位不支持（400 XHIGH）同账号降档自愈] (Fixes #3991, PR #3992, Thanks to @vecyang1)**:
+            -   **400 `Thinking level is unsupported` 单次钳制 `HIGH` 原地重试**: 针对部分账号虽在目录中声明支持 `gemini-4-hydrogen-xhigh`（`thinkingLevel: 100`）但推理时返回 `400 INVALID_ARGUMENT: Thinking level is unsupported: THINKING_LEVEL_XHIGH` 的问题，在 Pipeline `try_auto_heal` 中新增同账号单次自愈分支（`try_clamp_thinking_level`），将扩展档位（数值 `> 3` 或 `XHIGH`）安全钳制为 `HIGH` 并将 `-xhigh` 模型名同步降为 `-high` 后原地重试（四协议入口重建请求时同步保持钳制状态），既避免整轮对话失败与跨账号丢失 KV Cache，也避免触发模型熔断连坐冻结全系 Hydrogen 档位。(Fixes #3991, PR #3992, Thanks to @vecyang1)
+        -   **[OpenAI 适配器请求清洗时序修正与 Codex 身份拟态补齐] (Ref #3981, Fixes #3982, Ref #3983, Ref #3984, PR #3986, Thanks to @cubelikeplayDaniel)**:
+            -   **修正 OpenAI 适配器 `sanitize_gemini_payload` 执行时序**: 将 OpenAI 兼容请求映射器中的提示词与工具描述清洗节点下移至 `contents`、`tools`、`systemInstruction` 及 `inject_google_search_tool` 全量装配完成之后、前缀拓扑对齐与隐身侧载执行之前（与 Claude 适配器一致），消除隐身侧载引擎与 `L3-Prefix` 缓存哈希读取未归一化原文导致的误侧载及重复身份隐患，同时保留 `L2-Tools` 缓存的规则热更新能力。(Ref #3981, Ref #3983, Ref #3984, PR #3986, Thanks to @cubelikeplayDaniel)
+            -   **补齐 `Codex` 短开场白原生身份拟态**: 在 `RE_KNOWN_CLIENT_DECLARATION` 中增补独立 `codex` 助手声明匹配分支，将不携带厂牌或模型归属后缀的短开场白（如 `You are Codex, an AI coding assistant.`）无缝归一化为官方 Antigravity 原生身份。(Fixes #3982, PR #3986, Thanks to @cubelikeplayDaniel)
+            -   **并发单测配置锁隔离与边界断言加固**: 为提示词清洗引擎与 OpenAI 映射器单元测试补齐 `TEST_CONFIG_LOCK` 互斥锁及默认配置初始化复位，补充工具描述脱敏与下划线标识符保留的直接回归测试。(Ref #3981, PR #3986, Thanks to @cubelikeplayDaniel)
+
     *   **v5.0.4-beta.14 (2026-11-17)**:
         -   **[上游 WAF 伪 429 拦截全面中和与隐身侧载架构] (Fixes #3969, Ref #3975, Fixes #3972, Fixes #3981, Fixes #3982, Fixes #3983, PR #3976, Thanks to @cubelikeplayDaniel, @danilorbarreto, @its-AliM, @muzisuisuisui, @ALight777, @CommentOut64)**:
             -   **系统提示词隐身侧载（Prompt Stealth Sideloading）与根节点单次锚定**: 针对上游 Google Cloud Code WAF 针对非官方身份及复杂 Agent 提示词实施特征哈希扫描并秒级返回伪 429 RESOURCE_EXHAUSTED 的机制，设计并在 Pipeline 层落地隐身侧载架构。将第三方系统提示词无损打包为 `<system-instruction priority="critical" role="developer">` 安全嵌入首轮对话上下文，出站官方 `systemInstruction` 恢复纯净默认 Antigravity 身份；采用 Sticky Root 单次锚定机制，多轮对话历史绝不重复注入，实现 100% 缓存前缀字节级不可变与最大化复用 KV Cache。
