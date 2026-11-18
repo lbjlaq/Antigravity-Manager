@@ -602,12 +602,12 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Fixes #3993: Windows 下 SetWindowPos 会同步重入 Tauri 非可重入 RwLock；
-            // 经 run_on_main_thread 运行（非主线程调用时入队，已在主线程时内联执行）。
+            // Fixes #3993: Windows 下该回调跑在 UI 线程，且可能仍持有 PluginStore 锁；
+            // 经工作线程再投递到主线程，等当前回调返回后再重建窗口。
             #[cfg(target_os = "windows")]
             {
                 let app_handle = app.clone();
-                let _ = app.run_on_main_thread(move || {
+                modules::lightweight::defer_on_main_thread(app, move || {
                     let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
                 });
             }
@@ -646,9 +646,16 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 use tauri_plugin_window_state::{StateFlags, WindowExt};
                 let flags = StateFlags::all().difference(StateFlags::VISIBLE);
-                let _ = app.handle().run_on_main_thread(move || {
+                #[cfg(target_os = "windows")]
+                {
+                    modules::lightweight::defer_on_main_thread(app.handle(), move || {
+                        let _ = window.restore_state(flags);
+                    });
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
                     let _ = window.restore_state(flags);
-                });
+                }
             }
 
             // Windows: 异步原生自愈桌面与开始菜单历史快捷方式图标缺失，并刷新外壳（零子进程，不调用 powershell）

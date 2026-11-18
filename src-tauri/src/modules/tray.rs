@@ -453,12 +453,12 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                             .unwrap_or_else(|_| "mini".to_string());
 
                         if click_action == "main" {
-                            // Fixes #3993: Windows 下重建窗口时 SetWindowPos 会重入 Tauri
-                            // 非可重入 RwLock，经 run_on_main_thread 执行（保持原顺序）。
+                            // Fixes #3993: Windows 下托盘回调跑在 UI 线程；经工作线程再投递到
+                            // 主线程，等当前回调返回后再重建窗口（保持原顺序）。
                             #[cfg(target_os = "windows")]
                             {
                                 let app_handle = app.clone();
-                                let _ = app.run_on_main_thread(move || {
+                                crate::modules::lightweight::defer_on_main_thread(app, move || {
                                     hide_mini_window(&app_handle);
                                     let _ = crate::modules::lightweight::exit_lightweight_mode(
                                         &app_handle,
@@ -483,17 +483,20 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let app_handle = app.clone();
                 match event.id().as_ref() {
                     "show" => {
-                        // Fixes #3993: 同上，Windows 下经 run_on_main_thread 执行（保持原顺序）。
+                        // Fixes #3993: 同上，Windows 下经工作线程再投递到主线程（保持原顺序）。
                         #[cfg(target_os = "windows")]
                         {
                             let deferred_handle = app_handle.clone();
-                            let _ = app_handle.run_on_main_thread(move || {
-                                let _ = modules::lightweight::exit_lightweight_mode(
-                                    &deferred_handle,
-                                );
-                                set_mini_view_active(false);
-                                let _ = deferred_handle.emit("tray://show-window", ());
-                            });
+                            crate::modules::lightweight::defer_on_main_thread(
+                                &app_handle,
+                                move || {
+                                    let _ = modules::lightweight::exit_lightweight_mode(
+                                        &deferred_handle,
+                                    );
+                                    set_mini_view_active(false);
+                                    let _ = deferred_handle.emit("tray://show-window", ());
+                                },
+                            );
                         }
                         #[cfg(not(target_os = "windows"))]
                         {
