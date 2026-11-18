@@ -741,10 +741,7 @@ pub async fn fetch_quota_with_cache(
                     }
 
                     // 1. 提取模型级额度（若上游依然携带 quotaInfo）
-                    let model_pct: Option<i32> = info
-                        .quota_info
-                        .as_ref()
-                        .and_then(|qi| qi.remaining_fraction.map(|f| (f * 100.0).round() as i32));
+                    let model_pct: Option<i32> = model_quota_percentage(info.quota_info.as_ref());
                     let model_reset: Option<String> = info
                         .quota_info
                         .as_ref()
@@ -1728,9 +1725,72 @@ fn match_quota_group_for_model<'a>(
     match_quota_group_for_model_with_codenames(groups, name_lower, is_ultra, &[])
 }
 
+/// 从 `fetchAvailableModels` 的 `quotaInfo` 推导模型级剩余百分比。
+///
+/// proto3 JSON 会省略值为 0 的字段：已耗尽模型的 `quotaInfo` 只带 `resetTime`、
+/// 不带 `remainingFraction`。这种情况按 0 处理，而不是当作"未知"：否则当
+/// `retrieveUserQuotaSummary` 同时失败时，合并逻辑会落到 `(None, None) => 100`，
+/// 已耗尽的模型显示 100%。
+///
+/// `quotaInfo` 缺失，或既没有 `remainingFraction` 也没有非空 `resetTime` 时，返回 `None`（未知）。
+fn model_quota_percentage(
+    quota_info: Option<&crate::models::official_model::OfficialQuotaInfo>,
+) -> Option<i32> {
+    let qi = quota_info?;
+    match qi.remaining_fraction {
+        Some(fraction) => Some((fraction * 100.0).round() as i32),
+        None if qi.reset_time.as_deref().is_some_and(|s| !s.is_empty()) => Some(0),
+        None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_model_info(json: &str) -> crate::models::OfficialModelInfo {
+        serde_json::from_str(json).expect("test fixture must parse as OfficialModelInfo")
+    }
+
+    #[test]
+    fn test_model_quota_percentage_treats_omitted_remaining_fraction_as_exhausted() {
+        // proto3 JSON 省略值为 0 的字段：已耗尽模型的 quotaInfo 只带 resetTime
+        let exhausted = parse_model_info(r#"{"quotaInfo":{"resetTime":"2026-11-23T08:00:00Z"}}"#);
+        assert_eq!(
+            model_quota_percentage(exhausted.quota_info.as_ref()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_model_quota_percentage_keeps_explicit_and_unknown_values() {
+        let cases: [(&str, Option<i32>); 6] = [
+            (
+                r#"{"quotaInfo":{"remainingFraction":0.42,"resetTime":"2026-11-23T08:00:00Z"}}"#,
+                Some(42),
+            ),
+            (r#"{"quotaInfo":{"remainingFraction":1}}"#, Some(100)),
+            (
+                r#"{"quotaInfo":{"remainingFraction":0,"resetTime":"2026-11-23T08:00:00Z"}}"#,
+                Some(0),
+            ),
+            // 既无 remainingFraction 也无 resetTime：无法判断，仍为未知
+            (r#"{"quotaInfo":{}}"#, None),
+            (r#"{"quotaInfo":{"resetTime":""}}"#, None),
+            // 上游不下发 quotaInfo（如部分 Gemini 模型）：回退到分组配额
+            (r#"{}"#, None),
+        ];
+
+        for (json, expected) in cases {
+            let info = parse_model_info(json);
+            assert_eq!(
+                model_quota_percentage(info.quota_info.as_ref()),
+                expected,
+                "quotaInfo fixture: {}",
+                json
+            );
+        }
+    }
 
     #[test]
     fn test_quota_and_load_project_endpoints_health_reordering() {
