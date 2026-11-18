@@ -4,6 +4,10 @@
 
 *   **Version History**:
     *   **v5.0.4-beta.16 (2026-11-18)**:
+        -   **[Seamless In-App & Homebrew Dual-Track Auto Update with Instant Channel Sync]**:
+            -   **Instant Update Channel Switching & Explicit Parameter Forwarding**: `check_for_updates` Tauri command and Axum admin endpoints now support an explicit `channel` parameter. Toggling between Stable and Beta in Settings immediately persists preferences and triggers an on-the-fly update check with the chosen channel, eliminating race conditions and stale channel fallbacks.
+            -   **Homebrew & Native Online Update Dual-Track Freedom**: For users with Homebrew Cask installations, added a direct "Switch to In-App Online Update" toggle next to the brew upgrade button. Users can freely choose between managing updates via `brew` or applying instant in-app hot-patching; selecting the Beta channel automatically falls back to native in-app updates.
+            -   **Surfaced Update Channel Control in General Settings**: Exposed the Update Channel selector directly under "General Settings -> Auto Check for Updates", enabling instant one-click switching without having to navigate to the "About" tab.
         -   **[Egress Unsupported Location Fake 403 Neutralization & One-Click Unlock Probe] (Ref #3995)**:
             -   **Account-Level Protection Against Location-Unsupported 403s**: Added `is_location_unsupported_error` guards across OpenAI, Claude, and Gemini handlers and the account model lock engine. When proxy egress IPs transiently drift or encounter region restrictions (`Location not supported` / `UNSUPPORTED_LOCATION`), the error is properly classified as a network/proxy issue rather than account infringement, strictly preventing accounts from being marked `proxy_disabled` or permanently locked. (Ref #3995)
             -   **One-Click 403 Lock Clearing & Re-Probing**: Introduced the `clear_account_forbidden` Tauri command and store actions to safely reset system 403 locks and temporary model restrictions. Added a "Clear 403 & Re-probe" action within `AccountErrorDialog`, eliminating the need to manually edit local JSON config files. (Ref #3995)
