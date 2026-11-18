@@ -594,10 +594,27 @@ pub fn run() {
                     tauri_plugin_window_state::StateFlags::all()
                         .difference(tauri_plugin_window_state::StateFlags::VISIBLE),
                 )
+                // Fixes #3993: 插件在 on_window_ready 中会于 WebviewWindow::build 期间同步 restore_state，
+                // 此时 Tauri WindowManager/PluginStore 的非可重入 RwLock 仍被持有；Windows 上
+                // SetWindowPos 会同步回派 WM_WINDOWPOSCHANGED 并再次取锁，导致 UI 线程死锁。
+                // 跳过 main 的初始恢复，改为构建完成后再恢复（见 setup 与 lightweight::ensure_main_window）。
+                .skip_initial_state("main")
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = modules::lightweight::exit_lightweight_mode(app);
+            // Fixes #3993: Windows 下该回调跑在 UI 线程，且可能仍持有 PluginStore 锁；
+            // 经工作线程再投递到主线程，等当前回调返回后再重建窗口。
+            #[cfg(target_os = "windows")]
+            {
+                let app_handle = app.clone();
+                modules::lightweight::defer_on_main_thread(app, move || {
+                    let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
+                });
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = modules::lightweight::exit_lightweight_mode(app);
+            }
         }))
         .manage(commands::proxy::ProxyServiceState::new())
         .manage(commands::cloudflared::CloudflaredState::new())
@@ -620,6 +637,24 @@ pub fn run() {
                         width,
                         height,
                     ));
+                }
+            }
+
+            // Fixes #3993: 已对 main 设置 skip_initial_state，启动窗口的位置/尺寸恢复改在窗口
+            // 构建完成后的 setup 中执行，不再嵌套于构建期间（持有 Tauri 内部 RwLock）。
+            #[cfg(not(target_os = "android"))]
+            if let Some(window) = app.get_webview_window("main") {
+                use tauri_plugin_window_state::{StateFlags, WindowExt};
+                let flags = StateFlags::all().difference(StateFlags::VISIBLE);
+                #[cfg(target_os = "windows")]
+                {
+                    modules::lightweight::defer_on_main_thread(app.handle(), move || {
+                        let _ = window.restore_state(flags);
+                    });
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = window.restore_state(flags);
                 }
             }
 

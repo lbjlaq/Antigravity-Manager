@@ -2,6 +2,26 @@ use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder};
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
+/// Queue `f` onto the Win32 event loop from a worker thread so it cannot
+/// run inline inside the current tao/Win32 callback.
+///
+/// `AppHandle::run_on_main_thread` in tauri-runtime-wry 2.10 executes the
+/// task immediately when the caller is already on the UI thread, which
+/// would not release a WindowManager/PluginStore `RwLock` still held by
+/// that callback (Fixes #3993).
+#[cfg(target_os = "windows")]
+pub fn defer_on_main_thread<F>(app: &tauri::AppHandle, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("agm-defer-main".into())
+        .spawn(move || {
+            let _ = app.run_on_main_thread(f);
+        });
+}
+
 /// 尝试获取或重新构建主窗口。
 /// 如果主窗口已被轻量模式销毁，将基于 tauri.conf.json 的配置动态重建，并恢复窗口位置和图标。
 pub fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -66,7 +86,21 @@ pub fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         }
 
         // 5. 恢复窗口状态（记忆的位置和尺寸）
-        let _ = window.restore_state(StateFlags::all().difference(StateFlags::VISIBLE));
+        // main 已设置 skip_initial_state，插件不再于构建期间自动恢复，需在此手动恢复。
+        // Fixes #3993: Windows 上 SetWindowPos 会同步回派 WM_WINDOWPOSCHANGED 并重入 Tauri 的
+        // 非可重入 RwLock。build() 返回后通过工作线程再投递到主线程，避免在当前 UI 回调内联执行。
+        #[cfg(target_os = "windows")]
+        {
+            let window_for_restore = window.clone();
+            let flags = StateFlags::all().difference(StateFlags::VISIBLE);
+            defer_on_main_thread(app, move || {
+                let _ = window_for_restore.restore_state(flags);
+            });
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = window.restore_state(StateFlags::all().difference(StateFlags::VISIBLE));
+        }
 
         tracing::info!("[Lightweight] 主窗口重建完成");
         Ok(window)

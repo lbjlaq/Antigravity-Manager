@@ -453,9 +453,25 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                             .unwrap_or_else(|_| "mini".to_string());
 
                         if click_action == "main" {
-                            hide_mini_window(app);
-                            let _ = crate::modules::lightweight::exit_lightweight_mode(app);
-                            let _ = app.emit("tray://show-window", ());
+                            // Fixes #3993: Windows 下托盘回调跑在 UI 线程；经工作线程再投递到
+                            // 主线程，等当前回调返回后再重建窗口（保持原顺序）。
+                            #[cfg(target_os = "windows")]
+                            {
+                                let app_handle = app.clone();
+                                crate::modules::lightweight::defer_on_main_thread(app, move || {
+                                    hide_mini_window(&app_handle);
+                                    let _ = crate::modules::lightweight::exit_lightweight_mode(
+                                        &app_handle,
+                                    );
+                                    let _ = app_handle.emit("tray://show-window", ());
+                                });
+                            }
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                hide_mini_window(app);
+                                let _ = crate::modules::lightweight::exit_lightweight_mode(app);
+                                let _ = app.emit("tray://show-window", ());
+                            }
                         } else {
                             handle_tray_click(app, Some(rect));
                         }
@@ -467,9 +483,27 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let app_handle = app.clone();
                 match event.id().as_ref() {
                     "show" => {
-                        let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
-                        set_mini_view_active(false);
-                        let _ = app_handle.emit("tray://show-window", ());
+                        // Fixes #3993: 同上，Windows 下经工作线程再投递到主线程（保持原顺序）。
+                        #[cfg(target_os = "windows")]
+                        {
+                            let deferred_handle = app_handle.clone();
+                            crate::modules::lightweight::defer_on_main_thread(
+                                &app_handle,
+                                move || {
+                                    let _ = modules::lightweight::exit_lightweight_mode(
+                                        &deferred_handle,
+                                    );
+                                    set_mini_view_active(false);
+                                    let _ = deferred_handle.emit("tray://show-window", ());
+                                },
+                            );
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
+                            set_mini_view_active(false);
+                            let _ = app_handle.emit("tray://show-window", ());
+                        }
                     }
                     "mini_view" => {
                         handle_tray_click(&app_handle, None);
