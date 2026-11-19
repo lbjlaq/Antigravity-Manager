@@ -1019,7 +1019,7 @@
             "request": {
                 "user_agent": "User-Agent Override",
                 "user_agent_tooltip": "Override the User-Agent header sent to upstream APIs. Leave empty to use default.",
-                "user_agent_hint": "Current Default: antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)",
+                "user_agent_hint": "Current Default: antigravity/hub/2.33.0 (aidev_client; os_type=windows; arch=amd64; cl=1023160026)",
                 "user_agent_placeholder": "Enter custom User-Agent string...",
                 "user_agent_risk_title": "Risk Warning",
                 "user_agent_risk_desc": "Custom User-Agent strings may break upstream protocol compatibility. Google Cloud Code upstream strictly enforces client fingerprint version gating on flagship reasoning models like Gemini 4 Argon. If a non-Hub signature format (such as legacy IDE antigravity/4.3.0) or an outdated version (below official latest baseline {{version}}) is configured, upstream will immediately reject requests with HTTP 404 (Requested entity was not found) and trigger a 15-minute protective circuit break for the entire account pool. If unfamiliar with upstream fingerprint requirements, please proceed with caution or keep default settings.",
@@ -1425,7 +1425,11 @@
                 "source_baseline": "Stable Baseline",
                 "detect_button": "Detect",
                 "detect_success": "Successfully detected and synced official Hub: v{{version}} (CL: {{cl}})",
+                "detect_success_local": "Successfully synced fingerprint from local official client: v{{version}} (CL: {{cl}})",
+                "detect_success_baseline": "Outbound fingerprint aligned with official stable baseline: v{{version}} (CL: {{cl}})",
+                "detect_success_newer_available": "Official Hub v{{latest}} is available (safely retaining v{{version}}; update local client and detect again to sync latest CL)",
                 "detect_failed": "Detection failed: {{error}}",
+                "banner_newer_available": "💡 Official Hub v{{latest}} is available. Update your local official client and click \"Detect\" to automatically sync the latest CL.",
                 "version_label": "Hub Version",
                 "cl_label": "Piper Build Number (CL)"
             }

@@ -422,5 +422,7 @@ export interface HubFingerprint {
     cl: string;
     user_agent: string;
     source: 'custom' | 'remote' | 'local' | 'baseline';
+    latest_remote_version?: string;
+    update_available?: boolean;
 }
 

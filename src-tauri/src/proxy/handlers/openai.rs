@@ -2634,7 +2634,11 @@ pub async fn handle_chat_completions(
                     false,
                     retried_without_thinking,
                 );
-                if heal_flags.retried_with_budget_degraded {
+                if heal_flags.retried_with_capacity_promoted {
+                    crate::proxy::pipeline::InboundThinkingPipeline::try_promote_to_high_capacity(
+                        &mut b,
+                    );
+                } else if heal_flags.retried_with_budget_degraded {
                     crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
                         &mut b,
                     );
@@ -4763,7 +4767,11 @@ pub async fn handle_completions(
                         retried_without_thinking,
                     )
                 };
-                if heal_flags.retried_with_budget_degraded {
+                if heal_flags.retried_with_capacity_promoted {
+                    crate::proxy::pipeline::InboundThinkingPipeline::try_promote_to_high_capacity(
+                        &mut b,
+                    );
+                } else if heal_flags.retried_with_budget_degraded {
                     crate::proxy::pipeline::InboundThinkingPipeline::try_degrade_thinking_budget(
                         &mut b,
                     );

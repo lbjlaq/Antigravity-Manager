@@ -152,10 +152,22 @@ impl RequestRetryState {
                         abandon_sticky_account: false,
                     };
                 }
+
+                // [FIX Issue #4002] CacheFirst 下对瞬态 500/503/529 的同账号原地重试耗尽：
+                // 说明当前账号并非偶发网络抖动，而是遭遇持续故障或集群容量枯竭 (MODEL_CAPACITY_EXHAUSTED)。
+                // 1. 若同模型池还有其他候选账号 (pool_size > 1 且 attempt + 1 < pool_size)，解除该会话对当前故障账号的粘性绑定，
+                //    并裁决换号轮换 (Rotate)，使请求立即故障转移至同池其他健康账号；
+                // 2. 若单账号池或已尝试完全池，则 Stop 退出，但必须解绑 (abandon_sticky_account = true)，
+                //    彻底杜绝客户端后续外层重试陷入长达数十分钟死磕同一故障账号的饿死问题。
+                let should_rotate = pool_size > 1 && attempt + 1 < pool_size;
                 return HttpRetryPlan {
                     strategy: RetryStrategy::NoRetry,
-                    next: TerminalNextStep::Stop,
-                    abandon_sticky_account: false,
+                    next: if should_rotate {
+                        TerminalNextStep::Rotate
+                    } else {
+                        TerminalNextStep::Stop
+                    },
+                    abandon_sticky_account: true,
                 };
             }
 
@@ -1088,6 +1100,7 @@ mod tests {
                 RetryStrategy::FixedDelay(d) if d == Duration::from_millis(2000)
             ));
 
+            // 耗尽后：若多账号池 (pool_size=6 且 attempt=0)，裁决 Rotate 并解除粘性绑定 (Issue #4002)
             let exhausted = state.plan_http_retry(
                 &acc,
                 status,
@@ -1102,9 +1115,31 @@ mod tests {
                 true,
                 &cls,
             );
-            assert_eq!(exhausted.next, TerminalNextStep::Stop);
-            assert!(!exhausted.abandon_sticky_account);
+            assert_eq!(exhausted.next, TerminalNextStep::Rotate);
+            assert!(exhausted.abandon_sticky_account);
             assert!(matches!(exhausted.strategy, RetryStrategy::NoRetry));
+
+            // 若单账号池 (pool_size=1)，耗尽后裁决 Stop 并解除粘性绑定
+            let single_pool_exhausted = state.plan_http_retry(
+                &acc,
+                status,
+                "upstream error",
+                None,
+                false,
+                0,
+                1,
+                SchedulingMode::CacheFirst,
+                true,
+                180,
+                true,
+                &cls,
+            );
+            assert_eq!(single_pool_exhausted.next, TerminalNextStep::Stop);
+            assert!(single_pool_exhausted.abandon_sticky_account);
+            assert!(matches!(
+                single_pool_exhausted.strategy,
+                RetryStrategy::NoRetry
+            ));
         }
     }
 

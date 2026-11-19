@@ -1010,7 +1010,7 @@
             "request": {
                 "user_agent": "User-Agent 覆盖",
                 "user_agent_tooltip": "自定义发送给上游 API 的 User-Agent 请求头。留空则使用默认值。",
-                "user_agent_hint": "当前默认值: antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)",
+                "user_agent_hint": "当前默认值: antigravity/hub/2.33.0 (aidev_client; os_type=windows; arch=amd64; cl=1023160026)",
                 "user_agent_placeholder": "输入自定义 User-Agent 字符串...",
                 "user_agent_risk_title": "风险提示",
                 "user_agent_risk_desc": "自定义 User-Agent 可能会影响出站请求的协议兼容性。Google Cloud Code 上游对新一代旗舰模型（如 Gemini 4 Argon 等）实施了严格的客户端指纹门禁。若填入非 Hub 签名格式（如 antigravity/4.3.0 等旧 IDE 指纹）或版本过旧（低于官方最新基准 {{version}}），上游将直接返回 HTTP 404 (Requested entity was not found)，并可能导致网关账号池被临时保护性熔断挂起 15 分钟。若不了解上游指纹协议细节，请谨慎操作或保持默认。",
@@ -1416,7 +1416,11 @@
                 "source_baseline": "稳态基准",
                 "detect_button": "动态探测",
                 "detect_success": "已成功探测并同步官方最新 Hub: v{{version}} (CL: {{cl}})",
+                "detect_success_local": "已从本地已安装的官方客户端同步指纹: v{{version}} (CL: {{cl}})",
+                "detect_success_baseline": "当前出站指纹已对齐官方稳态基准: v{{version}} (CL: {{cl}})",
+                "detect_success_newer_available": "官方已发布新版 v{{latest}}（当前出站安全沿用 v{{version}}，更新本地客户端后再次探测可同步最新 CL）",
                 "detect_failed": "探测失败: {{error}}",
+                "banner_newer_available": "💡 检测到官方 Hub 已发布新版本 v{{latest}}。更新本地官方客户端后点击「动态探测」，可自动提取并同步最新 CL。",
                 "version_label": "Hub 版本号 (Version)",
                 "cl_label": "Piper 构建编号 (CL)"
             }

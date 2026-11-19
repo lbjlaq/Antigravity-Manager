@@ -3,6 +3,21 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.18 (2026-11-19)**:
+        -   **[隐身侧载执行权威锚点强化与模型指令服从度修复] (Ref #3997, Thanks to @mqrkin)**:
+            -   **注入 [SYSTEM MANDATE] 权威执行锚点消除降智与遗忘规则**: 针对复杂 Agent（如 Cursor/Cline/agy 等）携带大型自定义系统指令（数万字符）在触发「隐身侧载（Stealth Sideloading）」时，模型在首轮 user 消息中注意力权重不足导致盲目执行 `ls -R`、遗忘业务规则或编造事实的现象，在 `<system-instruction priority="critical" role="developer">` 容器首行注入强指令执行锚点（`[SYSTEM MANDATE]`）。在 100% 完整保留对抗 Google WAF 敏感词风控与伪 429 拦截能力的同时，强力唤醒模型对自定义规则与工具策略的最高服从度。(Ref #3997, Thanks to @mqrkin)
+        -   **[Gemini 工具多维嵌套数组 Schema 铁律双向守卫修复] (Fixes #4001, Thanks to @Allenalonel)**:
+            -   **强制补全嵌套 items 节点的 `type: array` 声明**: 针对客户端工具声明中包含多维数组/参数矩阵（如 `commandArguments.items.items`）但中间层 `items` 节点遗漏 `type: "array"` 声明，导致请求进入 Google Gemini API 时被上游 Protobuf 严格校验器拦截并报错 `400 INVALID_ARGUMENT (field predicate failed: $type == Type.ARRAY)` 的问题，在 `clean_json_schema` 管道中建立终态双向约束守卫。对任何持有 `items` 属性的节点强制确保其类型为 `array`（并由流水线大写归一化为 `ARRAY`），彻底消除各类第三方 Agent/CLI 声明复杂工具调用时的 400 崩溃。(Fixes #4001, Thanks to @Allenalonel)
+        -   **[CacheFirst 粘性会话 503 持续故障/容量枯竭防死锁解绑与轮换] (Fixes #4002, Thanks to @vecyang1)**:
+            -   **原地重试耗尽主动解绑粘性会话与故障转移**: 解决在 `CacheFirst` 缓存优先模式下，当单个绑定账号因上游持续返回 `503 MODEL_CAPACITY_EXHAUSTED` 或服务端故障（500/503/529）原地重试耗尽时，因裁决计划硬编码 `abandon_sticky_account: false` 导致会话永久死锁绑定在故障账号上、客户端（特别是 `/goal` 等长自动化任务）外层连续重试数十次长达 50+ 分钟饿死的问题。在流水线裁决中，同账号原地重试耗尽后主动标记 `abandon_sticky_account = true` 解除绑定，并在多账号池（`pool_size > 1`）下推进换号轮换（`TerminalNextStep::Rotate`），实现秒级平滑故障转移至池内健康账号。(Fixes #4002, Thanks to @vecyang1)
+        -   **[上游容量枯竭自愈防乒乓震荡与档位保护修复] (Fixes #4000, Thanks to @rainknight27)**:
+            -   **容量枯竭分支与思考预算降级分支互斥隔离**: 解决上游返回 `503 MODEL_CAPACITY_EXHAUSTED` 时，初始为 `high` 档位的请求因无法进一步提档而误落入普通 `is_server_overloaded` 过载分支被错误降级为 `medium`、进而触发二次提档导致在 `high ↔ medium` 之间反复拉扯乒乓的问题。在自愈流水线（Pipeline First）中显式增加互斥阻断条件，对已升档或容量枯竭场景严禁执行思考预算降级，彻底阻断无效重试与上游 `OVERLOADED_TOO_MANY_RETRIES_PER_REQUEST` 标记，确保错误体如实反映用户请求档位。(Fixes #4000, Thanks to @rainknight27)
+            -   **四协议入口重构请求体提档状态保持**: 在 OpenAI、Claude 与 Gemini 适配器换号重试与退避重新包装请求体时，同步感知并继承 `retried_with_capacity_promoted` 提档状态，杜绝已提档请求在后续轮次中被无条件强行冲刷回 `medium` 档位。(Fixes #4000, Thanks to @rainknight27)
+        -   **[官方 Hub 客户端指纹基准升级与动态探测真同步修复] (Fixes #3998, Thanks to @uselessbug)**:
+            -   **内置稳态基准升级至官方最新 2.33.0 (CL 1023160026)**: 将出站请求原生 User-Agent 稳态基线提升至 Google 官方 Antigravity Hub 最新版本 `2.33.0`（Piper 构建变更号 `1023160026`），严格保证版本号与 CL 成对同源校准，消除旧基线落后导致的客户端门禁隐患。
+            -   **本地安装客户端二进制同源 CL 流式提取**: 在 `hub_version` 模块中实现 `extract_cl_from_binary` 与 `try_detect_local_hub_fingerprint`，通过高吞吐流式块扫描从本地已安装的官方 `language_server` 核心组件中自动提取完整的构建 Changelist 编号。只要本地安装了官方客户端，无需用户手动维护即可一键同步出站指纹（标记来源为 `local` 本地应用）。
+            -   **修复设置页「动态探测」假同步与分流精准提示**: 彻底修复 `v5.0.4-beta.12` 以来点击「动态探测」未发起远程拉取且无条件提示“同步成功”的误导性问题。探测时真实拉取官方 `/releases` 权威发布源，并根据本地安装、官方发布动态及稳态基准严格分流展示：若检测到官方发布了未经 CL 人工校准的新版本（如未来的 2.34.0），前端明确提示安全沿用当前基线并在设置区展示温馨指引条；若本地已安装官方最新客户端则自动完成同步，杜绝弗兰肯斯坦拼凑 UA 触发 WAF 封号。(Fixes #3998, Thanks to @uselessbug)
+
     *   **v5.0.4-beta.17 (2026-11-19)**:
         -   **[上游长文本 KV 缓存就绪防竞争与平滑自适应延迟]**:
             -   **巨型冷请求完成感知与异步落盘平滑窗口**: 针对 Agent 连续高频调用或自动化工具链中，首轮巨型长文本（`input_tokens >= 16,000`）冷请求刚完成计算、次轮请求在毫秒级瞬间到达上游导致 Google 分布式 KV Cache 尚未落盘即判定为 Cache Miss 的时序竞争问题，在 Pipeline 统一出站阶段引入「KV 缓存就绪防竞争延迟（Cache Settling Grace Window）」。自动感知同会话巨型冷启动完成时间，在时间差不足落盘窗口时自适应微调等待（默认 1000ms），使紧随其后的次轮请求稳定命中 90%+ 的前缀 KV 缓存。

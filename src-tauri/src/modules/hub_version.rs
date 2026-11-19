@@ -41,14 +41,20 @@ impl std::fmt::Display for HubFingerprintSource {
 /// 官方 Hub 客户端指纹结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubFingerprint {
-    /// 官方 Hub 版本号 (如 "2.23.1")
+    /// 官方 Hub 版本号 (如 "2.33.0")
     pub version: String,
-    /// 官方构建提交号 (Piper CL, 如 "998881661")
+    /// 官方构建提交号 (Piper CL, 如 "1023160026")
     pub cl: String,
     /// 完整出站 User-Agent 字符串
     pub user_agent: String,
     /// 指纹来源标识
     pub source: HubFingerprintSource,
+    /// 探测到的官方远程最新版本（仅在动态探测时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_remote_version: Option<String>,
+    /// 是否检测到官方发布了比当前出站指纹更新的版本
+    #[serde(default)]
+    pub update_available: bool,
 }
 
 /// 全局缓存的最新 Hub 指纹，初始状态使用纯内存稳态基线，零运行时或 I/O 异常风险
@@ -58,6 +64,8 @@ static CACHED_HUB_FINGERPRINT: Lazy<RwLock<HubFingerprint>> = Lazy::new(|| {
         cl: OFFICIAL_HUB_CL.to_string(),
         user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
         source: HubFingerprintSource::Baseline,
+        latest_remote_version: None,
+        update_available: false,
     })
 });
 
@@ -280,6 +288,107 @@ async fn try_detect_remote_hub_version_with(force: bool) -> Option<String> {
     parse_hub_version_from_manifest(&resp.text().await.ok()?)
 }
 
+/// 尝试从本地安装的 `language_server` 二进制文件中提取 Piper 构建变更号 (CL)
+/// Google Blaze/Piper 构建在二进制中嵌入了 `changelist <CL> with baseline` 元数据
+pub fn extract_cl_from_binary(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    // 以 4MB 块流式扫描，保留 128 字节交叠，防止跨块截断
+    let chunk_size = 4 * 1024 * 1024;
+    let overlap = 128;
+    let mut prev = Vec::new();
+    let mut buf = vec![0u8; chunk_size];
+
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+
+        let mut data = Vec::with_capacity(prev.len() + n);
+        data.extend_from_slice(&prev);
+        data.extend_from_slice(&buf[..n]);
+
+        let needle = b"changelist ";
+        let mut pos = 0;
+        while let Some(idx) = data[pos..].windows(needle.len()).position(|w| w == needle) {
+            let match_pos = pos + idx;
+            let rest = &data[match_pos + needle.len()..];
+            let mut digits = Vec::new();
+            for &b in rest {
+                if b.is_ascii_digit() {
+                    digits.push(b as char);
+                } else {
+                    break;
+                }
+            }
+            if digits.len() >= 8 && digits.len() <= 12 {
+                return Some(digits.into_iter().collect());
+            }
+            pos = match_pos + needle.len();
+        }
+
+        if n < chunk_size {
+            break;
+        }
+        prev = buf[n.saturating_sub(overlap)..n].to_vec();
+    }
+
+    None
+}
+
+/// 尝试从本地已安装的 Antigravity 客户端探测 Hub 语言服务路径
+fn find_local_language_server_path() -> Option<std::path::PathBuf> {
+    if let Some(exe_path) = crate::modules::process::get_antigravity_executable_path(None) {
+        let path_str = exe_path.to_string_lossy();
+        let app_dir = if let Some(idx) = path_str.find(".app") {
+            std::path::PathBuf::from(&path_str[..idx + 4])
+        } else {
+            exe_path.clone()
+        };
+
+        let mut candidates = vec![
+            app_dir.join("Contents/Resources/bin/language_server"),
+            app_dir.join("Contents/Resources/bin/language_server.exe"),
+            app_dir.join("resources/bin/language_server.exe"),
+            app_dir.join("resources/bin/language_server"),
+            app_dir.join("bin/language_server"),
+            app_dir.join("bin/language_server.exe"),
+        ];
+
+        // 也检查可执行文件的上层目录
+        let mut parent = exe_path.as_path();
+        for _ in 0..4 {
+            if let Some(p) = parent.parent() {
+                candidates.push(p.join("Contents/Resources/bin/language_server"));
+                candidates.push(p.join("resources/bin/language_server.exe"));
+                candidates.push(p.join("resources/bin/language_server"));
+                candidates.push(p.join("bin/language_server"));
+                parent = p;
+            } else {
+                break;
+            }
+        }
+
+        for candidate in candidates {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// 尝试从本地已安装的 Antigravity 客户端提取同源且完整的 (版本号, CL) 配对
+/// 必须两者同时提取成功才返回，确保绝不拼装出非法出站 UA
+pub fn try_detect_local_hub_fingerprint() -> Option<(String, String)> {
+    let local_ver = try_detect_local_hub_version()?;
+    let ls_path = find_local_language_server_path()?;
+    let cl = extract_cl_from_binary(&ls_path)?;
+    Some((local_ver, cl))
+}
+
 /// 尝试从本地已安装的 Antigravity 客户端探测 Hub 版本（仅接受 2.x Hub 版本线，过滤 IDE 4.x 版本）
 pub fn try_detect_local_hub_version() -> Option<String> {
     if let Ok(local_ver) = crate::modules::version::get_antigravity_version(None) {
@@ -312,6 +421,8 @@ pub fn resolve_hub_fingerprint_sync(
             cl: c.to_string(),
             user_agent: build_hub_user_agent(v, c),
             source: HubFingerprintSource::Custom,
+            latest_remote_version: None,
+            update_available: false,
         };
     }
 
@@ -324,14 +435,16 @@ pub fn resolve_hub_fingerprint_sync(
     }
 
     // 2. 稳态基准兜底（硬编码校准值：版本与 CL 必须严格成对人工校准同源）
-    // Google Piper monorepo 的 CL 严格单调递增，版本号与 CL 必须人工校准成对（如 2.32.1 对应 1021296516）。
-    // 严禁将本地已安装旧版 (如 2.23.1) 或远程探测版本与基准 CL 错配拼接；错配的弗兰肯斯坦指纹
+    // Google Piper monorepo 的 CL 严格单调递增，版本号与 CL 必须人工校准成对（如 2.33.0 对应 1023160026）。
+    // 严禁将本地已安装旧版或远程未校准版本与基准 CL 错配拼接；错配的弗兰肯斯坦指纹
     // 会被 Google Cloud Code WAF 判定为非正版客户端模拟（触发 TOS_VIOLATION 封禁）。
     HubFingerprint {
         version: OFFICIAL_HUB_VERSION.to_string(),
         cl: OFFICIAL_HUB_CL.to_string(),
         user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
         source: HubFingerprintSource::Baseline,
+        latest_remote_version: None,
+        update_available: false,
     }
 }
 
@@ -344,13 +457,61 @@ pub async fn resolve_hub_fingerprint_async(
     resolve_hub_fingerprint_async_with(custom_version, custom_cl, false).await
 }
 
-/// 同上，`force_remote` 保留用于接口兼容
+/// 同上，`force_remote` 为 true 时跳过缓存拉取远程发布源信息
 pub async fn resolve_hub_fingerprint_async_with(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
-    _force_remote: bool,
+    force_remote: bool,
 ) -> HubFingerprint {
-    resolve_hub_fingerprint_sync(custom_version, custom_cl)
+    // 异步探测官方最新远程发布版本，用于状态感知与更新提醒
+    let remote_release = fetch_remote_hub_release_with(force_remote).await;
+    let latest_remote_ver = remote_release.map(|r| r.version);
+
+    // 1. 如果用户显式定义了自定义指纹
+    let clean_ver = custom_version.map(|s| s.trim()).filter(|s| !s.is_empty());
+    let clean_cl = custom_cl.map(|s| s.trim()).filter(|s| !s.is_empty());
+    if let (Some(v), Some(c)) = (clean_ver, clean_cl) {
+        let update_avail = latest_remote_ver.as_deref().map_or(false, |latest| {
+            crate::constants::compare_semver(latest, v) == std::cmp::Ordering::Greater
+        });
+        return HubFingerprint {
+            version: v.to_string(),
+            cl: c.to_string(),
+            user_agent: build_hub_user_agent(v, c),
+            source: HubFingerprintSource::Custom,
+            latest_remote_version: latest_remote_ver,
+            update_available: update_avail,
+        };
+    }
+
+    // 2. 尝试从本地已安装的客户端提取同源指纹 (带 CL)
+    if let Some((local_ver, local_cl)) = try_detect_local_hub_fingerprint() {
+        let update_avail = latest_remote_ver.as_deref().map_or(false, |latest| {
+            crate::constants::compare_semver(latest, &local_ver) == std::cmp::Ordering::Greater
+        });
+        return HubFingerprint {
+            version: local_ver.clone(),
+            cl: local_cl.clone(),
+            user_agent: build_hub_user_agent(&local_ver, &local_cl),
+            source: HubFingerprintSource::Local,
+            latest_remote_version: latest_remote_ver,
+            update_available: update_avail,
+        };
+    }
+
+    // 3. 稳态基准兜底
+    let update_avail = latest_remote_ver
+        .as_deref()
+        .map_or(false, is_update_available);
+
+    HubFingerprint {
+        version: OFFICIAL_HUB_VERSION.to_string(),
+        cl: OFFICIAL_HUB_CL.to_string(),
+        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
+        source: HubFingerprintSource::Baseline,
+        latest_remote_version: latest_remote_ver,
+        update_available: update_avail,
+    }
 }
 
 /// 获取当前缓存的 Hub 客户端指纹（带毒化恢复保障）
@@ -493,6 +654,22 @@ files:
         assert_eq!(fp_cl_only.version, OFFICIAL_HUB_VERSION);
         assert_eq!(fp_cl_only.cl, OFFICIAL_HUB_CL);
         assert_eq!(fp_cl_only.source, HubFingerprintSource::Baseline);
+    }
+
+    #[test]
+    fn test_extract_cl_from_binary_stream() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let test_bin_path = temp_dir.join(format!("test_ls_binary_{}", uuid::Uuid::new_v4()));
+        let mut file = std::fs::File::create(&test_bin_path).unwrap();
+        // 构造带有 Blaze/Piper 类似构建字符串的二进制片段
+        let dummy_data = b"Some random prefix data \x00\x01\x02 changelist 1023160026 with baseline 1022452901 in a mint client \x00 trailing";
+        file.write_all(dummy_data).unwrap();
+        drop(file);
+
+        let cl = extract_cl_from_binary(&test_bin_path);
+        let _ = std::fs::remove_file(&test_bin_path);
+        assert_eq!(cl, Some("1023160026".to_string()));
     }
 
     #[test]

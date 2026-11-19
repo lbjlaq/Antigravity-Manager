@@ -46,7 +46,7 @@ function Settings() {
     const { config, loadConfig, saveConfig, updateLanguage, updateTheme } = useConfigStore();
     const { enable, disable, isEnabled } = useDebugConsole();
     const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
-    const [appVersion, setAppVersion] = useState<string>('5.0.4-beta.17');
+    const [appVersion, setAppVersion] = useState<string>('5.0.4-beta.18');
     const [formData, setFormData] = useState<AppConfig>({
         language: 'zh',
         theme: 'system',
@@ -256,14 +256,46 @@ function Settings() {
                 customCl: formData.proxy?.hub_cl || null,
             });
             setHubFingerprint(fp);
-            showToast(
-                t('proxy.config.hub.detect_success', {
-                    version: fp.version,
-                    cl: fp.cl,
-                    defaultValue: `已成功探测并同步官方最新 Hub: v${fp.version} (CL: ${fp.cl})`
-                }),
-                'success'
-            );
+
+            if (fp.update_available && fp.latest_remote_version) {
+                showToast(
+                    t('proxy.config.hub.detect_success_newer_available', {
+                        version: fp.version,
+                        cl: fp.cl,
+                        latest: fp.latest_remote_version,
+                        defaultValue: `官方已发布新版 v${fp.latest_remote_version}（当前出站安全沿用 v${fp.version}，更新本地客户端后再次探测可同步最新 CL）`
+                    }),
+                    'info',
+                    7000
+                );
+            } else if (fp.source === 'local') {
+                showToast(
+                    t('proxy.config.hub.detect_success_local', {
+                        version: fp.version,
+                        cl: fp.cl,
+                        defaultValue: `已从本地已安装的官方客户端同步指纹: v${fp.version} (CL: ${fp.cl})`
+                    }),
+                    'success'
+                );
+            } else if (fp.source === 'baseline') {
+                showToast(
+                    t('proxy.config.hub.detect_success_baseline', {
+                        version: fp.version,
+                        cl: fp.cl,
+                        defaultValue: `当前出站指纹已对齐官方稳态基准: v${fp.version} (CL: ${fp.cl})`
+                    }),
+                    'success'
+                );
+            } else {
+                showToast(
+                    t('proxy.config.hub.detect_success', {
+                        version: fp.version,
+                        cl: fp.cl,
+                        defaultValue: `已成功探测并同步官方最新 Hub: v${fp.version} (CL: ${fp.cl})`
+                    }),
+                    'success'
+                );
+            }
         } catch (err) {
             console.error('探测 Hub 失败:', err);
             showToast(
@@ -1588,6 +1620,18 @@ function Settings() {
                                             />
                                         </div>
                                     </div>
+                                    {/* 官方新版本可用提示 Banner */}
+                                    {hubFingerprint?.update_available && hubFingerprint.latest_remote_version && (
+                                        <div className="mt-3 bg-amber-50/60 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-800/30 rounded-lg p-2.5 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                                            <span className="leading-relaxed">
+                                                {t('proxy.config.hub.banner_newer_available', {
+                                                    latest: hubFingerprint.latest_remote_version,
+                                                    defaultValue: `💡 检测到官方 Hub 已发布新版本 v${hubFingerprint.latest_remote_version}。更新本地官方客户端后点击「动态探测」，可自动提取并同步最新 CL。`
+                                                })}
+                                            </span>
+                                        </div>
+                                    )}
+
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                                         {t('proxy.config.hub.tooltip', { defaultValue: '出站流量对齐 Google 官方 Antigravity Hub 原生客户端特征，自动维护版本号与构建 CL 编号以规避 429 配额限制。' })}
                                     </p>

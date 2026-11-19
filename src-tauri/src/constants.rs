@@ -219,12 +219,12 @@ pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().
 
 /// Antigravity 官方语言服务枢纽 (Antigravity Hub) 版本号
 /// 对应官方出站 User-Agent: antigravity/hub/{OFFICIAL_HUB_VERSION}
-/// 2026-11-14 官方实抓版本与 CL（实抓自 Windows 客户端，出站平台段与之一致）
-pub const OFFICIAL_HUB_VERSION: &str = "2.32.1";
+/// 2026-11-19 官方实抓版本与 CL（实抓自官方最新客户端，出站平台段与之一致）
+pub const OFFICIAL_HUB_VERSION: &str = "2.33.0";
 
 /// Antigravity 官方内部代码仓库 (Google Piper Monorepo) 变更集编号 (Changelist Number / CL)
 /// 官方每一个正式版本发布均对应确定的构建提交点，全球正版客户端保持统一，切勿随机变动
-pub const OFFICIAL_HUB_CL: &str = "1021296516";
+pub const OFFICIAL_HUB_CL: &str = "1023160026";
 
 /// Returns the official Antigravity Hub User-Agent matching the upstream egress signature:
 /// format: "antigravity/hub/{OFFICIAL_HUB_VERSION} (aidev_client; os_type={os}; arch={arch}; cl={OFFICIAL_HUB_CL})"
@@ -380,10 +380,10 @@ mod tests {
     fn test_official_hub_version_baseline() {
         assert!(
             compare_semver(OFFICIAL_HUB_VERSION, "2.32.0") > std::cmp::Ordering::Equal,
-            "OFFICIAL_HUB_VERSION must be >= 2.32.1 to satisfy upstream Google Hub baseline"
+            "OFFICIAL_HUB_VERSION must be >= 2.33.0 to satisfy upstream Google Hub baseline"
         );
-        assert_eq!(OFFICIAL_HUB_VERSION, "2.32.1");
-        assert_eq!(OFFICIAL_HUB_CL, "1021296516");
+        assert_eq!(OFFICIAL_HUB_VERSION, "2.33.0");
+        assert_eq!(OFFICIAL_HUB_CL, "1023160026");
     }
 
     #[test]

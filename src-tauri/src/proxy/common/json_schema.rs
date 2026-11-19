@@ -721,7 +721,7 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                     map.insert("type".to_string(), Value::String("string".to_string()));
                 }
 
-                // 10. [FIX #3682] Gemini Protobuf 终态铁律守卫：所有终态为 ARRAY 的节点必须持有 items
+                // 10. [FIX #3682] Gemini Protobuf 终态铁律守卫 A：所有终态为 ARRAY 的节点必须持有 items
                 // 无论前面经过了 anyOf 合并、type 联合解包还是属性清洗，杜绝任何无 items 裸数组透传导致 400 INVALID_ARGUMENT
                 let final_is_array = map
                     .get("type")
@@ -730,6 +730,21 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                     .unwrap_or(false);
                 if final_is_array && !map.contains_key("items") {
                     map.insert("items".to_string(), json!({ "type": "string" }));
+                }
+
+                // 11. [FIX #4001] Gemini Protobuf 终态铁律守卫 B：
+                // Google 校验约束: field predicate failed: $type == Type.ARRAY
+                // 任何持有 items 属性的节点，其 type 必须明确且仅为 "array"！
+                // 针对嵌套多维数组中中间层 items 缺失 type 声明、或误写为非 array 类型的场景，强制补齐/归一化为 "array"。
+                if map.contains_key("items") {
+                    let type_matches_array = map
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(|t| t.eq_ignore_ascii_case("array"))
+                        .unwrap_or(false);
+                    if !type_matches_array {
+                        map.insert("type".to_string(), Value::String("array".to_string()));
+                    }
                 }
             }
         }
@@ -2191,5 +2206,39 @@ mod tests {
             .as_str()
             .unwrap_or("")
             .contains("(nullable)"));
+    }
+
+    #[test]
+    fn test_issue_4001_nested_array_items_missing_type_array_injected() {
+        // [FIX #4001] 嵌套数组/二维数组场景：
+        // commandArguments 本身为 array，其 items 又包含 items（即 elements 为 array），
+        // 但中间层 items 节点遗漏了 type: "array" 声明，导致 Gemini 上游报：
+        // * GenerateContentRequest.tools[N]...properties[commandArguments].items.items: field predicate failed: $type == Type.ARRAY
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "commandArguments": {
+                    "type": "array",
+                    "items": {
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        });
+
+        clean_json_schema(&mut schema);
+
+        // 验证中间层 items 节点被精准且稳固地补全了 type: "array"
+        let items_node = &schema["properties"]["commandArguments"]["items"];
+        assert_eq!(
+            items_node["type"], "array",
+            "Intermediate items schema node must have type: 'array' when containing nested items"
+        );
+        assert_eq!(
+            items_node["items"]["type"], "string",
+            "Inner items type should be preserved"
+        );
     }
 }

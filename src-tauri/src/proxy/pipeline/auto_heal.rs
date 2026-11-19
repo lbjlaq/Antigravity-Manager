@@ -187,12 +187,14 @@ pub fn try_auto_heal(
     flags: &mut AutoHealFlags,
 ) -> Option<AutoHealOutcome> {
     // 0. 上游容量枯竭 (MODEL_CAPACITY_EXHAUSTED / 503)：原地将 medium/low/tiered 升档为 high 算力通道
-    if crate::proxy::upstream::client::UpstreamClient::is_model_capacity_exhausted(
-        rquest::StatusCode::from_u16(status_code)
-            .unwrap_or(rquest::StatusCode::SERVICE_UNAVAILABLE),
-        error_text,
-    ) && !flags.retried_with_capacity_promoted
-    {
+    let is_capacity_exhausted =
+        crate::proxy::upstream::client::UpstreamClient::is_model_capacity_exhausted(
+            rquest::StatusCode::from_u16(status_code)
+                .unwrap_or(rquest::StatusCode::SERVICE_UNAVAILABLE),
+            error_text,
+        );
+
+    if is_capacity_exhausted && !flags.retried_with_capacity_promoted {
         if InboundThinkingPipeline::try_promote_to_high_capacity(body) {
             flags.retried_with_capacity_promoted = true;
             *degraded = Some(body.clone());
@@ -207,7 +209,15 @@ pub fn try_auto_heal(
     }
 
     // 1. 上游过载：降级思考预算，避免被调度到高算力集群继续排队
-    if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, error_text)
+    // 注意：若上游明确是 MODEL_CAPACITY_EXHAUSTED（容量枯竭），专属自愈策略是分支 0（升档或原地失败）；
+    // 严禁在此处将其视为普通过载执行降级，避免 high <-> medium 乒乓震荡 (Issue #4000)。
+    // 同时，若请求已升档至 high 算力通道 (retried_with_capacity_promoted)，也禁止再被降级回去。
+    if !is_capacity_exhausted
+        && !flags.retried_with_capacity_promoted
+        && crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(
+            status_code,
+            error_text,
+        )
         && !flags.retried_with_budget_degraded
         && InboundThinkingPipeline::try_degrade_thinking_budget(body)
     {
@@ -955,5 +965,86 @@ mod tests {
             &mut flags,
         );
         assert!(again.is_none());
+    }
+
+    #[test]
+    fn test_auto_heal_capacity_exhausted_no_ping_pong_issue_4000() {
+        // Case 1: 客户端请求本身就是 high 档位，遇到 503 MODEL_CAPACITY_EXHAUSTED 时，
+        // 既不能被 promote（已是最高），也绝不能被判定为普通过载降级为 medium（避免拉长请求时间与篡改模型）。
+        let classification = crate::proxy::pipeline::UpstreamClassification::classify(
+            503,
+            "The model is overloaded. Please try again later. MODEL_CAPACITY_EXHAUSTED",
+            None,
+        );
+        let err_text = "The model is overloaded. Please try again later. MODEL_CAPACITY_EXHAUSTED";
+        let mut high_body = json!({
+            "model": "gemini-4-hydrogen-high",
+            "generationConfig": {
+                "thinkingConfig": {
+                    "thinkingLevel": "HIGH"
+                }
+            }
+        });
+        let mut degraded = None;
+        let mut flags = AutoHealFlags::default();
+
+        let out = try_auto_heal(
+            &classification,
+            503,
+            err_text,
+            &mut high_body,
+            &mut degraded,
+            &mut flags,
+        );
+        assert!(
+            out.is_none(),
+            "Initial -high request on capacity exhaustion should not be degraded or ping-ponged"
+        );
+        assert!(!flags.retried_with_budget_degraded);
+        assert!(!flags.retried_with_capacity_promoted);
+        assert_eq!(high_body["model"], "gemini-4-hydrogen-high");
+
+        // Case 2: 客户端请求为 medium 档位，遇到 503 MODEL_CAPACITY_EXHAUSTED 时，
+        // 第一次成功升档为 high；当第二次仍然遇到 503 时，绝不能被降级回 medium。
+        let mut medium_body = json!({
+            "model": "gemini-4-hydrogen-medium",
+            "generationConfig": {
+                "thinkingConfig": {
+                    "thinkingLevel": "MEDIUM"
+                }
+            }
+        });
+        let mut degraded2 = None;
+        let mut flags2 = AutoHealFlags::default();
+
+        let out2 = try_auto_heal(
+            &classification,
+            503,
+            err_text,
+            &mut medium_body,
+            &mut degraded2,
+            &mut flags2,
+        );
+        assert!(out2.is_some());
+        assert_eq!(out2.unwrap().kind, "promote_tier_to_high_capacity");
+        assert!(flags2.retried_with_capacity_promoted);
+        assert_eq!(medium_body["model"], "gemini-4-hydrogen-high");
+
+        // 第二次上游依旧 503 MODEL_CAPACITY_EXHAUSTED
+        let mut degraded3 = None;
+        let out3 = try_auto_heal(
+            &classification,
+            503,
+            err_text,
+            &mut medium_body,
+            &mut degraded3,
+            &mut flags2,
+        );
+        assert!(
+            out3.is_none(),
+            "Already promoted request must not fall back to degrade_thinking_budget"
+        );
+        assert!(!flags2.retried_with_budget_degraded);
+        assert_eq!(medium_body["model"], "gemini-4-hydrogen-high");
     }
 }

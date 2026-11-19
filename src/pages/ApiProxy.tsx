@@ -74,8 +74,8 @@ interface CustomPreset {
     mappings: Record<string, string>;
 }
 
-export const DEFAULT_RECOMMENDED_HUB_UA = 'antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)';
-export const RECOMMENDED_HUB_VERSION = '2.32.1';
+export const DEFAULT_RECOMMENDED_HUB_UA = 'antigravity/hub/2.33.0 (aidev_client; os_type=windows; arch=amd64; cl=1023160026)';
+export const RECOMMENDED_HUB_VERSION = '2.33.0';
 
 
 interface CollapsibleCardProps {
@@ -213,7 +213,7 @@ export default function ApiProxy() {
     const [isClearBindingsConfirmOpen, setIsClearBindingsConfirmOpen] = useState(false);
     const [isClearRateLimitsConfirmOpen, setIsClearRateLimitsConfirmOpen] = useState(false);
     // Dynamic Hub Fingerprint from launch detection
-    const [latestHubVersion, setLatestHubVersion] = useState<string>('2.32.1');
+    const [latestHubVersion, setLatestHubVersion] = useState<string>('2.33.0');
     const [latestHubUa, setLatestHubUa] = useState<string>(DEFAULT_RECOMMENDED_HUB_UA);
 
     // User-Agent & Argon Sandbox Tester states
@@ -318,7 +318,7 @@ export default function ApiProxy() {
         try {
             const updateStatus = await invoke<{ current: string; latest?: string; update_available: boolean }>('check_hub_update');
             const fp = await invoke<{ version: string; user_agent: string }>('get_hub_fingerprint');
-            const targetVersion = (updateStatus && updateStatus.latest) || (fp && fp.version) || '2.32.1';
+            const targetVersion = (updateStatus && updateStatus.latest) || (fp && fp.version) || '2.33.0';
             setLatestHubVersion(targetVersion);
             if (fp && fp.user_agent) {
                 setLatestHubUa(fp.user_agent);
