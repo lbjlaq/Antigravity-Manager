@@ -274,6 +274,7 @@ export interface StickySessionConfig {
     request_429_grace_ms?: number;
     max_spillover_accounts?: number;
     affinity_scope?: AffinityScope;
+    cache_settling_delay_ms?: number;
 }
 
 export interface ScheduledWarmupConfig {

@@ -1165,6 +1165,8 @@
                 "max_wait_tooltip": "仅在“缓存优先”模式下生效：如果账号限流重置时间小于此值，则原地等待而非切换账号。",
                 "request_429_grace_ms": "请求级 429 原地等待",
                 "request_429_grace_ms_tooltip": "无 retryDelay 的请求级 429 首轮在当前账号原地等待的时间；默认 1500ms，范围 200–10000ms。",
+                "cache_settling_delay_ms": "KV 缓存就绪防竞争延迟",
+                "cache_settling_delay_ms_tooltip": "上一轮长文本未命中并构建新缓存后，本轮紧邻请求在发送前等待 KV 落盘的平滑窗口；默认 1000ms（设为 0 关闭），范围 0–5000ms。",
                 "max_spillover_accounts": "分流并发账号上限",
                 "max_spillover_accounts_tooltip": "当启动多个子代理或高并发多会话时，最多允许同时调用的健康账号数量。设为 0 表示不限制（全池空闲账号皆可外溢加速）；设为正整数（如 2）则限制最多同时使用该数量的账号，超出时在已有账号间负载均衡，防止子代理占用过多额外账号。",
                 "affinity_scope": "粘性绑定维度",

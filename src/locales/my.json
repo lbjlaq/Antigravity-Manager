@@ -1049,6 +1049,8 @@
                 "max_wait_tooltip": "Hanya digunakan dalam mod 'Cache First': tunggu bukannya menukar jika masa reset had kadar adalah di bawah nilai ini.",
                 "request_429_grace_ms": "Request အဆင့် 429 စောင့်ဆိုင်းချိန်",
                 "request_429_grace_ms_tooltip": "retryDelay မပါသော request အဆင့် 429 အတွက် လက်ရှိအကောင့်တွင် ပထမအကြိမ် စောင့်ဆိုင်းရမည့် အချိန်။ မူရင်း 1500ms၊ သတ်မှတ်နိုင်သည့် အတိုင်းအတာ 200–10000ms။",
+                "cache_settling_delay_ms": "KV Cache အတည်ပြုစောင့်ဆိုင်းချိန်",
+                "cache_settling_delay_ms_tooltip": "Cache မထိဘဲ စာသားရှည် Request အသစ်တစ်ခု Cache တည်ဆောက်ပြီးနောက် နောက်ဆက်တွဲ Request မပို့မီ KV Cache ရေးသွင်းမှု ပြီးမြောက်စေရန် ခေတ္တစောင့်ဆိုင်းချိန်။ မူရင်း 1000ms (ပိတ်ရန် 0)၊ သတ်မှတ်နိုင်သည့် အတိုင်းအတာ 0–5000ms။",
                 "max_spillover_accounts": "Had Akaun Limpahan",
                 "max_spillover_accounts_tooltip": "Bilangan maksimum akaun yang dibenarkan untuk limpahan trafik serentak. Tetapkan ke 0 untuk tanpa had; tetapkan integer positif (cth. 2) untuk mengehadkan akaun aktif.",
                 "spillover_unlimited": "Tanpa Had (Semua tersedia)",

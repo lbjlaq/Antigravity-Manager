@@ -1064,6 +1064,8 @@
                 "max_wait_tooltip": "'캐시 우선' 모드에서만 사용: 속도 제한 재설정 시간이 이 값보다 작으면 전환하는 대신 대기합니다.",
                 "request_429_grace_ms": "요청 수준 429 제자리 대기",
                 "request_429_grace_ms_tooltip": "retryDelay가 없는 요청 수준 429에 대해 현재 계정에서 1차 시도 시 대기하는 시간. 기본값 1500ms, 범위 200–10000ms.",
+                "cache_settling_delay_ms": "KV 캐시 정착 경쟁 방지 지연",
+                "cache_settling_delay_ms_tooltip": "이전 긴 텍스트 요청이 캐시 미스로 새 캐시를 생성한 직후, 후속 연속 요청 발송 전 KV 캐시 동기화를 대기하는 완충 시간. 기본값 1000ms(0 설정 시 비활성화), 범위 0–5000ms.",
                 "max_spillover_accounts": "분류 동시 계정 상한",
                 "max_spillover_accounts_tooltip": "여러 서브 에이전트 또는 병렬 세션을 실행할 때 동시에 호출할 수 있는 최대 정상 계정 수입니다. 0으로 설정하면 무제한(사용 가능한 모든 계정 사용); 양의 정수(예: 2)로 설정하면 활성 계정 수를 제한하여 과도한 분산을 방지합니다.",
                 "spillover_unlimited": "무제한 (모두 사용 가능)",

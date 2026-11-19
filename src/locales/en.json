@@ -1174,6 +1174,8 @@
                 "max_wait_tooltip": "Only used in 'Cache First' mode: wait instead of switching if the rate limit reset time is below this value.",
                 "request_429_grace_ms": "Request-level 429 grace wait",
                 "request_429_grace_ms_tooltip": "How long the first attempt waits in place on the current account for a request-level 429 without retryDelay; default 1500ms, range 200–10000ms.",
+                "cache_settling_delay_ms": "KV Cache Settling Delay",
+                "cache_settling_delay_ms_tooltip": "Settling grace window before sending back-to-back requests after an uncached heavy request builds a new KV cache; default 1000ms (0 to disable), range 0–5000ms.",
                 "max_spillover_accounts": "Spillover Account Cap",
                 "max_spillover_accounts_tooltip": "Maximum number of accounts allowed for concurrent traffic spillover when running multiple sub-agents or parallel sessions. Set to 0 for unlimited (all healthy accounts available); set to a positive integer (e.g. 2) to cap active accounts and prevent excessive spillover across accounts.",
                 "affinity_scope": "Affinity Scope",

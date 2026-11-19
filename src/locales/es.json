@@ -1064,6 +1064,8 @@
                 "max_wait_tooltip": "Solo usado en modo 'Caché Primero': esperar en lugar de cambiar si el tiempo de reinicio del límite de tasa está por debajo de este valor.",
                 "request_429_grace_ms": "Espera de cortesía 429 a nivel de solicitud",
                 "request_429_grace_ms_tooltip": "Tiempo que espera el primer intento en la cuenta actual ante un 429 a nivel de solicitud sin retryDelay; por defecto 1500 ms, rango 200–10000 ms.",
+                "cache_settling_delay_ms": "Retraso anticolisión de escritura en caché KV",
+                "cache_settling_delay_ms_tooltip": "Ventana de gracia para permitir la persistencia de la caché KV del servidor upstream tras una petición pesada no almacenada; por defecto 1000 ms (0 para desactivar), rango 0–5000 ms.",
                 "max_spillover_accounts": "Límite de Cuentas de Desbordamiento",
                 "max_spillover_accounts_tooltip": "Número máximo de cuentas permitidas para desbordamiento de tráfico concurrente. 0 para ilimitado (todas las cuentas sanas); un entero positivo (ej. 2) para limitar las cuentas activas.",
                 "spillover_unlimited": "Ilimitado (Todas disponibles)",

@@ -50,9 +50,22 @@ pub struct StickySessionConfig {
     /// 粘性路由绑定作用域（默认 Session 会话级）
     #[serde(default)]
     pub affinity_scope: AffinityScope,
+    /// 缓存优先模式下，当检测到巨型冷请求刚结束时的 KV 缓存就绪防竞争延迟（毫秒，默认 1000，设为 0 关闭）
+    #[serde(default = "default_cache_settling_delay_ms")]
+    pub cache_settling_delay_ms: u64,
 }
 
 impl StickySessionConfig {
+    /// 获取实际生效的 KV 缓存就绪防竞争平滑延迟（毫秒）。
+    /// 环境变量 `ANTIGRAVITY_CACHE_SETTLING_DELAY_MS` / `ABV_CACHE_SETTLING_DELAY_MS` 优先，范围 0–5000ms。
+    pub fn resolve_cache_settling_delay_ms(&self) -> u64 {
+        std::env::var("ANTIGRAVITY_CACHE_SETTLING_DELAY_MS")
+            .or_else(|_| std::env::var("ABV_CACHE_SETTLING_DELAY_MS"))
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(self.cache_settling_delay_ms)
+            .clamp(0, 5000)
+    }
     /// 获取实际生效的粘性作用域（优先从环境变量读取覆盖，对齐 Headless & CLI 规范）
     pub fn resolve_affinity_scope(&self) -> AffinityScope {
         if let Ok(val) = std::env::var("ANTIGRAVITY_SCHEDULING_AFFINITY_SCOPE")
@@ -105,6 +118,10 @@ fn default_max_spillover_accounts() -> usize {
     0
 }
 
+fn default_cache_settling_delay_ms() -> u64 {
+    1000
+}
+
 impl Default for StickySessionConfig {
     fn default() -> Self {
         Self {
@@ -113,6 +130,7 @@ impl Default for StickySessionConfig {
             request_429_grace_ms: 1500,
             max_spillover_accounts: 0,
             affinity_scope: AffinityScope::Session,
+            cache_settling_delay_ms: 1000,
         }
     }
 }
@@ -127,7 +145,9 @@ mod tests {
         assert_eq!(cfg.mode, SchedulingMode::Balance);
         assert_eq!(cfg.affinity_scope, AffinityScope::Session);
         assert_eq!(cfg.request_429_grace_ms, 1500);
+        assert_eq!(cfg.cache_settling_delay_ms, 1000);
         assert_eq!(cfg.resolve_affinity_scope(), AffinityScope::Session);
+        assert_eq!(cfg.resolve_cache_settling_delay_ms(), 1000);
     }
 
     #[test]

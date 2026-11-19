@@ -3,6 +3,11 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.17 (2026-11-19)**:
+        -   **[上游长文本 KV 缓存就绪防竞争与平滑自适应延迟]**:
+            -   **巨型冷请求完成感知与异步落盘平滑窗口**: 针对 Agent 连续高频调用或自动化工具链中，首轮巨型长文本（`input_tokens >= 16,000`）冷请求刚完成计算、次轮请求在毫秒级瞬间到达上游导致 Google 分布式 KV Cache 尚未落盘即判定为 Cache Miss 的时序竞争问题，在 Pipeline 统一出站阶段引入「KV 缓存就绪防竞争延迟（Cache Settling Grace Window）」。自动感知同会话巨型冷启动完成时间，在时间差不足落盘窗口时自适应微调等待（默认 1000ms），使紧随其后的次轮请求稳定命中 90%+ 的前缀 KV 缓存。
+            -   **全平台配置面与 12 国多语言支持 (Config Surface Parity)**: 在调度配置 `StickySessionConfig` 中新增 `cache_settling_delay_ms` 字段，支持环境变量 `ANTIGRAVITY_CACHE_SETTLING_DELAY_MS` / `ABV_CACHE_SETTLING_DELAY_MS` 无缝覆盖；前端在「会话与调度配置」面板中增加微调输入框（范围 0–5000ms，设为 0 即关闭），并补齐中文、繁体、英文、日语、韩语、西语、葡语、俄语、土耳其语、越南语、阿拉伯语与缅甸语共 12 种语言国际化。
+
     *   **v5.0.4-beta.16 (2026-11-18)**:
         -   **[在线更新与 Homebrew 双轨自由切换与通道即时联动]**:
             -   **更新通道即时联动与后端参数透传**: `check_for_updates` 指令与 Axum 管理接口全面支持显式透传 `channel` 参数，前端点击切换【正式版 / 预览版】后立即持久化并以新通道自动触发更新检查，彻底消除跨通道检查的时序延迟与旧值覆盖。

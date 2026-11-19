@@ -1077,6 +1077,8 @@
                 "max_wait_tooltip": "Usado apenas no modo 'Cache Primeiro': aguardar em vez de alternar se o tempo de reset do limite de taxa estiver abaixo deste valor.",
                 "request_429_grace_ms": "Espera de tolerância 429 no nível de requisição",
                 "request_429_grace_ms_tooltip": "Tempo que a primeira tentativa aguarda na conta atual para um 429 no nível de requisição sem retryDelay; padrão 1500ms, faixa 200–10000ms.",
+                "cache_settling_delay_ms": "Atraso de acomodação de cache KV",
+                "cache_settling_delay_ms_tooltip": "Janela de carência para aguardar a persistência do cache KV upstream após uma requisição longa sem cache construir um novo cache; padrão 1000ms (0 para desativar), faixa 0–5000ms.",
                 "max_spillover_accounts": "Limite de Contas de Transbordamento",
                 "max_spillover_accounts_tooltip": "Número máximo de contas permitidas para transbordamento de tráfego simultâneo. 0 para ilimitado (todas disponíveis); um inteiro positivo (ex: 2) para limitar contas ativas.",
                 "spillover_unlimited": "Ilimitado (Todas disponíveis)",

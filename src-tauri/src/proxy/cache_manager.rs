@@ -52,6 +52,8 @@ pub struct CacheManager {
     tools_cache: DashMap<String, ToolsCacheEntry>,
     /// Tools 统计
     tools_stats: std::sync::RwLock<(u64, u64, u64)>,
+    /// 会话最近一次巨型冷请求完成记录: session_id -> (完成时间戳 Instant, 输入 tokens)
+    heavy_miss_completions: DashMap<String, (Instant, u32)>,
 }
 
 impl Default for CacheManager {
@@ -66,6 +68,7 @@ impl CacheManager {
         Self {
             tools_cache: DashMap::new(),
             tools_stats: std::sync::RwLock::new((0, 0, 0)),
+            heavy_miss_completions: DashMap::new(),
         }
     }
 
@@ -213,6 +216,10 @@ impl CacheManager {
         self.tools_cache
             .retain(|_, v| !Self::is_expired(v.timestamp, TOOLS_CACHE_TTL));
 
+        // 巨型冷请求完成记录 60 秒后自动失效
+        self.heavy_miss_completions
+            .retain(|_, (ts, _)| ts.elapsed() < Duration::from_secs(60));
+
         let total = tools_before - self.tools_cache.len();
         if total > 0 {
             tracing::debug!("[CacheManager] Evicted {} expired tools entries", total);
@@ -220,9 +227,63 @@ impl CacheManager {
         total
     }
 
+    /// 记录某会话刚完成了一次未命中缓存的巨型长上下文请求（构建了新 KV Cache）
+    pub fn record_heavy_miss_completion(&self, session_id: &str, input_tokens: u32) {
+        if input_tokens >= 16_000 && !session_id.is_empty() {
+            // LRU 简易清理：超过 200 个会话记录时清理过期
+            if self.heavy_miss_completions.len() > 200 {
+                self.heavy_miss_completions
+                    .retain(|_, (ts, _)| ts.elapsed() < Duration::from_secs(60));
+            }
+            self.heavy_miss_completions
+                .insert(session_id.to_string(), (Instant::now(), input_tokens));
+            tracing::debug!(
+                "[Cache-Opt:Settling] Recorded heavy uncached completion for session={}, tokens={}",
+                session_id,
+                input_tokens
+            );
+        }
+    }
+
+    /// 检查某会话是否需要 KV 缓存落盘平滑延迟，并返回需补齐等待的毫秒数。
+    /// 触发条件：
+    /// 1. 当前请求前缀估算 tokens >= 16_000；
+    /// 2. 上一轮同 Session 刚发生巨型冷请求完成；
+    /// 3. 距离完成时间间隔 < settling_delay_ms；
+    pub fn check_and_consume_settling_delay(
+        &self,
+        session_id: &str,
+        current_tokens: u32,
+        settling_delay_ms: u64,
+    ) -> Option<u64> {
+        if settling_delay_ms == 0 || session_id.is_empty() || current_tokens < 16_000 {
+            return None;
+        }
+
+        if let Some((_, (finish_time, prior_tokens))) =
+            self.heavy_miss_completions.remove(session_id)
+        {
+            let elapsed_ms = finish_time.elapsed().as_millis() as u64;
+            if elapsed_ms < settling_delay_ms {
+                let delay = settling_delay_ms.saturating_sub(elapsed_ms);
+                tracing::info!(
+                    "[Cache-Opt:Settling] Session {} completed heavy uncached request (prior {} toks, current {} toks) {}ms ago. Applying settling delay of {}ms to avoid cache write race.",
+                    session_id,
+                    prior_tokens,
+                    current_tokens,
+                    elapsed_ms,
+                    delay
+                );
+                return Some(delay);
+            }
+        }
+        None
+    }
+
     /// 清空缓存和统计
     pub fn clear(&self) {
         self.tools_cache.clear();
+        self.heavy_miss_completions.clear();
         if let Ok(mut s) = self.tools_stats.write() {
             *s = (0, 0, 0);
         }
@@ -338,5 +399,40 @@ mod tests {
         let stats = cm.get_layer_stats();
         assert_eq!(stats.tools_total, 0);
         assert_eq!(stats.active_tools_entries, 0);
+    }
+
+    #[test]
+    fn test_heavy_miss_completion_and_settling_delay() {
+        let cm = CacheManager::new();
+        let sid = "sess-settling-test";
+
+        // 1. 小请求 (<16k) 不触发记录
+        cm.record_heavy_miss_completion(sid, 8000);
+        assert!(cm
+            .check_and_consume_settling_delay(sid, 20000, 1000)
+            .is_none());
+
+        // 2. 巨型未命中请求 (>=16k) 触发记录
+        cm.record_heavy_miss_completion(sid, 28000);
+
+        // 3. 当前请求若是小请求 (<16k)，不触发延迟
+        // 注意：remove 只有在满足当前请求也是巨型请求时才消费
+        assert!(cm
+            .check_and_consume_settling_delay(sid, 5000, 1000)
+            .is_none());
+
+        // 4. 当前请求是连续巨型请求，成功触发平滑延迟（且单次消费）
+        let delay = cm.check_and_consume_settling_delay(sid, 32000, 1000);
+        assert!(delay.is_some());
+        assert!(delay.unwrap() <= 1000);
+
+        // 5. 已消费过，下一次不再重复触发
+        assert!(cm
+            .check_and_consume_settling_delay(sid, 36000, 1000)
+            .is_none());
+
+        // 6. delay_ms 为 0 时直接关闭
+        cm.record_heavy_miss_completion(sid, 28000);
+        assert!(cm.check_and_consume_settling_delay(sid, 32000, 0).is_none());
     }
 }

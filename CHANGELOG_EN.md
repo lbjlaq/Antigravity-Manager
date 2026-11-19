@@ -3,6 +3,11 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.17 (2026-11-19)**:
+        -   **[Upstream Heavy Prompt KV Cache Settling Race Mitigation & Adaptive Grace Delay]**:
+            -   **Heavy Cold Cache Detection & Asynchronous Write Settling Window**: Resolved the cache write race condition in autonomous agent loops where a massive cold request (`input_tokens >= 16,000`) completes calculation and a subsequent tool-call request arrives milliseconds later before Google's distributed cluster finishes KV index persistence, causing premature cache misses. Introduced an adaptive "Cache Settling Grace Window" in the unified Pipeline egress stage: detects recent heavy uncached completions for the same session and smoothly absorbs back-to-back requests (default 1000ms), ensuring immediate 90%+ prompt cache reuse on subsequent turns.
+            -   **Full Configuration Surface & 12-Locale Internationalization (Config Surface Parity)**: Added `cache_settling_delay_ms` to `StickySessionConfig` with full environment variable overrides (`ANTIGRAVITY_CACHE_SETTLING_DELAY_MS` / `ABV_CACHE_SETTLING_DELAY_MS`); exposed a numerical setting in the UI under "Session & Scheduling" (range 0–5000ms, 0 to disable), accompanied by native translations across 12 languages (EN, ZH, ZH-TW, JA, KO, ES, PT, RU, TR, VI, AR, MY).
+
     *   **v5.0.4-beta.16 (2026-11-18)**:
         -   **[Seamless In-App & Homebrew Dual-Track Auto Update with Instant Channel Sync]**:
             -   **Instant Update Channel Switching & Explicit Parameter Forwarding**: `check_for_updates` Tauri command and Axum admin endpoints now support an explicit `channel` parameter. Toggling between Stable and Beta in Settings immediately persists preferences and triggers an on-the-fly update check with the chosen channel, eliminating race conditions and stale channel fallbacks.

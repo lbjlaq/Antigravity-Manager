@@ -1505,6 +1505,36 @@ impl UpstreamClient {
             crate::proxy::pipeline::budget::set_estimated_tokens(payload_tokens);
         }
 
+        // [Cache-Opt:Settling Delay] 巨型冷请求落盘防竞争平滑延迟
+        // 当同一 Session 刚完成巨型冷请求计算时，给予上游极其短暂的异步 KV 索引落地窗口，
+        // 彻底解决连续紧邻工具轮次击穿 KV Cache 的问题。
+        if payload_tokens >= 16_000 {
+            let session_id = extra_headers
+                .get("x-session-id")
+                .or_else(|| extra_headers.get("x-antigravity-session-id"))
+                .cloned()
+                .or_else(|| {
+                    body.get("sessionId")
+                        .or_else(|| body.get("request").and_then(|r| r.get("sessionId")))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
+            if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+                let settling_delay_ms = crate::modules::config::load_app_config()
+                    .map(|cfg| cfg.proxy.scheduling.resolve_cache_settling_delay_ms())
+                    .unwrap_or(1000);
+                if let Some(delay_ms) = crate::proxy::cache_manager::global_cache_manager()
+                    .check_and_consume_settling_delay(
+                        &sid,
+                        payload_tokens as u32,
+                        settling_delay_ms,
+                    )
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
 

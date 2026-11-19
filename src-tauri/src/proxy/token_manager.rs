@@ -11663,6 +11663,7 @@ mod tests {
                 request_429_grace_ms: 1500,
                 max_spillover_accounts: 0,
                 affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
+                cache_settling_delay_ms: 1000,
             })
             .await;
 
@@ -11718,6 +11719,7 @@ mod tests {
                 request_429_grace_ms: 1500,
                 max_spillover_accounts: 0,
                 affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
+                cache_settling_delay_ms: 1000,
             })
             .await;
         // 连续两次慢首字触发 QoS Jailed

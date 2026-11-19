@@ -3364,6 +3364,27 @@ print(response.choices[0].message.content)`;
                                             <div className="bg-gray-50/70 dark:bg-base-200 rounded-xl p-4 border border-gray-100 dark:border-base-300">
                                                 <div className="flex items-center justify-between mb-2">
                                                     <label className="text-xs font-medium text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+                                                        {t('proxy.config.scheduling.cache_settling_delay_ms', { defaultValue: 'KV 缓存就绪防竞争延迟' })}
+                                                        <HelpTooltip text={t('proxy.config.scheduling.cache_settling_delay_ms_tooltip', { defaultValue: '上一轮长文本未命中并构建新缓存后，本轮紧邻请求在发送前等待 KV 落盘的平滑窗口；默认 1000ms（设为 0 关闭），范围 0–5000ms。' })} />
+                                                    </label>
+                                                    <span className="text-xs font-mono text-indigo-600 font-bold">
+                                                        {appConfig.proxy.scheduling?.cache_settling_delay_ms ?? 1000}ms
+                                                    </span>
+                                                </div>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={5000}
+                                                    step={100}
+                                                    value={appConfig.proxy.scheduling?.cache_settling_delay_ms ?? 1000}
+                                                    onChange={(e) => updateSchedulingConfig({ cache_settling_delay_ms: Math.max(0, Math.min(5000, parseInt(e.target.value) || 0)) })}
+                                                    className="w-full px-3 py-1.5 border border-gray-300 dark:border-base-300 rounded-lg bg-white dark:bg-base-200 text-xs font-mono text-gray-900 dark:text-base-content focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                                                />
+                                            </div>
+
+                                            <div className="bg-gray-50/70 dark:bg-base-200 rounded-xl p-4 border border-gray-100 dark:border-base-300">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
                                                         {t('proxy.config.scheduling.max_spillover_accounts')}
                                                         <HelpTooltip text={t('proxy.config.scheduling.max_spillover_accounts_tooltip')} />
                                                     </label>

@@ -1057,6 +1057,8 @@
                 "max_wait_tooltip": "Chỉ dùng trong chế độ 'Ưu tiên Cache': chờ thay vì đổi tài khoản nếu thời gian reset rate limit thấp hơn giá trị này.",
                 "request_429_grace_ms": "Thời gian chờ giảm tải 429 cấp độ yêu cầu",
                 "request_429_grace_ms_tooltip": "Thời gian lần thử đầu tiên chờ tại chỗ trên tài khoản hiện tại đối với lỗi 429 cấp độ yêu cầu không có retryDelay; mặc định 1500ms, phạm vi 200–10000ms.",
+                "cache_settling_delay_ms": "Độ trễ ổn định bộ nhớ đệm KV",
+                "cache_settling_delay_ms_tooltip": "Khoảng thời gian đệm chờ ghi KV cache sau khi yêu cầu văn bản dài không trúng cache tạo cache mới; mặc định 1000ms (0 để tắt), phạm vi 0–5000ms.",
                 "max_spillover_accounts": "Giới hạn Tài khoản Phân lưu",
                 "max_spillover_accounts_tooltip": "Số lượng tài khoản tối đa cho phép phân lưu lưu lượng truy cập đồng thời. 0 là không giới hạn; số nguyên dương (ví dụ: 2) để giới hạn tài khoản hoạt động.",
                 "spillover_unlimited": "Không giới hạn (Tất cả khả dụng)",

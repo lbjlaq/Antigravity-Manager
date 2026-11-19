@@ -1927,6 +1927,16 @@ pub async fn monitor_middleware(
                 }
             }
 
+            // [Cache-Opt:Settling Delay] 记录巨型冷请求完成（构建了未命中的大体积新 KV Cache）
+            if let Some(sid) = log.session_id.as_deref().filter(|s| !s.is_empty()) {
+                let in_toks = log.input_tokens.unwrap_or(0);
+                let cached_toks = log.cached_tokens.unwrap_or(0);
+                if in_toks >= 16_000 && cached_toks == 0 && log.status == 200 {
+                    crate::proxy::cache_manager::global_cache_manager()
+                        .record_heavy_miss_completion(sid, in_toks);
+                }
+            }
+
             // Record User Token Usage
             record_user_token_usage(&user_token_identity, &log, user_agent.clone());
 
@@ -2035,6 +2045,16 @@ pub async fn monitor_middleware(
 
                 // Record User Token Usage
                 record_user_token_usage(&user_token_identity, &log, user_agent.clone());
+
+                // [Cache-Opt:Settling Delay] 记录巨型冷请求完成（构建了未命中的大体积新 KV Cache）
+                if let Some(sid) = log.session_id.as_deref().filter(|s| !s.is_empty()) {
+                    let in_toks = log.input_tokens.unwrap_or(0);
+                    let cached_toks = log.cached_tokens.unwrap_or(0);
+                    if in_toks >= 16_000 && cached_toks == 0 && log.status == 200 {
+                        crate::proxy::cache_manager::global_cache_manager()
+                            .record_heavy_miss_completion(sid, in_toks);
+                    }
+                }
 
                 monitor.log_request(log).await;
                 Response::from_parts(parts, Body::from(bytes))

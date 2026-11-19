@@ -1056,6 +1056,8 @@
                 "max_wait_tooltip": "僅在“快取優先”模式下生效：如果帳號限流重置時間小於此值，則原地等待而非切換帳號。",
                 "request_429_grace_ms": "請求級 429 原地等待",
                 "request_429_grace_ms_tooltip": "無 retryDelay 的請求級 429 首輪在目前帳號原地等待的時間；預設 1500ms，範圍 200–10000ms。",
+                "cache_settling_delay_ms": "KV 快取就緒防競爭延遲",
+                "cache_settling_delay_ms_tooltip": "上一輪長文字未命中並建立新快取後，本輪緊鄰請求在傳送前等待 KV 寫入磁碟的平滑視窗；預設 1000ms（設為 0 關閉），範圍 0–5000ms。",
                 "max_spillover_accounts": "分流併發帳號上限",
                 "max_spillover_accounts_tooltip": "當啟動多個子代理或高併發多會話時，最多允許同時呼叫的健康帳號數量。設為 0 表示不限制（全池空閒帳號皆此外溢加速）；設為正整數（如 2）則限制最多同時使用該數量的帳號，超出時在已有帳號間負載均衡，防止子代理佔用過多額外帳號。",
                 "spillover_unlimited": "不限制 (全池可用)",
