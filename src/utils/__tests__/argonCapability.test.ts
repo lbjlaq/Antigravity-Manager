@@ -143,9 +143,9 @@ test('getModelQuotaDisplay correctly preserves Ultra Argon percentage and zeros 
     assertEqual(displayZero.percentage, 0, 'Unauthorized Argon percentage is 0');
 });
 
-// 5. Orchestrator (Argon) & internal worker isolation tests
-test('gemini-pro-orchestrator-g1-pro maps to Argon group and Gemini 4, while gemini-flash-worker-agy is excluded', () => {
-    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-g1-pro'), 'argon', 'Orchestrator maps to argon codename');
+// 5. Orchestrator (Neon) & internal worker isolation tests
+test('gemini-pro-orchestrator-g1-pro maps to Neon group and Gemini 4, while gemini-flash-worker-agy is excluded', () => {
+    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-g1-pro'), 'neon', 'Orchestrator maps to neon codename');
     assertEqual(inferModelGroup('gemini-pro-orchestrator-g1-pro'), 'Gemini 4', 'Orchestrator belongs to Gemini 4 group');
     assertEqual(isSupportedDisplayModel('gemini-pro-orchestrator-g1-pro'), true, 'Orchestrator is supported display model');
     assertEqual(isSupportedDisplayModel('gemini-flash-worker-agy'), false, 'Internal worker is excluded from display');
@@ -162,9 +162,9 @@ test('gemini-pro-orchestrator-g1-pro maps to Argon group and Gemini 4, while gem
                     ]
                 },
                 {
-                    display_name: 'Gemini 4 Argon',
+                    display_name: 'Gemini 4 Neon',
                     buckets: [
-                        { bucket_id: 'gemini-argon-wtu-weekly', window: 'weekly', remaining_fraction: 0.77, reset_time: '2026-10-31T12:00:00Z' },
+                        { bucket_id: 'gemini-neon-wtu-weekly', window: 'weekly', remaining_fraction: 0.77, reset_time: '2026-10-31T12:00:00Z' },
                     ]
                 }
             ],
@@ -174,9 +174,66 @@ test('gemini-pro-orchestrator-g1-pro maps to Argon group and Gemini 4, while gem
         } as QuotaData
     };
 
-    assertEqual(hasAccountArgonCapability(proAccount), true, 'Pro with orchestrator has Argon capability');
+    assertEqual(hasAccountArgonCapability(proAccount), true, 'Pro with orchestrator has Neon/Argon capability');
     const orchDisplay = getModelQuotaDisplay('gemini-pro-orchestrator-g1-pro', proAccount.quota.models[0], proAccount.quota.quota_groups);
-    assertEqual(orchDisplay.percentage, 77, 'Orchestrator displays Argon quota');
+    assertEqual(orchDisplay.percentage, 77, 'Orchestrator displays Neon quota');
+});
+
+// 6. Dynamic Gemini 4+ Codename Extraction & Role Token Filter tests
+test('extractGemini4Codename correctly extracts future and current codenames, filtering out generic role tokens', () => {
+    // Current & future codenames
+    assertEqual(extractGemini4Codename('gemini-4-neon'), 'neon', 'Neon extracted');
+    assertEqual(extractGemini4Codename('gemini-4-neon-xhigh'), 'neon', 'Neon xhigh stripped');
+    assertEqual(extractGemini4Codename('gemini-4-carbon'), 'carbon', 'Carbon extracted');
+    assertEqual(extractGemini4Codename('gemini-4-hydrogen-high'), 'hydrogen', 'Hydrogen high stripped');
+    assertEqual(extractGemini4Codename('gemini-4-argon'), 'argon', 'Argon extracted');
+    assertEqual(extractGemini4Codename('gemini-4.5-oxygen'), 'oxygen', 'Minor version oxygen extracted');
+
+    // Generic role tokens must return null
+    assertEqual(extractGemini4Codename('gemini-4-pro'), null, 'Generic role pro filtered');
+    assertEqual(extractGemini4Codename('gemini-4-flash'), null, 'Generic role flash filtered');
+    assertEqual(extractGemini4Codename('gemini-4-wtu'), null, 'Generic role wtu filtered');
+    assertEqual(extractGemini4Codename('gemini-4-weekly'), null, 'Generic role weekly filtered');
+    assertEqual(extractGemini4Codename('gemini-4-quota'), null, 'Generic role quota filtered');
+
+    // Disabled models must return null
+    assertEqual(extractGemini4Codename('gemini-4-neon-disabled'), null, 'Disabled model filtered');
+    assertEqual(extractGemini4Codename('gemini-4-neon_disabled'), null, 'Underscore disabled filtered');
+});
+
+// 7. Dynamic Quota Summary Label Resolution (Neon replaces Argon as primary)
+test('getGroupQuotaSummaries generates dynamic Gemini 4 Neon label for Neon models', () => {
+    const proNeonAccount = {
+        quota: {
+            last_updated: Date.now(),
+            subscription_tier: 'PRO',
+            quota_groups: [
+                {
+                    display_name: 'Gemini Models',
+                    buckets: [
+                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 1.0, reset_time: '2026-10-27T08:00:00Z' },
+                        { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.95, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                },
+                {
+                    display_name: 'Gemini 4 Neon',
+                    buckets: [
+                        { bucket_id: 'gemini-neon-wtu-weekly', window: 'weekly', remaining_fraction: 0.88, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                }
+            ],
+            models: [
+                { name: 'gemini-4-neon', percentage: 88, reset_time: '2026-10-31T12:00:00Z' },
+                { name: 'gemini-4-neon-high', percentage: 88, reset_time: '2026-10-31T12:00:00Z' },
+            ]
+        } as QuotaData
+    };
+
+    const summaries = getGroupQuotaSummaries(proNeonAccount.quota.quota_groups, proNeonAccount.quota.models, 'pro');
+    const neonSummary = summaries.find(s => s.key === 'argon');
+    assertEqual(Boolean(neonSummary), true, 'Flagship summary present');
+    assertEqual(neonSummary?.dynamicLabel, 'Gemini 4 Neon', 'Dynamic label correctly set to Gemini 4 Neon');
+    assertEqual(neonSummary?.weekly?.percentage, 88, 'Weekly percentage matches Neon group');
 });
 
 console.log(`Passed: ${passed}, Failed: ${failed}`);

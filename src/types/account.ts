@@ -1,4 +1,4 @@
-import { isArgonModel } from '../utils/modelCategory';
+import { isFlagshipModel } from '../utils/modelCategory';
 
 export type ModelPriorityGroup = 'gemini' | 'claude';
 
@@ -172,63 +172,69 @@ export function getAccountTier(account: { quota?: QuotaData | null; token?: { is
 }
 
 /**
- * 统一收敛判定：该账号是否具备 Gemini 4 Argon 授权能力
- * 涵盖两种套餐的 Argon 权威判据：
- * 1. Ultra 旗舰套餐 (Google AI Ultra / Helium)：
- *    Ultra 订阅上游全量授权 Argon（纳入高阶特权共享池），即便 quota_groups 未拆分独立桶，也原生享有 Argon 完整权限；
+ * 统一收敛判定：该账号是否具备 Gemini 旗舰代际（Neon / Argon 等）授权能力
+ * 涵盖两种套餐的旗舰权威判据：
+ * 1. Ultra 旗舰套餐 (Google AI Ultra / Helium) / Enterprise 企业授权：
+ *    Ultra 订阅上游全量授权旗舰模型（纳入高阶特权共享池），即便 quota_groups 未拆分独立桶，也原生享有完整权限；
  * 2. Pro 套餐或灰度专属分组 (Google AI Pro)：
- *    上游在真实 quota_groups 中显式下发了 Argon 专属配额组（如 gemini-argon-wtu-weekly），
- *    或（无 groups 离线兜底时）models 列表中明确包含非禁用的 Argon 官方条目；
+ *    上游在真实 quota_groups 中显式下发了专属旗舰配额组（如 gemini-neon-wtu-weekly 或 gemini-argon-wtu-weekly），
+ *    或（无 groups 离线兜底时）models 列表中明确包含非禁用的旗舰官方条目；
  * 3. Free / 未授权套餐：
- *    未分配专属分组且非 Ultra，坚决判定为 false（严格防呆隔离，杜绝虚假徽章与卡片）。
+ *    未分配专属分组且非 Ultra/Enterprise，坚决判定为 false（严格防呆隔离，杜绝虚假徽章与卡片）。
  */
-export function hasAccountArgonCapability(account: { quota?: QuotaData | null }): boolean {
+export function hasAccountFlagshipCapability(account: { quota?: QuotaData | null }): boolean {
     const tier = getAccountTier(account);
     const groups = account.quota?.quota_groups || [];
     const models = account.quota?.models || [];
-    return checkArgonEligibility(groups, models, tier);
+    return checkFlagshipEligibility(groups, models, tier);
 }
 
+/** 兼容旧接口别名 */
+export const hasAccountArgonCapability = hasAccountFlagshipCapability;
+
 /**
- * 依据配额组、模型列表与订阅等级综合校验 Argon 准入资格
+ * 依据配额组、模型列表与订阅等级综合校验旗舰准入资格（Neon / Argon 等）
  */
-export function checkArgonEligibility(
+export function checkFlagshipEligibility(
     groups: QuotaGroup[] = [],
     models: ModelQuota[] = [],
     tier?: 'ultra' | 'pro' | 'enterprise' | 'free'
 ): boolean {
-    // 判据 1: Ultra 旗舰套餐 / Enterprise 企业授权（原生全量支持 Argon，共享或内置高阶池）
+    // 判据 1: Ultra 旗舰套餐 / Enterprise 企业授权（原生全量支持旗舰模型，共享或内置高阶池）
     if (tier === 'ultra' || tier === 'enterprise') {
         const hasExplicitDisabled = models.some(m => {
             const n = (m?.name || '').toLowerCase();
-            return isArgonModel(n) && (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled);
+            return isFlagshipModel(n) && (n.includes('-disabled') || n.endsWith('_disabled') || (m as any)?.disabled);
         });
         if (hasExplicitDisabled) return false;
         return true;
     }
 
-    // 判据 2: Pro 套餐或灰度授权（必须在真实 quota_groups 中分配了专属 Argon 分组/桶）
-    const hasArgonInGroups = (groups || []).some(group => {
+    // 判据 2: Pro 套餐或灰度授权（必须在真实 quota_groups 中分配了专属旗舰分组/桶，如 neon / argon）
+    const hasFlagshipInGroups = (groups || []).some(group => {
         const groupName = (group?.display_name || '').toLowerCase();
-        return /argon/i.test(groupName)
-            || (group?.buckets || []).some(b => /argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
+        return /neon|argon/i.test(groupName)
+            || (group?.buckets || []).some(b => /neon|argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
     });
 
-    if (hasArgonInGroups) {
+    if (hasFlagshipInGroups) {
         return true;
     }
 
-    // 判据 3: 无 groups 数据时的离线/冷启动兜底（仅当服务端未返回任何 groups，且 models 明确包含非禁用 Argon 模型）
+    // 判据 3: 无 groups 数据时的离线/冷启动兜底（仅当服务端未返回任何 groups，且 models 明确包含非禁用旗舰模型）
     if (!groups || groups.length === 0) {
         return models.some(m => {
             const n = (m?.name || '').toLowerCase();
-            return isArgonModel(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+            return isFlagshipModel(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
         });
     }
 
-    // 其余情况（如 Free 账号但仅有普通 Gemini 组，无 Argon 专属组）：坚决判定为 false (Fixes #3745)
+    // 其余情况（如 Free 账号但仅有普通 Gemini 组，无旗舰专属组）：坚决判定为 false (Fixes #3745)
     return false;
 }
+
+/** 兼容旧接口别名 */
+export const checkArgonEligibility = checkFlagshipEligibility;
 
 /**
  * 订阅等级的展示文案。所有徽标都应使用它，避免直接把后端的原始字符串
