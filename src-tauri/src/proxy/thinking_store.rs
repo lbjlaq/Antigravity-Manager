@@ -107,7 +107,11 @@ impl ThinkingRecord {
         if self.thought.trim().is_empty() && self.signature.is_none() {
             return false;
         }
-        is_capturable_thought(&self.thought, self.signature.as_deref(), self.has_tool_calls())
+        is_capturable_thought(
+            &self.thought,
+            self.signature.as_deref(),
+            self.has_tool_calls(),
+        )
     }
 }
 
@@ -5745,7 +5749,10 @@ mod tests {
             visible: "Hello world".to_string(),
             context_anchor: "".to_string(),
         };
-        assert!(!rec.is_capturable(), "Degraded text turn must not be capturable");
+        assert!(
+            !rec.is_capturable(),
+            "Degraded text turn must not be capturable"
+        );
 
         let store = ThinkingStore::new();
         let key = "test_issue_3997_reject";
@@ -5772,7 +5779,10 @@ mod tests {
             visible: "".to_string(),
             context_anchor: "call_123".to_string(),
         };
-        assert!(rec.is_capturable(), "Pure FC turn with signature must be capturable");
+        assert!(
+            rec.is_capturable(),
+            "Pure FC turn with signature must be capturable"
+        );
 
         let store = ThinkingStore::new();
         let key = "test_issue_3997_allow_fc";
@@ -5827,13 +5837,19 @@ mod tests {
 
         // 因为客户端已有实质思考块，且 store 记录为无思考块的 FC 记录：
         // 绝不能剥离客户端的思考块，且 restored 计数不应增加
-        assert_eq!(restored, 0, "Pure FC turn must not count as restored thinking block");
+        assert_eq!(
+            restored, 0,
+            "Pure FC turn must not count as restored thinking block"
+        );
 
         let model_parts = gemini_contents[1]["parts"].as_array().expect("parts");
         let thought_part = model_parts
             .iter()
             .find(|p| p.get("thought").and_then(|t| t.as_bool()) == Some(true));
-        assert!(thought_part.is_some(), "Existing client thought MUST NOT be stripped!");
+        assert!(
+            thought_part.is_some(),
+            "Existing client thought MUST NOT be stripped!"
+        );
         assert_eq!(
             thought_part.unwrap()["text"],
             "Client reasoning: thinking about what file to read step by step..."
