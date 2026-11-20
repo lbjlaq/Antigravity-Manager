@@ -405,20 +405,20 @@ impl SystemIntegration for DesktopIntegration {
 
         // 2. 决定切换模式（热切号 / 完整重启）并处理进程与凭据
         //
-        //    · 热切号 —— 仅限原生经典版（Standalone >= 2.0.0，issue #3503 / issue #3637）：
-        //      经典款主窗口进程与后台 language_server 解耦，只终止子进程并更新 Keyring 后，
-        //      宿主内置 supervisor 会在约 2 秒内原地重建子进程重载新凭据，保留主窗口和未保存内容。
+        //    · 热切号（原生经典版与 Antigravity IDE 统一支持，issue #3503 / issue #3637）：
+        //      主窗口进程（无论是 Standalone 还是 VS Code 架构的 IDE）与后台 language_server/agy 解耦，
+        //      只要客户端运行中且能定位到语言服务子进程，先将凭据双写至 SQLite/Keyring/本地文件，
+        //      然后仅终止后台 language_server/agy 子进程。宿主内置的 supervisor 会在约 1.5~2 秒内原地
+        //      重建子进程并重新挂载新凭据，完美保留主窗口和未保存内容，无需重启 IDE。
         //      顺序是**先写凭据 → 再杀子进程 →（best-effort）再补写一次**。
-        //    · 完整重启 —— IDE 款（is_ide）、客户端未运行、未定位到语言服务子进程或杀死失败：
-        //      IDE 款深度依赖 Extension Host 内存上下文与 SQLite (state.vscdb) 单写者锁，单杀子进程
-        //      无法使 IDE 窗口界面与主会话感知新账号，且容易导致并发写冲突与回写覆盖；故 IDE 款坚决
-        //      保持「先杀主进程 → 干净写入 SQLite → 重新启动客户端」的权威原子流程。
+        //    · 完整重启 —— 客户端未运行、未定位到语言服务子进程或杀死/拉起失败：
+        //      兜底保持「终止主进程 → 干净写入凭据 → 重新启动客户端」的稳健流程。
         let running = process::is_antigravity_running(effective_target);
         let mut hot_switch = false;
         let mut credentials_applied = false;
 
-        // 仅原生经典版（!is_ide）且运行中时尝试热切号
-        if !is_ide && running {
+        // 只要目标客户端正在运行，统一优先尝试无感热切号
+        if running {
             apply_account_credentials(
                 account,
                 effective_target,
@@ -431,9 +431,9 @@ impl SystemIntegration for DesktopIntegration {
                 Ok(n) if n > 0 => {
                     hot_switch = true;
                     crate::modules::logger::log_info(&format!(
-                        "[Desktop] Hot switch: terminated {} language_server subprocess(es); \
+                        "[Desktop] Hot switch: terminated {} language_server/agy subprocess(es) for {:?}; \
                          main window kept alive, supervisor will respawn the child with the new credentials.",
-                        n
+                        n, effective_target
                     ));
 
                     // 补写一次凭据（best-effort）：子进程已被终止，此时数据库不存在竞争写者，

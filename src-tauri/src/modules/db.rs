@@ -220,6 +220,30 @@ fn inject_new_format(
     )
     .map_err(|e| format!("Failed to write onboarding flag: {}", e))?;
 
+    // 对齐 IDE 安全条款与声明确认状态，消除切号后弹出“Security Notice & Data Use”条款确认卡片
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+        ["agy.onboarding.lastLoginUsername", email],
+    );
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+        [
+            "agy.onboarding.lastLoginIsGcpTos",
+            if is_gcp_tos { "true" } else { "false" },
+        ],
+    );
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+        ["jetski.onboarding.lastLoginUsername", email],
+    );
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+        [
+            "jetski.onboarding.lastLoginIsGcpTos",
+            if is_gcp_tos { "true" } else { "false" },
+        ],
+    );
+
     // Fix for missing history: Delete the old format state to prevent the IDE from reading a stale UserID
     // which causes history fetching to fail.
     let _ = conn.execute(
