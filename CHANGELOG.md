@@ -3,6 +3,27 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.19 (2026-11-20)**:
+        -   **[纯思考空回复流式收尾零篡改与真实用量保全] (Fixes #4008)**:
+            -   **移除流式门禁自愈未果注入假正文 `"task ready"`**: 解决在纯思考输出场景下，当上游流式响应因仅包含思考块、未产出可见正文且二次续写自愈未果时，网关在终止前强行注入 `"task ready"` 假正文篡改真实响应导致下游 Agent 逻辑受扰的问题。
+            -   **零篡改下发标准终止帧与用量保全**: 严格遵循网关零正文篡改规范，在无有效正文产出时不下发任何虚构内容，改为构建携带规范 `finishReason: "STOP"` 的候选帧与 `[DONE]` 终态终止帧，并在终止帧中完整保留流式阶段积累的 `usageMetadata` Token 统计指标。(Fixes #4008)
+            -   **流量日志与 HAR 抓包完整可视**: 监控与 HAR 导出中如实记录思考块（`thinking`）与真实空正文，便于开发者清晰诊断上游模型表现与流式通信细节。
+        -   **[流式截断语义判定精准化与容量枯竭升档边界防护] (Fixes #4006, PR #4007, Thanks to @cubelikeplayDaniel)**:
+            -   **流式思考空回复判定精准收敛至 `finishReason: "STOP"`**: 修复流式自愈门禁无差别拦截所有包含思考但尚未输出正文的终止帧的问题。精准判定仅当候选帧显式以 `STOP` 异常截断时才暂缓发射 `[DONE]` 启动自愈；对因达到最大输出限制（`MAX_TOKENS`）或安全拦截（`SAFETY`）等合法流式终止原因原样透传，保留正常的截断语义与终止帧。(Fixes #4006, PR #4007, Thanks to @cubelikeplayDaniel)
+            -   **容量枯竭升档边界安全守卫**: 在 `try_promote_to_high_capacity` 提档逻辑中增加模型系列守卫，严禁对不支持 `-high` 档位的轻量模型（`flash-lite`）、图像生成模型（`imagen`）、向量嵌入模型（`embedding`）以及已处于高思考档位（`-high`、`-xhigh`、`-max`、`-extreme`）的请求执行盲目提档，杜绝无效提档引发上游 400 参数校验崩溃。(Fixes #4006, PR #4007, Thanks to @cubelikeplayDaniel)
+        -   **[思考缓存签名污染拦截与 Gemini 4+ 配额动态迁移 Neon] (Fixes #3997, Fixes #3745, PR #4005, Thanks to @cubelikeplayDaniel)**:
+            -   **拒绝退化空思考记录防止会话签名污染**: 在 `ThinkingStore` 存取管道中增强签名合法性校验，主动丢弃降级或异常为空思考的缓存条目，防止空思考指纹污染会话存储引发后续多轮对话的签名错位与上下文断裂。(Fixes #3997, PR #4005, Thanks to @cubelikeplayDaniel)
+            -   **Gemini 4+ 代号动态正则提取与 Neon 配额界面迁移**: 实现前向兼容的代号动态提取引擎 `extractGemini4Codename`，自动兼容未来模型代号（neon、carbon 等）并过滤通用角色标识；将配额分组胶囊、账号表格卡片等 UI 视图平滑迁移至 Neon 标识与动态旗舰标签，支持 Neon 与 Argon 双旗舰实时限额探测，并增加多层级旗舰资格校验防止免费层级账号误标旗舰徽章。(Fixes #3745, Ref #3997, PR #4005, Thanks to @cubelikeplayDaniel)
+        -   **[非 403/停用账号清除 403 按钮显隐门禁与真实测活错误透出] (Ref #3995, PR #4010, Thanks to @vecyang1)**:
+            -   **前端清 403 按钮显隐精准门禁**: 抽取 `canClearForbiddenLock`，严格排除已停用（`disabled`，如 OAuth `invalid_grant`）、已封禁（`banned`）及纯手动/非 403 停代账号，杜绝失效账号误显「清除 403 标记并重新测活」按钮。(Ref #3995, PR #4010, Thanks to @vecyang1)
+            -   **后端 `clear_account_forbidden_lock` 越权防护与验证锁彻底清理**: 明确拒绝 `disabled` 账号，严禁清除用户主动设置的 `manual_proxy_disabled` 停代意图；同时完整重置 `validation_blocked = false` 与 `validation_url = None`，根除因残留标记导致临时验证锁被前端视作永久死锁的问题。(Ref #3995, PR #4010, Thanks to @vecyang1)
+            -   **测活失败真实原因透出与 Headless API 补齐**: 修复 `handleClearAndWarmUp` 丢弃真实错误并一律提示排查代理的问题，新增 `formatWarmUpErrorDetail` 与 12 种语言错误详情模板；并在后端补充 `POST /api/accounts/:accountId/clear-forbidden` 路由与 `request.ts` 映射，实现 GUI 与 Headless/Web 模式功能对齐。(Ref #3995, PR #4010, Thanks to @vecyang1)
+        -   **[Antigravity IDE 无感热切号与条款声明免弹窗支持]**:
+            -   **IDE 客户端无感热切号支持与 supervisor 自愈闭环**: 将经典原生版的热切号架构扩展至 Antigravity IDE。当 IDE 处于运行态时，优先将凭据双写至 SQLite `state.vscdb`、系统 Keychain 与本地凭据，仅安全终止挂靠在 IDE 树下的后台 `agy`/`language_server` 语言服务子进程，由宿主 supervisor 原地拉起并挂载新凭据，彻底消除此前因杀死 IDE 主窗口导致的会话中断、未保存缓冲丢失与窗口闪烁问题；针对无解耦子进程的旧版 IDE 或拉起超时场景，自动平滑降级为完整安全重启，未运行状态下则自动唤醒启动 IDE 客户端。
+            -   **SQLite 安全条款确认状态对齐与免弹窗守护**: 在注入 IDE `state.vscdb` 数据库时，同步写入 `agy.onboarding.lastLoginUsername`、`antigravityOnboarding` 与 TOS 状态，彻底消除切换账号后 IDE 内嵌页面反复弹出“Security Notice & Data Use”条款向导卡片的问题。
+        -   **[账号手动预热弹窗确认与反代小额 Token 提示] (Ref #4009)**:
+            -   **预热确认弹窗全场景覆盖与机制透明化**: 在账号管理页中为单账号手动预热、批量勾选预热与全量预热弹窗统一增加明确提示，告知使用预热功能将通过反向代理发起一次小额 Token 的请求以激活会话与周期，避免误触与对底层原理的误解；并在设置页「7天周配额智能预热」卡片下方补充对应技术说明。(Ref #4009)
+
     *   **v5.0.4-beta.18 (2026-11-19)**:
         -   **[隐身侧载执行权威锚点强化与模型指令服从度修复] (Ref #3997, Thanks to @mqrkin)**:
             -   **注入 [SYSTEM MANDATE] 权威执行锚点消除降智与遗忘规则**: 针对复杂 Agent（如 Cursor/Cline/agy 等）携带大型自定义系统指令（数万字符）在触发「隐身侧载（Stealth Sideloading）」时，模型在首轮 user 消息中注意力权重不足导致盲目执行 `ls -R`、遗忘业务规则或编造事实的现象，在 `<system-instruction priority="critical" role="developer">` 容器首行注入强指令执行锚点（`[SYSTEM MANDATE]`）。在 100% 完整保留对抗 Google WAF 敏感词风控与伪 429 拦截能力的同时，强力唤醒模型对自定义规则与工具策略的最高服从度。(Ref #3997, Thanks to @mqrkin)
