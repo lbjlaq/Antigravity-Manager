@@ -29,7 +29,7 @@ export function GroupQuotaCard({ summary, liveLimit, isProtected, fullWidth }: G
         summary.key === 'gemini'
             ? 'Gemini'
             : summary.key === 'argon'
-                ? (fullWidth ? 'Gemini 4 Argon' : 'G4 Argon')
+                ? (fullWidth ? 'Gemini 4 Neon' : 'G4 Neon')
                 : 'Claude / GPT'
     );
     const isMultiBucket = fiveHour !== undefined && weekly !== undefined;

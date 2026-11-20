@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2, X } from 'lucide-react';
-import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
+import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -18,7 +18,7 @@ import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
-import { isArgonModel } from '../../utils/modelCategory';
+import { extractGemini4Codename, isFlagshipModel } from '../../utils/modelCategory';
 import AccountActionsModal from './AccountActionsModal';
 
 interface AccountCardProps {
@@ -98,11 +98,13 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
-        const hasArgon = hasAccountArgonCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isArgonModel);
+        const hasFlagship = hasAccountFlagshipCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isFlagshipModel);
+        const flagshipCode = supported.map(extractGemini4Codename).find(Boolean) || (hasFlagship ? 'neon' : null);
+        const flagshipLabel = flagshipCode ? flagshipCode.charAt(0).toUpperCase() + flagshipCode.slice(1) : 'Neon';
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
-        return { hasArgon, hasClaude55, hasClaude46, hasGpt };
+        return { hasArgon: hasFlagship, flagshipLabel, hasClaude55, hasClaude46, hasGpt };
     }, [account, groupSummaries]);
 
     const tags = useMemo(() => parseTags(account.custom_label), [account.custom_label]);
@@ -111,10 +113,10 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
         if (!config?.quota_protection?.enabled) return false;
         if (!account.protected_models || account.protected_models.length === 0) return false;
         if (key === 'argon') {
-            return account.protected_models.some(isArgonModel);
+            return account.protected_models.some(isFlagshipModel);
         }
         if (key === 'gemini') {
-            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && !isArgonModel(m));
+            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && !isFlagshipModel(m));
         } else {
             return account.protected_models.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
         }
@@ -342,7 +344,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                 <span
                                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/15 to-indigo-500/15 text-purple-700 dark:text-purple-300 text-[9px] font-bold border border-purple-200/60 dark:border-purple-800/50"
                                 >
-                                    Argon
+                                    {modelCapabilities.flagshipLabel}
                                 </span>
                             )}
                             {modelCapabilities.hasClaude55 && (
@@ -440,7 +442,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     <GroupQuotaCard
                                         summary={argon}
                                         isProtected={isGroupProtected('argon')}
-                                        liveLimit={getLiveLimitForModel(account, 'gemini-4-argon')}
+                                        liveLimit={getLiveLimitForModel(account, 'gemini-4-neon') || getLiveLimitForModel(account, 'gemini-4-argon')}
                                         fullWidth
                                     />
                                 </div>

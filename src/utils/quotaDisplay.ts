@@ -1,5 +1,5 @@
 import { checkArgonEligibility, type ModelQuota, type QuotaGroup } from '../types/account';
-import { isArgonModel } from './modelCategory';
+import { isArgonModel, extractGemini4Codename, isDedicatedG4Group } from './modelCategory';
 
 export type DashboardQuotaView = 'weighted' | '5h' | 'weekly';
 
@@ -88,12 +88,11 @@ export function getModelConstrainedQuota(
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
 
     const buckets = (groups || []).filter(group => {
-        const groupName = (group?.display_name || '').toLowerCase();
-        const hasArgonBucket = (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('argon'));
-        const groupIsArgon = groupName.includes('argon') || hasArgonBucket;
+        const groupIsArgon = isDedicatedG4Group(group) || /neon|argon/i.test(group?.display_name || '');
         if (isArgon) return groupIsArgon;
         if (groupIsArgon) return false;
 
+        const groupName = (group?.display_name || '').toLowerCase();
         const isThirdParty = /claude|gpt|3p/.test(groupName)
             || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
         return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
@@ -253,16 +252,28 @@ function summarizeSupportedModels(models: ModelQuota[], key: 'gemini' | 'claude'
     if (active.length === 0) {
         if (key === 'argon') {
             return {
-                dynamicLabel: 'Gemini 4 Argon',
-                supportedModels: ['gemini-4-argon', 'gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low', 'gemini-pro-orchestrator-g1-pro'],
+                dynamicLabel: 'Gemini 4 Neon',
+                supportedModels: ['gemini-4-neon', 'gemini-4-neon-high', 'gemini-4-neon-medium', 'gemini-4-neon-low', 'gemini-pro-orchestrator-g1-pro'],
             };
         }
         return { supportedModels: [] };
     }
 
     if (key === 'argon') {
+        const codenames = new Set<string>();
+        for (const n of active) {
+            const code = extractGemini4Codename(n);
+            if (code) {
+                codenames.add(code.charAt(0).toUpperCase() + code.slice(1));
+            }
+        }
+        const codenameList = Array.from(codenames);
+        const dynamicLabel = codenameList.length > 0
+            ? `Gemini 4 ${codenameList.join(' / ')}`
+            : 'Gemini 4 Neon';
+
         return {
-            dynamicLabel: 'Gemini 4 Argon',
+            dynamicLabel,
             supportedModels: active,
         };
     }
@@ -330,17 +341,16 @@ export function getGroupQuotaSummaries(
     const findGroupBuckets = (target: 'gemini' | 'claude' | 'argon') => {
         const directBuckets = (groups || []).filter(group => {
             const groupName = (group?.display_name || '').toLowerCase();
-            const hasArgonBucket = (group?.buckets || []).some(b => /argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
-            const isArgon = /argon/i.test(groupName) || hasArgonBucket;
-            if (target === 'argon') return isArgon;
-            if (isArgon) return false;
+            const isFlagship = isDedicatedG4Group(group) || /neon|argon/i.test(groupName);
+            if (target === 'argon') return isFlagship;
+            if (isFlagship) return false;
 
             const isThirdParty = /claude|gpt|3p/.test(groupName)
                 || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
             return target === 'claude' ? isThirdParty : !isThirdParty;
         }).flatMap(group => group?.buckets || []);
 
-        // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
+        // Ultra 账号在官方架构下未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
         if (target === 'argon' && directBuckets.length === 0 && isUltraTier) {
             return (groups || []).filter(group => {
                 const groupName = (group?.display_name || '').toLowerCase();
@@ -450,7 +460,7 @@ export function getGroupQuotaSummaries(
             ? 'accounts.quota_group_argon'
             : (key === 'claude' ? 'accounts.quota_group_claude' : 'accounts.quota_group_gemini');
         const defaultLabel = key === 'argon'
-            ? 'Gemini 4 Argon'
+            ? 'Gemini 4 Neon'
             : (key === 'claude' ? 'Claude & GPT Models' : 'Gemini Models');
 
         const matchedForSummary = fallbackModels.filter(m => {

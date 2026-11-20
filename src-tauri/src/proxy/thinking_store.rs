@@ -98,6 +98,23 @@ pub struct ThinkingRecord {
     pub context_anchor: String,
 }
 
+impl ThinkingRecord {
+    pub fn has_tool_calls(&self) -> bool {
+        !self.tool_ids.is_empty() || !self.tool_names.is_empty()
+    }
+
+    pub fn is_capturable(&self) -> bool {
+        if self.thought.trim().is_empty() && self.signature.is_none() {
+            return false;
+        }
+        is_capturable_thought(
+            &self.thought,
+            self.signature.as_deref(),
+            self.has_tool_calls(),
+        )
+    }
+}
+
 #[derive(Debug)]
 struct SessionEntry {
     turns: Vec<Arc<ThinkingRecord>>,
@@ -196,13 +213,9 @@ impl ThinkingStore {
         if !crate::proxy::config::is_thinking_store_enabled() {
             return;
         }
-        if rec.thought.trim().is_empty() && rec.signature.is_none() {
-            return;
-        }
-        // Placeholder "..." / sentinel-only blocks are injected for Gemini protocol
-        // compliance. Recording them as new turns made every 300K-context request
-        // append N dummies, then prune rewrite the whole SQLite session.
-        if !is_capturable_thought(&rec.thought, rec.signature.as_deref()) {
+        // Placeholder "..." / sentinel-only blocks or degraded turns (0 thought with 188B placeholder sig)
+        // must never be recorded into the store, preventing pollution and degradation.
+        if !rec.is_capturable() {
             return;
         }
 
@@ -371,6 +384,9 @@ impl ThinkingStore {
                     visible: p.visible,
                     context_anchor: p.context_anchor,
                 };
+                if !rec.is_capturable() {
+                    continue;
+                }
                 entry.bytes += record_bytes(&rec);
                 entry.turns.push(Arc::new(rec));
             }
@@ -1027,13 +1043,38 @@ impl ThinkingStore {
                 continue;
             };
 
+            let existing_is_meaningful = is_meaningful_thought(&turn.existing_thought);
+            let rec_is_meaningful = is_meaningful_thought(&rec.thought);
+
+            // 1. 若本地记录既无实质思考又无工具调用，该记录无任何可回填内容，直接跳过
+            if !rec_is_meaningful && !rec.has_tool_calls() {
+                continue;
+            }
+
+            // 2. 若历史轮次中已存在客户端发送的实质思考块，而本地记录并无实质思考（纯 FC 轮），绝不剥离现有实质思考块！
+            if existing_is_meaningful && !rec_is_meaningful {
+                let has_unvalidated_function_call = parts
+                    .iter()
+                    .any(|p| p.get("functionCall").is_some() && !part_has_signature(p));
+                if has_unvalidated_function_call && rec.has_tool_calls() {
+                    let fallback = rec
+                        .signature
+                        .as_deref()
+                        .filter(|s| is_real_signature(s) && is_likely_gemini_signature(s));
+                    place_turn_signature_scoped(&mut *parts, fallback, true, Some(store_key));
+                }
+                continue;
+            }
+
             let has_unvalidated_function_call = parts
                 .iter()
                 .any(|p| p.get("functionCall").is_some() && !part_has_signature(p));
 
             let should_replace = is_placeholder_thought(&turn.existing_thought)
-                || turn.existing_thought.len() < rec.thought.len()
-                || (rec.signature.is_some() && !parts.iter().any(|p| part_has_signature(p)))
+                || (rec_is_meaningful && turn.existing_thought.len() < rec.thought.len())
+                || (rec_is_meaningful
+                    && rec.signature.is_some()
+                    && !parts.iter().any(|p| part_has_signature(p)))
                 || has_unvalidated_function_call;
 
             if !should_replace {
@@ -1042,8 +1083,7 @@ impl ThinkingStore {
 
             parts.retain(|p| p.get("thought").and_then(|t| t.as_bool()) != Some(true));
 
-            let has_meaningful_thought =
-                !is_placeholder_thought(&rec.thought) && !rec.thought.trim().is_empty();
+            let has_meaningful_thought = rec_is_meaningful;
 
             let is_claude_target = target_model
                 .map(|m| m.to_lowercase().contains("claude"))
@@ -1149,10 +1189,8 @@ impl ThinkingStore {
                     parts.insert(0, thought_part);
                     restored += 1;
                 }
-            } else {
-                // 【2026-09-27】无实质思考内容（占位/空思考）：绝不注入 "..." 占位思考块！
-                // 官方标准形态为「无思考块 + 锚点带签名」（baogao.txt 9/24 轮）。
-                // 首个非思考 part 作为锚点正常承接该轮签名。
+            } else if rec.has_tool_calls() {
+                // 纯 FC 轮：无思考文本，仅工具调用锚点承接该轮签名，绝不计入 restored 思考块计数！
                 if is_claude_target {
                     let fallback = rec
                         .signature
@@ -1170,11 +1208,7 @@ impl ThinkingStore {
                         .signature
                         .as_deref()
                         .filter(|s| is_real_signature(s) && is_likely_gemini_signature(s));
-                    if place_turn_signature_scoped(&mut *parts, fallback, true, Some(store_key))
-                        .is_some()
-                    {
-                        restored += 1;
-                    }
+                    place_turn_signature_scoped(&mut *parts, fallback, true, Some(store_key));
                 }
             }
         }
@@ -1690,12 +1724,21 @@ impl TurnAccumulator {
         }
     }
 
+    pub fn has_tool_calls(&self) -> bool {
+        !self.tool_ids.is_empty() || !self.tool_names.is_empty()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.thought.trim().is_empty() && self.signature.is_none()
     }
 
     fn should_capture(&self) -> bool {
-        !self.is_empty() && is_capturable_thought(&self.thought, self.signature.as_deref())
+        !self.is_empty()
+            && is_capturable_thought(
+                &self.thought,
+                self.signature.as_deref(),
+                self.has_tool_calls(),
+            )
     }
 
     fn into_record(self) -> ThinkingRecord {
@@ -1797,20 +1840,22 @@ fn contents_have_capturable_thought(contents: &[Value]) -> bool {
         let Some(parts) = content.get("parts").and_then(|p| p.as_array()) else {
             continue;
         };
+        let has_tool_calls = parts.iter().any(|p| p.get("functionCall").is_some());
         for part in parts {
             let is_thought = part
                 .get("thought")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            if !is_thought {
-                continue;
-            }
-            let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
-            let sig = part
-                .get("thoughtSignature")
-                .or_else(|| part.get("thought_signature"))
-                .and_then(|s| s.as_str());
-            if is_capturable_thought(text, sig) {
+            if is_thought {
+                let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                let sig = part
+                    .get("thoughtSignature")
+                    .or_else(|| part.get("thought_signature"))
+                    .and_then(|s| s.as_str());
+                if is_capturable_thought(text, sig, has_tool_calls) {
+                    return true;
+                }
+            } else if has_tool_calls && part_has_signature(part) {
                 return true;
             }
         }
@@ -3322,17 +3367,13 @@ pub fn extract_think_tags(text: &str) -> Option<(String, String)> {
     None
 }
 
-fn is_capturable_thought(thought: &str, signature: Option<&str>) -> bool {
-    // 占位符或纯空白思考绝不可捕获为新的持久化思考记录！
-    if is_placeholder_thought(thought) || thought.trim().is_empty() {
-        // [DECOUPLE 2026-09-26] 官方新规：任何 model 轮都可能返回签名（正文轮 / 工具轮 / 纯思考轮）。
-        // 纯 fc 轮（无思考文本）只要携带真实签名，也必须入库——否则下一轮锚点回填时找不到签名。
-        return signature.is_some_and(is_real_signature);
-    }
-    if signature.is_some_and(is_real_signature) {
+fn is_capturable_thought(thought: &str, signature: Option<&str>, has_tool_calls: bool) -> bool {
+    if is_meaningful_thought(thought) {
         return true;
     }
-    is_meaningful_thought(thought)
+    // 纯 FC 轮（无实质思考文本）只要携带真实签名，可以入库承载工具调用签名；
+    // 非 FC 的纯文本降级轮（thought 为空且无工具调用），哪怕上游返回 188 字节的占位签名，也绝不入库！
+    has_tool_calls && signature.is_some_and(is_real_signature)
 }
 
 fn record_bytes(rec: &ThinkingRecord) -> usize {
@@ -3388,6 +3429,14 @@ fn can_merge_records(last: &ThinkingRecord, rec: &ThinkingRecord) -> bool {
 }
 
 fn is_stronger_record(new: &ThinkingRecord, old: &ThinkingRecord) -> bool {
+    let new_meaningful = is_meaningful_thought(&new.thought);
+    let old_meaningful = is_meaningful_thought(&old.thought);
+    if old_meaningful && !new_meaningful {
+        return false;
+    }
+    if !old_meaningful && new_meaningful {
+        return true;
+    }
     new.thought.len() > old.thought.len()
         || new.signature.as_ref().map(|s| s.len()).unwrap_or(0)
             > old.signature.as_ref().map(|s| s.len()).unwrap_or(0)
@@ -5676,6 +5725,134 @@ mod tests {
         assert!(
             fc["functionCall"].get("id").is_none(),
             "Synthetic ID must remain internal and not leak to client"
+        );
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(key);
+    }
+
+    #[test]
+    fn test_issue_3997_reject_degraded_text_turn_with_placeholder_sig() {
+        // ~188 字节的占位签名 (Base64 protobuf 格式，非空但无实质思考)
+        let placeholder_sig = "EhcBFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAX";
+        assert!(placeholder_sig.len() >= 32);
+
+        // 1. 无工具调用的普通文本轮次，即便携带 >= 32 字节占位签名，也绝不可被捕获
+        assert!(!is_capturable_thought("", Some(placeholder_sig), false));
+        assert!(!is_capturable_thought("   ", Some(placeholder_sig), false));
+
+        let rec = ThinkingRecord {
+            fingerprint: "txt_only".to_string(),
+            thought: "".to_string(),
+            signature: Some(placeholder_sig.to_string()),
+            tool_ids: Vec::new(),
+            tool_names: Vec::new(),
+            visible: "Hello world".to_string(),
+            context_anchor: "".to_string(),
+        };
+        assert!(
+            !rec.is_capturable(),
+            "Degraded text turn must not be capturable"
+        );
+
+        let store = ThinkingStore::new();
+        let key = "test_issue_3997_reject";
+        store.record(key, rec);
+
+        // 内存中不应存在任何记录
+        let turn_count = store.sessions.get(key).map(|s| s.turns.len()).unwrap_or(0);
+        assert_eq!(turn_count, 0, "Store must reject degraded text record");
+    }
+
+    #[test]
+    fn test_issue_3997_allow_pure_tool_call_with_signature() {
+        let real_sig = "EhcBFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAX";
+
+        // 纯 FC 轮次携带有效签名允许捕获，用于承载 tool call 签名回填
+        assert!(is_capturable_thought("", Some(real_sig), true));
+
+        let rec = ThinkingRecord {
+            fingerprint: "fc_only".to_string(),
+            thought: "".to_string(),
+            signature: Some(real_sig.to_string()),
+            tool_ids: vec!["call_123".to_string()],
+            tool_names: vec!["bash".to_string()],
+            visible: "".to_string(),
+            context_anchor: "call_123".to_string(),
+        };
+        assert!(
+            rec.is_capturable(),
+            "Pure FC turn with signature must be capturable"
+        );
+
+        let store = ThinkingStore::new();
+        let key = "test_issue_3997_allow_fc";
+        store.record(key, rec);
+
+        let turn_count = store.sessions.get(key).map(|s| s.turns.len()).unwrap_or(0);
+        assert_eq!(turn_count, 1, "Store should retain pure FC record");
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(key);
+    }
+
+    #[test]
+    fn test_issue_3997_do_not_strip_client_meaningful_thought() {
+        let store = ThinkingStore::new();
+        let key = "test_issue_3997_no_strip";
+
+        // 假设历史上有一次被捕获的纯 FC 记录（无思考文本）
+        let fc_rec = ThinkingRecord {
+            fingerprint: "fc_rec".to_string(),
+            thought: "".to_string(),
+            signature: Some("EhcBFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAXABcAFwAX".to_string()),
+            tool_ids: vec!["call_abc".to_string()],
+            tool_names: vec!["read_file".to_string()],
+            visible: "".to_string(),
+            context_anchor: "call_abc".to_string(),
+        };
+        store.record(key, fc_rec);
+
+        // 客户端在当前请求历史中自带了实质思考块（例如来自 OpenAI/Claude Code 的推理内容）
+        let mut gemini_contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{ "text": "Please read file" }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [
+                    { "thought": true, "text": "Client reasoning: thinking about what file to read step by step..." },
+                    { "functionCall": { "name": "read_file", "id": "call_abc", "args": { "path": "test.txt" } } }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "name": "read_file", "response": { "content": "hello" } } }]
+            }),
+        ];
+
+        let restored = store.restore_gemini_contents_with_model(
+            key,
+            &mut gemini_contents,
+            Some("gemini-3.8-flash-tiered"),
+        );
+
+        // 因为客户端已有实质思考块，且 store 记录为无思考块的 FC 记录：
+        // 绝不能剥离客户端的思考块，且 restored 计数不应增加
+        assert_eq!(
+            restored, 0,
+            "Pure FC turn must not count as restored thinking block"
+        );
+
+        let model_parts = gemini_contents[1]["parts"].as_array().expect("parts");
+        let thought_part = model_parts
+            .iter()
+            .find(|p| p.get("thought").and_then(|t| t.as_bool()) == Some(true));
+        assert!(
+            thought_part.is_some(),
+            "Existing client thought MUST NOT be stripped!"
+        );
+        assert_eq!(
+            thought_part.unwrap()["text"],
+            "Client reasoning: thinking about what file to read step by step..."
         );
 
         let _ = crate::modules::proxy_db::delete_thinking_records_for_session(key);
