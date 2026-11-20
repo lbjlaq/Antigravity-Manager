@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v5.0.3)
+> 专业级 AI 账号管理与协议代理系统 (v5.0.4)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-5.0.3-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-5.0.4-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -529,7 +529,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v5.0.3**（2026-11-06）：配额归因治理与调度内核重构——网关内部限流判据收敛至 `policy::is_internal_gateway_exhaustion` 单一权威源（根除占全量 5xx 92.6% 的 503 归因污染），新增 403 封禁专用归因 `account_forbidden`；将「上游告知的配额耗尽」与自适应熔断彻底解耦（熔断关闭时仍能锁定 `QuotaExhausted` 账号），重试循环引入 `attempted_accounts` 账号排除防反复锤击，并将配额过滤前置于优先级收敛以消除 0 配额高优账号饥饿全池的优先级倒置死锁 (Fixes #3838, #3841, PR #3845)；蹬额度模式由暴力禁用重构为最高调度优先级竞争，保住 Prompt Cache 并自动外溢并发流量 (PR #3840)；超时契约解除 135s/160s 硬截断，首字基准恢复 180s、多模态上限 270s、全局预算统一下沉 pipeline，Codex / Legacy 流式收敛至统一生命周期并补齐思考期自适应跃迁 (Fixes #3816, #3821, Ref #3763)；模型路由确立自定义映射最高优先级、旧版模型硬下线与先映射后判定、号池自适应暗路由与上游物理模型统一收敛至 `X-Upstream-Model` (Fixes #2065, Ref #3764, #3769, #3815)；多模态坏图 400 就地自愈与指纹黑名单、保鲜滑窗默认开启、Responses 协议日志脱敏与视觉 Token 估算 (Fixes #3758, #3824, #3756)；提示词清洗分轨保护用户正文、CTF 策略自适应剥离与 Gzip 入站解压 (Fixes #3764, #3781)；GCP Vertex AI 企业账号与 Project ID 一键获取、Antigravity IDE 2.6.0+ 三级双写切号与进程身份收敛、账号删除一致性、Web/Docker OAuth 与更新设置修复、DeepSeek Harness 一键同步 (Fixes #3823, #3829, #3806, #3802, #3754)；Linux 远程桌面保活、macOS Mini 视窗主线程调度、界面与字体缩放及托盘交互优化 (Fixes #3752, #3757, #3744)；工具签名缓存写入放大治理与 Token 双视角 + TTFT 统计、QoS 死锁修复 (PR #3765, PR #3774, Fixes #3810, #3749)；多智能体根会话归一化与凭据级强粘性、3P 幽灵配额治理 (Fixes #3789, #3809)。
+> 最新版本 **v5.0.4**（2026-11-20）：流式零篡改规范与调度生态稳态演进——严格遵循零正文篡改规范，彻底移除流式空思考注入假正文行为，输出标准 `finishReason: "STOP"` 与 `[DONE]` 帧并完整保全流式 Token 用量指标与日志透明度 (Fixes #4008)；流式思考截断判定精准收敛至异常中断，透传 `MAX_TOKENS` 等正常终止，增加高容量提档模型系列边界守卫 (Fixes #4006, PR #4007)；引入 `[SYSTEM MANDATE]` 权威执行锚点，消除大型 Prompt 隐身侧载下的模型降智与规则遗忘 (Ref #3997)；官方 Hub 指纹升至最新 2.33.0 (CL 1023160026) 并支持本地 binary 动态同源提取 (Fixes #3998)；Antigravity IDE 扩展无感热切号与条款声明免弹窗；Gemini 4+ 代号（Neon/Argon）动态提取与配额视图平滑迁移 (Fixes #3745)；工具 Schema 补全嵌套数组声明并支持 Object 联合类型智能合并 (Fixes #4001, PR #3878)；CacheFirst 粘性会话原地重试耗尽防死锁自动解绑与池内轮换 (Fixes #4002)；消除容量枯竭与思考降级之间的重试拉扯 (Fixes #4000)；引入长文本 KV 缓存防竞争延迟以最大化前缀命中率；收敛 403 恢复权威与测活错误透出 (Ref #3995, PR #4010)；支持在线更新与 Homebrew 双轨自由切换与通道即时联动。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 

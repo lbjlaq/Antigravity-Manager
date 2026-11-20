@@ -3,6 +3,15 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4 (2026-11-20)**:
+        > Evolving from v5.0.3 to v5.0.4 through 20 preview releases, this version delivers a comprehensive refactor of streaming zero-tampering contracts, stealth sideloading and anti-degradation architectures, seamless official Hub & IDE parity, and a resilient scheduling/self-healing core:
+
+        -   **Streaming & Thinking Resilience**: Canonical `finishReason: "STOP"` and `[DONE]` frames for thought-only streams with zero content tampering, preserving real token usage; precise streaming truncation semantics preserving `MAX_TOKENS` and adding model-family boundaries for tier promotion; thinking cache corruption protection; Claude/Gemini thought folding and discriminated object union merging (Fixes #4008, #4006, #3997, PR #4007, #4005, #3878, #3866, #3867).
+        -   **WAF Evasion & Prompt Engineering**: Injected `[SYSTEM MANDATE]` authority anchor to completely eliminate model instruction decay, rule forgetting, and blind `ls -R` under stealth sideloading; neutralized upstream WAF pseudo-429 triggers across Pi agent codemode, WorkBuddy, Codex, and DSH; introduced fine-grained rule scope selectors (`all` / `prompt` / `tools`) (Ref #3997, Fixes #3981, #3982, #3983, PR #3986).
+        -   **Ecosystem Parity & Protocol Robustness**: Official Hub baseline upgraded to 2.33.0 (CL 1023160026) with local binary dynamic extraction; Antigravity IDE dual-write seamless hot-switch and onboarding terms suppression; Gemini 4+ dynamic codename extraction with Neon quota UI migration; enforced `type: array` on nested tool schemas (Fixes #3998, #4001, #3745, #3842).
+        -   **Scheduler Core & Quota Self-Healing**: CacheFirst sticky session deadlock prevention via auto-unbinding and pool failover; mutual exclusion between capacity exhaustion and budget degradation; cache-settling delay grace window maximizing long-context prefix reuse; per-model-family account priority scheduling and 403 authority convergence (Fixes #4002, #4000, #3991, #3863, #3875, PR #3879, #3881, #3882).
+        -   **Operations & Multi-Platform**: 403 recovery visibility gate and transparent probe error surfacing; warmup confirmation transparency; dual-track updates with Homebrew switching and instant channel linkage; Windows deadlock resolution and Termux Android ARM64 support (Ref #3995, #4009, Fixes #3993, #3818, PR #4010, #3996).
+
     *   **v5.0.4-beta.19 (2026-11-20)**:
         -   **[Zero-Tampering Finish & Usage Preservation for Thought-Only Streams] (Fixes #4008)**:
             -   **Eliminate Synthetic "task ready" Injection on Auto-Heal Collapse**: Resolved an issue where the streaming gate injected a fallback `"task ready"` text when an upstream model produced only thinking blocks without visible content and subsequent auto-heal continuation failed, violating downstream agent expectations.
