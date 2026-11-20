@@ -345,6 +345,23 @@ fn inspect_gemini_candidate_parts(
     }
 }
 
+/// 构造纯思考收尾无假正文的标准终止帧组（finishReason: STOP 与 [DONE]）
+pub fn make_clean_empty_thought_stop_chunks(last_usage: Option<&Value>) -> (Bytes, Bytes) {
+    let mut candidate_obj = serde_json::Map::new();
+    candidate_obj.insert("finishReason".to_string(), json!("STOP"));
+    let mut stop_resp = json!({
+        "candidates": [Value::Object(candidate_obj)]
+    });
+    if let Some(usage) = last_usage {
+        stop_resp["usageMetadata"] = usage.clone();
+    }
+    let stop_chunk = format!(
+        "data: {}\n\n",
+        serde_json::to_string(&stop_resp).unwrap_or_default()
+    );
+    (Bytes::from(stop_chunk), Bytes::from("data: [DONE]\n\n"))
+}
+
 /// 统一纯思考空回复自愈流式包装器（Pipeline First）
 ///
 /// 对上游原始 Gemini SSE 流进行透明包装：
@@ -367,6 +384,7 @@ where
         let mut saw_tool_call = false;
         let mut saw_finish_reason = false;
         let mut finish_reason_val: Option<String> = None;
+        let mut last_usage_val: Option<Value> = None;
 
         let mut stream1 = stream;
         while let Some(item) = stream1.next().await {
@@ -409,6 +427,9 @@ where
                                     } else {
                                         &mut json
                                     };
+                                    if let Some(usage) = inner.get("usageMetadata").or_else(|| inner.get("usage")) {
+                                        last_usage_val = Some(usage.clone());
+                                    }
                                     let mut chunk_has_finish = false;
                                     let mut chunk_finish_is_stop = false;
                                     let mut chunk_has_parts = false;
@@ -549,6 +570,9 @@ where
                                             let json_part = line.trim_start_matches("data: ").trim();
                                             if let Ok(json) = serde_json::from_str::<Value>(json_part) {
                                                 let inner = json.get("response").unwrap_or(&json);
+                                                if let Some(usage) = inner.get("usageMetadata").or_else(|| inner.get("usage")) {
+                                                    last_usage_val = Some(usage.clone());
+                                                }
                                                 if let Some(candidates) = inner.get("candidates").and_then(|c| c.as_array()) {
                                                     for cand in candidates {
                                                         let mut dummy_thought = false;
@@ -578,68 +602,38 @@ where
                         }
                     }
 
-                    // 兜底防御：若续跑流依然未产出任何可视正文或工具调用，注入微小兜底避免客户端崩溃
+                    // 若续跑流依然未产出任何可视正文或工具调用，遵循零正文篡改原则输出标准 STOP 与 [DONE]
                     if !stream2_saw_output {
                         tracing::warn!(
-                            "[{}] [Stream-AutoHeal] Continuation stream also returned 0 output. Injecting fallback message to prevent client disconnect.",
+                            "[{}] [Stream-AutoHeal] Continuation stream also returned 0 output. Emitting clean STOP and [DONE] without fake content.",
                             ctx.trace_id
                         );
-                        let fallback_text = "task ready";
-                        let fallback_chunk = format!(
-                            "data: {}\n\n",
-                            serde_json::to_string(&json!({
-                                "candidates": [{
-                                    "content": {
-                                        "parts": [{ "text": fallback_text }],
-                                        "role": "model"
-                                    },
-                                    "finishReason": "STOP"
-                                }]
-                            })).unwrap_or_default()
-                        );
-                        yield Ok(Bytes::from(fallback_chunk));
+                        let (stop_chunk, done_chunk) =
+                            make_clean_empty_thought_stop_chunks(last_usage_val.as_ref());
+                        yield Ok(stop_chunk);
+                        yield Ok(done_chunk);
                     }
                 }
                 Ok(call_fail) => {
                     let status = call_fail.response.status();
-                    tracing::error!(
-                        "[{}] [Stream-AutoHeal] Continuation request returned HTTP {}. Injecting fallback message.",
+                    tracing::warn!(
+                        "[{}] [Stream-AutoHeal] Continuation request returned HTTP {}. Emitting clean STOP and [DONE] without fake content.",
                         ctx.trace_id, status
                     );
-                    let fallback_text = "task ready";
-                    let fallback_chunk = format!(
-                        "data: {}\n\n",
-                        serde_json::to_string(&json!({
-                            "candidates": [{
-                                "content": {
-                                    "parts": [{ "text": fallback_text }],
-                                    "role": "model"
-                                },
-                                "finishReason": "STOP"
-                            }]
-                        })).unwrap_or_default()
-                    );
-                    yield Ok(Bytes::from(fallback_chunk));
+                    let (stop_chunk, done_chunk) =
+                        make_clean_empty_thought_stop_chunks(last_usage_val.as_ref());
+                    yield Ok(stop_chunk);
+                    yield Ok(done_chunk);
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "[{}] [Stream-AutoHeal] Continuation request failed: {}. Injecting fallback message.",
+                    tracing::warn!(
+                        "[{}] [Stream-AutoHeal] Continuation request failed: {}. Emitting clean STOP and [DONE] without fake content.",
                         ctx.trace_id, e
                     );
-                    let fallback_text = "task ready";
-                    let fallback_chunk = format!(
-                        "data: {}\n\n",
-                        serde_json::to_string(&json!({
-                            "candidates": [{
-                                "content": {
-                                    "parts": [{ "text": fallback_text }],
-                                    "role": "model"
-                                },
-                                "finishReason": "STOP"
-                            }]
-                        })).unwrap_or_default()
-                    );
-                    yield Ok(Bytes::from(fallback_chunk));
+                    let (stop_chunk, done_chunk) =
+                        make_clean_empty_thought_stop_chunks(last_usage_val.as_ref());
+                    yield Ok(stop_chunk);
+                    yield Ok(done_chunk);
                 }
             }
         }
@@ -834,6 +828,48 @@ mod tests {
             }
         });
         assert_eq!(resolve_continuation_prompt(&body), "Continue.");
+    }
+
+    #[test]
+    fn test_make_clean_empty_thought_stop_chunks_with_usage() {
+        let usage = json!({
+            "promptTokenCount": 25,
+            "candidatesTokenCount": 512,
+            "totalTokenCount": 537
+        });
+        let (stop_chunk, done_chunk) = make_clean_empty_thought_stop_chunks(Some(&usage));
+        let stop_str = std::str::from_utf8(&stop_chunk).unwrap();
+        assert!(stop_str.starts_with("data: "));
+        assert!(stop_str.ends_with("\n\n"));
+        let json_str = stop_str.trim_start_matches("data: ").trim();
+        let parsed: Value = serde_json::from_str(json_str).unwrap();
+
+        // 关键断言：1. 严禁包含 parts 或任何伪造的 "task ready" 正文
+        assert!(parsed["candidates"][0].get("content").is_none());
+        assert!(!stop_str.contains("task ready"));
+
+        // 2. 正式输出 finishReason: "STOP"
+        assert_eq!(parsed["candidates"][0]["finishReason"], "STOP");
+
+        // 3. 完整保全思考产生的使用量元数据
+        assert_eq!(parsed["usageMetadata"]["candidatesTokenCount"], 512);
+
+        // 4. 正式输出 [DONE] 终结信号
+        assert_eq!(done_chunk.as_ref(), b"data: [DONE]\n\n");
+    }
+
+    #[test]
+    fn test_make_clean_empty_thought_stop_chunks_without_usage() {
+        let (stop_chunk, done_chunk) = make_clean_empty_thought_stop_chunks(None);
+        let stop_str = std::str::from_utf8(&stop_chunk).unwrap();
+        let json_str = stop_str.trim_start_matches("data: ").trim();
+        let parsed: Value = serde_json::from_str(json_str).unwrap();
+
+        assert!(parsed["candidates"][0].get("content").is_none());
+        assert!(!stop_str.contains("task ready"));
+        assert_eq!(parsed["candidates"][0]["finishReason"], "STOP");
+        assert!(parsed.get("usageMetadata").is_none());
+        assert_eq!(done_chunk.as_ref(), b"data: [DONE]\n\n");
     }
 
     #[test]
