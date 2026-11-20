@@ -2199,6 +2199,44 @@ impl InboundThinkingPipeline {
     /// [FIX 503] 当 Gemini 上游返回 503 (MODEL_CAPACITY_EXHAUSTED) 时，
     /// 说明 medium / low / tiered 算力池已枯竭，原地将模型升档至 high 算力通道并调整 thinkingLevel 为 HIGH。
     pub fn try_promote_to_high_capacity(body: &mut Value) -> bool {
+        // 先检查目标模型是否具备 high 升档资格
+        let model_str = body
+            .get("model")
+            .or_else(|| body.get("request").and_then(|r| r.get("model")))
+            .and_then(|m| m.as_str());
+
+        if let Some(m) = model_str {
+            let lower = m.to_lowercase();
+            // 不可升档为 high 的模型排除列表：
+            // 1. lite 系列（如 gemini-3.5-flash-lite，官方不存在 -high 且仅支持 LOW 思考档，盲目升档会导致 404 与 400 崩溃）
+            // 2. 图像/生图模型（如 imagen, image）
+            // 3. 向量/嵌入模型（如 embed, embedding）
+            // 4. 已经处于或高于 high 档位的模型（如 -high, -xhigh, -max, -extreme）
+            if lower.contains("lite")
+                || lower.contains("image")
+                || lower.contains("imagen")
+                || lower.contains("embed")
+                || lower.ends_with("-high")
+                || lower.ends_with("-xhigh")
+                || lower.ends_with("-max")
+                || lower.ends_with("-extreme")
+            {
+                return false;
+            }
+            // 仅对 flash 与 pro 系列（或明确带有 medium/low/tiered 的模型）做容量升档
+            if !lower.contains("flash")
+                && !lower.contains("pro")
+                && !lower.ends_with("-medium")
+                && !lower.ends_with("-low")
+                && !lower.ends_with("-tiered")
+            {
+                return false;
+            }
+        } else {
+            // 如果请求体中没有任何 model 字段，无法安全判定升档
+            return false;
+        }
+
         let mut promoted = false;
 
         let promote_tc = |tc: &mut Value| -> bool {
@@ -2262,6 +2300,17 @@ impl InboundThinkingPipeline {
         let mut promote_model_str = |m_val: &mut Value| {
             if let Some(m_str) = m_val.as_str() {
                 let lower = m_str.to_lowercase();
+                if lower.contains("lite")
+                    || lower.contains("image")
+                    || lower.contains("imagen")
+                    || lower.contains("embed")
+                    || lower.ends_with("-high")
+                    || lower.ends_with("-xhigh")
+                    || lower.ends_with("-max")
+                    || lower.ends_with("-extreme")
+                {
+                    return;
+                }
                 if lower.ends_with("-medium") {
                     *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
                     promoted = true;
@@ -2271,9 +2320,7 @@ impl InboundThinkingPipeline {
                 } else if lower.ends_with("-tiered") {
                     *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
                     promoted = true;
-                } else if (lower.contains("flash") || lower.contains("pro"))
-                    && !lower.ends_with("-high")
-                {
+                } else if lower.contains("flash") || lower.contains("pro") {
                     *m_val = json!(format!("{}-high", m_str));
                     promoted = true;
                 }
@@ -6207,5 +6254,78 @@ mod tests {
 
         let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&session_id);
         crate::proxy::thinking_store::ThinkingStore::global().end_session(&session_id);
+    }
+
+    #[test]
+    fn test_try_promote_to_high_capacity_issue_4006() {
+        // Case 1: flash-lite 不支持 -high 档位且仅支持 LOW 思考档，禁止升档
+        let mut lite_body = json!({
+            "model": "gemini-3.5-flash-lite",
+            "generationConfig": {
+                "thinkingConfig": { "thinkingLevel": "LOW" }
+            }
+        });
+        assert!(!InboundThinkingPipeline::try_promote_to_high_capacity(
+            &mut lite_body
+        ));
+        assert_eq!(lite_body["model"], "gemini-3.5-flash-lite");
+        assert_eq!(
+            lite_body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
+        );
+
+        // Case 2: 已是 high / xhigh / max / extreme 档位的模型，禁止再次升档
+        let mut xhigh_body = json!({
+            "model": "gemini-3.8-pro-xhigh",
+            "generationConfig": {
+                "thinkingConfig": { "thinkingLevel": "XHIGH" }
+            }
+        });
+        assert!(!InboundThinkingPipeline::try_promote_to_high_capacity(
+            &mut xhigh_body
+        ));
+        assert_eq!(xhigh_body["model"], "gemini-3.8-pro-xhigh");
+
+        // Case 3: 图像与嵌入模型，禁止升档
+        let mut imagen_body = json!({ "model": "imagen-3.0-generate-002" });
+        assert!(!InboundThinkingPipeline::try_promote_to_high_capacity(
+            &mut imagen_body
+        ));
+
+        let mut embed_body = json!({ "model": "text-embedding-004" });
+        assert!(!InboundThinkingPipeline::try_promote_to_high_capacity(
+            &mut embed_body
+        ));
+
+        // Case 4: 标准 flash / pro 或带 medium/low/tiered 后缀的模型，正常升档为 -high 并设置 thinkingLevel 为 HIGH
+        let mut flash_body = json!({
+            "model": "gemini-3.0-flash",
+            "generationConfig": {
+                "thinkingConfig": { "thinkingLevel": "MEDIUM" }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_promote_to_high_capacity(
+            &mut flash_body
+        ));
+        assert_eq!(flash_body["model"], "gemini-3.0-flash-high");
+        assert_eq!(
+            flash_body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+
+        let mut pro_medium_body = json!({
+            "model": "gemini-3.8-pro-medium",
+            "generationConfig": {
+                "thinkingConfig": { "thinkingLevel": "MEDIUM" }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_promote_to_high_capacity(
+            &mut pro_medium_body
+        ));
+        assert_eq!(pro_medium_body["model"], "gemini-3.8-pro-high");
+        assert_eq!(
+            pro_medium_body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
     }
 }

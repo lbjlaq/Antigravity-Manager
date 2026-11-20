@@ -390,7 +390,12 @@ where
                         if line.starts_with("data: ") {
                             let json_part = line.trim_start_matches("data: ").trim();
                             if json_part == "[DONE]" {
-                                if saw_content || saw_tool_call {
+                                // 仅当确认属于思考空回复异常（无正文、无工具调用且以 STOP 结束）时才暂缓发射 [DONE] 以便进行自愈
+                                let is_empty_thought_stop_collapse = saw_thought
+                                    && !saw_content
+                                    && !saw_tool_call
+                                    && finish_reason_val.as_deref() == Some("STOP");
+                                if !is_empty_thought_stop_collapse {
                                     yield Ok(Bytes::from("data: [DONE]\n\n"));
                                 }
                                 continue;
@@ -405,6 +410,7 @@ where
                                         &mut json
                                     };
                                     let mut chunk_has_finish = false;
+                                    let mut chunk_finish_is_stop = false;
                                     let mut chunk_has_parts = false;
 
                                     if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
@@ -424,6 +430,9 @@ where
                                                 chunk_has_finish = true;
                                                 saw_finish_reason = true;
                                                 finish_reason_val = Some(fr.to_string());
+                                                if fr == "STOP" {
+                                                    chunk_finish_is_stop = true;
+                                                }
                                             }
                                         }
                                     }
@@ -431,8 +440,8 @@ where
                                     if saw_content || saw_tool_call {
                                         // 正常回复流程：已看到正文或工具调用，原样放行
                                         yield Ok(Bytes::from(format!("data: {}\n\n", json_part)));
-                                    } else if saw_thought && chunk_has_finish {
-                                        // 思考空回复异常候选帧：
+                                    } else if saw_thought && chunk_has_finish && chunk_finish_is_stop {
+                                        // 思考空回复异常候选帧（仅限 finishReason == "STOP"）：
                                         // 若当前帧还包含思考部件，清洗剥离 finishReason 与 usageMetadata 后放行思考，不发射终止信号
                                         if chunk_has_parts {
                                             if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
@@ -448,9 +457,9 @@ where
                                             let sanitized = serde_json::to_string(&json).unwrap_or_default();
                                             yield Ok(Bytes::from(format!("data: {}\n\n", sanitized)));
                                         }
-                                        // 若无有效部件仅有 finishReason，彻底拦截暂存，不往下游发送
+                                        // 若无有效部件仅有 finishReason: "STOP"，彻底拦截暂存，不往下游发送
                                     } else {
-                                        // 普通思考块或中间流帧：原样透传
+                                        // 普通思考块、中间流帧、以及非 STOP 终止帧（如 MAX_TOKENS、SAFETY 等）：原样透传
                                         yield Ok(Bytes::from(format!("data: {}\n\n", json_part)));
                                     }
                                 }
@@ -485,11 +494,18 @@ where
         // 1. 存在思考块 (saw_thought)
         // 2. 无任何正文 (saw_content == false)
         // 3. 无任何工具调用 (saw_tool_call == false)
-        // 4. 上游正常返回了结束符 (saw_finish_reason == true)
-        if saw_thought && !saw_content && !saw_tool_call && saw_finish_reason {
+        // 4. 上游返回了正常结束符 STOP (finish_reason == Some("STOP"))
+        // 注意：若因为 token 耗尽等导致截断（如 MAX_TOKENS、SAFETY），属于正常语义截断，严禁拦截自愈
+        let is_empty_thought_stop_collapse = saw_thought
+            && !saw_content
+            && !saw_tool_call
+            && saw_finish_reason
+            && finish_reason_val.as_deref() == Some("STOP");
+
+        if is_empty_thought_stop_collapse {
             tracing::warn!(
-                "[{}] [Stream-AutoHeal] 🚨 Detected empty thinking completion (thought present, 0 content, 0 tool_calls, finishReason={:?}). Triggering auto-heal continuation 1/1...",
-                ctx.trace_id, finish_reason_val
+                "[{}] [Stream-AutoHeal] 🚨 Detected empty thinking completion (thought present, 0 content, 0 tool_calls, finishReason=STOP). Triggering auto-heal continuation 1/1...",
+                ctx.trace_id
             );
 
             // 发射 SSE 心跳注释保持客户端下游连接存活
@@ -1046,5 +1062,45 @@ mod tests {
         );
         assert!(!flags2.retried_with_budget_degraded);
         assert_eq!(medium_body["model"], "gemini-4-hydrogen-high");
+    }
+
+    #[test]
+    fn test_auto_heal_capacity_exhausted_skips_lite_and_unsupported_models_issue_4006() {
+        let classification = crate::proxy::pipeline::UpstreamClassification::classify(
+            503,
+            "The model is overloaded. Please try again later. MODEL_CAPACITY_EXHAUSTED",
+            None,
+        );
+        let err_text = "The model is overloaded. Please try again later. MODEL_CAPACITY_EXHAUSTED";
+        let mut lite_body = json!({
+            "model": "gemini-3.5-flash-lite",
+            "generationConfig": {
+                "thinkingConfig": {
+                    "thinkingLevel": "LOW"
+                }
+            }
+        });
+        let mut degraded = None;
+        let mut flags = AutoHealFlags::default();
+
+        let out = try_auto_heal(
+            &classification,
+            503,
+            err_text,
+            &mut lite_body,
+            &mut degraded,
+            &mut flags,
+        );
+        assert!(
+            out.is_none(),
+            "flash-lite must not be promoted to -high or degraded"
+        );
+        assert!(!flags.retried_with_capacity_promoted);
+        assert!(!flags.retried_with_budget_degraded);
+        assert_eq!(lite_body["model"], "gemini-3.5-flash-lite");
+        assert_eq!(
+            lite_body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
+        );
     }
 }
