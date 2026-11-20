@@ -122,11 +122,12 @@ function Accounts() {
   const [isBatchDelete, setIsBatchDelete] = useState(false);
 
   const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
+  const [warmupTargetAccountId, setWarmupTargetAccountId] = useState<string | null>(null);
   const [isWarmuping, setIsWarmuping] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [errorAccountId, setErrorAccountId] = useState<string | null>(null);
 
-  const handleWarmup = async (accountId: string) => {
+  const executeSingleWarmup = async (accountId: string) => {
     setRefreshingIds((prev) => {
       const next = new Set(prev);
       next.add(accountId);
@@ -144,6 +145,11 @@ function Accounts() {
         return next;
       });
     }
+  };
+
+  const handleWarmup = (accountId: string) => {
+    setWarmupTargetAccountId(accountId);
+    setIsWarmupConfirmOpen(true);
   };
 
   const handleUpdateLabel = async (accountId: string, label: string) => {
@@ -1090,7 +1096,10 @@ function Accounts() {
 
           <button
             className={`px-2.5 py-2 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarmuping ? "opacity-70 cursor-not-allowed" : ""}`}
-            onClick={() => setIsWarmupConfirmOpen(true)}
+            onClick={() => {
+              setWarmupTargetAccountId(null);
+              setIsWarmupConfirmOpen(true);
+            }}
             disabled={isWarmuping}
             title={
               selectedIds.size > 0
@@ -1283,27 +1292,46 @@ function Accounts() {
       <ModalDialog
         isOpen={isWarmupConfirmOpen}
         title={
-          selectedIds.size > 0
-            ? t("accounts.dialog.batch_warmup_title", "批量手动预热")
-            : t("accounts.dialog.warmup_all_title", "全量手动预热")
+          warmupTargetAccountId
+            ? t("accounts.dialog.single_warmup_title", "账号手动预热")
+            : selectedIds.size > 0
+              ? t("accounts.dialog.batch_warmup_title", "批量手动预热")
+              : t("accounts.dialog.warmup_all_title", "全量手动预热")
         }
         message={
-          selectedIds.size > 0
+          warmupTargetAccountId
             ? t(
-              "accounts.dialog.batch_warmup_msg",
-              "确定要为选中的 {{count}} 个账号立即触发预热吗？",
-              { count: selectedIds.size },
+              "accounts.dialog.single_warmup_msg",
+              "确定要为该账号触发预热吗？使用预热功能将通过反向代理发起一次小额 Token 的请求以激活会话与周期。",
             )
-            : t(
-              "accounts.dialog.warmup_all_msg",
-              "确定要立即为所有符合条件的账号触发预热任务吗？这将向 Google 服务发送极小流量。",
-            )
+            : selectedIds.size > 0
+              ? t(
+                "accounts.dialog.batch_warmup_msg",
+                "确定要为选中的 {{count}} 个账号立即触发预热吗？使用预热功能将通过反向代理发起小额 Token 的请求以激活周期。",
+                { count: selectedIds.size },
+              )
+              : t(
+                "accounts.dialog.warmup_all_msg",
+                "确定要立即为所有符合条件的账号触发预热任务吗？使用预热功能将通过反向代理发起小额 Token 的请求以激活周期。",
+              )
         }
         type="confirm"
         confirmText={t("accounts.warmup_now", "立即预热")}
         isDestructive={false}
-        onConfirm={handleWarmupAll}
-        onCancel={() => setIsWarmupConfirmOpen(false)}
+        onConfirm={async () => {
+          setIsWarmupConfirmOpen(false);
+          if (warmupTargetAccountId) {
+            const targetId = warmupTargetAccountId;
+            setWarmupTargetAccountId(null);
+            await executeSingleWarmup(targetId);
+          } else {
+            await handleWarmupAll();
+          }
+        }}
+        onCancel={() => {
+          setIsWarmupConfirmOpen(false);
+          setWarmupTargetAccountId(null);
+        }}
       />
 
       {/* 账号错误详情弹窗 */}

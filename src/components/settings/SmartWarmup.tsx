@@ -67,6 +67,9 @@ const SmartWarmup: React.FC<SmartWarmupProps> = ({ config, onChange }) => {
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                             {t('settings.warmup.desc', '在各账号的 7 天周配额到达重置时间后自动唤醒 1 次，启动当周计时器，零多余消耗。')}
                         </p>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+                            {t('settings.warmup.notice', '说明：使用预热功能将通过反向代理发起一次小额 Token 的请求以激活会话与周期。')}
+                        </p>
                     </div>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
