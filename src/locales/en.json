@@ -628,6 +628,7 @@
         "clear_forbidden_success": "403 lock cleared successfully, re-probing account...",
         "warmup_success": "Account re-probe succeeded! Restored to active pool.",
         "warmup_failed_warning": "Lock cleared, but probe did not fully pass. Please check your proxy node.",
+        "warmup_failed_warning_with_reason": "Lock cleared, but re-probe failed: {{reason}}",
         "clear_forbidden_failed": "Failed to clear 403 status"
     },
     "settings": {

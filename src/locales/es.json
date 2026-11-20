@@ -539,6 +539,7 @@
         "clear_forbidden_success": "Bloqueo 403 limpiado con éxito, probando cuenta...",
         "warmup_success": "¡Reprueba de cuenta exitosa! Restaurada al grupo activo.",
         "warmup_failed_warning": "Bloqueo eliminado, pero la prueba no pasó por completo. Verifique su proxy.",
+        "warmup_failed_warning_with_reason": "Bloqueo eliminado, pero la comprobación falló: {{reason}}",
         "clear_forbidden_failed": "Error al limpiar el estado 403"
     },
     "settings": {

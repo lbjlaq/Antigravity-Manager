@@ -537,6 +537,7 @@
         "clear_forbidden_success": "تم مسح قفل 403 بنجاح، جارٍ إعادة الفحص...",
         "warmup_success": "نجح فحص الحساب! تم استعادته إلى المجموعة النشطة.",
         "warmup_failed_warning": "تمت إزالة القفل، لكن الفحص لم يكتمل بنجاح. يرجى التحقق من الخادم الوكيل.",
+        "warmup_failed_warning_with_reason": "تمت إزالة القفل، لكن إعادة الفحص فشلت: {{reason}}",
         "clear_forbidden_failed": "فشل مسح حالة 403"
     },
     "settings": {

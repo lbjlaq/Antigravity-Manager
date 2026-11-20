@@ -539,6 +539,7 @@
         "clear_forbidden_success": "403ロックが正常に解除されました。再検証中...",
         "warmup_success": "アカウントの再検証に成功しました！正常に復帰しました。",
         "warmup_failed_warning": "ロックは解除されましたが、検証に完全にはパスしませんでした。プロキシを確認してください。",
+        "warmup_failed_warning_with_reason": "ロックは解除されましたが、再検証に失敗しました: {{reason}}",
         "clear_forbidden_failed": "403状態の解除に失敗しました"
     },
     "settings": {

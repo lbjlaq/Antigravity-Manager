@@ -539,6 +539,7 @@
         "clear_forbidden_success": "403 잠금이 성공적으로 해제되었습니다. 재검증 중...",
         "warmup_success": "계정 재검증 성공! 정상적으로 복원되었습니다.",
         "warmup_failed_warning": "잠금은 해제되었으나 검증이 완료되지 않았습니다. 프록시 노드를 확인하세요.",
+        "warmup_failed_warning_with_reason": "잠금은 해제되었으나 재검증에 실패했습니다: {{reason}}",
         "clear_forbidden_failed": "403 상태 해제 실패"
     },
     "settings": {

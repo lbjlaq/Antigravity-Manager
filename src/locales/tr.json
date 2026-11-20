@@ -539,6 +539,7 @@
         "clear_forbidden_success": "403 kilidi başarıyla temizlendi, yeniden sınanıyor...",
         "warmup_success": "Hesap sınaması başarılı! Havuza geri yüklendi.",
         "warmup_failed_warning": "Kilit temizlendi ancak sınama tam geçmedi. Lütfen proxy'nizi kontrol edin.",
+        "warmup_failed_warning_with_reason": "Kilit temizlendi ancak yeniden sınama başarısız oldu: {{reason}}",
         "clear_forbidden_failed": "403 durumu temizlenemedi"
     },
     "settings": {

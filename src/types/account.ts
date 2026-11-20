@@ -20,6 +20,7 @@ export interface Account {
     disabled?: boolean;
     disabled_reason?: string;
     disabled_at?: number;
+    manual_proxy_disabled?: boolean;
     proxy_disabled?: boolean;
     proxy_disabled_reason?: string;
     proxy_disabled_at?: number;

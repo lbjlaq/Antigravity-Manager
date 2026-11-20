@@ -626,6 +626,7 @@
         "clear_forbidden_success": "已成功清除 403 锁定状态，正在重新测活...",
         "warmup_success": "账号重新测活成功！已恢复正常",
         "warmup_failed_warning": "锁定已清除，但测活仍未完全通过，请检查代理节点",
+        "warmup_failed_warning_with_reason": "锁定已清除，但重新测活未通过：{{reason}}",
         "clear_forbidden_failed": "解除 403 状态失败"
     },
     "settings": {
