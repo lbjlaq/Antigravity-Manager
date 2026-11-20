@@ -17,6 +17,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'refresh_all_quotas': { url: '/api/accounts/refresh', method: 'POST' },
   'reorder_accounts': { url: '/api/accounts/reorder', method: 'POST' },
   'toggle_proxy_status': { url: '/api/accounts/:accountId/toggle-proxy', method: 'POST' },
+  'clear_account_forbidden': { url: '/api/accounts/:accountId/clear-forbidden', method: 'POST' },
   'warm_up_accounts': { url: '/api/accounts/warmup', method: 'POST' },
   'warm_up_all_accounts': { url: '/api/accounts/warmup', method: 'POST' },
   'warm_up_account': { url: '/api/accounts/:accountId/warmup', method: 'POST' },

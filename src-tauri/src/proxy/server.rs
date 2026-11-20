@@ -994,6 +994,10 @@ impl AxumServer {
                 "/accounts/:accountId/toggle-proxy",
                 post(admin_toggle_proxy_status),
             )
+            .route(
+                "/accounts/:accountId/clear-forbidden",
+                post(admin_clear_account_forbidden),
+            )
             .route("/accounts/warmup", post(admin_warm_up_all_accounts))
             .route("/accounts/:accountId/warmup", post(admin_warm_up_account))
             .route(
@@ -3689,6 +3693,19 @@ async fn admin_toggle_proxy_status(
     } else {
         state.token_manager.prepare_manual_enable(&account_id);
     }
+    let _ = state.token_manager.reload_account(&account_id).await;
+
+    Ok(StatusCode::OK)
+}
+
+async fn admin_clear_account_forbidden(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::modules::account::clear_account_forbidden_lock(&account_id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
+
+    state.token_manager.prepare_manual_enable(&account_id);
     let _ = state.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)
