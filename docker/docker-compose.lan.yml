@@ -1,0 +1,31 @@
+# Standalone deployment using the published image (no local Rust build).
+# docker compose --env-file docker/.env -f docker/docker-compose.lan.yml up -d
+name: antigravity-local
+
+services:
+  antigravity-manager:
+    image: lbjlaq/antigravity-manager:v5.0.3
+    container_name: antigravity-manager
+    ports:
+      - "0.0.0.0:${PORT:-8045}:8045"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      API_KEY: ${API_KEY:?Set API_KEY in docker/.env}
+      WEB_PASSWORD: ${WEB_PASSWORD:?Set WEB_PASSWORD in docker/.env}
+      ABV_AUTH_MODE: all_except_health
+      ABV_BIND_LOCAL_ONLY: "false"
+      ABV_DATA_DIR: /root/.antigravity_tools
+      ABV_MAX_BODY_SIZE: ${ABV_MAX_BODY_SIZE:-104857600}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,::1,antigravity-manager
+    volumes:
+      - ${ABV_HOST_DATA_DIR:-~/.antigravity_tools}:/root/.antigravity_tools
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
