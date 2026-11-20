@@ -497,10 +497,12 @@
             "disable_proxy_msg": "Tem certeza de que deseja desabilitar o proxy para esta conta? A conta permanecerá utilizável no aplicativo.",
             "enable_proxy_title": "Habilitar Proxy",
             "enable_proxy_msg": "Tem certeza de que deseja reabilitar o proxy para esta conta?",
+            "single_warmup_title": "Aquecimento Manual da Conta",
+            "single_warmup_msg": "Tem certeza de que deseja acionar o aquecimento para esta conta? O recurso de aquecimento envia uma solicitação de tokens mínima por meio do proxy reverso para ativar sessões e ciclos.",
             "warmup_all_title": "Aquecimento Manual Completo",
-            "warmup_all_msg": "Tem certeza de que deseja acionar tarefas de aquecimento para todas as contas elegíveis imediatamente? Isso enviará tráfego mínimo para os serviços do Google para redefinir ciclos de cota.",
+            "warmup_all_msg": "Tem certeza de que deseja acionar tarefas de aquecimento para todas as contas qualificadas? O recurso de aquecimento envia solicitações de tokens mínimas por meio do proxy reverso para ativar ciclos.",
             "batch_warmup_title": "Aquecimento Manual em Lote",
-            "batch_warmup_msg": "Tem certeza de que deseja acionar o aquecimento para as {{count}} contas selecionadas imediatamente?"
+            "batch_warmup_msg": "Tem certeza de que deseja acionar o aquecimento para as {{count}} contas selecionadas imediatamente? O recurso de aquecimento envia solicitações de tokens mínimas por meio do proxy reverso para ativar ciclos."
         },
         "switch_to_agy": "Alternar para Antigravity CLI (agy)",
         "switch_to_acp": "Alternar para o plugin do IDE Antigravity (ACP)",
@@ -543,6 +545,7 @@
         "clear_forbidden_success": "Bloqueio 403 limpo com sucesso, testando conta...",
         "warmup_success": "Teste de conta bem-sucedido! Restaurada ao pool ativo.",
         "warmup_failed_warning": "Bloqueio removido, mas o teste não passou totalmente. Verifique seu proxy.",
+        "warmup_failed_warning_with_reason": "Bloqueio removido, mas o novo teste falhou: {{reason}}",
         "clear_forbidden_failed": "Falha ao limpar status 403"
     },
     "settings": {
@@ -625,6 +628,7 @@
         "warmup": {
             "title": "Aquecimento Inteligente",
             "desc": "Monitora automaticamente todos os modelos e aciona o aquecimento imediatamente quando a cota atinge 100%, mantendo os modelos aquecidos",
+            "notice": "Observação: A função de aquecimento envia uma solicitação de tokens mínima por meio do proxy reverso para ativar sessões e ciclos.",
             "monitored_models_label": "Escopo de Modelos para Pré-aquecimento",
             "monitored_models_desc": "Selecione os modelos a serem pré-aquecidos. Quando a cota semanal atingir o horário de redefinição, um despertar automático será executado para iniciar o ciclo."
         },

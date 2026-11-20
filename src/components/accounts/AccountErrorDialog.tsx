@@ -1,6 +1,6 @@
 import { Ban, Lock, Clock, ExternalLink, Copy, FileText, Terminal, ChevronDown, ChevronRight, RefreshCw, CheckCircle2, Globe } from 'lucide-react';
 import { Account } from '../../types/account';
-import { isValidationBlockActive } from '../../utils/accountStatus';
+import { canClearForbiddenLock, formatWarmUpErrorDetail, isValidationBlockActive } from '../../utils/accountStatus';
 import { formatDate } from '../../utils/format';
 import { useTranslation, Trans } from 'react-i18next';
 import ModalDialog from '../common/ModalDialog';
@@ -155,7 +155,7 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     // 识别错误类型
     const isViolation = isBanned || rawReason.toLowerCase().includes('terms of service') || rawReason.toLowerCase().includes('violation');
     const isVerificationNeeded = !isViolation && (rawReason.toLowerCase().includes('verify your account') || !!account.validation_url);
-    const isLocationError = rawReason.toLowerCase().includes('location') && rawReason.toLowerCase().includes('support');
+    const showClearForbiddenAction = canClearForbiddenLock(account);
 
     // 如果是违规/封禁或系统 403 锁定，但上游报文没有携带任何验证链接，兜底使用 Google 官方申诉表单
     const isFallbackAppealUrl = !actionUrl && (isViolation || isForbidden || isBanned);
@@ -175,11 +175,22 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                 await warmUpAccount(account.id);
                 showToast(t('accounts.warmup_success', '账号重新测活成功！已恢复正常'), 'success');
             } catch (warmUpErr) {
-                showToast(t('accounts.warmup_failed_warning', '锁定已清除，但测活仍未完全通过，请检查代理节点'), 'info');
+                const detail = formatWarmUpErrorDetail(warmUpErr);
+                showToast(
+                    detail
+                        ? t('accounts.warmup_failed_warning_with_reason', {
+                            reason: detail,
+                            defaultValue: '锁定已清除，但测活未通过：{{reason}}',
+                        })
+                        : t('accounts.warmup_failed_warning', '锁定已清除，但测活仍未完全通过，请检查代理节点'),
+                    'warning',
+                    5000
+                );
             }
             onClose();
         } catch (err) {
-            showToast(String(err) || t('accounts.clear_forbidden_failed', '解除 403 状态失败'), 'error');
+            const detail = formatWarmUpErrorDetail(err);
+            showToast(detail || t('accounts.clear_forbidden_failed', '解除 403 状态失败'), 'error', 5000);
         } finally {
             setIsClearing(false);
         }
@@ -352,8 +363,8 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                         </>
                     )}
 
-                    {/* 一键清除 403 锁定与重新测活 (假 403 / 地区限制 / 恢复试探) */}
-                    {(isForbidden || isLocationError || (isProxyDisabled && !isBanned)) && !isBanned && !showRaw && (
+                    {/* 一键清除 403 锁定与重新测活 (仅在非封禁、非停用且存在 403 / 验证 / 地区限制锁定时展示) */}
+                    {showClearForbiddenAction && !showRaw && (
                         <div className="mt-4 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/40">
                             <div className="flex items-center justify-between gap-2 mb-2">
                                 <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">

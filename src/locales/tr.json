@@ -461,10 +461,12 @@
             "disable_proxy_msg": "Bu hesap için proxy'yi devre dışı bırakmak istediğinizden emin misiniz? Hesap uygulamada kullanılabilir durumda kalacaktır.",
             "enable_proxy_title": "Proxy'yi Etkinleştir",
             "enable_proxy_msg": "Bu hesap için proxy'yi yeniden etkinleştirmek istediğinizden emin misiniz?",
+            "single_warmup_title": "Hesap Manuel Isıtma",
+            "single_warmup_msg": "Bu hesap için ısıtmayı başlatmak istediğinizden emin misiniz? Isıtma özelliği, oturumları ve döngüleri etkinleştirmek için ters proxy üzerinden küçük bir token isteği gönderir.",
             "warmup_all_title": "Full Manual Warmup",
-            "warmup_all_msg": "Are you sure you want to trigger warmup tasks for all eligible accounts immediately? This will send minimal traffic to Google services to reset quota cycles.",
+            "warmup_all_msg": "Tüm uygun hesaplar için ısıtma görevlerini hemen başlatmak istediğinizden emin misiniz? Isıtma özelliği, döngüleri etkinleştirmek için ters proxy üzerinden küçük token istekleri gönderir.",
             "batch_warmup_title": "Batch Manual Warmup",
-            "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately?"
+            "batch_warmup_msg": "Seçilen {{count}} hesap için hemen ısıtmayı başlatmak istediğinizden emin misiniz? Isıtma özelliği, döngüleri etkinleştirmek için ters proxy üzerinden küçük token istekleri gönderir."
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
         "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
@@ -539,6 +541,7 @@
         "clear_forbidden_success": "403 kilidi başarıyla temizlendi, yeniden sınanıyor...",
         "warmup_success": "Hesap sınaması başarılı! Havuza geri yüklendi.",
         "warmup_failed_warning": "Kilit temizlendi ancak sınama tam geçmedi. Lütfen proxy'nizi kontrol edin.",
+        "warmup_failed_warning_with_reason": "Kilit temizlendi ancak yeniden sınama başarısız oldu: {{reason}}",
         "clear_forbidden_failed": "403 durumu temizlenemedi"
     },
     "settings": {
@@ -854,7 +857,8 @@
         },
         "warmup": {
             "title": "7-Day Weekly Reset Warmup",
-            "desc": "Automatically sends a minimal ping once when the 7-day weekly quota resets, starting the countdown with zero extra token waste."
+            "desc": "Automatically sends a minimal ping once when the 7-day weekly quota resets, starting the countdown with zero extra token waste.",
+            "notice": "Not: Isıtma özelliği, oturumları ve döngüleri etkinleştirmek için ters proxy üzerinden küçük bir token isteği gönderir."
         },
         "quota_protection": {
             "title": "Quota Protection",

@@ -492,10 +492,12 @@
             "disable_proxy_msg": "¿Está seguro de que desea deshabilitar el proxy para esta cuenta? La cuenta seguirá siendo utilizable en la app.",
             "enable_proxy_title": "Habilitar Proxy",
             "enable_proxy_msg": "¿Está seguro de que desea volver a habilitar el proxy para esta cuenta?",
+            "single_warmup_title": "Calentamiento manual de cuenta",
+            "single_warmup_msg": "¿Está seguro de que desea activar el calentamiento para esta cuenta? La función de calentamiento envía una solicitud de tokens mínima a través del proxy inverso para activar sesiones y ciclos.",
             "warmup_all_title": "Calentamiento Manual Completo",
-            "warmup_all_msg": "¿Está seguro de que desea activar tareas de calentamiento para todas las cuentas elegibles inmediatamente? Esto enviará tráfico mínimo a los servicios de Google para reiniciar los ciclos de cuota.",
+            "warmup_all_msg": "¿Está seguro de que desea activar tareas de calentamiento para todas las cuentas elegibles? La función de calentamiento envía solicitudes de tokens mínimas a través del proxy inverso para activar ciclos.",
             "batch_warmup_title": "Calentamiento Manual en Lote",
-            "batch_warmup_msg": "¿Está seguro de que desea activar el calentamiento para las {{count}} cuentas seleccionadas inmediatamente?"
+            "batch_warmup_msg": "¿Está seguro de que desea activar el calentamiento para las {{count}} cuentas seleccionadas inmediatamente? La función de calentamiento envía solicitudes de tokens mínimas a través del proxy inverso para activar ciclos."
         },
         "switch_to_agy": "Cambiar a CLI de Antigravity (agy)",
         "switch_to_acp": "Cambiar al plugin de IDE de Antigravity (ACP)",
@@ -539,6 +541,7 @@
         "clear_forbidden_success": "Bloqueo 403 limpiado con éxito, probando cuenta...",
         "warmup_success": "¡Reprueba de cuenta exitosa! Restaurada al grupo activo.",
         "warmup_failed_warning": "Bloqueo eliminado, pero la prueba no pasó por completo. Verifique su proxy.",
+        "warmup_failed_warning_with_reason": "Bloqueo eliminado, pero la comprobación falló: {{reason}}",
         "clear_forbidden_failed": "Error al limpiar el estado 403"
     },
     "settings": {
@@ -618,7 +621,8 @@
         },
         "warmup": {
             "title": "Calentamiento Inteligente",
-            "desc": "Monitorea automáticamente todos los modelos y activa el calentamiento inmediatamente cuando la cuota alcanza el 100%, manteniendo los modelos activos"
+            "desc": "Monitorea automáticamente todos los modelos y activa el calentamiento inmediatamente cuando la cuota alcanza el 100%, manteniendo los modelos activos",
+            "notice": "Nota: La función de calentamiento envía una solicitud de tokens mínima a través del proxy inverso para activar sesiones y ciclos."
         },
         "quota_protection": {
             "title": "Protección de Cuota",

@@ -492,10 +492,12 @@
             "disable_proxy_msg": "이 계정의 프록시를 비활성화하시겠습니까? 계정은 앱 내에서 계속 사용할 수 있습니다.",
             "enable_proxy_title": "프록시 활성화",
             "enable_proxy_msg": "이 계정의 프록시를 다시 활성화하시겠습니까?",
+            "single_warmup_title": "계정 수동 웜업",
+            "single_warmup_msg": "이 계정에 대해 웜업을 실행하시겠습니까? 웜업 기능은 리버스 프록시를 통해 소량의 토큰 요청을 전송하여 세션과 주기를 활성화합니다.",
             "warmup_all_title": "전체 수동 웜업",
-            "warmup_all_msg": "모든 대상 계정에 대해 즉시 웜업 작업을 트리거하시겠습니까? 할당량 주기를 재설정하기 위해 Google 서비스에 최소한의 트래픽을 보냅니다.",
+            "warmup_all_msg": "모든 대상 계정에 대해 즉시 웜업 작업을 실행하시겠습니까? 웜업 기능은 리버스 프록시를 통해 소량의 토큰 요청을 전송하여 주기를 활성화합니다.",
             "batch_warmup_title": "일괄 수동 웜업",
-            "batch_warmup_msg": "선택한 {{count}}개 계정에 대해 즉시 웜업을 트리거하시겠습니까?"
+            "batch_warmup_msg": "선택한 {{count}}개 계정에 대해 즉시 웜업을 실행하시겠습니까? 웜업 기능은 리버스 프록시를 통해 소량의 토큰 요청을 전송하여 주기를 활성화합니다."
         },
         "switch_to_agy": "Antigravity CLI (agy)로 전환",
         "switch_to_acp": "Antigravity IDE 플러그인 (ACP)으로 전환",
@@ -539,6 +541,7 @@
         "clear_forbidden_success": "403 잠금이 성공적으로 해제되었습니다. 재검증 중...",
         "warmup_success": "계정 재검증 성공! 정상적으로 복원되었습니다.",
         "warmup_failed_warning": "잠금은 해제되었으나 검증이 완료되지 않았습니다. 프록시 노드를 확인하세요.",
+        "warmup_failed_warning_with_reason": "잠금은 해제되었으나 재검증에 실패했습니다: {{reason}}",
         "clear_forbidden_failed": "403 상태 해제 실패"
     },
     "settings": {
@@ -618,7 +621,8 @@
         },
         "warmup": {
             "title": "스마트 웜업",
-            "desc": "모든 모델을 자동으로 모니터링하고 할당량이 100%에 도달하면 즉시 웜업을 실행하여 모델을 활성 상태로 유지합니다."
+            "desc": "모든 모델을 자동으로 모니터링하고 할당량이 100%에 도달하면 즉시 웜업을 실행하여 모델을 활성 상태로 유지합니다.",
+            "notice": "참고: 웜업 기능은 리버스 프록시를 통해 소량의 토큰 요청을 전송하여 세션과 주기를 활성화합니다."
         },
         "quota_protection": {
             "title": "할당량 보호",

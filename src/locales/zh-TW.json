@@ -476,10 +476,12 @@
             "disable_proxy_msg": "確定要停用此帳號的反向代理功能嗎？帳號仍可在應用程式中使用。",
             "enable_proxy_title": "啟用反向代理",
             "enable_proxy_msg": "確定要重新啟用此帳號的反向代理功能嗎？",
+            "single_warmup_title": "帳號手動預熱",
+            "single_warmup_msg": "確定要為該帳號觸發預熱嗎？使用預熱功能將透過反向代理發起一次小額 Token 的請求以啟動工作階段與週期。",
             "warmup_all_title": "全量手動預熱",
-            "warmup_all_msg": "確定要立即為所有符合條件的帳號觸發預熱任務嗎？這將向 Google 服務傳送極小流量以重置配額配額週期。",
+            "warmup_all_msg": "確定要立即為所有符合條件的帳號觸發預熱任務嗎？使用預熱功能將透過反向代理發起小額 Token 的請求以啟動週期。",
             "batch_warmup_title": "批次手動預熱",
-            "batch_warmup_msg": "確定要為選中的 {{count}} 個帳號立即觸發預熱嗎？"
+            "batch_warmup_msg": "確定要為選中的 {{count}} 個帳號立即觸發預熱嗎？使用預熱功能將透過反向代理發起小額 Token 的請求以啟動週期。"
         },
         "switch_to_agy": "切換到 Antigravity CLI (agy)",
         "switch_to_acp": "切換到 Antigravity IDE 外掛 (ACP)",
@@ -538,6 +540,7 @@
         "clear_forbidden_success": "已成功清除 403 鎖定狀態，正在重新測活...",
         "warmup_success": "帳號重新測活成功！已恢復正常",
         "warmup_failed_warning": "鎖定已清除，但測活仍未完全通過，請檢查代理節點",
+        "warmup_failed_warning_with_reason": "鎖定已清除，但重新測活未通過：{{reason}}",
         "clear_forbidden_failed": "解除 403 狀態失敗"
     },
     "settings": {
@@ -617,7 +620,8 @@
         },
         "warmup": {
             "title": "智慧預熱",
-            "desc": "自動監控所有模型，當額度恢復到 100% 時立即觸發預熱，保持模型熱狀態"
+            "desc": "自動監控所有模型，當額度恢復到 100% 時立即觸發預熱，保持模型熱狀態",
+            "notice": "說明：使用預熱功能將透過反向代理發起一次小額 Token 的請求以啟動工作階段與週期。"
         },
         "quota_protection": {
             "title": "配額保護",

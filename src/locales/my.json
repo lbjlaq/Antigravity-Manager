@@ -469,10 +469,12 @@
             "disable_proxy_msg": "Adakah anda pasti mahu menyahaktifkan proksi untuk akaun ini? Akaun akan kekal boleh digunakan dalam aplikasi.",
             "enable_proxy_title": "Aktifkan Proksi",
             "enable_proxy_msg": "Adakah anda pasti mahu mengaktifkan semula proksi untuk akaun ini?",
+            "single_warmup_title": "Pemanasan Manual Akaun",
+            "single_warmup_msg": "Adakah anda pasti mahu mencetuskan pemanasan untuk akaun ini? Ciri pemanasan menghantar permintaan token yang kecil melalui proksi terbalik untuk mengaktifkan sesi dan kitaran.",
             "warmup_all_title": "Pemanasan Manual Penuh",
-            "warmup_all_msg": "Adakah anda pasti mahu mencetuskan tugas pemanasan untuk semua akaun yang layak dengan segera? Ini akan menghantar trafik minimum ke perkhidmatan Google untuk menetapkan semula kitaran kuota.",
+            "warmup_all_msg": "Adakah anda pasti mahu mencetuskan tugas pemanasan untuk semua akaun yang layak dengan segera? Ciri pemanasan menghantar permintaan token yang kecil melalui proksi terbalik untuk mengaktifkan kitaran.",
             "batch_warmup_title": "Pemanasan Manual Kelompok",
-            "batch_warmup_msg": "Adakah anda pasti mahu mencetuskan pemanasan untuk {{count}} akaun yang dipilih dengan segera?"
+            "batch_warmup_msg": "Adakah anda pasti mahu mencetuskan pemanasan untuk {{count}} akaun yang dipilih dengan segera? Ciri pemanasan menghantar permintaan token yang kecil melalui proksi terbalik untuk mengaktifkan kitaran."
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
         "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
@@ -537,6 +539,7 @@
         "clear_forbidden_success": "403 လော့ခ်အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ၊ ပြန်လည်စစ်ဆေးနေပါသည်...",
         "warmup_success": "အကောင့်စစ်ဆေးခြင်း အောင်မြင်ပါသည်! ပုံမှန်အခြေအနေသို့ ပြန်လည်ရောက်ရှိပါပြီ။",
         "warmup_failed_warning": "လော့ခ်ဖယ်ရှားပြီးဖြစ်သော်လည်း စစ်ဆေးမှု လုံးဝမအောင်မြင်သေးပါ၊ ပရောက်စီကို စစ်ဆေးပါ။",
+        "warmup_failed_warning_with_reason": "လော့ခ်ဖယ်ရှားပြီးဖြစ်သော်လည်း ပြန်လည်စစ်ဆေးမှု မအောင်မြင်ပါ: {{reason}}",
         "clear_forbidden_failed": "403 အခြေအနေ ရှင်းလင်းခြင်း မအောင်မြင်ပါ"
     },
     "settings": {
@@ -616,7 +619,8 @@
         },
         "warmup": {
             "title": "Pemanasan Pintar",
-            "desc": "Memantau semua model secara automatik dan mencetuskan pemanasan dengan segera apabila kuota mencapai 100%, memastikan model sentiasa panas"
+            "desc": "Memantau semua model secara automatik dan mencetuskan pemanasan dengan segera apabila kuota mencapai 100%, memastikan model sentiasa panas",
+            "notice": "Nota: Ciri pemanasan menghantar permintaan token yang kecil melalui proksi terbalik untuk mengaktifkan sesi dan kitaran."
         },
         "quota_protection": {
             "title": "Perlindungan Kuota",

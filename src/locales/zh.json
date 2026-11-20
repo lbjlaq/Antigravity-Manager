@@ -545,10 +545,12 @@
             "disable_proxy_msg": "确定要禁用此账号的反代功能吗？账号仍可在应用中使用。",
             "enable_proxy_title": "启用反代",
             "enable_proxy_msg": "确定要重新启用此账号的反代功能吗？",
+            "single_warmup_title": "账号手动预热",
+            "single_warmup_msg": "确定要为该账号触发预热吗？使用预热功能将通过反向代理发起一次小额 Token 的请求以激活会话与周期。",
             "warmup_all_title": "全量手动预热",
-            "warmup_all_msg": "确定要立即为所有符合条件的账号触发预热任务吗？这将向 Google 服务发送极小流量以重置配额配额周期。",
+            "warmup_all_msg": "确定要立即为所有符合条件的账号触发预热任务吗？使用预热功能将通过反向代理发起小额 Token 的请求以激活周期。",
             "batch_warmup_title": "批量手动预热",
-            "batch_warmup_msg": "确定要为选中的 {{count}} 个账号立即触发预热吗？"
+            "batch_warmup_msg": "确定要为选中的 {{count}} 个账号立即触发预热吗？使用预热功能将通过反向代理发起小额 Token 的请求以激活周期。"
         },
         "switch_to_agy": "切换到 Antigravity CLI (agy)",
         "switch_to_acp": "切换到 Antigravity IDE 插件 (ACP)",
@@ -626,6 +628,7 @@
         "clear_forbidden_success": "已成功清除 403 锁定状态，正在重新测活...",
         "warmup_success": "账号重新测活成功！已恢复正常",
         "warmup_failed_warning": "锁定已清除，但测活仍未完全通过，请检查代理节点",
+        "warmup_failed_warning_with_reason": "锁定已清除，但重新测活未通过：{{reason}}",
         "clear_forbidden_failed": "解除 403 状态失败"
     },
     "settings": {
@@ -705,7 +708,8 @@
         },
         "warmup": {
             "title": "7天周配额智能预热",
-            "desc": "在各账号的 7 天周配额到达重置时间后自动唤醒 1 次，启动当周计时器，零多余消耗。"
+            "desc": "在各账号的 7 天周配额到达重置时间后自动唤醒 1 次，启动当周计时器，零多余消耗。",
+            "notice": "说明：使用预热功能将通过反向代理发起一次小额 Token 的请求以激活会话与周期。"
         },
         "quota_protection": {
             "title": "配额保护",

@@ -466,10 +466,12 @@
             "disable_proxy_msg": "Bạn có chắc muốn tắt proxy cho tài khoản này? Tài khoản vẫn dùng được trong app nhưng sẽ không nhận traffic từ proxy.",
             "enable_proxy_title": "Bật Proxy",
             "enable_proxy_msg": "Bạn có chắc muốn bật lại proxy cho tài khoản này?",
+            "single_warmup_title": "Làm nóng tài khoản thủ công",
+            "single_warmup_msg": "Bạn có chắc muốn làm nóng tài khoản này? Tính năng làm nóng sẽ gửi một yêu cầu token nhỏ qua reverse proxy để kích hoạt phiên và chu kỳ.",
             "warmup_all_title": "Làm nóng Thủ công Toàn bộ",
-            "warmup_all_msg": "Bạn có chắc muốn chạy tác vụ làm nóng cho tất cả tài khoản đủ điều kiện ngay bây giờ? Việc này sẽ gửi một lượng traffic nhỏ đến Google để reset chu kỳ hạn mức.",
+            "warmup_all_msg": "Bạn có chắc muốn chạy tác vụ làm nóng cho tất cả tài khoản đủ điều kiện ngay bây giờ? Tính năng làm nóng sẽ gửi yêu cầu token nhỏ qua reverse proxy để kích hoạt chu kỳ.",
             "batch_warmup_title": "Làm nóng Thủ công Hàng loạt",
-            "batch_warmup_msg": "Bạn có chắc muốn chạy tác vụ làm nóng cho {{count}} tài khoản đã chọn ngay bây giờ?"
+            "batch_warmup_msg": "Bạn có chắc muốn làm nóng ngay cho {{count}} tài khoản đã chọn? Tính năng làm nóng sẽ gửi yêu cầu token nhỏ qua reverse proxy để kích hoạt chu kỳ."
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
         "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
@@ -539,6 +541,7 @@
         "clear_forbidden_success": "Đã xóa khóa 403 thành công, đang kiểm tra lại...",
         "warmup_success": "Kiểm tra lại tài khoản thành công! Đã khôi phục hoạt động.",
         "warmup_failed_warning": "Đã xóa khóa nhưng kiểm tra chưa hoàn toàn thành công. Vui lòng kiểm tra proxy.",
+        "warmup_failed_warning_with_reason": "Đã xóa khóa nhưng kiểm tra lại thất bại: {{reason}}",
         "clear_forbidden_failed": "Xóa trạng thái 403 thất bại"
     },
     "settings": {
@@ -618,7 +621,8 @@
         },
         "warmup": {
             "title": "Làm nóng Thông minh (Smart Warmup)",
-            "desc": "Tự động theo dõi và kích hoạt làm nóng ngay khi hạn mức hồi phục về 100%, giữ cho model luôn sẵn sàng (warm)."
+            "desc": "Tự động theo dõi và kích hoạt làm nóng ngay khi hạn mức hồi phục về 100%, giữ cho model luôn sẵn sàng (warm).",
+            "notice": "Lưu ý: Tính năng làm nóng sẽ gửi một yêu cầu token nhỏ qua reverse proxy để kích hoạt phiên và chu kỳ."
         },
         "quota_protection": {
             "title": "Bảo vệ Hạn mức",

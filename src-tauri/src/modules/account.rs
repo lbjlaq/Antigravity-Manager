@@ -1150,6 +1150,196 @@ mod tests {
     }
 
     #[test]
+    fn test_clear_account_forbidden_lock_rejects_disabled_account() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-clear-403-disabled-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "disabled@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.disabled = true;
+        account.disabled_reason = Some("invalid_grant: Bad Request".to_string());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("dead_account_quarantine".to_string());
+        save_account(&account).unwrap();
+
+        let err = clear_account_forbidden_lock(acc_id).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("disabled"),
+            "unexpected error: {}",
+            err
+        );
+
+        let unchanged = load_account(acc_id).unwrap();
+        assert!(unchanged.disabled);
+        assert!(
+            unchanged.proxy_disabled,
+            "disabled account proxy_disabled must not be cleared"
+        );
+        assert_eq!(
+            unchanged.proxy_disabled_reason.as_deref(),
+            Some("dead_account_quarantine")
+        );
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_lock_rejects_banned_account() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-clear-403-banned-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "banned@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.banned = true;
+        account.banned_code = Some("TOS_VIOLATION".to_string());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("banned: TOS_VIOLATION".to_string());
+        save_account(&account).unwrap();
+
+        let err = clear_account_forbidden_lock(acc_id).unwrap_err();
+        assert!(err.contains("TOS_VIOLATION"), "unexpected error: {}", err);
+
+        let unchanged = load_account(acc_id).unwrap();
+        assert!(unchanged.banned);
+        assert!(unchanged.proxy_disabled);
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_lock_rejects_manual_proxy_disabled_without_403() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-clear-403-manual-only-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "manual@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.proxy_disabled = true;
+        account.manual_proxy_disabled = true;
+        account.proxy_disabled_reason = Some("用户手动禁用".to_string());
+        save_account(&account).unwrap();
+
+        let err = clear_account_forbidden_lock(acc_id).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("no active 403"),
+            "unexpected error: {}",
+            err
+        );
+
+        let unchanged = load_account(acc_id).unwrap();
+        assert!(unchanged.proxy_disabled);
+        assert!(unchanged.manual_proxy_disabled);
+        assert_eq!(
+            unchanged.proxy_disabled_reason.as_deref(),
+            Some("用户手动禁用")
+        );
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_lock_preserves_manual_proxy_disabled_when_clearing_403() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-clear-403-preserve-manual-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "manual-and-403@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.proxy_disabled = true;
+        account.manual_proxy_disabled = true;
+        account.proxy_disabled_reason = Some("批量禁用".to_string());
+        account
+            .forbidden_models
+            .insert("claude-sonnet-5-5".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("403 Forbidden".to_string());
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        clear_account_forbidden_lock(acc_id).unwrap();
+
+        let updated = load_account(acc_id).unwrap();
+        assert!(!updated.quota.as_ref().unwrap().is_forbidden);
+        assert!(updated.quota.as_ref().unwrap().forbidden_reason.is_none());
+        assert!(updated.forbidden_models.is_empty());
+        assert!(
+            updated.proxy_disabled,
+            "manual proxy_disabled must be preserved"
+        );
+        assert!(updated.manual_proxy_disabled);
+        assert_eq!(updated.proxy_disabled_reason.as_deref(), Some("批量禁用"));
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_lock_clears_403_validation_and_location_locks() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-clear-403-full-unlock-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "locked403@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.validation_blocked = true;
+        account.validation_blocked_until = Some(chrono::Utc::now().timestamp() + 600);
+        account.validation_blocked_reason = Some("VALIDATION_REQUIRED".to_string());
+        account.validation_url = Some("https://accounts.google.com/challenge".to_string());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Location not supported".to_string());
+        account
+            .forbidden_models
+            .insert("gemini-4-argon".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("Location not supported".to_string());
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        clear_account_forbidden_lock(acc_id).unwrap();
+
+        let unlocked = load_account(acc_id).unwrap();
+        assert!(!unlocked.validation_blocked);
+        assert!(unlocked.validation_blocked_until.is_none());
+        assert!(unlocked.validation_blocked_reason.is_none());
+        assert!(unlocked.validation_url.is_none());
+        assert!(!unlocked.proxy_disabled);
+        assert!(unlocked.proxy_disabled_reason.is_none());
+        assert!(unlocked.forbidden_models.is_empty());
+        assert!(!unlocked.quota.as_ref().unwrap().is_forbidden);
+        assert!(unlocked.quota.as_ref().unwrap().forbidden_reason.is_none());
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
     fn test_clear_validation_blocked_accepts_lowercase_validation_reason() {
         let _guard = SHARED_TEST_ENV_LOCK
             .lock()
@@ -4608,7 +4798,10 @@ pub fn toggle_proxy_status_with_intent(
 }
 
 /// 清除账号的系统 403 锁定及模型级冻结（用户手动强制解除或重新测活前调用）。
-/// 注意：若账号已被上游确认永久封禁（banned = true），则拒绝清除，必须走官方申诉流程。
+/// 注意：
+/// 1. 若账号已被上游确认永久封禁（banned = true），则拒绝清除，必须走官方申诉流程；
+/// 2. 若账号已被停用（disabled = true，例如 OAuth invalid_grant），清除 403 无法恢复凭据，必须重新授权；
+/// 3. 仅清除系统 403 / 验证 / 地区限制锁定，严格保留用户手动或非 403 原因设置的 proxy_disabled 意图。
 pub fn clear_account_forbidden_lock(account_id: &str) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
@@ -4623,30 +4816,69 @@ pub fn clear_account_forbidden_lock(account_id: &str) -> Result<(), String> {
         ));
     }
 
+    if account.disabled {
+        return Err(
+            "Account is disabled (e.g. OAuth invalid_grant); re-authorize the account instead of clearing 403 lock"
+                .to_string(),
+        );
+    }
+
+    let had_forbidden = account.quota.as_ref().is_some_and(|q| q.is_forbidden);
+    let had_validation = account.validation_blocked
+        || account.validation_blocked_until.is_some()
+        || account.validation_blocked_reason.is_some()
+        || account.validation_url.is_some();
+    let had_model_forbidden = !account.forbidden_models.is_empty();
+    let proxy_reason_is_clearable =
+        account
+            .proxy_disabled_reason
+            .as_deref()
+            .is_some_and(|reason| {
+                matches!(
+                    classify_lock_reason(reason),
+                    AccountLockKind::HardForbidden | AccountLockKind::Validation
+                ) || crate::models::account::is_location_unsupported_error(reason)
+            });
+    let had_clearable_proxy_lock = account.proxy_disabled
+        && !account.manual_proxy_disabled
+        && (proxy_reason_is_clearable
+            || (account.proxy_disabled_reason.is_none() && (had_forbidden || had_validation)));
+
+    if !had_forbidden && !had_validation && !had_model_forbidden && !had_clearable_proxy_lock {
+        return Err("Account has no active 403 or validation lock to clear".to_string());
+    }
+
     // 清除 quota 中的 403 标记
     if let Some(ref mut q) = account.quota {
         q.is_forbidden = false;
         q.forbidden_reason = None;
     }
 
-    // 清除账号级 proxy_disabled 锁定（仅清除系统 403 / 验证原因，保留用户意图）
-    account.manual_proxy_disabled = false;
-    account.proxy_disabled = false;
-    account.proxy_disabled_reason = None;
-    account.proxy_disabled_at = None;
+    // 完整清除验证锁定状态（避免残留 validation_blocked=true 叠加 until=None 变成永久锁定）
+    account.validation_blocked = false;
     account.validation_blocked_until = None;
     account.validation_blocked_reason = None;
+    account.validation_url = None;
+
+    // 仅清除由系统 403 / 验证 / 地区限制触发的 proxy_disabled，保留用户手动或非 403 停代意图
+    if had_clearable_proxy_lock {
+        account.proxy_disabled = false;
+        account.proxy_disabled_reason = None;
+        account.proxy_disabled_at = None;
+    }
 
     // 清空模型级 403 冻结列表
     account.forbidden_models.clear();
 
     save_account(&account)?;
 
-    // 同步更新索引
-    let mut index = load_account_index()?;
-    if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
-        summary.proxy_disabled = false;
-        let _ = save_account_index(&index);
+    // 仅在解除 proxy_disabled 时同步更新索引
+    if had_clearable_proxy_lock {
+        let mut index = load_account_index()?;
+        if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+            summary.proxy_disabled = false;
+            let _ = save_account_index(&index);
+        }
     }
 
     crate::proxy::server::trigger_account_reload(account_id);

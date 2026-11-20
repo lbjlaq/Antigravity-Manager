@@ -547,10 +547,12 @@
             "disable_proxy_msg": "Are you sure you want to disable proxy for this account? The account will remain usable in the app.",
             "enable_proxy_title": "Enable Proxy",
             "enable_proxy_msg": "Are you sure you want to re-enable proxy for this account?",
+            "single_warmup_title": "Account Manual Warmup",
+            "single_warmup_msg": "Are you sure you want to trigger warmup for this account? Warmup sends a small-token request through the reverse proxy to activate sessions and cycles.",
             "warmup_all_title": "Full Manual Warmup",
-            "warmup_all_msg": "Are you sure you want to trigger warmup tasks for all eligible accounts immediately? This will send minimal traffic to Google services to reset quota cycles.",
+            "warmup_all_msg": "Are you sure you want to trigger warmup for all eligible accounts? Warmup sends small-token requests through the reverse proxy to activate cycles.",
             "batch_warmup_title": "Batch Manual Warmup",
-            "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately?"
+            "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately? Warmup sends small-token requests through the reverse proxy to activate cycles."
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
         "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
@@ -628,6 +630,7 @@
         "clear_forbidden_success": "403 lock cleared successfully, re-probing account...",
         "warmup_success": "Account re-probe succeeded! Restored to active pool.",
         "warmup_failed_warning": "Lock cleared, but probe did not fully pass. Please check your proxy node.",
+        "warmup_failed_warning_with_reason": "Lock cleared, but re-probe failed: {{reason}}",
         "clear_forbidden_failed": "Failed to clear 403 status"
     },
     "settings": {
@@ -707,7 +710,8 @@
         },
         "warmup": {
             "title": "7-Day Weekly Reset Warmup",
-            "desc": "Automatically sends a minimal ping once when the 7-day weekly quota resets, starting the countdown with zero extra token waste."
+            "desc": "Automatically sends a minimal ping once when the 7-day weekly quota resets, starting the countdown with zero extra token waste.",
+            "notice": "Note: Using the warmup feature sends a small-token request through the reverse proxy to activate sessions and cycles."
         },
         "quota_protection": {
             "title": "Quota Protection",
