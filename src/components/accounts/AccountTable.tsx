@@ -52,10 +52,9 @@ import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { showToast } from '../common/ToastContainer';
-import { exportAccounts, releaseAccountQoSJail } from '../../services/accountService';
+import { exportAccounts } from '../../services/accountService';
 import { copyToClipboard } from '../../utils/clipboard';
 import AccountSwitchMenu from './AccountSwitchMenu';
-import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
@@ -331,19 +330,6 @@ function AccountRowContent({
 
     const tags = useMemo(() => parseTags(account.custom_label), [account.custom_label]);
 
-    const handleReleaseJail = async () => {
-        try {
-            await releaseAccountQoSJail(account.id);
-            showToast(t('accounts.qos.release_success', '已解除该账号的小黑屋限制'), 'success');
-            // 解除小黑屋只影响运行时 QoS 状态，与配额无关：直接重拉账号列表立即回显。
-            // 若复用 onRefresh 的配额刷新链路，上游 429/503 时 fetchAccountQuota 会抛错，
-            // 列表刷新被跳过，界面上的「限速小黑屋中」徽章就会一直残留。
-            await useAccountStore.getState().fetchAccounts();
-        } catch (err: any) {
-            showToast(err?.message || '解除失败', 'error');
-        }
-    };
-
     const tier = useMemo(() => getAccountTier(account), [account]);
     const groupSummaries = useMemo(() => {
         return getGroupQuotaSummaries(account.quota?.quota_groups, account.quota?.models, tier);
@@ -497,13 +483,6 @@ function AccountRowContent({
                                 </button>
                             ))
                         )}
-                        <QoSStatusBadge
-                            status={account.qos_status}
-                            resetSeconds={account.qos_reset_seconds}
-                            size="md"
-                            onRelease={handleReleaseJail}
-                        />
-
 
                         {/* 订阅类型徽章 */}
                         {(() => {

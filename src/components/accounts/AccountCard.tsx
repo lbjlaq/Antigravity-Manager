@@ -8,10 +8,9 @@ import { useAccountStore } from '../../stores/useAccountStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { showToast } from '../common/ToastContainer';
-import { exportAccounts, releaseAccountQoSJail } from '../../services/accountService';
+import { exportAccounts } from '../../services/accountService';
 import { copyToClipboard } from '../../utils/clipboard';
 import AccountSwitchMenu from './AccountSwitchMenu';
-import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { isValidationBlockActive } from '../../utils/accountStatus';
@@ -74,16 +73,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
     const isAgy = activeClients?.agy_account_id === account.id;
     const isAcp = activeClients?.acp_account_id === account.id;
     const isCurrent = propIsCurrent || isClassic || isIde || isAgy || isAcp;
-
-    const handleReleaseJail = async () => {
-        try {
-            await releaseAccountQoSJail(account.id);
-            showToast(t('accounts.qos.release_success', '已解除该账号的小黑屋限制'), 'success');
-            await useAccountStore.getState().fetchAccounts();
-        } catch (err: any) {
-            showToast(err?.message || '解除失败', 'error');
-        }
-    };
 
     const tier = useMemo(() => getAccountTier(account), [account]);
     const groupSummaries = useMemo(() => {
@@ -233,12 +222,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     {validationBlockedLabel.toUpperCase()}
                                 </span>
                             )}
-                            <QoSStatusBadge
-                                status={account.qos_status}
-                                resetSeconds={account.qos_reset_seconds}
-                                size="sm"
-                                onRelease={handleReleaseJail}
-                            />
                             {/* 订阅类型徽章 */}
                             {(() => {
                                 const tier = getAccountTier(account);

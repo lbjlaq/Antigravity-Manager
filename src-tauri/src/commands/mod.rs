@@ -15,12 +15,6 @@ pub async fn list_accounts() -> Result<Vec<Account>, String> {
         .unwrap_or_else(|_| Err("Task panicked".to_string()))
 }
 
-/// 手动解除账号的小黑屋限制 (QoS 隔离与冷却)
-#[tauri::command]
-pub async fn release_account_qos_jail(_account_id: String) -> Result<(), String> {
-    Ok(())
-}
-
 /// 手动解除账号指定模型的 403 冻结
 #[tauri::command]
 pub async fn remove_account_forbidden_model(

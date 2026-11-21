@@ -70,10 +70,6 @@ export async function deleteAccount(accountId: string): Promise<void> {
     return await invoke('delete_account', { accountId });
 }
 
-export async function releaseAccountQoSJail(accountId: string): Promise<void> {
-    return await invoke('release_account_qos_jail', { accountId });
-}
-
 export async function deleteAccounts(accountIds: string[]): Promise<void> {
     return await invoke('delete_accounts', { accountIds });
 }

@@ -10,7 +10,6 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'add_account': { url: '/api/accounts', method: 'POST' },
   'batch_import_accounts': { url: '/api/accounts/batch-import', method: 'POST' },
   'delete_account': { url: '/api/accounts/:accountId', method: 'DELETE' },
-  'release_account_qos_jail': { url: '/api/accounts/:accountId/release-qos', method: 'POST' },
   'delete_accounts': { url: '/api/accounts/bulk-delete', method: 'POST' },
   'fetch_account_quota': { url: '/api/accounts/:accountId/quota', method: 'GET' },
   'refresh_account_quota': { url: '/api/accounts/:accountId/quota', method: 'GET' },
