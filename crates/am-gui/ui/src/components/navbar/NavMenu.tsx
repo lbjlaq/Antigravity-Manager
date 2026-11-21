@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import { LayoutDashboard, Users, BarChart3, Settings } from 'lucide-react';
 
 export type TabId = 'dashboard' | 'accounts' | 'stats' | 'settings';
@@ -19,7 +18,7 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
   ];
 
   return (
-    <div className="flex items-center p-1 bg-slate-200/60 dark:bg-zinc-800/60 backdrop-blur-md rounded-full border border-slate-300/40 dark:border-zinc-700/50 shadow-inner select-none">
+    <nav className="flex items-center gap-1 bg-gray-100 dark:bg-[#15161b] rounded-full p-1 select-none">
       {tabs.map((tab) => {
         const isActive = currentTab === tab.id;
         const Icon = tab.icon;
@@ -28,24 +27,27 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
           <button
             key={tab.id}
             onClick={() => onTabChange(tab.id)}
-            className={`relative flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-full transition-colors duration-150 ${
-              isActive
-                ? 'text-slate-900 dark:text-white font-semibold'
-                : 'text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200'
-            }`}
+            className={`
+              px-5 py-2 
+              rounded-full 
+              text-sm 
+              font-medium 
+              transition-all duration-200
+              whitespace-nowrap
+              inline-flex
+              items-center
+              gap-2
+              ${isActive
+                ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900 font-semibold'
+                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-[#26272f]'
+              }
+            `}
           >
-            {isActive && (
-              <motion.div
-                layoutId="nav-active-pill"
-                className="absolute inset-0 bg-white dark:bg-zinc-700/90 rounded-full shadow-sm border border-black/[0.04] dark:border-white/[0.08]"
-                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
-              />
-            )}
-            <Icon className="w-3.5 h-3.5 relative z-10" />
-            <span className="relative z-10">{tab.label}</span>
+            <Icon className="w-4 h-4" />
+            <span>{tab.label}</span>
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 };

@@ -4,10 +4,9 @@ import { TabId } from './components/navbar/NavMenu';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
 
-  // 同步主题 class 到 html 根节点
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -17,7 +16,6 @@ export function App() {
     }
   }, [theme]);
 
-  // 主题扩散动效切换
   const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
 
@@ -43,10 +41,10 @@ export function App() {
         document.documentElement.animate(
           { clipPath },
           {
-            duration: 400,
+            duration: 450,
             easing: 'ease-in-out',
             fill: 'forwards',
-            pseudoElement: '::view-transition-new(root)',
+            pseudoElement: isDarkMode ? '::view-transition-old(root)' : '::view-transition-new(root)',
           }
         );
       });
@@ -55,29 +53,25 @@ export function App() {
     }
   };
 
-  const handleLangToggle = () => {
-    setLang((prev) => (prev === 'zh' ? 'en' : 'zh'));
-  };
-
   return (
-    <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090B] text-slate-900 dark:text-zinc-100 transition-colors duration-300">
-      {/* 顶部三段式导航栏 */}
+    <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100 transition-colors duration-200">
+      {/* 顶部主分支风格 Navbar (带 pt-9 与 macOS 交通灯留白) */}
       <Navbar
         currentTab={currentTab}
         onTabChange={setCurrentTab}
         theme={theme}
         onThemeToggle={handleThemeToggle}
         lang={lang}
-        onLangToggle={handleLangToggle}
+        onLanguageChange={setLang}
       />
 
-      {/* 菜单栏下方内容画布 (当前按要求保持预留空白区) */}
-      <main className="flex-1 flex flex-col items-center justify-center p-6 overflow-hidden relative">
-        <div className="text-center space-y-2 select-none opacity-40 hover:opacity-80 transition-opacity">
+      {/* 菜单栏下方内容画布 (预留空白) */}
+      <main className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
+        <div className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity">
           <p className="text-xs font-mono uppercase tracking-widest text-slate-400 dark:text-zinc-500">
             {lang === 'zh' ? '内容区域就绪 · 当前模块' : 'CANVAS READY · ACTIVE MODULE'}
           </p>
-          <h2 className="text-xl font-bold tracking-tight text-slate-700 dark:text-zinc-300">
+          <h2 className="text-2xl font-bold tracking-tight text-slate-700 dark:text-zinc-300">
             {currentTab.toUpperCase()}
           </h2>
         </div>

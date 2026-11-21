@@ -4,9 +4,6 @@
   "version": "4.9.0",
   "identifier": "com.antigravity.manager",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
     "frontendDist": "../ui/dist"
   },
   "app": {

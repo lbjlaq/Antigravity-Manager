@@ -9,7 +9,7 @@ interface NavbarProps {
   theme: 'light' | 'dark';
   onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
   lang: 'zh' | 'en';
-  onLangToggle: () => void;
+  onLanguageChange: (lang: 'zh' | 'en') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -18,33 +18,43 @@ export const Navbar: React.FC<NavbarProps> = ({
   theme,
   onThemeToggle,
   lang,
-  onLangToggle,
+  onLanguageChange,
 }) => {
   return (
-    <header className="relative w-full h-14 px-3 flex items-center justify-between border-b border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-[#0B0C0E]/70 backdrop-blur-xl z-50">
-      {/* 顶部防失效系统级拖拽条 (Window Drag Strip) */}
+    <nav
+      style={{ position: 'sticky', top: 0, zIndex: 50 }}
+      className="pt-9 transition-all duration-200 bg-[#FAFBFC] dark:bg-[#09090b]"
+    >
+      {/* 顶部 Tauri 原生拖拽区域 (高为 top-9 到导航区域) */}
       <div
-        className="absolute top-0 left-0 right-0 h-9 z-[-1]"
-        style={{
-          cursor: 'default',
-          userSelect: 'none',
-        }}
+        className="absolute top-0 left-0 right-0 h-24"
+        style={{ zIndex: 5, backgroundColor: 'rgba(0,0,0,0.001)', cursor: 'default' }}
         data-tauri-drag-region
       />
 
-      {/* 左侧：Logo 拟物标识与状态 */}
-      <NavLogo />
+      <div className="max-w-7xl mx-auto px-8 relative" style={{ zIndex: 10 }}>
+        <div className="flex items-center h-16 gap-4 justify-between">
+          {/* 左侧 Logo */}
+          <div className="basis-[220px] shrink-0">
+            <NavLogo />
+          </div>
 
-      {/* 中间：居中滑动胶囊菜单栏 (4大核心模块) */}
-      <NavMenu currentTab={currentTab} onTabChange={onTabChange} lang={lang} />
+          {/* 中间 导航胶囊 */}
+          <div className="flex-1 flex justify-center">
+            <NavMenu currentTab={currentTab} onTabChange={onTabChange} lang={lang} />
+          </div>
 
-      {/* 右侧：多语言与暗黑主题切换动作群 */}
-      <NavActions
-        theme={theme}
-        onThemeToggle={onThemeToggle}
-        lang={lang}
-        onLangToggle={onLangToggle}
-      />
-    </header>
+          {/* 右侧 语言与主题切换圆钮群 */}
+          <div className="basis-[220px] shrink-0 flex justify-end">
+            <NavActions
+              theme={theme}
+              onThemeToggle={onThemeToggle}
+              lang={lang}
+              onLanguageChange={onLanguageChange}
+            />
+          </div>
+        </div>
+      </div>
+    </nav>
   );
 };
