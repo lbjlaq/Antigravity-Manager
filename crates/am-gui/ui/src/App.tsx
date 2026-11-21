@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
+import { injectBlurCircleStyle, removeThemeStyle } from './utils/themeAnimation';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
@@ -17,7 +18,7 @@ export function App() {
     }
   }, [theme]);
 
-  // 对齐 baiwumm / minhvo 的标准圆心水波纹 View Transition 扩散算法
+  // 完全对齐 baiwumm/theme-switch-animation 的 CIRCLE_BLUR 圆形高斯模糊蒙版扩散实现
   const handleThemeToggle = async (event: React.MouseEvent<HTMLButtonElement>) => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
 
@@ -28,48 +29,34 @@ export function App() {
     }
 
     // 1. 获取点击物理坐标作为圆心
-    const x = event.clientX;
-    const y = event.clientY;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
 
-    // 2. 计算覆盖全屏所需的最大外接圆半径
-    const endRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    );
+    const DURATION = 700;
 
-    // 3. 必须通过 flushSync 强制 React 18 同步提交 DOM 变更
-    const transition = document.startViewTransition(() => {
-      flushSync(() => {
-        setTheme(newTheme);
-        const root = document.documentElement;
-        if (newTheme === 'dark') {
-          root.classList.add('dark');
-        } else {
-          root.classList.remove('dark');
-        }
+    // 2. 注入带 feGaussianBlur 的 SVG Mask 转场动画样式
+    injectBlurCircleStyle({ x, y }, DURATION, 2.4);
+
+    try {
+      // 3. 通过 flushSync 强制 React 18 同步提交 DOM 变更
+      const transition = document.startViewTransition(() => {
+        flushSync(() => {
+          setTheme(newTheme);
+          const root = document.documentElement;
+          if (newTheme === 'dark') {
+            root.classList.add('dark');
+          } else {
+            root.classList.remove('dark');
+          }
+        });
       });
-    });
 
-    // 4. 等待视图过渡就绪
-    await transition.ready;
-
-    // 5. 驱动新视图从圆心平滑展开
-    // 调优扩散节奏：时长从 450ms 调整至 650ms，采用柔和缓动曲线
-    const clipPath = [
-      `circle(0px at ${x}px ${y}px)`,
-      `circle(${endRadius}px at ${x}px ${y}px)`,
-    ];
-
-    document.documentElement.animate(
-      {
-        clipPath: clipPath,
-      },
-      {
-        duration: 650,
-        easing: 'cubic-bezier(0.2, 0.8, 0.25, 1)',
-        pseudoElement: '::view-transition-new(root)',
-      }
-    );
+      // 4. 等待动画自然完成，清理临时注入的 style 标签
+      await transition.finished;
+    } finally {
+      removeThemeStyle();
+    }
   };
 
   return (

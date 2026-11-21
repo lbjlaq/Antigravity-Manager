@@ -37,28 +37,11 @@ body {
   background-color: #09090b;
 }
 
-/* ==================== 圆形模糊扩散滤镜与层级 (Apple 级柔和光晕) ==================== */
+/* ==================== View Transitions 基础层级基线 ==================== */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
-}
-
-::view-transition-old(root) {
-  z-index: 1;
-}
-
-::view-transition-new(root) {
-  z-index: 9999;
-  /* 多重渐进投影模拟物理羽化模糊边缘，消除生硬的剪切轮廓 */
-  filter: drop-shadow(0 0 24px rgba(0, 0, 0, 0.25))
-          drop-shadow(0 0 60px rgba(0, 0, 0, 0.4));
-}
-
-.dark::view-transition-new(root) {
-  /* 深色切回浅色时柔和的明亮光晕扩散 */
-  filter: drop-shadow(0 0 24px rgba(255, 255, 255, 0.35))
-          drop-shadow(0 0 60px rgba(255, 255, 255, 0.2));
 }
 
 * {
