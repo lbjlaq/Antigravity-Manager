@@ -106,14 +106,19 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
         };
     }, [timeRange, summary]);
 
-    // 1. 输入输出比例与生成比
+    // 1. 输入输出比例与生成比（兼顾 Claude 历史未合并 prompt 模式）
     const inOutRatio = useMemo(() => {
         if (!summary || summary.total_tokens === 0) return { inPct: 50, outPct: 50, inOutMultiplier: '1.0' };
-        const total = summary.total_input_tokens + summary.total_output_tokens;
+        const totalInput = summary.total_input_tokens || 0;
+        const totalCached = summary.total_cached_tokens || 0;
+        const effectiveInput = (totalCached > 0 && totalInput < totalCached)
+            ? totalInput + totalCached
+            : totalInput;
+        const total = effectiveInput + summary.total_output_tokens;
         if (total === 0) return { inPct: 50, outPct: 50, inOutMultiplier: '1.0' };
-        const inPct = Math.round((summary.total_input_tokens / total) * 100);
+        const inPct = Math.round((effectiveInput / total) * 100);
         const mult = summary.total_output_tokens > 0
-            ? (summary.total_input_tokens / summary.total_output_tokens).toFixed(1)
+            ? (effectiveInput / summary.total_output_tokens).toFixed(1)
             : '0.0';
         return { inPct, outPct: 100 - inPct, inOutMultiplier: mult };
     }, [summary]);
@@ -121,14 +126,20 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
     // 2. 均次负载与真实未缓存输入
     const deepMetrics = useMemo(() => {
         const totalReqs = summary?.total_requests || 1;
-        const totalTokens = summary?.total_tokens || 0;
         const totalInput = summary?.total_input_tokens || 0;
         const totalOutput = summary?.total_output_tokens || 0;
         const totalCached = summary?.total_cached_tokens || 0;
         const totalReasoning = summary?.total_reasoning_tokens || 0;
 
-        const avgTokensPerReq = Math.round(totalTokens / totalReqs);
-        const uncachedInput = Math.max(0, totalInput - totalCached);
+        const effectiveInput = (totalCached > 0 && totalInput < totalCached)
+            ? totalInput + totalCached
+            : totalInput;
+        const effectiveTotal = effectiveInput + totalOutput;
+
+        const avgTokensPerReq = Math.round(effectiveTotal / totalReqs);
+        const uncachedInput = (totalCached > 0 && totalInput < totalCached)
+            ? totalInput
+            : Math.max(0, totalInput - totalCached);
         const avgCostPerReq = totalReqs > 0 ? totalEstimatedCost / totalReqs : 0;
         const reasoningPctOfOutput = totalOutput > 0 ? Math.round((totalReasoning / totalOutput) * 100) : 0;
         const avgReasoningPerReq = Math.round(totalReasoning / totalReqs);

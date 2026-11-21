@@ -248,13 +248,19 @@ pub fn record_usage(
 ) -> Result<(), String> {
     let conn = connect_db()?;
     let timestamp = chrono::Local::now().timestamp();
-    let total_tokens = input_tokens + output_tokens;
+    // Canonicalize input tokens when protocol reports uncached incremental prompt tokens separately from cached tokens
+    let canonical_input = if cached_tokens > 0 && input_tokens < cached_tokens {
+        input_tokens.saturating_add(cached_tokens)
+    } else {
+        input_tokens.max(cached_tokens)
+    };
+    let total_tokens = canonical_input.saturating_add(output_tokens);
 
     // Insert into raw usage table
     conn.execute(
         "INSERT INTO token_usage (timestamp, account_email, model, requested_model, input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, ttft_ms)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![timestamp, account_email, model, requested_model, input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, ttft_ms],
+        params![timestamp, account_email, model, requested_model, canonical_input, output_tokens, cached_tokens, reasoning_tokens, total_tokens, ttft_ms],
     ).map_err(|e| e.to_string())?;
 
     let hour_bucket = chrono::Local::now().format("%Y-%m-%d %H:00").to_string();
@@ -268,7 +274,7 @@ pub fn record_usage(
             total_reasoning_tokens = total_reasoning_tokens + ?6,
             total_tokens = total_tokens + ?7,
             request_count = request_count + 1",
-        params![hour_bucket, account_email, input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens],
+        params![hour_bucket, account_email, canonical_input, output_tokens, cached_tokens, reasoning_tokens, total_tokens],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
