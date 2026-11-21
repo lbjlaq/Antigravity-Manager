@@ -72,3 +72,4 @@ docs/CODEBASE_ALIGNMENT_ANALYSIS.md
 testJson/
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+target/
