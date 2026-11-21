@@ -53,7 +53,8 @@ export function App() {
     // 4. 等待视图过渡就绪
     await transition.ready;
 
-    // 5. 驱动新视图从圆心以 cubic-bezier 展开为全屏大圆
+    // 5. 驱动新视图从圆心平滑展开
+    // 调优扩散节奏：时长从 450ms 调整至 650ms，采用柔和缓动曲线
     const clipPath = [
       `circle(0px at ${x}px ${y}px)`,
       `circle(${endRadius}px at ${x}px ${y}px)`,
@@ -64,8 +65,8 @@ export function App() {
         clipPath: clipPath,
       },
       {
-        duration: 450,
-        easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+        duration: 650,
+        easing: 'cubic-bezier(0.2, 0.8, 0.25, 1)',
         pseudoElement: '::view-transition-new(root)',
       }
     );
@@ -83,9 +84,12 @@ export function App() {
         onLanguageChange={setLang}
       />
 
-      {/* 菜单栏下方内容画布 (预留空白) */}
+      {/* 菜单栏下方内容画布 (预留空白，带 Tab 切换淡入平移动效) */}
       <main className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
-        <div className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity duration-150">
+        <div
+          key={currentTab}
+          className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity duration-150 animate-in fade-in zoom-in-95 duration-200"
+        >
           <p className="text-xs font-mono uppercase tracking-widest text-slate-400 dark:text-zinc-500">
             {lang === 'zh' ? '内容区域就绪 · 当前模块' : 'CANVAS READY · ACTIVE MODULE'}
           </p>

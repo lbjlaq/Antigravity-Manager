@@ -43,9 +43,9 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
       ref={containerRef}
       className="relative flex items-center bg-gray-100 dark:bg-[#15161b] rounded-full p-1 select-none border border-transparent dark:border-[#26272f]/50"
     >
-      {/* 纯 CSS 硬件加速智能滑动药丸底盘 (0延迟，真120Hz平移动效) */}
+      {/* 纯 CSS 硬件加速智能滑动药丸底盘 (带弹性缓动与精致微阴影) */}
       <div
-        className="absolute top-1 bottom-1 bg-gray-900 dark:bg-white rounded-full shadow-sm transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        className="absolute top-1 bottom-1 bg-gray-900 dark:bg-white rounded-full shadow-[0_2px_8px_rgba(0,0,0,0.12)] dark:shadow-[0_2px_12px_rgba(255,255,255,0.18)] transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.25,1)]"
         style={{
           transform: `translate3d(${indicatorStyle.left}px, 0, 0)`,
           width: `${indicatorStyle.width}px`,
