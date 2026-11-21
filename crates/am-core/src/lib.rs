@@ -10,7 +10,7 @@ pub mod types;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 pub use quota::QuotaFetchResult;
-pub use stats::{HostUsageSummary, LocalUsageStats};
+pub use stats::*;
 pub use strategy::*;
 pub use types::*;
 
@@ -380,8 +380,8 @@ impl AntigravityManager {
     }
 
     /// 获取本地纯数据库统计大盘 (零代理、零拦截，只读模式)
-    pub fn get_local_usage_stats(&self) -> Result<LocalUsageStats> {
-        stats::StatsEngine::collect_local_stats()
+    pub fn get_local_usage_stats(&self) -> Result<MasterAnalyticsReport> {
+        stats::StatsEngine::generate_master_report(&self.storage)
     }
 
     /// 通过已有 refresh_token 手工添加账号

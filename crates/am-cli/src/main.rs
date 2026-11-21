@@ -138,10 +138,17 @@ enum Commands {
 
     /// 📊 View local token usage & activity statistics across 4 hosts (Zero-Proxy Local DB)
     Stats {
+        /// Projection perspective: all (default), account, model, app, or timeline
+        #[arg(short, long, default_value = "all")]
+        view: String,
+
         /// Output in JSON format
         #[arg(long)]
         json: bool,
     },
+
+    /// 💬 Inspect active conversation context window, token breakdown & health
+    Context,
 }
 
 #[derive(Subcommand)]
@@ -194,8 +201,11 @@ async fn main() -> Result<()> {
         Some(Commands::Fingerprint) => {
             handle_fingerprint().await?;
         }
-        Some(Commands::Stats { json }) => {
-            handle_stats(&manager, json)?;
+        Some(Commands::Stats { view, json }) => {
+            handle_stats(&manager, &view, json)?;
+        }
+        Some(Commands::Context) => {
+            handle_context(&manager)?;
         }
         Some(Commands::Switch {
             account,
@@ -793,20 +803,126 @@ async fn handle_fingerprint() -> Result<()> {
     Ok(())
 }
 
-fn handle_stats(manager: &AntigravityManager, json: bool) -> Result<()> {
-    let stats = manager.get_local_usage_stats()?;
+fn handle_stats(manager: &AntigravityManager, view: &str, json: bool) -> Result<()> {
+    let report = manager.get_local_usage_stats()?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&stats)?);
+        println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    println!(
-        "{}",
-        "📊 Local Token Usage & Host Activity (Zero-Proxy Local SQLite)"
-            .cyan()
-            .bold()
-    );
+    match view.to_lowercase().as_str() {
+        "account" | "acc" => print_account_perspective(&report),
+        "model" | "models" => print_model_perspective(&report),
+        "app" | "host" => print_app_perspective(&report),
+        "timeline" | "time" => print_timeline_perspective(&report),
+        _ => {
+            // 默认全景总览 (Apple 设计风格: Hero Card + 多维矩阵切片)
+            print_hero_overview(&report);
+            println!();
+            print_account_perspective(&report);
+            println!();
+            print_model_perspective(&report);
+            println!();
+            print_app_perspective(&report);
+        }
+    }
+    Ok(())
+}
 
+fn print_hero_overview(r: &am_core::stats::MasterAnalyticsReport) {
+    println!("{}", "🍎 Antigravity Intelligence & Efficiency Insights".cyan().bold());
+    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+    println!(
+        "  {} Total Volume:       {} ({} reqs)",
+        "⚡".yellow(),
+        format_tokens(r.total_tokens).bold(),
+        r.total_requests
+    );
+    println!(
+        "  {} Cache Hit Ratio:    {:.1}% (Saved: ${:.2} USD)",
+        "✨".green(),
+        r.global_cache_hit_rate,
+        r.total_saved_cost_usd
+    );
+    println!(
+        "  {} Performance:        {:.1} tok/s · {}ms TTFT",
+        "🚀".cyan(),
+        r.avg_speed_tps,
+        r.avg_ttft_ms
+    );
+    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+}
+
+fn print_account_perspective(r: &am_core::stats::MasterAnalyticsReport) {
+    println!("{}", "👤 Account Attribution Matrix (Token 归属与价值大盘)".cyan().bold());
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+    table.set_header(vec![
+        Cell::new("Account Email").fg(Color::Cyan),
+        Cell::new("Reqs").fg(Color::Yellow),
+        Cell::new("New Input").fg(Color::White),
+        Cell::new("Cached (Hit%)").fg(Color::Green),
+        Cell::new("Output").fg(Color::Magenta),
+        Cell::new("Est. Cost").fg(Color::Yellow),
+        Cell::new("Quota (G/C)").fg(Color::Blue),
+    ]);
+
+    for a in &r.by_account {
+        let quota_str = format!(
+            "{}/{}",
+            a.quota_gemini_pct.map(|p| format!("{:.0}%", p)).unwrap_or_else(|| "-".into()),
+            a.quota_claude_pct.map(|p| format!("{:.0}%", p)).unwrap_or_else(|| "-".into())
+        );
+
+        table.add_row(Row::from(vec![
+            Cell::new(&a.email),
+            Cell::new(a.total_requests.to_string()),
+            Cell::new(format_tokens(a.new_input_tokens)),
+            Cell::new(format!("{} ({:.0}%)", format_tokens(a.cached_tokens), a.cache_hit_rate)),
+            Cell::new(format_tokens(a.output_tokens)),
+            Cell::new(format!("${:.3}", a.estimated_cost_usd)),
+            Cell::new(quota_str),
+        ]));
+    }
+    println!("{table}");
+}
+
+fn print_model_perspective(r: &am_core::stats::MasterAnalyticsReport) {
+    println!("{}", "⚡ Model Fidelity & Physical Backend Resolution (真实物理模型与速度)".cyan().bold());
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+    table.set_header(vec![
+        Cell::new("Requested Model").fg(Color::Cyan),
+        Cell::new("Physical Backend Model").fg(Color::Green),
+        Cell::new("Output Speed").fg(Color::Yellow),
+        Cell::new("First Byte").fg(Color::Magenta),
+        Cell::new("Total Volume").fg(Color::White),
+        Cell::new("Share").fg(Color::Blue),
+    ]);
+
+    for m in &r.by_model {
+        let phy_display = if m.is_downgraded {
+            format!("⚠️ {}", m.physical_model).yellow().to_string()
+        } else {
+            format!("⚡ {}", m.physical_model).green().to_string()
+        };
+
+        table.add_row(Row::from(vec![
+            Cell::new(&m.requested_model),
+            Cell::new(&phy_display),
+            Cell::new(format!("{:.1} tok/s", m.avg_tps)),
+            Cell::new(format!("{} ms", m.avg_ttft_ms)),
+            Cell::new(format_tokens(m.total_tokens)),
+            Cell::new(format!("{:.1}%", m.share_percentage)),
+        ]));
+    }
+    println!("{table}");
+}
+
+fn print_app_perspective(r: &am_core::stats::MasterAnalyticsReport) {
+    println!("{}", "💻 Multi-Host Target & Top Workspaces (4 大宿主与工作区分流)".cyan().bold());
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -814,33 +930,103 @@ fn handle_stats(manager: &AntigravityManager, json: bool) -> Result<()> {
         Cell::new("Host Target").fg(Color::Cyan),
         Cell::new("Conversations").fg(Color::Yellow),
         Cell::new("Total Steps").fg(Color::Magenta),
-        Cell::new("Est. Tokens").fg(Color::Green),
-        Cell::new("Latest Activity").fg(Color::Blue),
+        Cell::new("Volume Share").fg(Color::Green),
+        Cell::new("Primary Workspace").fg(Color::White),
     ]);
 
-    for host in &stats.hosts {
-        let est_tokens_str = format_number(host.estimated_tokens);
-        let latest = host.latest_activity.as_deref().unwrap_or("-");
-
+    for h in &r.by_host {
+        let primary_ws = h.top_workspaces.first().map(|(w, s)| format!("{} ({} steps)", w, s)).unwrap_or_else(|| "-".into());
         table.add_row(Row::from(vec![
-            Cell::new(&host.host_name),
-            Cell::new(host.conversation_count.to_string()),
-            Cell::new(format_number(host.total_steps)),
-            Cell::new(est_tokens_str),
-            Cell::new(latest),
+            Cell::new(&h.host_name),
+            Cell::new(h.conversation_count.to_string()),
+            Cell::new(format_number(h.total_steps)),
+            Cell::new(format!("{:.1}%", h.share_percentage)),
+            Cell::new(primary_ws),
         ]));
     }
-
-    table.add_row(Row::from(vec![
-        Cell::new("⚡ Total Aggregated").fg(Color::Cyan),
-        Cell::new(stats.total_conversations.to_string()).fg(Color::Yellow),
-        Cell::new(format_number(stats.total_steps)).fg(Color::Magenta),
-        Cell::new(format_number(stats.total_estimated_tokens)).fg(Color::Green),
-        Cell::new("All 4 Targets").fg(Color::White),
-    ]));
-
     println!("{table}");
+}
+
+fn print_timeline_perspective(r: &am_core::stats::MasterAnalyticsReport) {
+    println!("{}", "⏱ 24h Developer Circadian Rhythm (生物钟时段与开发节奏)".cyan().bold());
+    for t in &r.timeline {
+        let bar_len = (t.share_percentage / 5.0) as usize;
+        let bar = "█".repeat(bar_len) + &"░".repeat(20usize.saturating_sub(bar_len));
+        println!(
+            "  {:<18} [{}] {:>4.1}%  · {} (Peak: {:.0} tok/s)",
+            t.time_slot.bold(),
+            bar.cyan(),
+            t.share_percentage,
+            t.label.dimmed(),
+            t.peak_tps
+        );
+    }
+}
+
+fn handle_context(manager: &AntigravityManager) -> Result<()> {
+    let report = manager.get_local_usage_stats()?;
+    let ctx = match report.active_context {
+        Some(c) => c,
+        None => {
+            println!("{}", "No active conversation context detected.".yellow());
+            return Ok(());
+        }
+    };
+
+    println!("{}", "🍏 Active Context Window & Session Inspector (当前会话深度上下文)".cyan().bold());
+    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+    println!("  📍 Active Session:    {}", ctx.title.bold());
+    println!("  📁 Workspace:         {}", ctx.workspace.green());
+    println!("  🖥️  Host Target:       {}", ctx.host_target.blue());
+    println!("  🧠 Physical Engine:   {}", ctx.physical_model.magenta());
+    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+
+    let bar_len = (ctx.usage_percentage / 5.0).min(20.0) as usize;
+    let bar = "█".repeat(bar_len) + &"░".repeat(20usize.saturating_sub(bar_len));
+    let color_bar = if ctx.health_status == "healthy" {
+        bar.green()
+    } else if ctx.health_status == "warning" {
+        bar.yellow()
+    } else {
+        bar.red()
+    };
+
+    println!("\n🌊 Context Window Utilization (用量水位)");
+    println!(
+        "  Steps:   {} steps  [{}] {:.1}% ({} remaining)",
+        ctx.step_count.to_string().bold(),
+        color_bar,
+        ctx.usage_percentage,
+        format_tokens(ctx.remaining_tokens)
+    );
+    println!(
+        "  Used:    {} / {} budget",
+        format_tokens(ctx.current_used_tokens).bold(),
+        format_tokens(ctx.budget_tokens)
+    );
+
+    println!("\n✨ Cache & Token Reservoir Decomposition (分层水库拆解)");
+    println!("  • Cached Input Tokens:   {} ({:.1}% Hit Rate)", format_tokens(ctx.cached_tokens).green(), ctx.cache_hit_rate);
+    println!("  • Direct Prompt Input:   {}", format_tokens(ctx.prompt_tokens));
+    println!("  • Completion Output:     {}", format_tokens(ctx.completion_tokens).cyan());
+    println!("  • Thinking / Reasoning:  {} ({:.1}%)", format_tokens(ctx.thinking_tokens).magenta(), (ctx.thinking_tokens as f64 / ctx.current_used_tokens.max(1) as f64) * 100.0);
+    println!("  • Tool Execution Stream: {}", format_tokens(ctx.tool_tokens).yellow());
+    println!("  • Cost Saved (Cache):    ${:.2} USD", ctx.saved_cost_usd);
+
+    if let Some(t) = ctx.last_model_update {
+        println!("\n⏱ Last Interaction: {}", t.dimmed());
+    }
     Ok(())
+}
+
+fn format_tokens(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.2}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}K", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
 }
 
 fn format_number(num: u64) -> String {
