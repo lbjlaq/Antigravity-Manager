@@ -1,10 +1,15 @@
 import { isFlagshipModel } from '../utils/modelCategory';
+import {
+    hasAnyCustomModelPriorities,
+    resolveEffectiveModelPriorityDetail,
+} from '../utils/modelPriority';
 
 export type ModelPriorityGroup = 'gemini' | 'claude';
 
 export interface ModelPriorities {
     gemini?: number;
     claude?: number;
+    [modelId: string]: number | undefined;
 }
 
 export interface Account {
@@ -247,26 +252,16 @@ export function getTierLabel(tier: 'ultra' | 'pro' | 'enterprise' | 'free'): str
 
 export function getEffectiveModelPriority(
     account: { priority?: number; model_priorities?: ModelPriorities },
-    group: ModelPriorityGroup
+    groupOrModel: ModelPriorityGroup | string
 ): number {
-    const override = account.model_priorities?.[group];
-    if (typeof override === 'number' && override >= 1 && override <= 100) {
-        return override;
-    }
-    return typeof account.priority === 'number' && account.priority >= 1 && account.priority <= 100
-        ? account.priority
-        : 50;
+    return resolveEffectiveModelPriorityDetail(account, groupOrModel).priority;
 }
 
 export function hasCustomModelPriorities(account: {
     priority?: number;
     model_priorities?: ModelPriorities;
 }): boolean {
-    if (!account.model_priorities) return false;
-    const base = typeof account.priority === 'number' ? account.priority : 50;
-    const g = account.model_priorities.gemini;
-    const c = account.model_priorities.claude;
-    return (typeof g === 'number' && g !== base) || (typeof c === 'number' && c !== base);
+    return hasAnyCustomModelPriorities(account);
 }
 
 export interface ImportAccountEntry {

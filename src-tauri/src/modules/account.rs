@@ -3213,7 +3213,7 @@ pub fn update_account_priority(account_id: &str, priority: u8) -> Result<(), Str
     update_account_priority_with_models(account_id, priority, None).map(|_| ())
 }
 
-/// Save proxy selection priority and optional per-model-family overrides ("gemini" / "claude").
+/// Save proxy selection priority and optional per-model / per-model-family overrides.
 pub fn update_account_priority_with_models(
     account_id: &str,
     priority: u8,

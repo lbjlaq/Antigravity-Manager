@@ -278,6 +278,8 @@ struct AccountResponse {
     email: String,
     name: Option<String>,
     priority: u8,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    model_priorities: HashMap<String, u8>,
     is_current: bool,
     disabled: bool,
     disabled_reason: Option<String>,
@@ -387,6 +389,7 @@ fn to_account_response(
         email: account.email.clone(),
         name: account.name.clone(),
         priority: account.priority,
+        model_priorities: account.model_priorities.clone(),
         is_current: current_id.as_ref() == Some(&account.id),
         disabled: account.disabled,
         disabled_reason: account.disabled_reason.clone(),
@@ -1506,6 +1509,7 @@ async fn admin_list_accounts(
                 email: acc.email,
                 name: acc.name,
                 priority: acc.priority,
+                model_priorities: acc.model_priorities,
                 is_current,
                 disabled: acc.disabled,
                 disabled_reason: acc.disabled_reason,
@@ -1618,6 +1622,7 @@ async fn admin_get_current_account(
                 email: acc.email,
                 name: acc.name,
                 priority: acc.priority,
+                model_priorities: acc.model_priorities,
                 is_current: true,
                 disabled: acc.disabled,
                 disabled_reason: acc.disabled_reason,
@@ -5517,7 +5522,21 @@ mod image_scheduler_tests {
             let payload =
                 serde_json::to_value(super::to_account_response(&account, &None)).unwrap();
             assert_eq!(payload.get("priority"), Some(&serde_json::json!(priority)));
+            assert!(payload.get("model_priorities").is_none());
         }
+
+        account
+            .model_priorities
+            .insert("gemini-4-argon".to_string(), 5);
+        account.model_priorities.insert("claude".to_string(), 80);
+        let payload = serde_json::to_value(super::to_account_response(&account, &None)).unwrap();
+        assert_eq!(
+            payload.get("model_priorities"),
+            Some(&serde_json::json!({
+                "gemini-4-argon": 5,
+                "claude": 80
+            }))
+        );
     }
 
     #[test]
