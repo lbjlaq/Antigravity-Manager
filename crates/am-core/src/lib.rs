@@ -2,11 +2,13 @@ pub mod auth;
 pub mod device;
 pub mod quota;
 pub mod storage;
+pub mod strategy;
 pub mod switcher;
 pub mod types;
 
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
+pub use strategy::*;
 pub use types::*;
 
 /// Antigravity Manager 统一门面 API
@@ -34,6 +36,11 @@ impl AntigravityManager {
         self.storage.list_account_summaries()
     }
 
+    /// 列出所有账号完整实体
+    pub fn list_full_accounts(&self) -> Result<Vec<Account>> {
+        self.storage.list_full_accounts()
+    }
+
     /// 获取单个账号完整实体 (含 Token 与配额)
     pub fn get_account(&self, id: &str) -> Result<Option<Account>> {
         self.storage.get_account(id)
@@ -48,6 +55,205 @@ impl AntigravityManager {
     pub fn delete_account(&self, query: &str) -> Result<bool> {
         let acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
         self.storage.delete_account(&acc.id)
+    }
+
+    /// 标签管理：添加标签到账号
+    pub fn add_account_tags(&self, query: &str, tags_to_add: &[String]) -> Result<Account> {
+        let mut acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
+        for tag in tags_to_add {
+            let clean = tag.trim();
+            if clean.is_empty() {
+                continue;
+            }
+            if clean.chars().count() > 15 {
+                return Err(anyhow!("Tag '{}' exceeds maximum length of 15 characters", clean));
+            }
+            if !acc.tags.iter().any(|t| t.eq_ignore_ascii_case(clean)) {
+                if acc.tags.len() >= 8 {
+                    return Err(anyhow!("Account already has maximum limit of 8 tags"));
+                }
+                acc.tags.push(clean.to_string());
+            }
+        }
+        self.storage.save_account(&acc)?;
+        Ok(acc)
+    }
+
+    /// 标签管理：移除账号中的标签
+    pub fn remove_account_tags(&self, query: &str, tags_to_remove: &[String]) -> Result<Account> {
+        let mut acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
+        acc.tags.retain(|t| !tags_to_remove.iter().any(|r| r.trim().eq_ignore_ascii_case(t)));
+        self.storage.save_account(&acc)?;
+        Ok(acc)
+    }
+
+    /// 标签管理：直接设置完整标签列表
+    pub fn set_account_tags(&self, query: &str, new_tags: &[String]) -> Result<Account> {
+        let mut acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
+        let mut clean_tags = Vec::new();
+        for tag in new_tags {
+            let clean = tag.trim();
+            if clean.is_empty() {
+                continue;
+            }
+            if clean.chars().count() > 15 {
+                return Err(anyhow!("Tag '{}' exceeds maximum length of 15 characters", clean));
+            }
+            if !clean_tags.iter().any(|t: &String| t.eq_ignore_ascii_case(clean)) {
+                if clean_tags.len() >= 8 {
+                    return Err(anyhow!("Maximum limit of 8 tags exceeded"));
+                }
+                clean_tags.push(clean.to_string());
+            }
+        }
+        acc.tags = clean_tags;
+        self.storage.save_account(&acc)?;
+        Ok(acc)
+    }
+
+    /// 账号过滤与排序
+    pub fn query_accounts(
+        &self,
+        filter_tag: Option<&str>,
+        healthy_only: bool,
+        sort_order: Option<AccountSortOrder>,
+    ) -> Result<Vec<Account>> {
+        let mut accounts = self.storage.list_full_accounts()?;
+
+        // 1. 过滤
+        accounts.retain(|acc| {
+            if healthy_only && (acc.disabled || acc.banned) {
+                return false;
+            }
+            if let Some(tag) = filter_tag {
+                let tag_lower = tag.to_lowercase();
+                if !acc.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                    return false;
+                }
+            }
+            true
+        });
+
+        // 2. 排序
+        if let Some(order) = sort_order {
+            match order {
+                AccountSortOrder::QuotaDesc => {
+                    accounts.sort_by(|a, b| {
+                        let qa = Self::calculate_account_effective_quota(a, ModelPoolPreference::Balanced);
+                        let qb = Self::calculate_account_effective_quota(b, ModelPoolPreference::Balanced);
+                        qb.partial_cmp(&qa).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+                AccountSortOrder::QuotaAsc => {
+                    accounts.sort_by(|a, b| {
+                        let qa = Self::calculate_account_effective_quota(a, ModelPoolPreference::Balanced);
+                        let qb = Self::calculate_account_effective_quota(b, ModelPoolPreference::Balanced);
+                        qa.partial_cmp(&qb).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+                AccountSortOrder::PriorityDesc => {
+                    accounts.sort_by(|a, b| b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0)));
+                }
+                AccountSortOrder::LastUsedAsc => {
+                    accounts.sort_by_key(|a| a.last_used.unwrap_or(0));
+                }
+                AccountSortOrder::LastUsedDesc => {
+                    accounts.sort_by_key(|a| std::cmp::Reverse(a.last_used.unwrap_or(0)));
+                }
+                AccountSortOrder::CreatedAtDesc => {
+                    accounts.sort_by_key(|a| std::cmp::Reverse(a.created_at.unwrap_or(0)));
+                }
+                AccountSortOrder::EmailAsc => {
+                    accounts.sort_by(|a, b| a.email.cmp(&b.email));
+                }
+            }
+        }
+
+        Ok(accounts)
+    }
+
+    /// 计算账号在特定偏好下的有效额度评分 (0.0 ~ 100.0)
+    pub fn calculate_account_effective_quota(acc: &Account, prefer: ModelPoolPreference) -> f64 {
+        let quota = match &acc.quota {
+            Some(q) => q,
+            None => return 0.0,
+        };
+
+        match prefer {
+            ModelPoolPreference::Claude => {
+                quota.claude_percentage.unwrap_or(0.0)
+            }
+            ModelPoolPreference::Gemini => {
+                quota.gemini_percentage.unwrap_or(0.0)
+            }
+            ModelPoolPreference::Balanced => {
+                let c = quota.claude_percentage.unwrap_or(0.0);
+                let g = quota.gemini_percentage.unwrap_or(0.0);
+                // 平衡策略：若 Claude 和 Gemini 都存在，则以较低者为木桶瓶颈或二者加权，这里优先保障双池都有额度
+                if quota.claude_percentage.is_some() && quota.gemini_percentage.is_some() {
+                    (c * 0.5) + (g * 0.5)
+                } else {
+                    c.max(g)
+                }
+            }
+        }
+    }
+
+    /// 智能选号 (Smart Account Picker)
+    pub fn pick_best_account(&self, filter: AccountSelectionFilter) -> Result<Option<Account>> {
+        let mut candidates = self.storage.list_full_accounts()?;
+        let prefer = filter.prefer_pool.unwrap_or(ModelPoolPreference::Balanced);
+        let strategy = filter.strategy.unwrap_or(SwitchStrategy::MaxQuota);
+
+        // 1. 过滤
+        candidates.retain(|acc| {
+            if filter.healthy_only && (acc.disabled || acc.banned) {
+                return false;
+            }
+            if let Some(tag) = &filter.required_tag {
+                let tag_lower = tag.to_lowercase();
+                if !acc.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                    return false;
+                }
+            }
+            if let Some(min_pct) = filter.min_quota_percentage {
+                let eff = Self::calculate_account_effective_quota(acc, prefer);
+                if eff < min_pct {
+                    return false;
+                }
+            }
+            true
+        });
+
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        // 2. 按策略挑选
+        match strategy {
+            SwitchStrategy::MaxQuota => {
+                candidates.sort_by(|a, b| {
+                    let qa = Self::calculate_account_effective_quota(a, prefer);
+                    let qb = Self::calculate_account_effective_quota(b, prefer);
+                    qb.partial_cmp(&qa).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                Ok(candidates.into_iter().next())
+            }
+            SwitchStrategy::LeastUsed => {
+                // 最久未被使用
+                candidates.sort_by_key(|a| a.last_used.unwrap_or(0));
+                Ok(candidates.into_iter().next())
+            }
+            SwitchStrategy::Priority => {
+                candidates.sort_by(|a, b| b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0)));
+                Ok(candidates.into_iter().next())
+            }
+            SwitchStrategy::Random => {
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                Ok(candidates.choose(&mut rng).cloned())
+            }
+        }
     }
 
     /// 刷新单个账号配额 (对齐原生: 自动尝试发现并携带 Project ID)
@@ -90,7 +296,6 @@ impl AntigravityManager {
         let mut results = Vec::new();
 
         for (idx, s) in summaries.into_iter().enumerate() {
-            // 每刷新一个账号稍微平滑等待 250ms，防止并发冲击触发风控
             if idx > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
@@ -116,6 +321,10 @@ impl AntigravityManager {
 
         // 执行切换
         switcher::SwitchEngine::switch(&account, target, restart)?;
+
+        // 更新最后使用时间
+        account.last_used = Some(chrono::Utc::now().timestamp());
+        let _ = self.storage.save_account(&account);
 
         // 更新激活记录
         let target_str = match target {

@@ -19,5 +19,7 @@ colored = "3.0"
 indicatif = "0.17"
 anyhow = "1.0"
 uuid = { version = "1.10", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+open = "5.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

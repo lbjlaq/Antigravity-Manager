@@ -69,6 +69,18 @@ impl StorageManager {
         Ok(index.accounts)
     }
 
+    /// 列出所有账号完整实体
+    pub fn list_full_accounts(&self) -> Result<Vec<Account>> {
+        let summaries = self.list_account_summaries()?;
+        let mut list = Vec::new();
+        for s in summaries {
+            if let Some(acc) = self.get_account(&s.id)? {
+                list.push(acc);
+            }
+        }
+        Ok(list)
+    }
+
     /// 读取单个账号详细信息 (含 Token 与配额)
     pub fn get_account(&self, id: &str) -> Result<Option<Account>> {
         let path = self.account_file_path(id);

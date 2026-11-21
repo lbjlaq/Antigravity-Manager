@@ -1,6 +1,9 @@
 use am_core::types::TargetHost;
-use am_core::AntigravityManager;
-use anyhow::Result;
+use am_core::{
+    AccountSelectionFilter, AccountSortOrder, AntigravityManager, ModelPoolPreference,
+    SwitchStrategy,
+};
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
@@ -11,7 +14,10 @@ use comfy_table::{Cell, Color, Row, Table};
 #[command(name = "am")]
 #[command(author = "Antigravity Team")]
 #[command(version = "0.1.0")]
-#[command(about = "🚀 Lightweight Google AI Account Manager for Antigravity (App, IDE, Plugin, CLI)", long_about = None)]
+#[command(
+    about = "🚀 Lightweight Google AI Account Manager for Antigravity (App, IDE, Plugin, CLI)",
+    long_about = None
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -22,6 +28,18 @@ enum Commands {
     /// 📋 List all accounts and their quota pools (alias: ls)
     #[command(alias = "ls")]
     List {
+        /// Filter by specific tag
+        #[arg(short, long)]
+        tag: Option<String>,
+
+        /// Show healthy accounts only
+        #[arg(long)]
+        healthy: bool,
+
+        /// Sort order: quota, priority, last-used, recent, created, email
+        #[arg(short, long)]
+        sort: Option<String>,
+
         /// Output in JSON format
         #[arg(long)]
         json: bool,
@@ -31,11 +49,27 @@ enum Commands {
     #[command(alias = "whoami")]
     Current,
 
-    /// ⚡ Hot-switch active account across host targets (alias: use)
+    /// ⚡ Switch active account across host targets (manual or smart auto-selection) (alias: use)
     #[command(alias = "use")]
     Switch {
-        /// Target account ID, email, or prefix
-        account: String,
+        /// Target account ID, email, or prefix (optional if --auto is specified)
+        account: Option<String>,
+
+        /// Automatically pick the optimal account based on strategy
+        #[arg(short, long)]
+        auto: bool,
+
+        /// Smart strategy: max-quota (default), least-used, priority, random
+        #[arg(short, long, default_value = "max-quota")]
+        strategy: String,
+
+        /// Model quota preference: balanced (default), claude, gemini
+        #[arg(short, long, default_value = "balanced")]
+        prefer: String,
+
+        /// Scope auto-selection to accounts having this tag
+        #[arg(long)]
+        tag: Option<String>,
 
         /// Target host: all, app, ide, plugin, agy (default: all)
         #[arg(short, long, default_value = "all")]
@@ -44,6 +78,15 @@ enum Commands {
         /// Force restart the host application instead of hot reload
         #[arg(short, long)]
         restart: bool,
+    },
+
+    /// 🏷 Manage account tags (add, remove, set)
+    Tag {
+        /// Target account ID, email, or prefix
+        account: String,
+
+        #[command(subcommand)]
+        action: TagAction,
     },
 
     /// 🔄 Refresh quota for a single account or all accounts (alias: sync)
@@ -82,6 +125,29 @@ enum Commands {
     Fingerprint,
 }
 
+#[derive(Subcommand)]
+enum TagAction {
+    /// Add one or more tags to the account
+    Add {
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Remove one or more tags from the account
+    #[command(alias = "rm")]
+    Remove {
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Overwrite all tags for the account
+    Set {
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// List tags of the account
+    #[command(alias = "ls")]
+    List,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -89,10 +155,19 @@ async fn main() -> Result<()> {
 
     match cli.command {
         None => {
-            handle_list(&manager, false)?;
+            handle_list(&manager, None, false, None, false)?;
         }
-        Some(Commands::List { json }) => {
-            handle_list(&manager, json)?;
+        Some(Commands::List {
+            tag,
+            healthy,
+            sort,
+            json,
+        }) => {
+            let sort_order = match sort.as_deref() {
+                Some(s) => Some(s.parse::<AccountSortOrder>().map_err(|e| anyhow!("{}", e))?),
+                None => None,
+            };
+            handle_list(&manager, tag.as_deref(), healthy, sort_order, json)?;
         }
         Some(Commands::Current) => {
             handle_current(&manager)?;
@@ -102,11 +177,27 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Switch {
             account,
+            auto,
+            strategy,
+            prefer,
+            tag,
             target,
             restart,
         }) => {
-            let target_host: TargetHost = target.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
-            handle_switch(&manager, &account, target_host, restart)?;
+            let target_host: TargetHost = target.parse().map_err(|e| anyhow!("{}", e))?;
+            handle_switch_command(
+                &manager,
+                account.as_deref(),
+                auto,
+                &strategy,
+                &prefer,
+                tag.as_deref(),
+                target_host,
+                restart,
+            )?;
+        }
+        Some(Commands::Tag { account, action }) => {
+            handle_tag_command(&manager, &account, action)?;
         }
         Some(Commands::Refresh { account }) => {
             handle_refresh(&manager, account.as_deref()).await?;
@@ -125,15 +216,24 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_list(manager: &AntigravityManager, json: bool) -> Result<()> {
-    let summaries = manager.list_accounts()?;
+fn handle_list(
+    manager: &AntigravityManager,
+    filter_tag: Option<&str>,
+    healthy_only: bool,
+    sort_order: Option<AccountSortOrder>,
+    json: bool,
+) -> Result<()> {
+    let accounts = manager.query_accounts(filter_tag, healthy_only, sort_order)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&summaries)?);
+        println!("{}", serde_json::to_string_pretty(&accounts)?);
         return Ok(());
     }
 
-    if summaries.is_empty() {
-        println!("{}", "No accounts found. Run 'am login' or 'am add --token <token>' to add one.".yellow());
+    if accounts.is_empty() {
+        println!(
+            "{}",
+            "No matching accounts found. Run 'am login' or check your filters.".yellow()
+        );
         return Ok(());
     }
 
@@ -146,45 +246,58 @@ fn handle_list(manager: &AntigravityManager, json: bool) -> Result<()> {
         Cell::new("Gemini Pool").fg(Color::Yellow),
         Cell::new("Claude Pool").fg(Color::Magenta),
         Cell::new("Tags").fg(Color::Blue),
+        Cell::new("Last Used").fg(Color::Cyan),
         Cell::new("Status").fg(Color::White),
     ]);
 
-    for s in summaries {
-        let full = manager.get_account(&s.id).ok().flatten();
-        let gemini_str = full
+    for acc in accounts {
+        let gemini_str = acc
+            .quota
             .as_ref()
-            .and_then(|a| a.quota.as_ref())
             .and_then(|q| q.gemini_percentage)
             .map(|p| format!("{:.0}%", p))
             .unwrap_or_else(|| "-".to_string());
 
-        let claude_str = full
+        let claude_str = acc
+            .quota
             .as_ref()
-            .and_then(|a| a.quota.as_ref())
             .and_then(|q| q.claude_percentage)
             .map(|p| format!("{:.0}%", p))
             .unwrap_or_else(|| "-".to_string());
 
-        let tags_str = if s.tags.is_empty() {
+        let tags_str = if acc.tags.is_empty() {
             "-".to_string()
         } else {
-            s.tags.join(", ")
+            acc.tags.join(", ")
         };
 
-        let status_str = if s.disabled {
+        let last_used_str = acc
+            .last_used
+            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+            .map(|dt| dt.format("%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "Never".to_string());
+
+        let status_str = if acc.disabled {
             "🔴 Disabled".red().to_string()
+        } else if acc.banned {
+            "🚫 Banned".red().bold().to_string()
         } else {
             "🟢 Healthy".green().to_string()
         };
 
-        let short_id = if s.id.len() > 8 { &s.id[..8] } else { &s.id };
+        let short_id = if acc.id.len() > 8 {
+            &acc.id[..8]
+        } else {
+            &acc.id
+        };
 
         table.add_row(Row::from(vec![
             Cell::new(short_id),
-            Cell::new(&s.email),
+            Cell::new(&acc.email),
             Cell::new(&gemini_str),
             Cell::new(&claude_str),
             Cell::new(&tags_str),
+            Cell::new(&last_used_str),
             Cell::new(&status_str),
         ]));
     }
@@ -206,19 +319,31 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity App (Classic)"),
-        Cell::new(if hosts.app_running { "🟢 Yes" } else { "⚪ No" }),
+        Cell::new(if hosts.app_running {
+            "🟢 Yes"
+        } else {
+            "⚪ No"
+        }),
         Cell::new("Official Desktop App (/Applications/Antigravity.app)"),
     ]));
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity IDE"),
-        Cell::new(if hosts.ide_running { "🟢 Yes" } else { "⚪ No" }),
+        Cell::new(if hosts.ide_running {
+            "🟢 Yes"
+        } else {
+            "⚪ No"
+        }),
         Cell::new("VSCode-based IDE (/Applications/Antigravity IDE.app)"),
     ]));
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity Plugin (ACP)"),
-        Cell::new(if hosts.plugin_running { "🟢 Yes" } else { "⚪ No" }),
+        Cell::new(if hosts.plugin_running {
+            "🟢 Yes"
+        } else {
+            "⚪ No"
+        }),
         Cell::new("IDE Plugin Daemon (agy_acp_server)"),
     ]));
 
@@ -232,14 +357,67 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
     Ok(())
 }
 
-fn handle_switch(
+fn handle_switch_command(
     manager: &AntigravityManager,
-    account_query: &str,
+    account_query: Option<&str>,
+    auto: bool,
+    strategy_str: &str,
+    prefer_str: &str,
+    tag: Option<&str>,
     target: TargetHost,
     restart: bool,
 ) -> Result<()> {
-    println!("{}", format!("⚡ Switching to account '{}' (Target: {:?})...", account_query, target).cyan());
-    let switched = manager.switch_account(account_query, target, restart)?;
+    let target_query = if auto || account_query.is_none() {
+        let strategy: SwitchStrategy = strategy_str.parse().map_err(|e| anyhow!("{}", e))?;
+        let prefer_pool: ModelPoolPreference =
+            prefer_str.parse().map_err(|e| anyhow!("{}", e))?;
+
+        println!(
+            "{}",
+            format!(
+                "🤖 Smart Account Selection: strategy='{}', prefer='{}', tag={:?}...",
+                strategy_str,
+                prefer_str,
+                tag.unwrap_or("none")
+            )
+            .cyan()
+        );
+
+        let filter = AccountSelectionFilter {
+            strategy: Some(strategy),
+            prefer_pool: Some(prefer_pool),
+            required_tag: tag.map(String::from),
+            healthy_only: true,
+            min_quota_percentage: None,
+        };
+
+        let best = manager
+            .pick_best_account(filter)?
+            .ok_or_else(|| anyhow!("No healthy accounts found matching selection criteria!"))?;
+
+        let quota_eval =
+            AntigravityManager::calculate_account_effective_quota(&best, prefer_pool);
+        println!(
+            "{}",
+            format!(
+                "🎯 Selected optimal account: {} (ID: {}, Quota Score: {:.1}%)",
+                best.email,
+                &best.id[..8],
+                quota_eval
+            )
+            .green()
+        );
+
+        best.id
+    } else {
+        account_query.unwrap().to_string()
+    };
+
+    println!(
+        "{}",
+        format!("⚡ Switching target {:?} to account '{}'...", target, target_query).cyan()
+    );
+    let switched = manager.switch_account(&target_query, target, restart)?;
     println!(
         "{}",
         format!(
@@ -250,96 +428,183 @@ fn handle_switch(
         )
         .green()
     );
-    Ok(())
-}
 
-async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str>) -> Result<()> {
-    if let Some(query) = account_query {
-        let acc = manager
-            .find_account(query)?
-            .ok_or_else(|| anyhow::anyhow!("Account not found: {}", query))?;
-        println!("{}", format!("🔄 Refreshing quota for {}...", acc.email).cyan());
-        let q = manager.refresh_account_quota(&acc.id).await?;
+    if !restart {
         println!(
             "{}",
-            format!(
-                "✅ Refreshed! Gemini: {:.0}%, Claude: {:.0}%",
-                q.gemini_percentage.unwrap_or(0.0),
-                q.claude_percentage.unwrap_or(0.0)
-            )
-            .green()
+            "💡 Language Server hot-reloaded seamlessly. No IDE/App restart needed!".dimmed()
         );
-    } else {
-        println!("{}", "🔄 Batch refreshing all accounts...".cyan());
-        let results = manager.refresh_all_quotas().await?;
-        for (email, res) in results {
-            match res {
-                Ok(q) => {
-                    println!(
-                        "  {} {}: Gemini {:.0}%, Claude {:.0}%",
-                        "✔".green(),
-                        email,
-                        q.gemini_percentage.unwrap_or(0.0),
-                        q.claude_percentage.unwrap_or(0.0)
-                    );
-                }
-                Err(e) => {
-                    println!("  {} {}: Failed ({})", "✖".red(), email, e);
-                }
-            }
-        }
-        println!("{}", "✅ All quotas refreshed!".green());
     }
     Ok(())
 }
 
-async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> {
-    let redirect_uri = "http://localhost:8085/oauth/callback";
-    let state = uuid::Uuid::new_v4().to_string();
-    let auth_url = am_core::auth::OAuthClient::build_auth_url(redirect_uri, &state);
+fn handle_tag_command(
+    manager: &AntigravityManager,
+    account_query: &str,
+    action: TagAction,
+) -> Result<()> {
+    match action {
+        TagAction::Add { tags } => {
+            let updated = manager.add_account_tags(account_query, &tags)?;
+            println!(
+                "{}",
+                format!(
+                    "🏷 Added tags {:?} to {} (current: {:?})",
+                    tags, updated.email, updated.tags
+                )
+                .green()
+            );
+        }
+        TagAction::Remove { tags } => {
+            let updated = manager.remove_account_tags(account_query, &tags)?;
+            println!(
+                "{}",
+                format!(
+                    "🏷 Removed tags {:?} from {} (current: {:?})",
+                    tags, updated.email, updated.tags
+                )
+                .green()
+            );
+        }
+        TagAction::Set { tags } => {
+            let updated = manager.set_account_tags(account_query, &tags)?;
+            println!(
+                "{}",
+                format!("🏷 Set tags for {} to {:?}", updated.email, updated.tags).green()
+            );
+        }
+        TagAction::List => {
+            let acc = manager
+                .find_account(account_query)?
+                .ok_or_else(|| anyhow!("Account not found: {}", account_query))?;
+            println!(
+                "{}",
+                format!("🏷 Tags for {}: {:?}", acc.email, acc.tags).cyan()
+            );
+        }
+    }
+    Ok(())
+}
 
-    println!("{}", "🔐 Google OAuth 2.0 Authorization".bold());
-    println!("{}", "Open the following URL in your browser to sign in:".yellow());
-    println!("\n  {}\n", auth_url.underline().blue());
+async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str>) -> Result<()> {
+    match account_query {
+        Some(query) => {
+            let acc = manager
+                .find_account(query)?
+                .ok_or_else(|| anyhow!("Account not found matching: {}", query))?;
+            println!(
+                "{}",
+                format!("🔄 Refreshing quota for {}...", acc.email).cyan()
+            );
+            let quota = manager.refresh_account_quota(&acc.id).await?;
+            print_quota_summary(&acc.email, &quota);
+        }
+        None => {
+            println!(
+                "{}",
+                "🔄 Refreshing quotas for ALL accounts with rate-limit pacing (250ms)..."
+                    .cyan()
+            );
+            let results = manager.refresh_all_quotas().await?;
+            let mut success = 0;
+            let mut failed = 0;
+            for (email, res) in results {
+                match res {
+                    Ok(q) => {
+                        println!("  {} Refreshed {}", "✔".green(), email);
+                        print_quota_summary(&email, &q);
+                        success += 1;
+                    }
+                    Err(e) => {
+                        println!("  {} Failed {}: {}", "✖".red(), email, e);
+                        failed += 1;
+                    }
+                }
+            }
+            println!(
+                "\n{}",
+                format!(
+                    "✨ Sync complete: {} succeeded, {} failed.",
+                    success, failed
+                )
+                .green()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_quota_summary(_email: &str, quota: &am_core::types::QuotaSummary) {
+    let gemini = quota
+        .gemini_percentage
+        .map(|p| format!("{:.0}%", p))
+        .unwrap_or_else(|| "-".to_string());
+    let claude = quota
+        .claude_percentage
+        .map(|p| format!("{:.0}%", p))
+        .unwrap_or_else(|| "-".to_string());
+    println!(
+        "     {} Gemini Pool: {} | Claude Pool: {}",
+        "•".blue(),
+        gemini.yellow(),
+        claude.magenta()
+    );
+}
+
+async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let oauth = am_core::auth::OAuthClient::new();
+    let port = 8085;
+    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+    let state = uuid::Uuid::new_v4().to_string();
+    let auth_url = am_core::auth::OAuthClient::build_auth_url(&redirect_uri, &state);
+
+    println!(
+        "{}",
+        "🔐 Starting official Google OAuth authentication...".cyan()
+    );
 
     if manual {
-        println!("After signing in, paste the authorization code (or the full redirect URL) below:");
-        print!("> ");
-        use std::io::Write;
-        std::io::stdout().flush()?;
+        println!("\nOpen this URL in your browser:\n{}", auth_url.bold());
+        println!("\nEnter the authorization code callback URL or code:");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         let code = input.trim();
-        let code = if code.contains("code=") {
-            code.split("code=").nth(1).unwrap_or(code).split('&').next().unwrap_or(code)
-        } else {
-            code
-        };
-
-        let oauth = am_core::auth::OAuthClient::new();
-        let token_info = oauth.exchange_code(code, redirect_uri).await?;
+        let token_info = oauth.exchange_code(code, &redirect_uri).await?;
         let user_info = oauth.fetch_user_info(&token_info.access_token).await?;
-
-        println!("{}", format!("✅ Successfully authenticated as {}!", user_info.email).green());
-        let acc = manager.add_account_by_token(&token_info.refresh_token, vec![]).await?;
+        println!(
+            "{}",
+            format!("✅ Successfully authenticated as {}!", user_info.email).green()
+        );
+        let acc = manager
+            .add_account_by_token(&token_info.refresh_token, vec![])
+            .await?;
         println!("{}", format!("Saved account ID: {}", acc.id).green());
-    } else {
-        println!("{}", "Waiting for local browser callback on port 8085...".cyan());
-        // 自动拉起默认浏览器 (Mac: open)
-        let _ = std::process::Command::new("open").arg(&auth_url).spawn();
+        return Ok(());
+    }
 
-        // 简易本地 HTTP 监听一次性请求
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:8085").await?;
-        let (mut socket, _) = listener.accept().await?;
+    println!("Opening browser for authentication...");
+    let _ = open::that(&auth_url);
+    println!("Listening on {} for callback...", redirect_uri);
+
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
+    if let Ok((mut socket, _)) = listener.accept().await {
         let mut buf = [0u8; 2048];
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let n = socket.read(&mut buf).await?;
         let request = String::from_utf8_lossy(&buf[..n]);
 
-        if let Some(code_part) = request.lines().next().and_then(|l| l.split_whitespace().nth(1)) {
-            if let Some(code) = code_part.split("code=").nth(1).and_then(|s| s.split('&').next()) {
-                let oauth = am_core::auth::OAuthClient::new();
-                let token_info = oauth.exchange_code(code, redirect_uri).await?;
+        if let Some(code_part) = request
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+        {
+            if let Some(code) = code_part
+                .split("code=")
+                .nth(1)
+                .and_then(|s| s.split('&').next())
+            {
+                let token_info = oauth.exchange_code(code, &redirect_uri).await?;
                 let user_info = oauth.fetch_user_info(&token_info.access_token).await?;
 
                 let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
@@ -349,20 +614,32 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
                     </body></html>";
                 let _ = socket.write_all(resp.as_bytes()).await;
 
-                println!("{}", format!("✅ Successfully authenticated as {}!", user_info.email).green());
-                let acc = manager.add_account_by_token(&token_info.refresh_token, vec![]).await?;
+                println!(
+                    "{}",
+                    format!("✅ Successfully authenticated as {}!", user_info.email).green()
+                );
+                let acc = manager
+                    .add_account_by_token(&token_info.refresh_token, vec![])
+                    .await?;
                 println!("{}", format!("Saved account ID: {}", acc.id).green());
                 return Ok(());
             }
         }
 
-        println!("{}", "❌ Failed to extract authorization code from callback.".red());
+        println!(
+            "{}",
+            "❌ Failed to extract authorization code from callback.".red()
+        );
     }
 
     Ok(())
 }
 
-async fn handle_add(manager: &AntigravityManager, token: &str, tags: Vec<String>) -> Result<()> {
+async fn handle_add(
+    manager: &AntigravityManager,
+    token: &str,
+    tags: Vec<String>,
+) -> Result<()> {
     println!("{}", "➕ Verifying token and adding account...".cyan());
     let account = manager.add_account_by_token(token, tags).await?;
     println!(
@@ -379,7 +656,10 @@ async fn handle_add(manager: &AntigravityManager, token: &str, tags: Vec<String>
 
 fn handle_delete(manager: &AntigravityManager, accounts: Vec<String>) -> Result<()> {
     if accounts.is_empty() {
-        println!("{}", "Please specify at least one account ID or email to delete.".yellow());
+        println!(
+            "{}",
+            "Please specify at least one account ID or email to delete.".yellow()
+        );
         return Ok(());
     }
 
@@ -394,15 +674,30 @@ fn handle_delete(manager: &AntigravityManager, accounts: Vec<String>) -> Result<
 
 fn handle_fingerprint() -> Result<()> {
     let fp = am_core::quota::fingerprint::get_active_fingerprint();
-    println!("{}", "🛡 Active Antigravity Hub Client Fingerprint".cyan().bold());
+    println!(
+        "{}",
+        "🛡 Active Antigravity Hub Client Fingerprint".cyan().bold()
+    );
     println!("  {} Hub Version:  {}", "•".blue(), fp.version.bold());
     println!("  {} Piper CL:     {}", "•".blue(), fp.cl.bold());
-    println!("  {} Source:       {}", "•".blue(), match fp.source {
-        am_core::quota::fingerprint::FingerprintSource::Local => "Local Installed App (Dynamic Alignment)".green().bold(),
-        am_core::quota::fingerprint::FingerprintSource::Baseline => "Calibrated Baseline (Fallback)".yellow().bold(),
-    });
+    println!(
+        "  {} Source:       {}",
+        "•".blue(),
+        match fp.source {
+            am_core::quota::fingerprint::FingerprintSource::Local => {
+                "Local Installed App (Dynamic Alignment)".green().bold()
+            }
+            am_core::quota::fingerprint::FingerprintSource::Baseline => {
+                "Calibrated Baseline (Fallback)".yellow().bold()
+            }
+        }
+    );
     if let Some(path) = &fp.local_path {
-        println!("  {} Detected At:  {}", "•".blue(), path.display().to_string().dimmed());
+        println!(
+            "  {} Detected At:  {}",
+            "•".blue(),
+            path.display().to_string().dimmed()
+        );
     }
     println!("  {} Outbound UA:  {}", "•".blue(), fp.user_agent.dimmed());
     Ok(())
