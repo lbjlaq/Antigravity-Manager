@@ -37,7 +37,13 @@ body {
   background-color: #09090b;
 }
 
-/* ==================== View Transitions 基础层级基线 (跨平台极致丝滑) ==================== */
+/* ==================== 跨平台极致丝滑 120Hz 径向模糊羽化扩散 ==================== */
+@property --am-theme-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;

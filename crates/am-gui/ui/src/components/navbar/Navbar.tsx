@@ -7,9 +7,7 @@ interface NavbarProps {
   currentTab: TabId;
   onTabChange: (tab: TabId) => void;
   theme: 'light' | 'dark';
-  onThemeToggle: () => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  themeButtonRef?: any;
+  onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
   lang: 'zh' | 'en';
   onLanguageChange: (lang: 'zh' | 'en') => void;
 }
@@ -19,7 +17,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onTabChange,
   theme,
   onThemeToggle,
-  themeButtonRef,
   lang,
   onLanguageChange,
 }) => {
@@ -52,7 +49,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <NavActions
               theme={theme}
               onThemeToggle={onThemeToggle}
-              themeButtonRef={themeButtonRef}
               lang={lang}
               onLanguageChange={onLanguageChange}
             />
