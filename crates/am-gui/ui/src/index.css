@@ -37,13 +37,7 @@ body {
   background-color: #09090b;
 }
 
-/* ==================== 跨平台极致丝滑 120Hz 径向模糊羽化扩散 ==================== */
-@property --am-theme-radius {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-
+/* ==================== 跨平台 120Hz 黄金 View Transitions 规则 ==================== */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;

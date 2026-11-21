@@ -17,80 +17,55 @@ export function App() {
     }
   }, [theme]);
 
-  // 跨平台 0 延迟、真正的径向高斯模糊羽化光晕扩散 (GPU Fragment Shader 硬件加速)
+  // 稳定、100% 生效的圆心水波扩散动画 (对齐 minhvo / baiwumm 标准实现)
   const handleThemeToggle = async (event: React.MouseEvent<HTMLButtonElement>) => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
 
-    // 降级兼容：不支持 View Transition 则直接切换
     if (!document.startViewTransition) {
       setTheme(newTheme);
       return;
     }
 
-    // 1. 获取点击物理圆心
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
+    // 1. 获取点击真实视口坐标
+    const x = event.clientX;
+    const y = event.clientY;
 
-    // 2. 精确计算覆盖视口所需最大半径，加上 60px 羽化外延防止角落断层
-    const maxRadius = Math.hypot(
+    // 2. 计算覆盖全屏最大外接圆半径
+    const endRadius = Math.hypot(
       Math.max(x, window.innerWidth - x),
       Math.max(y, window.innerHeight - y)
     );
-    const endRadius = Math.round(maxRadius + 80);
 
-    const STYLE_ID = 'am-theme-feather-style';
-    document.getElementById(STYLE_ID)?.remove();
-
-    // 3. 注入静态蒙版盒子（100% 100%，盒子不移动、不缩放，杜绝 GPU 重绘）
-    // 渐变通过 CSS 自定义属性 --am-theme-radius 进行插值，边缘 60px 物理柔和羽化
-    const style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = `
-      ::view-transition-new(root) {
-        -webkit-mask-image: radial-gradient(circle at ${x}px ${y}px, #000 calc(var(--am-theme-radius) - 60px), transparent var(--am-theme-radius));
-        mask-image: radial-gradient(circle at ${x}px ${y}px, #000 calc(var(--am-theme-radius) - 60px), transparent var(--am-theme-radius));
-        -webkit-mask-size: 100% 100%;
-        mask-size: 100% 100%;
-        -webkit-mask-repeat: no-repeat;
-        mask-repeat: no-repeat;
-      }
-    `;
-    document.head.appendChild(style);
-
-    try {
-      // 4. 同步提交 DOM 翻转
-      const transition = document.startViewTransition(() => {
-        flushSync(() => {
-          setTheme(newTheme);
-          const root = document.documentElement;
-          if (newTheme === 'dark') {
-            root.classList.add('dark');
-          } else {
-            root.classList.remove('dark');
-          }
-        });
-      });
-
-      await transition.ready;
-
-      // 5. 由 GPU 动画驱动半径属性展开（650ms 舒适节奏，配合 Apple 阻尼曲线）
-      const animation = document.documentElement.animate(
-        [
-          { ['--am-theme-radius' as string]: '0px' },
-          { ['--am-theme-radius' as string]: `${endRadius}px` },
-        ],
-        {
-          duration: 650,
-          easing: 'cubic-bezier(0.2, 0.8, 0.25, 1)',
-          fill: 'forwards',
+    // 3. 强制 React 18 同步提交 DOM 翻转并挂载动画
+    const transition = document.startViewTransition(() => {
+      flushSync(() => {
+        setTheme(newTheme);
+        const root = document.documentElement;
+        if (newTheme === 'dark') {
+          root.classList.add('dark');
+        } else {
+          root.classList.remove('dark');
         }
-      );
+      });
+    });
 
-      await animation.finished;
-    } finally {
-      document.getElementById(STYLE_ID)?.remove();
-    }
+    await transition.ready;
+
+    // 4. 驱动新视图从点击圆心以平滑缓动向全屏展开
+    // 时长 550ms：既清晰可见水波扩散，又完全不拖泥带水
+    document.documentElement.animate(
+      {
+        clipPath: [
+          `circle(0px at ${x}px ${y}px)`,
+          `circle(${endRadius}px at ${x}px ${y}px)`,
+        ],
+      },
+      {
+        duration: 550,
+        easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+        pseudoElement: '::view-transition-new(root)',
+      }
+    );
   };
 
   return (
