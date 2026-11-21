@@ -77,6 +77,9 @@ enum Commands {
         /// Account ID(s) or Email(s)
         accounts: Vec<String>,
     },
+
+    /// 🔍 Inspect active Hub client fingerprint and local app alignment
+    Fingerprint,
 }
 
 #[tokio::main]
@@ -93,6 +96,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Current) => {
             handle_current(&manager)?;
+        }
+        Some(Commands::Fingerprint) => {
+            handle_fingerprint()?;
         }
         Some(Commands::Switch {
             account,
@@ -383,5 +389,21 @@ fn handle_delete(manager: &AntigravityManager, accounts: Vec<String>) -> Result<
             Err(e) => println!("  {} Failed to delete '{}': {}", "✖".red(), acc, e),
         }
     }
+    Ok(())
+}
+
+fn handle_fingerprint() -> Result<()> {
+    let fp = am_core::quota::fingerprint::get_active_fingerprint();
+    println!("{}", "🛡 Active Antigravity Hub Client Fingerprint".cyan().bold());
+    println!("  {} Hub Version:  {}", "•".blue(), fp.version.bold());
+    println!("  {} Piper CL:     {}", "•".blue(), fp.cl.bold());
+    println!("  {} Source:       {}", "•".blue(), match fp.source {
+        am_core::quota::fingerprint::FingerprintSource::Local => "Local Installed App (Dynamic Alignment)".green().bold(),
+        am_core::quota::fingerprint::FingerprintSource::Baseline => "Calibrated Baseline (Fallback)".yellow().bold(),
+    });
+    if let Some(path) = &fp.local_path {
+        println!("  {} Detected At:  {}", "•".blue(), path.display().to_string().dimmed());
+    }
+    println!("  {} Outbound UA:  {}", "•".blue(), fp.user_agent.dimmed());
     Ok(())
 }
