@@ -508,12 +508,13 @@ Antigravity Manager 桌面客户端 (`am-gui`) 是专为专业开发者打造的
 2. **卡片圆角与微边框 (Squircle & Micro-Borders)**：
    - 卡片采用 `rounded-xl (12px)` 或 `rounded-2xl (16px)`。
    - 边框采用 `border border-base-300/60 dark:border-base-300/40`，呈现微弱的半透明金属切边质感。
-3. **主题切换圆形高斯模糊扩散动效 (CIRCLE_BLUR Theme Transition)**：
-   - 深度对齐开源项目 `baiwumm/theme-switch-animation` 的核心 `CIRCLE_BLUR` 算法规范：
-     - **矢量高斯模糊蒙版**：将 `<feGaussianBlur stdDeviation="..."/>` 直接烘焙进 SVG 矢量蒙版（避免 Safari/WebKit 滤镜渲染瑕疵）。
-     - **新视图挂载**：挂载于 `::view-transition-new(root)`，旧视图完整垫底，避免主题瞬间翻转。
-     - **中心几何锚定 (pinCenterGeometry)**：通过 `mask-size` 与 `mask-position` 从点击物理坐标以 `cubic-bezier(0.2, 0.8, 0.25, 1)`（700ms）向全屏外接圆柔和扩散，产生优雅的模糊光晕。
-     - **零内存残留**：转场完成后立即移除注入的临时 `<style>` 标签，零常驻开销，跨平台满帧 120Hz。
+3. **跨平台极致丝滑主题扩散动效 (Ultra-Smooth GPU Clip-Path Transition)**：
+   - **摒弃笨重矢量蒙版**：彻底废弃需要每帧 CPU 重新光栅化的 5000px `<feGaussianBlur>` SVG Mask 方案，解决 Windows WebView2、Linux WebKitGTK 与核显环境下的掉帧、撕裂与全屏雾化卡顿。
+   - **GPU 片元着色器实时裁切**：采用 Web Animations API 驱动 `clip-path: circle(0px at x y) -> circle(endRadius at x y)`，由 GPU 片元管线直接硬件加速计算。
+   - **动态精准外接圆计算**：
+     $$r_{\text{end}} = \text{hypot}(\max(x, w - x), \max(y, h - y))$$
+     根据当前窗口物理分辨率与触发点实时计算最小精确外接圆，杜绝超大屏下任何几何浪费与计算冗余。
+   - **Apple 工业级阻尼曲线**：采用 `duration: 480ms` 与 `cubic-bezier(0.16, 1, 0.3, 1)`，兼顾呼吸感与干脆利落的响应速度，全平台满帧 120Hz，内存零常驻。
 
 ### 8.4 导航栏与布局架构 (Navbar Structure)
 
