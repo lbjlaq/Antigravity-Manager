@@ -3,6 +3,13 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.20 (2026-11-21)**:
+        -   **[Token 缓存命中率防溢出与核算成本倒挂自愈] (PR #4015, Thanks to @cubelikeplayDaniel)**:
+            -   **跨协议 Prompt 缓存记账口径归一化**: 修复在 Anthropic Claude 协议下，上游响应将未命中缓存增量与缓存读取分离（`input_tokens` 与 `cache_read_input_tokens`），导致前端将增量输入直接作为总输入计算时，缓存命中率异常溢出至 100% 以上（如 108.8%）的问题。在 `TokenStats`、`AppleBentoView` 与 `CyberCockpitView` 中引入非破坏性自愈机制，自动恢复有效完整 Prompt 上下文（`total_input + cached`），将命中率严格收敛于 `[0, 100%]`。(PR #4015, Thanks to @cubelikeplayDaniel)
+            -   **根除成本截断归零与节省金额倒挂**: 修复成本计算中 `Math.max(0, total_input - cached)` 因增量输入小于缓存 token 数量而被强行截断归零、导致总支出严重低估且估算节省金额反超总支出数倍的财务核算倒挂缺陷；并在后端 `token_stats.rs` 写入层引入饱和加法规范化，杜绝未来增量数据污染 SQLite 数据库。(PR #4015, Thanks to @cubelikeplayDaniel)
+        -   **[Gemini 入站动态思考开启判定与协议对齐] (Fixes #4012, PR #4014, Thanks to @vecyang1)**:
+            -   **修复 `thinkingBudget: -1` 被误转为 0 导致思考静默关闭**: 解决客户端通过 Gemini 协议原生传递 `thinkingBudget: -1`（自适应/动态思考开启）时，`wrap_request_v2` 误将其映射为 `0` 触发关闭思考逻辑、导致上游请求静默丢失思考链与工具规划能力退化的问题。将 `-1` 正确识别为动态思考开启并交由入站管线按目标模型通道下发，同时严格保持 `thinkingBudget: 0` 与 `includeThoughts: false` 的显式关闭一票否决权。(Fixes #4012, PR #4014, Thanks to @vecyang1)
+
     *   **v5.0.4-beta.19 (2026-11-20)**:
         -   **[纯思考空回复流式收尾零篡改与真实用量保全] (Fixes #4008)**:
             -   **移除流式门禁自愈未果注入假正文 `"task ready"`**: 解决在纯思考输出场景下，当上游流式响应因仅包含思考块、未产出可见正文且二次续写自愈未果时，网关在终止前强行注入 `"task ready"` 假正文篡改真实响应导致下游 Agent 逻辑受扰的问题。
