@@ -3,6 +3,7 @@ import { Account, getAccountTier, ModelPriorities } from '../types/account';
 import { PedalCandidate, PedalModeState, PedalTargetModel } from '../types/pedal';
 import { getGroupQuotaSummaries } from '../utils/quotaDisplay';
 import { showToast } from '../components/common/ToastContainer';
+import { buildPedalBoostedModelPriorities } from '../utils/modelPriority';
 import { useAccountStore } from './useAccountStore';
 import { request } from '../utils/request';
 
@@ -177,7 +178,6 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
             const targetSet = new Set(targetIds);
             const originalPriorities: Record<string, number> = {};
             const originalModelPriorities: Record<string, ModelPriorities> = {};
-            const otherModel: PedalTargetModel = model === 'gemini' ? 'claude' : 'gemini';
 
             for (const acc of accounts) {
                 if (targetSet.has(acc.id)) {
@@ -191,16 +191,12 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 if (updateAccountPriority) await updateAccountPriority(id, p, mp);
             });
 
-            // 批量将目标账号对应模型族设置为最高调度优先级（priority = 1），保留另一模型族原优先级，绝不挂起其他正常账号
+            // 批量将目标账号对应模型族设置为最高调度优先级（priority = 1），保留另一模型族及其单模型原优先级，绝不挂起其他正常账号
             for (const id of targetIds) {
                 try {
                     const origP = originalPriorities[id] ?? 50;
                     const origMp = originalModelPriorities[id] || {};
-                    const boostedMp: ModelPriorities = {
-                        ...origMp,
-                        [model]: 1,
-                        [otherModel]: origMp[otherModel] ?? origP,
-                    };
+                    const boostedMp = buildPedalBoostedModelPriorities(origP, origMp, model);
                     await priorityUpdater(id, 1, boostedMp);
                 } catch (e) {
                     console.error('[PedalMode] Failed to boost account priority:', id, e);

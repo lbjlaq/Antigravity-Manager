@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2, X } from 'lucide-react';
-import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
+import { Account, ActiveClientsStatus, getAccountTier, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
+import { formatAccountPriorityBadge, formatAccountPriorityTooltip } from '../../utils/modelPriority';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -313,15 +314,12 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                             ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
                                             : "bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
                                 )}
-                                title={
-                                    hasCustomModelPriorities(account)
-                                        ? `Gemini: ${getEffectiveModelPriority(account, 'gemini')} | Claude: ${getEffectiveModelPriority(account, 'claude')} (${t('accounts.priority')}: ${account.priority ?? 50})`
-                                        : t('accounts.priority_hint')
-                                }
+                                title={formatAccountPriorityTooltip(account, {
+                                    priority: t('accounts.priority'),
+                                    defaultHint: t('accounts.priority_hint'),
+                                })}
                             >
-                                {hasCustomModelPriorities(account)
-                                    ? `${t('accounts.priority')}: G:${getEffectiveModelPriority(account, 'gemini')} · C:${getEffectiveModelPriority(account, 'claude')}`
-                                    : `${t('accounts.priority')}: ${account.priority ?? 50}`}
+                                {formatAccountPriorityBadge(account, t('accounts.priority'))}
                             </span>
                             {/* 多标签平铺渲染 (最多显示 2 个，超出的显示 +N 徽章) */}
                             {tags.length > 0 && (

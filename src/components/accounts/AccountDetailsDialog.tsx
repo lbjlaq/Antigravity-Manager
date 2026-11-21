@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Clock, AlertCircle, Bot, Ban, ExternalLink, Copy } from 'lucide-react';
+import { X, Clock, AlertCircle, Bot, Ban, ExternalLink, Copy, Plus, Check } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Account, getAccountTier, getTierLabel, ModelPriorities } from '../../types/account';
 import { formatDate, formatTimeRemaining } from '../../utils/format';
@@ -8,6 +8,19 @@ import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { isSupportedDisplayModel } from '../../utils/quotaDisplay';
 import { showToast } from '../common/ToastContainer';
 import { copyToClipboard } from '../../utils/clipboard';
+import {
+    buildModelPriorityPickerOptions,
+    getCanonicalModelSeriesId,
+    getSpecificModelPriorityEntries,
+    isCoarseModelPriorityGroup,
+    isValidModelPriorityKey,
+    normalizeModelPriorityKey,
+    resolveEffectiveModelPriorityDetail,
+    resolveModelPriorityGroup,
+    stripDisplayTierLabel,
+} from '../../utils/modelPriority';
+
+const CUSTOM_MODEL_OPTION = '__custom__';
 
 interface AccountDetailsDialogProps {
     account: Account | null;
@@ -29,6 +42,12 @@ export default function AccountDetailsDialog({
     const [priorityInput, setPriorityInput] = useState('50');
     const [geminiPriorityInput, setGeminiPriorityInput] = useState('');
     const [claudePriorityInput, setClaudePriorityInput] = useState('');
+    const [specificPriorityInputs, setSpecificPriorityInputs] = useState<Record<string, string>>({});
+    const [selectedOverrideKey, setSelectedOverrideKey] = useState('');
+    const [customOverrideKey, setCustomOverrideKey] = useState('');
+    const [newOverridePriority, setNewOverridePriority] = useState('');
+    const [inlineEditingModel, setInlineEditingModel] = useState<string | null>(null);
+    const [inlinePriorityDraft, setInlinePriorityDraft] = useState('');
     const [savingPriority, setSavingPriority] = useState(false);
     const [projectIdInput, setProjectIdInput] = useState('');
     const [savingProjectId, setSavingProjectId] = useState(false);
@@ -43,6 +62,16 @@ export default function AccountDetailsDialog({
         return models.filter(m => isSupportedDisplayModel(m.name || ''));
     }, [account?.quota?.models]);
 
+    const savedSpecificEntries = useMemo(
+        () => getSpecificModelPriorityEntries(account?.model_priorities),
+        [account?.model_priorities]
+    );
+
+    const savedSpecificSignature = useMemo(
+        () => JSON.stringify(savedSpecificEntries),
+        [savedSpecificEntries]
+    );
+
     useEffect(() => {
         setPriorityInput(String(account?.priority ?? 50));
         setGeminiPriorityInput(
@@ -55,14 +84,92 @@ export default function AccountDetailsDialog({
                 ? String(account.model_priorities.claude)
                 : ''
         );
+        const nextSpecific: Record<string, string> = {};
+        for (const [k, v] of savedSpecificEntries) {
+            nextSpecific[k] = String(v);
+        }
+        setSpecificPriorityInputs(nextSpecific);
+        setSelectedOverrideKey('');
+        setCustomOverrideKey('');
+        setNewOverridePriority('');
+        setInlineEditingModel(null);
+        setInlinePriorityDraft('');
         setProjectIdInput(account?.token?.project_id || '');
     }, [
         account?.id,
         account?.priority,
         account?.model_priorities?.gemini,
         account?.model_priorities?.claude,
+        savedSpecificSignature,
         account?.token?.project_id,
     ]);
+
+    const modelLabelLookup = useMemo(() => {
+        const exact = new Map<string, string>();
+        const series = new Map<string, { label: string; count: number }>();
+        for (const model of displayModels) {
+            const rawKey = normalizeModelPriorityKey(model.name || '');
+            if (!rawKey) continue;
+            const config = MODEL_CONFIG[rawKey];
+            const label = model.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.label || model.name));
+            exact.set(rawKey, label);
+            const seriesKey = getCanonicalModelSeriesId(rawKey);
+            const existing = series.get(seriesKey);
+            if (existing) {
+                existing.count += 1;
+            } else {
+                series.set(seriesKey, {
+                    label: stripDisplayTierLabel(label) || seriesKey,
+                    count: 1,
+                });
+            }
+        }
+        return { exact, series };
+    }, [displayModels, t]);
+
+    const configuredSpecificKeys = useMemo(
+        () => new Set(Object.keys(specificPriorityInputs)),
+        [specificPriorityInputs]
+    );
+
+    const pickerOptions = useMemo(
+        () =>
+            buildModelPriorityPickerOptions(
+                displayModels.map(m => {
+                    const key = normalizeModelPriorityKey(m.name || '');
+                    return {
+                        name: m.name,
+                        display_name: modelLabelLookup.exact.get(key) || m.display_name || m.name,
+                    };
+                }),
+                configuredSpecificKeys
+            ),
+        [displayModels, modelLabelLookup, configuredSpecificKeys]
+    );
+
+    const draftAccountForPreview = useMemo(() => {
+        const parsedBase = Number(priorityInput);
+        const base =
+            Number.isInteger(parsedBase) && parsedBase >= 1 && parsedBase <= 100
+                ? parsedBase
+                : (account?.priority ?? 50);
+        const mp: ModelPriorities = {};
+        const gVal = Number(geminiPriorityInput.trim());
+        if (geminiPriorityInput.trim() !== '' && Number.isInteger(gVal) && gVal >= 1 && gVal <= 100) {
+            mp.gemini = gVal;
+        }
+        const cVal = Number(claudePriorityInput.trim());
+        if (claudePriorityInput.trim() !== '' && Number.isInteger(cVal) && cVal >= 1 && cVal <= 100) {
+            mp.claude = cVal;
+        }
+        for (const [k, rawVal] of Object.entries(specificPriorityInputs)) {
+            const v = Number(rawVal.trim());
+            if (rawVal.trim() !== '' && Number.isInteger(v) && v >= 1 && v <= 100) {
+                mp[k] = v;
+            }
+        }
+        return { priority: base, model_priorities: mp };
+    }, [priorityInput, geminiPriorityInput, claudePriorityInput, specificPriorityInputs, account?.priority]);
 
     if (!account) return null;
 
@@ -70,16 +177,28 @@ export default function AccountDetailsDialog({
         account.model_priorities?.gemini !== undefined ? String(account.model_priorities.gemini) : '';
     const currentClaudeStr =
         account.model_priorities?.claude !== undefined ? String(account.model_priorities.claude) : '';
+    const normalizedDraftSpecific = Object.entries(specificPriorityInputs)
+        .filter(([, val]) => val.trim() !== '')
+        .map(([k, val]) => [normalizeModelPriorityKey(k), val.trim()] as const)
+        .sort(([a], [b]) => a.localeCompare(b));
+    const savedSpecificComparable = savedSpecificEntries.map(([k, v]) => [k, String(v)] as const);
+    const isSpecificDirty =
+        JSON.stringify(normalizedDraftSpecific) !== JSON.stringify(savedSpecificComparable);
     const isPriorityDirty =
         priorityInput.trim() !== String(account.priority ?? 50) ||
         geminiPriorityInput.trim() !== currentGeminiStr ||
-        claudePriorityInput.trim() !== currentClaudeStr;
+        claudePriorityInput.trim() !== currentClaudeStr ||
+        isSpecificDirty;
+    const hasAnyDraftOverride =
+        geminiPriorityInput.trim() !== '' ||
+        claudePriorityInput.trim() !== '' ||
+        Object.keys(specificPriorityInputs).length > 0;
 
-    const savePriority = async () => {
+    const persistPriorityDraft = async (overrideSpecific?: Record<string, string>) => {
         const priority = Number(priorityInput);
         if (!Number.isInteger(priority) || priority < 1 || priority > 100) {
             showToast(t('accounts.priority_invalid'), 'error');
-            return;
+            return false;
         }
         const nextModelPriorities: ModelPriorities = {};
         const gTrim = geminiPriorityInput.trim();
@@ -87,7 +206,7 @@ export default function AccountDetailsDialog({
             const gVal = Number(gTrim);
             if (!Number.isInteger(gVal) || gVal < 1 || gVal > 100) {
                 showToast(t('accounts.priority_invalid'), 'error');
-                return;
+                return false;
             }
             nextModelPriorities.gemini = gVal;
         }
@@ -96,21 +215,119 @@ export default function AccountDetailsDialog({
             const cVal = Number(cTrim);
             if (!Number.isInteger(cVal) || cVal < 1 || cVal > 100) {
                 showToast(t('accounts.priority_invalid'), 'error');
-                return;
+                return false;
             }
             nextModelPriorities.claude = cVal;
+        }
+
+        const specificMap = overrideSpecific ?? specificPriorityInputs;
+        for (const [rawKey, rawVal] of Object.entries(specificMap)) {
+            const trimmedVal = rawVal.trim();
+            if (trimmedVal === '') continue;
+            const key = normalizeModelPriorityKey(rawKey);
+            if (!isValidModelPriorityKey(key)) {
+                showToast(
+                    t('accounts.priority_key_invalid', {
+                        defaultValue: '模型优先级键名无效: {{key}}',
+                        key: rawKey,
+                    }),
+                    'error'
+                );
+                return false;
+            }
+            const val = Number(trimmedVal);
+            if (!Number.isInteger(val) || val < 1 || val > 100) {
+                showToast(t('accounts.priority_invalid'), 'error');
+                return false;
+            }
+            nextModelPriorities[key] = val;
         }
 
         setSavingPriority(true);
         try {
             await onUpdatePriority(account.id, priority, nextModelPriorities);
             showToast(t('accounts.priority_updated'), 'success');
+            return true;
         } catch (error) {
             showToast(`${t('common.error')}: ${error}`, 'error');
+            return false;
         } finally {
             setSavingPriority(false);
         }
     };
+
+    const savePriority = async () => {
+        await persistPriorityDraft();
+    };
+
+    const effectiveNewOverrideKey =
+        selectedOverrideKey === CUSTOM_MODEL_OPTION
+            ? normalizeModelPriorityKey(customOverrideKey)
+            : normalizeModelPriorityKey(selectedOverrideKey);
+
+    const newOverridePlaceholder = effectiveNewOverrideKey
+        ? String(resolveEffectiveModelPriorityDetail(draftAccountForPreview, effectiveNewOverrideKey).priority)
+        : (priorityInput || '50');
+
+    const handleAddSpecificOverride = () => {
+        const key = effectiveNewOverrideKey;
+        if (!key || !isValidModelPriorityKey(key)) {
+            showToast(
+                t('accounts.priority_key_invalid', {
+                    defaultValue: '模型优先级键名无效: {{key}}',
+                    key: selectedOverrideKey === CUSTOM_MODEL_OPTION ? customOverrideKey : selectedOverrideKey,
+                }),
+                'error'
+            );
+            return;
+        }
+        const rawVal = newOverridePriority.trim() || newOverridePlaceholder;
+        const val = Number(rawVal);
+        if (!Number.isInteger(val) || val < 1 || val > 100) {
+            showToast(t('accounts.priority_invalid'), 'error');
+            return;
+        }
+        if (isCoarseModelPriorityGroup(key)) {
+            if (key === 'gemini') {
+                setGeminiPriorityInput(String(val));
+            } else {
+                setClaudePriorityInput(String(val));
+            }
+        } else {
+            setSpecificPriorityInputs(prev => ({
+                ...prev,
+                [key]: String(val),
+            }));
+        }
+        setSelectedOverrideKey('');
+        setCustomOverrideKey('');
+        setNewOverridePriority('');
+    };
+
+    const handleInlineModelPriorityCommit = async (modelKey: string, valueStr: string | null) => {
+        const normalizedKey = normalizeModelPriorityKey(modelKey);
+        const nextSpecific: Record<string, string> = { ...specificPriorityInputs };
+        if (valueStr === null || valueStr.trim() === '') {
+            delete nextSpecific[normalizedKey];
+        } else {
+            const parsed = Number(valueStr.trim());
+            if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+                showToast(t('accounts.priority_invalid'), 'error');
+                return;
+            }
+            nextSpecific[normalizedKey] = String(parsed);
+        }
+        setSpecificPriorityInputs(nextSpecific);
+        const ok = await persistPriorityDraft(nextSpecific);
+        if (ok) {
+            setInlineEditingModel(null);
+            setInlinePriorityDraft('');
+        }
+    };
+
+    const sortedSpecificDraftKeys = Object.keys(specificPriorityInputs).sort((a, b) =>
+        a.localeCompare(b)
+    );
 
     const saveProjectId = async () => {
         if (!onUpdateProjectId) return;
@@ -263,13 +480,24 @@ export default function AccountDetailsDialog({
                                             C:{account.model_priorities.claude}
                                         </span>
                                     )}
+                                    {savedSpecificEntries.length > 0 && (
+                                        <span
+                                            className="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 font-mono font-bold"
+                                            title={savedSpecificEntries.map(([k, v]) => `${k}: ${v}`).join(', ')}
+                                        >
+                                            {t('accounts.priority_models_badge', {
+                                                defaultValue: '+{{count}} 模型',
+                                                count: savedSpecificEntries.length,
+                                            })}
+                                        </span>
+                                    )}
                                 </div>
                                 <p className="mt-1 text-xs text-gray-400 dark:text-gray-500 leading-relaxed max-w-xl">
                                     {t('accounts.priority_hint')}
                                 </p>
                             </div>
                             <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-                                {(geminiPriorityInput.trim() !== '' || claudePriorityInput.trim() !== '') && (
+                                {hasAnyDraftOverride && (
                                     <button
                                         type="button"
                                         className="btn btn-ghost btn-xs text-gray-500 hover:text-gray-700 dark:text-gray-400"
@@ -277,8 +505,9 @@ export default function AccountDetailsDialog({
                                         onClick={() => {
                                             setGeminiPriorityInput('');
                                             setClaudePriorityInput('');
+                                            setSpecificPriorityInputs({});
                                         }}
-                                        title={t('accounts.model_priority_reset_hint', '清空独立模型优先级，全部跟随账号默认优先级')}
+                                        title={t('accounts.model_priority_reset_hint', '清空全部模型族与单模型覆盖，统一跟随账号默认优先级')}
                                     >
                                         {t('accounts.model_priority_reset', '恢复统一')}
                                     </button>
@@ -361,6 +590,177 @@ export default function AccountDetailsDialog({
                                     onChange={event => setClaudePriorityInput(event.target.value)}
                                 />
                             </label>
+                        </div>
+
+                        {/* 按模型 / 系列单独覆盖优先级 */}
+                        <div className="pt-2.5 border-t border-gray-200/60 dark:border-base-300/60 space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-1">
+                                <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                                    {t('accounts.priority_specific_title', '按模型覆盖优先级')}
+                                </span>
+                                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                                    {t('accounts.priority_specific_hint', '可针对模型系列（覆盖全部档位）或单个具体模型单独设置')}
+                                </span>
+                            </div>
+
+                            {sortedSpecificDraftKeys.length > 0 && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {sortedSpecificDraftKeys.map(modelKey => {
+                                        const family = resolveModelPriorityGroup(modelKey);
+                                        const seriesInfo = modelLabelLookup.series.get(modelKey);
+                                        const exactLabel = modelLabelLookup.exact.get(modelKey);
+                                        const isSeries = Boolean(seriesInfo && seriesInfo.count > 1 && !exactLabel);
+                                        const friendlyName = exactLabel || seriesInfo?.label || modelKey;
+                                        return (
+                                            <div
+                                                key={modelKey}
+                                                className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white dark:bg-base-100 border border-gray-200/80 dark:border-base-300"
+                                            >
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <span
+                                                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                                                family === 'claude' ? 'bg-amber-500' : 'bg-indigo-500'
+                                                            }`}
+                                                        />
+                                                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate">
+                                                            {friendlyName}
+                                                        </span>
+                                                        {isSeries && (
+                                                            <span className="text-[9px] px-1 py-0.25 rounded bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 font-medium shrink-0">
+                                                                {t('accounts.priority_series_tag', '系列')}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-[10px] font-mono text-gray-400 dark:text-gray-500 truncate">
+                                                        {modelKey}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <input
+                                                        type="number"
+                                                        min={1}
+                                                        max={100}
+                                                        step={1}
+                                                        aria-label={`${modelKey} ${t('accounts.priority')}`}
+                                                        className="input input-bordered input-xs w-14 text-center font-mono font-bold"
+                                                        value={specificPriorityInputs[modelKey] ?? ''}
+                                                        disabled={savingPriority}
+                                                        onChange={event =>
+                                                            setSpecificPriorityInputs(prev => ({
+                                                                ...prev,
+                                                                [modelKey]: event.target.value,
+                                                            }))
+                                                        }
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        disabled={savingPriority}
+                                                        onClick={() =>
+                                                            setSpecificPriorityInputs(prev => {
+                                                                const next = { ...prev };
+                                                                delete next[modelKey];
+                                                                return next;
+                                                            })
+                                                        }
+                                                        className="btn btn-ghost btn-xs btn-square text-gray-400 hover:text-rose-500"
+                                                        title={t('accounts.priority_inline_clear_hint', '清除该模型的独立优先级覆盖')}
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-2">
+                                <select
+                                    className="select select-bordered select-xs flex-1 min-w-[180px] font-mono text-xs bg-white dark:bg-base-100"
+                                    value={selectedOverrideKey}
+                                    disabled={savingPriority}
+                                    onChange={event => {
+                                        setSelectedOverrideKey(event.target.value);
+                                        if (event.target.value !== CUSTOM_MODEL_OPTION) {
+                                            setCustomOverrideKey('');
+                                        }
+                                    }}
+                                >
+                                    <option value="">
+                                        {t('accounts.priority_select_model', '选择模型或系列...')}
+                                    </option>
+                                    {pickerOptions.seriesOptions.length > 0 && (
+                                        <optgroup label={t('accounts.priority_group_series', '模型系列（全档位生效）')}>
+                                            {pickerOptions.seriesOptions.map(opt => (
+                                                <option key={`series:${opt.key}`} value={opt.key}>
+                                                    {opt.label !== opt.key ? `${opt.label} (${opt.key})` : opt.key}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                    {pickerOptions.exactOptions.length > 0 && (
+                                        <optgroup label={t('accounts.priority_group_exact', '具体模型（单变体生效）')}>
+                                            {pickerOptions.exactOptions.map(opt => (
+                                                <option key={`exact:${opt.key}`} value={opt.key}>
+                                                    {opt.label !== opt.key ? `${opt.label} (${opt.key})` : opt.key}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                    <option value={CUSTOM_MODEL_OPTION}>
+                                        {t('accounts.priority_custom_model_option', '自定义模型 ID...')}
+                                    </option>
+                                </select>
+
+                                {selectedOverrideKey === CUSTOM_MODEL_OPTION && (
+                                    <input
+                                        type="text"
+                                        className="input input-bordered input-xs w-48 font-mono text-xs bg-white dark:bg-base-100"
+                                        placeholder={t(
+                                            'accounts.priority_custom_model_placeholder',
+                                            '例如 gemini-4-argon 或 claude-opus-5-5'
+                                        )}
+                                        value={customOverrideKey}
+                                        disabled={savingPriority}
+                                        onChange={event => setCustomOverrideKey(event.target.value)}
+                                        onKeyDown={event => {
+                                            if (event.key === 'Enter') {
+                                                event.preventDefault();
+                                                handleAddSpecificOverride();
+                                            }
+                                        }}
+                                    />
+                                )}
+
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    step={1}
+                                    placeholder={newOverridePlaceholder}
+                                    className="input input-bordered input-xs w-16 text-center font-mono font-bold bg-white dark:bg-base-100"
+                                    value={newOverridePriority}
+                                    disabled={savingPriority || !selectedOverrideKey}
+                                    onChange={event => setNewOverridePriority(event.target.value)}
+                                    onKeyDown={event => {
+                                        if (event.key === 'Enter') {
+                                            event.preventDefault();
+                                            handleAddSpecificOverride();
+                                        }
+                                    }}
+                                />
+
+                                <button
+                                    type="button"
+                                    className="btn btn-outline btn-xs gap-1 shrink-0"
+                                    disabled={savingPriority || !effectiveNewOverrideKey}
+                                    onClick={handleAddSpecificOverride}
+                                >
+                                    <Plus size={12} />
+                                    {t('accounts.priority_add_model', '添加')}
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -473,6 +873,40 @@ export default function AccountDetailsDialog({
                                         return true;
                                     }).map(({ model, label }) => {
                                         const p = model.percentage;
+                                        const modelKey = normalizeModelPriorityKey(model.name || '');
+                                        const effectiveP = resolveEffectiveModelPriorityDetail(draftAccountForPreview, modelKey);
+                                        const hasExactOverride = Object.prototype.hasOwnProperty.call(
+                                            specificPriorityInputs,
+                                            modelKey
+                                        );
+                                        const isEditingInline = inlineEditingModel === modelKey;
+                                        const prioritySourceHint =
+                                            effectiveP.source === 'exact'
+                                                ? t('accounts.priority_source_exact', {
+                                                      defaultValue: '单模型覆盖 ({{key}})',
+                                                      key: effectiveP.matchedKey || modelKey,
+                                                  })
+                                                : effectiveP.source === 'series'
+                                                    ? t('accounts.priority_source_series', {
+                                                          defaultValue: '继承自模型系列 {{key}}',
+                                                          key: effectiveP.matchedKey || '',
+                                                      })
+                                                    : effectiveP.source === 'family'
+                                                        ? t('accounts.priority_source_family', {
+                                                              defaultValue: '继承自 {{key}} 模型族',
+                                                              key: (effectiveP.matchedKey || '').toUpperCase(),
+                                                          })
+                                                        : t('accounts.priority_source_default', '继承自账号默认优先级');
+                                        const priorityPillClass =
+                                            effectiveP.source === 'exact'
+                                                ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 border-violet-300/70 dark:border-violet-700/60'
+                                                : effectiveP.source === 'series'
+                                                    ? 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 border-sky-200/70 dark:border-sky-800/50'
+                                                    : effectiveP.source === 'family'
+                                                        ? effectiveP.matchedKey === 'claude'
+                                                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200/60 dark:border-amber-800/50'
+                                                            : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border-indigo-200/60 dark:border-indigo-800/50'
+                                                        : 'bg-gray-100 text-gray-500 dark:bg-base-200 dark:text-gray-400 border-gray-200/70 dark:border-base-300';
                                         const progressColor = p >= 50 ? 'bg-emerald-500' : p >= 20 ? 'bg-amber-500' : 'bg-rose-500';
                                         const badgeColor = p >= 50
                                             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40'
@@ -504,9 +938,73 @@ export default function AccountDetailsDialog({
                                                             )}
                                                         </div>
                                                     </div>
-                                                    <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md shrink-0 ${badgeColor}`}>
-                                                        {model.percentage}%
-                                                    </span>
+                                                    <div className="flex items-center gap-1.5 shrink-0">
+                                                        {isEditingInline ? (
+                                                            <div className="flex items-center gap-1">
+                                                                <input
+                                                                    type="number"
+                                                                    min={1}
+                                                                    max={100}
+                                                                    step={1}
+                                                                    autoFocus
+                                                                    aria-label={`${model.name} ${t('accounts.priority')}`}
+                                                                    className="input input-bordered input-xs w-14 text-center font-mono font-bold"
+                                                                    value={inlinePriorityDraft}
+                                                                    disabled={savingPriority}
+                                                                    onChange={event => setInlinePriorityDraft(event.target.value)}
+                                                                    onKeyDown={event => {
+                                                                        if (event.key === 'Enter') {
+                                                                            event.preventDefault();
+                                                                            handleInlineModelPriorityCommit(modelKey, inlinePriorityDraft);
+                                                                        } else if (event.key === 'Escape') {
+                                                                            setInlineEditingModel(null);
+                                                                            setInlinePriorityDraft('');
+                                                                        }
+                                                                    }}
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={savingPriority}
+                                                                    onClick={() =>
+                                                                        handleInlineModelPriorityCommit(modelKey, inlinePriorityDraft)
+                                                                    }
+                                                                    className="btn btn-primary btn-xs btn-square"
+                                                                    title={t('common.save')}
+                                                                >
+                                                                    <Check size={12} />
+                                                                </button>
+                                                                {hasExactOverride && (
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={savingPriority}
+                                                                        onClick={() =>
+                                                                            handleInlineModelPriorityCommit(modelKey, null)
+                                                                        }
+                                                                        className="btn btn-ghost btn-xs btn-square text-rose-500"
+                                                                        title={t('accounts.priority_inline_clear_hint', '清除该模型的独立优先级覆盖')}
+                                                                    >
+                                                                        <X size={12} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                disabled={savingPriority}
+                                                                onClick={() => {
+                                                                    setInlineEditingModel(modelKey);
+                                                                    setInlinePriorityDraft(String(effectiveP.priority));
+                                                                }}
+                                                                className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-md border transition-colors hover:border-blue-400 dark:hover:border-blue-500 cursor-pointer ${priorityPillClass}`}
+                                                                title={`${t('accounts.priority')}: ${effectiveP.priority} · ${prioritySourceHint} · ${t('accounts.priority_inline_edit_hint', '点击单独调整该模型优先级')}`}
+                                                            >
+                                                                P:{effectiveP.priority}
+                                                            </button>
+                                                        )}
+                                                        <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md shrink-0 ${badgeColor}`}>
+                                                            {model.percentage}%
+                                                        </span>
+                                                    </div>
                                                 </div>
 
                                                 {/* Progress Bar */}

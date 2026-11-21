@@ -21,20 +21,48 @@ pub(crate) fn deserialize_priority<'de, D: serde::Deserializer<'de>>(
     Ok(priority)
 }
 
+const MAX_MODEL_PRIORITY_KEY_LEN: usize = 128;
+const MAX_MODEL_PRIORITY_ENTRIES: usize = 256;
+
+pub(crate) fn is_valid_model_priority_key(key: &str) -> bool {
+    if key.is_empty() || key.len() > MAX_MODEL_PRIORITY_KEY_LEN {
+        return false;
+    }
+    let bytes = key.as_bytes();
+    if !bytes[0].is_ascii_alphanumeric() || key.contains("..") || key.ends_with('/') {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/' | b':' | b'@'))
+}
+
 pub(crate) fn validate_model_priorities(
     priorities: &HashMap<String, u8>,
 ) -> Result<HashMap<String, u8>, String> {
-    let mut normalized = HashMap::new();
+    if priorities.len() > MAX_MODEL_PRIORITY_ENTRIES {
+        return Err(format!(
+            "too many model priority overrides ({} > {})",
+            priorities.len(),
+            MAX_MODEL_PRIORITY_ENTRIES
+        ));
+    }
+    let mut normalized = HashMap::with_capacity(priorities.len());
     for (raw_key, &value) in priorities {
         validate_priority(value)?;
         let key = raw_key.trim().to_ascii_lowercase();
-        if !matches!(key.as_str(), "gemini" | "claude") {
+        if !is_valid_model_priority_key(&key) {
             return Err(format!(
-                "unsupported model priority group '{}': expected 'gemini' or 'claude'",
+                "invalid model priority key '{}': expected 'gemini', 'claude', or a valid model identifier",
                 raw_key
             ));
         }
-        normalized.insert(key, value);
+        if normalized.insert(key.clone(), value).is_some() {
+            return Err(format!(
+                "duplicate model priority key '{}' after normalization",
+                key
+            ));
+        }
     }
     Ok(normalized)
 }
@@ -75,6 +103,89 @@ pub(crate) fn resolve_model_priority_group(
     } else {
         "gemini"
     }
+}
+
+/// Iteratively strip known thinking/tier suffixes (e.g. `gemini-4-hydrogen-tiered-high`
+/// -> `gemini-4-hydrogen-tiered` -> `gemini-4-hydrogen`).
+fn strip_all_tier_suffixes(model: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut cur = model.trim().to_ascii_lowercase();
+    for _ in 0..4 {
+        let next =
+            crate::proxy::common::model_mapping::strip_tier_suffix(&cur).to_ascii_lowercase();
+        if next.is_empty() || next == cur {
+            break;
+        }
+        chain.push(next.clone());
+        cur = next;
+    }
+    chain
+}
+
+/// Resolve the effective scheduling priority (1-100; lower wins) for an account.
+///
+/// Precedence (most specific to least specific):
+/// 1. Exact requested model ID (e.g. `gemini-3.8-flash-high`, `claude-opus-5-5-high`)
+/// 2. Tier-stripped / image-variant base model IDs (e.g. `gemini-4-argon`, `claude-opus-5-5`,
+///    `gemini-3.8-flash`, `gemini-3.1-flash-image`)
+/// 3. Normalized standard ID (and its tier-stripped base) when more specific than the coarse family
+/// 4. Coarse model-family override (`"gemini"` or `"claude"`)
+/// 5. Account default `base_priority`
+pub(crate) fn resolve_effective_model_priority(
+    base_priority: u8,
+    model_priorities: &HashMap<String, u8>,
+    target_model: &str,
+    normalized_target: &str,
+) -> u8 {
+    if model_priorities.is_empty() {
+        return base_priority;
+    }
+
+    let raw = target_model.trim().to_ascii_lowercase();
+    let norm = normalized_target.trim().to_ascii_lowercase();
+    let family = resolve_model_priority_group(&raw, &norm);
+
+    if !raw.is_empty() && raw != family {
+        if let Some(&p) = model_priorities.get(&raw) {
+            return p;
+        }
+    }
+
+    if !raw.is_empty() {
+        for base in strip_all_tier_suffixes(&raw) {
+            if base != family {
+                if let Some(&p) = model_priorities.get(&base) {
+                    return p;
+                }
+            }
+        }
+        let img_base = crate::proxy::common::model_mapping::strip_image_variant_suffix(&raw)
+            .to_ascii_lowercase();
+        if !img_base.is_empty() && img_base != raw && img_base != family {
+            if let Some(&p) = model_priorities.get(&img_base) {
+                return p;
+            }
+        }
+    }
+
+    if !norm.is_empty() && norm != raw && norm != family {
+        if let Some(&p) = model_priorities.get(&norm) {
+            return p;
+        }
+        for base in strip_all_tier_suffixes(&norm) {
+            if base != family {
+                if let Some(&p) = model_priorities.get(&base) {
+                    return p;
+                }
+            }
+        }
+    }
+
+    if let Some(&p) = model_priorities.get(family) {
+        return p;
+    }
+
+    base_priority
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -540,8 +651,8 @@ pub struct Account {
         deserialize_with = "deserialize_priority"
     )]
     pub priority: u8,
-    /// Optional per-model-family priority overrides ("gemini" / "claude", 1-100; lower is selected first).
-    /// Falls back to `priority` when a family override is not set.
+    /// Optional per-model-family ("gemini" / "claude") and per-model / series priority overrides
+    /// (1-100; lower is selected first). Resolves exact model -> series/base -> family -> `priority`.
     #[serde(
         default,
         skip_serializing_if = "HashMap::is_empty",
@@ -1113,19 +1224,40 @@ mod tests {
 
         json["model_priorities"] = serde_json::json!({
             "claude": 1,
-            "gemini": 80
+            "gemini": 80,
+            "Gemini-4-Argon": 10,
+            "claude-opus-5-5-high": 5,
+            "gpt-oss-120b-medium": 65
         });
         let parsed = serde_json::from_value::<Account>(json.clone()).unwrap();
         assert_eq!(parsed.model_priorities.get("claude"), Some(&1));
         assert_eq!(parsed.model_priorities.get("gemini"), Some(&80));
+        assert_eq!(parsed.model_priorities.get("gemini-4-argon"), Some(&10));
+        assert_eq!(
+            parsed.model_priorities.get("claude-opus-5-5-high"),
+            Some(&5)
+        );
+        assert_eq!(
+            parsed.model_priorities.get("gpt-oss-120b-medium"),
+            Some(&65)
+        );
 
         for invalid in [
             serde_json::json!({"claude": 0}),
             serde_json::json!({"gemini": 101}),
-            serde_json::json!({"unknown_group": 10}),
+            serde_json::json!({"": 10}),
+            serde_json::json!({"   ": 10}),
+            serde_json::json!({"bad model": 10}),
+            serde_json::json!({"gemini-*": 10}),
+            serde_json::json!({"../etc": 10}),
+            serde_json::json!({"-leading-dash": 10}),
+            serde_json::json!({"Gemini": 10, "gemini": 20}),
         ] {
             json["model_priorities"] = invalid;
-            assert!(serde_json::from_value::<Account>(json.clone()).is_err());
+            assert!(
+                serde_json::from_value::<Account>(json.clone()).is_err(),
+                "expected invalid model_priorities payload to fail deserialization"
+            );
         }
 
         assert_eq!(
@@ -1143,6 +1275,117 @@ mod tests {
         assert_eq!(
             resolve_model_priority_group("gemini-4-argon-high", "gemini-4-argon-high"),
             "gemini"
+        );
+    }
+
+    #[test]
+    fn account_model_priorities_resolve_hierarchical_precedence() {
+        let mut overrides = HashMap::new();
+        overrides.insert("gemini".to_string(), 80);
+        overrides.insert("claude".to_string(), 70);
+        overrides.insert("gemini-4-argon".to_string(), 20);
+        overrides.insert("gemini-4-argon-high".to_string(), 5);
+        overrides.insert("gemini-4-hydrogen".to_string(), 15);
+        overrides.insert("gemini-3.1-flash-image".to_string(), 30);
+        overrides.insert("claude-opus-5-5".to_string(), 8);
+        overrides.insert("claude-opus-5-5-high".to_string(), 2);
+        overrides.insert("gpt-oss-120b".to_string(), 90);
+
+        // 1. Exact model variant beats series, family, and default
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &overrides,
+                "gemini-4-argon-high",
+                "gemini-4-argon"
+            ),
+            5
+        );
+        assert_eq!(
+            resolve_effective_model_priority(50, &overrides, "claude-opus-5-5-high", "claude"),
+            2
+        );
+
+        // 2. Tier-stripped series beats family and default (even when normalized_target == "claude")
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &overrides,
+                "gemini-4-argon-medium",
+                "gemini-4-argon"
+            ),
+            20
+        );
+        assert_eq!(
+            resolve_effective_model_priority(50, &overrides, "claude-opus-5-5-medium", "claude"),
+            8
+        );
+        // Double-suffix tier stripping (gemini-4-hydrogen-tiered-xhigh -> gemini-4-hydrogen)
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &overrides,
+                "gemini-4-hydrogen-tiered-xhigh",
+                "gemini-4-hydrogen"
+            ),
+            15
+        );
+        // Image resolution variant stripping (gemini-3.1-flash-image-4k -> gemini-3.1-flash-image)
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &overrides,
+                "gemini-3.1-flash-image-4k",
+                "gemini-3.1-flash-image"
+            ),
+            30
+        );
+        // GPT-OSS tier stripping beats coarse "claude" family
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &overrides,
+                "gpt-oss-120b-medium",
+                "gpt-oss-120b-medium"
+            ),
+            90
+        );
+
+        // 3. Unmatched model falls back to coarse family
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &overrides,
+                "gemini-3.8-flash-high",
+                "gemini-3.8-flash"
+            ),
+            80
+        );
+        assert_eq!(
+            resolve_effective_model_priority(50, &overrides, "claude-sonnet-5-5-high", "claude"),
+            70
+        );
+
+        // 4. Without family override, unmatched model falls back to account default priority
+        let mut only_argon = HashMap::new();
+        only_argon.insert("gemini-4-argon".to_string(), 10);
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &only_argon,
+                "gemini-4-argon-low",
+                "gemini-4-argon"
+            ),
+            10
+        );
+        assert_eq!(
+            resolve_effective_model_priority(
+                50,
+                &only_argon,
+                "gemini-3.8-flash-high",
+                "gemini-3.8-flash"
+            ),
+            50
         );
     }
 

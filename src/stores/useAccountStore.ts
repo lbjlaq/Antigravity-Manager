@@ -412,9 +412,16 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         const cleanModelPriorities =
             modelPriorities !== undefined
                 ? Object.fromEntries(
-                      Object.entries(modelPriorities).filter(
-                          ([, v]) => typeof v === 'number' && v >= 1 && v <= 100
-                      )
+                      Object.entries(modelPriorities)
+                          .filter(
+                              ([k, v]) =>
+                                  k.trim().length > 0 &&
+                                  typeof v === 'number' &&
+                                  Number.isInteger(v) &&
+                                  v >= 1 &&
+                                  v <= 100
+                          )
+                          .map(([k, v]) => [k.trim().toLowerCase(), v as number])
                   )
                 : undefined;
         set(state => ({

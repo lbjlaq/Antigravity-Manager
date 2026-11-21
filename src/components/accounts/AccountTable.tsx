@@ -44,7 +44,8 @@ import {
     Trash2,
     X,
 } from 'lucide-react';
-import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
+import { type Account, type ActiveClientsStatus, getAccountTier, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
+import { formatAccountPriorityBadge, formatAccountPriorityTooltip } from '../../utils/modelPriority';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
@@ -586,15 +587,12 @@ function AccountRowContent({
                                         ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
                                         : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
                             )}
-                            title={
-                                hasCustomModelPriorities(account)
-                                    ? `Gemini: ${getEffectiveModelPriority(account, 'gemini')} | Claude: ${getEffectiveModelPriority(account, 'claude')} (${t('accounts.priority')}: ${account.priority ?? 50})`
-                                    : t('accounts.priority_hint')
-                            }
+                            title={formatAccountPriorityTooltip(account, {
+                                priority: t('accounts.priority'),
+                                defaultHint: t('accounts.priority_hint'),
+                            })}
                         >
-                            {hasCustomModelPriorities(account)
-                                ? `${t('accounts.priority')}: G:${getEffectiveModelPriority(account, 'gemini')} · C:${getEffectiveModelPriority(account, 'claude')}`
-                                : `${t('accounts.priority')}: ${account.priority ?? 50}`}
+                            {formatAccountPriorityBadge(account, t('accounts.priority'))}
                         </span>
                         {/* 多标签平铺渲染 (最多显示 2 个，超出的显示 +N 徽章) */}
                         {tags.length > 0 && (
