@@ -1,0 +1,22 @@
+[package]
+name = "am-core"
+version = "0.1.0"
+edition = "2021"
+description = "Antigravity Manager Core SDK"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+base64 = "0.22"
+thiserror = "2.0"
+dirs = "5.0"
+sysinfo = "0.31"
+url = "2.5"
+anyhow = "1.0"
+tracing = "0.1"
