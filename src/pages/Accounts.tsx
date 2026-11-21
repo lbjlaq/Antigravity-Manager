@@ -56,8 +56,6 @@ function Accounts() {
     refreshQuota,
     toggleProxyStatus,
     reorderAccounts,
-    warmUpAccounts,
-    warmUpAccount,
     updateAccountLabel,
     updateAccountPriority,
     updateAccountProjectId,
@@ -120,37 +118,8 @@ function Accounts() {
   const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isBatchDelete, setIsBatchDelete] = useState(false);
-
-  const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
-  const [warmupTargetAccountId, setWarmupTargetAccountId] = useState<string | null>(null);
-  const [isWarmuping, setIsWarmuping] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [errorAccountId, setErrorAccountId] = useState<string | null>(null);
-
-  const executeSingleWarmup = async (accountId: string) => {
-    setRefreshingIds((prev) => {
-      const next = new Set(prev);
-      next.add(accountId);
-      return next;
-    });
-    try {
-      const msg = await warmUpAccount(accountId);
-      showToast(msg, "success");
-    } catch (error) {
-      showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setRefreshingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(accountId);
-        return next;
-      });
-    }
-  };
-
-  const handleWarmup = (accountId: string) => {
-    setWarmupTargetAccountId(accountId);
-    setIsWarmupConfirmOpen(true);
-  };
 
   const handleUpdateLabel = async (accountId: string, label: string) => {
     try {
@@ -158,44 +127,6 @@ function Accounts() {
       showToast(t('accounts.label_updated', 'Label updated'), 'success');
     } catch (error) {
       showToast(`${t('common.error')}: ${error}`, 'error');
-    }
-  };
-
-  const handleWarmupAll = async () => {
-    setIsWarmupConfirmOpen(false);
-    setIsWarmuping(true);
-    try {
-      const isBatch = selectedIds.size > 0;
-      if (isBatch) {
-        const ids = Array.from(selectedIds);
-        setRefreshingIds(new Set(ids));
-        const results = await Promise.allSettled(
-          ids.map((id) => warmUpAccount(id)),
-        );
-        let successCount = 0;
-        results.forEach((r) => {
-          if (r.status === "fulfilled") successCount++;
-        });
-        showToast(
-          t("accounts.warmup_batch_triggered", { count: successCount }),
-          "success",
-        );
-      } else {
-        const msg = await warmUpAccounts();
-        if (msg) {
-          showToast(msg, "success");
-        } else {
-          showToast(
-            t("accounts.warmup_all_triggered", "全量预热任务已触发"),
-            "success",
-          );
-        }
-      }
-    } catch (error) {
-      showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setIsWarmuping(false);
-      setRefreshingIds(new Set());
     }
   };
 
@@ -1094,31 +1025,6 @@ function Accounts() {
             selectedCount={selectedIds.size}
           />
 
-          <button
-            className={`px-2.5 py-2 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarmuping ? "opacity-70 cursor-not-allowed" : ""}`}
-            onClick={() => {
-              setWarmupTargetAccountId(null);
-              setIsWarmupConfirmOpen(true);
-            }}
-            disabled={isWarmuping}
-            title={
-              selectedIds.size > 0
-                ? t("accounts.warmup_selected", { count: selectedIds.size })
-                : t("accounts.warmup_all", "一键预热所有账号")
-            }
-          >
-            <Sparkles
-              className={`w-3.5 h-3.5 ${isWarmuping ? "animate-pulse" : ""}`}
-            />
-            <span className="hidden xl:inline">
-              {isWarmuping
-                ? t("common.loading")
-                : selectedIds.size > 0
-                  ? t("accounts.warmup_selected", { count: selectedIds.size })
-                  : t("accounts.warmup_all", "一键预热")}
-            </span>
-          </button>
-
           <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 self-center mx-1 shrink-0"></div>
 
           <button
@@ -1178,7 +1084,6 @@ function Accounts() {
                   )
                 }
                 onReorder={reorderAccounts}
-                onWarmup={handleWarmup}
                 onUpdateLabel={handleUpdateLabel}
                 onViewError={(id: string) => setErrorAccountId(id)}
               />
@@ -1206,7 +1111,6 @@ function Accounts() {
                   !!accounts.find((a) => a.id === id)?.proxy_disabled,
                 )
               }
-              onWarmup={handleWarmup}
               onUpdateLabel={handleUpdateLabel}
               onViewError={(id: string) => setErrorAccountId(id)}
             />
@@ -1288,51 +1192,6 @@ function Accounts() {
       />
 
 
-
-      <ModalDialog
-        isOpen={isWarmupConfirmOpen}
-        title={
-          warmupTargetAccountId
-            ? t("accounts.dialog.single_warmup_title", "账号手动预热")
-            : selectedIds.size > 0
-              ? t("accounts.dialog.batch_warmup_title", "批量手动预热")
-              : t("accounts.dialog.warmup_all_title", "全量手动预热")
-        }
-        message={
-          warmupTargetAccountId
-            ? t(
-              "accounts.dialog.single_warmup_msg",
-              "确定要为该账号触发预热吗？使用预热功能将通过反向代理发起一次小额 Token 的请求以激活会话与周期。",
-            )
-            : selectedIds.size > 0
-              ? t(
-                "accounts.dialog.batch_warmup_msg",
-                "确定要为选中的 {{count}} 个账号立即触发预热吗？使用预热功能将通过反向代理发起小额 Token 的请求以激活周期。",
-                { count: selectedIds.size },
-              )
-              : t(
-                "accounts.dialog.warmup_all_msg",
-                "确定要立即为所有符合条件的账号触发预热任务吗？使用预热功能将通过反向代理发起小额 Token 的请求以激活周期。",
-              )
-        }
-        type="confirm"
-        confirmText={t("accounts.warmup_now", "立即预热")}
-        isDestructive={false}
-        onConfirm={async () => {
-          setIsWarmupConfirmOpen(false);
-          if (warmupTargetAccountId) {
-            const targetId = warmupTargetAccountId;
-            setWarmupTargetAccountId(null);
-            await executeSingleWarmup(targetId);
-          } else {
-            await handleWarmupAll();
-          }
-        }}
-        onCancel={() => {
-          setIsWarmupConfirmOpen(false);
-          setWarmupTargetAccountId(null);
-        }}
-      />
 
       {/* 账号错误详情弹窗 */}
       <AccountErrorDialog

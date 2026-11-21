@@ -2640,26 +2640,5 @@
         "confirm": "Clear Now",
         "cancel": "Cancel",
         "success": "Thinking block cache cleared successfully and will rebuild automatically."
-    },
-    "pedal": {
-        "notice_title": "{{model}} Weekly Quota Resetting Soon!",
-        "notice_desc": "The following accounts have weekly quota resetting within 24 hours. Select the accounts you want to prioritize in Pedal Quota Mode:",
-        "selected_summary": "{{selected}} / {{total}} selected",
-        "select_all": "Select All",
-        "deselect_all": "Deselect All",
-        "mode_explanation": "Activating will set the selected accounts to the highest scheduling priority while keeping other accounts available for session affinity and concurrency spillover. Default priority will be restored automatically once all target quotas reach 0% or reset.",
-        "suppress_button": "Do not prompt again for {{model}}",
-        "activate_button": "Activate Pedal Quota Mode",
-        "banner_running": "🚴 Pedal Quota Mode Running ({{model}})",
-        "banner_priority_badge": "Highest Priority",
-        "banner_suspended_count": "{{count}} accounts suspended",
-        "banner_active_count": "{{count}} accounts to exhaust",
-        "banner_subtext": "Prioritizing imminent accounts with top scheduling priority while keeping others standby for session affinity and concurrency resilience. Default scheduling restores once quotas hit 0% or reset.",
-        "target_accounts": "Target Accounts",
-        "account_pedaling_badge": "⚡ Pedaling",
-        "account_pedaling_tooltip": "This account is in Pedal Quota Mode with highest scheduling priority (priority = 1)",
-        "session_unbind_title": "Session Unbind & Cache Reset Notice: ",
-        "session_unbind_desc": "Activating will automatically unbind existing sessions and reset prompt caches, allowing ongoing conversations to seamlessly switch to target accounts. Because the upstream prompt cache must be rebuilt on the new account, we recommend compressing your context (e.g. /compact) beforehand if you wish to avoid heavy initial quota consumption.",
-        "exit_button": "Manual Exit & Restore"
     }
 }

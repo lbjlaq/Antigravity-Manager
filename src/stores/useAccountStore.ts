@@ -32,8 +32,6 @@ interface AccountState {
     syncAccountFromDb: () => Promise<void>;
     toggleProxyStatus: (accountId: string, enable: boolean, reason?: string) => Promise<void>;
     clearAccountForbidden: (accountId: string) => Promise<void>;
-    warmUpAccounts: () => Promise<string>;
-    warmUpAccount: (accountId: string) => Promise<string>;
     updateAccountLabel: (accountId: string, label: string) => Promise<void>;
     updateAccountPriority: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>;
     updateAccountProjectId: (accountId: string, projectId: string) => Promise<void>;
@@ -376,34 +374,6 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         } catch (error) {
             console.error('[AccountStore] Clear account forbidden failed:', error);
             throw error;
-        }
-    },
-
-    warmUpAccounts: async () => {
-        set({ loading: true, error: null });
-        try {
-            const result = await accountService.warmUpAllAccounts();
-            set({ loading: false });
-            return result;
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        } finally {
-            await get().fetchAccounts();
-        }
-    },
-
-    warmUpAccount: async (accountId: string) => {
-        set({ loading: true, error: null });
-        try {
-            const result = await accountService.warmUpAccount(accountId);
-            set({ loading: false });
-            return result;
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        } finally {
-            await get().fetchAccounts();
         }
     },
 

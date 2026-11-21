@@ -1165,18 +1165,6 @@ pub async fn clear_account_forbidden(
     Ok(())
 }
 
-/// 预热所有可用账号
-#[tauri::command]
-pub async fn warm_up_all_accounts() -> Result<String, String> {
-    modules::quota::warm_up_all_accounts().await
-}
-
-/// 预热指定账号
-#[tauri::command]
-pub async fn warm_up_account(account_id: String) -> Result<String, String> {
-    modules::quota::warm_up_account(&account_id).await
-}
-
 /// Save account priority
 #[tauri::command]
 pub async fn update_account_priority(

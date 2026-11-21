@@ -36,7 +36,6 @@ import {
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
-    Zap,
     Power,
     MoreHorizontal,
     BookCopy,
@@ -48,9 +47,7 @@ import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveMod
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
-import { useConfigStore } from '../../stores/useConfigStore';
 import { useAccountStore } from '../../stores/useAccountStore';
-import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
@@ -85,7 +82,6 @@ interface AccountTableProps {
     onExport: (accountId: string) => void;
     onDelete: (accountId: string) => void;
     onToggleProxy: (accountId: string) => void;
-    onWarmup?: (accountId: string) => void;
     onUpdateLabel?: (accountId: string, label: string) => void;
     /** 拖拽排序回调，当用户完成拖拽时触发 */
     onReorder?: (accountIds: string[]) => void;
@@ -108,7 +104,6 @@ interface SortableRowProps {
     onExport: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
-    onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
     isDragDisabled?: boolean;
@@ -128,7 +123,6 @@ interface AccountRowContentProps {
     onExport: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
-    onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
 }
@@ -136,17 +130,6 @@ interface AccountRowContentProps {
 // ============================================================================
 // 辅助函数
 // ============================================================================
-
-function isGroupProtected(protectedModels: string[] | undefined, groupKey: 'gemini' | 'claude' | 'argon'): boolean {
-    if (!protectedModels || protectedModels.length === 0) return false;
-    if (groupKey === 'argon') {
-        return protectedModels.some(isFlagshipModel);
-    } else if (groupKey === 'gemini') {
-        return protectedModels.some(m => m.toLowerCase().startsWith('gemini') && !isFlagshipModel(m));
-    } else {
-        return protectedModels.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
-    }
-}
 
 /**
  * 提取账号的最快配额重置时间（毫秒时间戳）
@@ -206,7 +189,6 @@ function SortableAccountRow({
     onExport,
     onDelete,
     onToggleProxy,
-    onWarmup,
     onUpdateLabel,
     onViewError,
     isDragDisabled = false,
@@ -234,20 +216,15 @@ function SortableAccountRow({
     const isAcp = activeClients?.acp_account_id === account.id;
     const isRowCurrent = isCurrent || isClassic || isIde || isAgy || isAcp;
 
-    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
-    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
-
     return (
         <tr
             ref={setNodeRef}
             style={style as React.CSSProperties}
             className={cn(
                 "group transition-colors border-b border-gray-100 dark:border-base-200",
-                isPedaling && "bg-amber-50/50 dark:bg-amber-950/20 border-l-4 border-l-amber-500",
-                !isPedaling && isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
+                isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
                 isDragging && "bg-blue-100 dark:bg-blue-900/30 shadow-lg",
-                !isDragging && !isPedaling && "hover:bg-gray-50 dark:hover:bg-base-200",
-                !isDragging && isPedaling && "hover:bg-amber-50/80 dark:hover:bg-amber-950/30"
+                !isDragging && "hover:bg-gray-50 dark:hover:bg-base-200"
             )}
         >
             {/* 拖拽手柄 */}
@@ -290,7 +267,6 @@ function SortableAccountRow({
                 onExport={onExport}
                 onDelete={onDelete}
                 onToggleProxy={onToggleProxy}
-                onWarmup={onWarmup}
                 onUpdateLabel={onUpdateLabel}
                 onViewError={onViewError}
             />
@@ -316,14 +292,10 @@ function AccountRowContent({
     onExport,
     onDelete,
     onToggleProxy,
-    onWarmup,
     onUpdateLabel,
     onViewError,
 }: AccountRowContentProps) {
     const { t } = useTranslation();
-    const { config } = useConfigStore();
-    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
-    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
     const isValidationBlocked = isValidationBlockActive(account);
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
     const isBanned = Boolean(account.banned);
@@ -566,25 +538,13 @@ function AccountRowContent({
                                 );
                             }
                         })()}
-                        {/* 蹬额度中高亮徽章 */}
-                        {isPedaling && (
-                            <span
-                                className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse motion-reduce:animate-none"
-                                title={t('pedal.account_pedaling_tooltip', '该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)')}
-                            >
-                                <Zap className="w-2.5 h-2.5 fill-current text-amber-500" />
-                                {t('pedal.account_pedaling_badge', '⚡ 蹬额度中')}
-                            </span>
-                        )}
                         {/* 优先级 */}
                         <span
                             className={cn(
                                 "px-2 py-0.5 rounded-md text-[10px] font-bold",
-                                isPedaling
-                                    ? "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border border-amber-300/80 dark:border-amber-700/80 shadow-2xs"
-                                    : hasCustomModelPriorities(account)
-                                        ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
-                                        : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
+                                hasCustomModelPriorities(account)
+                                    ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
+                                    : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
                             )}
                             title={
                                 hasCustomModelPriorities(account)
@@ -685,7 +645,7 @@ function AccountRowContent({
                                 <GroupQuotaCard
                                     key={summary.key}
                                     summary={summary}
-                                    isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, summary.key))}
+                                    isProtected={false}
                                     liveLimit={summary.key === 'gemini' ? getLiveLimitForModel(account, 'gemini-pro') : getLiveLimitForModel(account, 'claude')}
                                     compact
                                 />
@@ -698,7 +658,7 @@ function AccountRowContent({
                                 <div className="w-full pt-0.5">
                                     <GroupQuotaCard
                                         summary={argon}
-                                        isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, 'argon'))}
+                                        isProtected={false}
                                         liveLimit={getLiveLimitForModel(account, 'gemini-4-neon') || getLiveLimitForModel(account, 'gemini-4-argon')}
                                         compact
                                         fullWidth
@@ -795,7 +755,6 @@ function AccountRowContent({
                     onClose={() => setIsActionsModalOpen(false)}
                     account={account}
                     onSwitch={(target) => onSwitch(target)}
-                    onWarmup={onWarmup}
                     onViewDevice={() => {
                         setIsActionsModalOpen(false);
                         onViewDevice();
@@ -811,7 +770,6 @@ function AccountRowContent({
                         onDelete();
                     }}
                     isSwitching={isSwitching}
-                    isRefreshing={isRefreshing}
                 />
             </td>
         </>
@@ -843,7 +801,6 @@ function AccountTable({
     onDelete,
     onToggleProxy,
     onReorder,
-    onWarmup,
     onUpdateLabel,
     onViewError,
 }: AccountTableProps) {
@@ -1068,7 +1025,6 @@ function AccountTable({
                                     onExport={() => onExport(account.id)}
                                     onDelete={() => onDelete(account.id)}
                                     onToggleProxy={() => onToggleProxy(account.id)}
-                                    onWarmup={onWarmup ? () => onWarmup(account.id) : undefined}
                                     onUpdateLabel={onUpdateLabel ? (label: string) => onUpdateLabel(account.id, label) : undefined}
                                     onViewError={() => onViewError(account.id)}
                                     isDragDisabled={isSortingActive}

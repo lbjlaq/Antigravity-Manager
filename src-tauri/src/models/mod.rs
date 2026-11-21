@@ -9,7 +9,7 @@ pub use account::{
     AccountSummary, ActiveClientsStatus, BatchImportProgress, BatchImportResult, DeviceProfile,
     DeviceProfileVersion, ImportAccountEntry,
 };
-pub use config::{AppConfig, CircuitBreakerConfig, QuotaProtectionConfig};
+pub use config::AppConfig;
 pub use official_model::{OfficialModelCatalog, OfficialModelInfo};
 pub use quota::{ModelListingMeta, QuotaData};
 pub use token::TokenData;

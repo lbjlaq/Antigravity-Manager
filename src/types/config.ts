@@ -277,16 +277,6 @@ export interface StickySessionConfig {
     cache_settling_delay_ms?: number;
 }
 
-export interface ScheduledWarmupConfig {
-    enabled: boolean;
-    monitored_models: string[];
-}
-
-export interface QuotaProtectionConfig {
-    enabled: boolean;
-    threshold_percentage: number; // 1-99
-    monitored_models: string[];
-}
 
 export interface PinnedQuotaModelsConfig {
     models: string[];
@@ -305,11 +295,6 @@ export interface ExperimentalConfig {
     enable_global_compaction_strip?: boolean;
 }
 
-export interface CircuitBreakerConfig {
-    enabled: boolean;
-    backoff_steps: number[];
-    lock_on_zero_quota?: boolean;
-}
 
 export interface ClassicAutoSwitchConfig {
     enabled: boolean;
@@ -344,10 +329,7 @@ export interface AppConfig {
     update_channel?: 'stable' | 'beta'; // 更新通道：正式版 vs 预览版
     accounts_page_size?: number; // 账号列表每页显示数量,默认 0 表示自动计算
     hidden_menu_items?: string[]; // 隐藏的菜单项路径列表
-    scheduled_warmup: ScheduledWarmupConfig;
-    quota_protection: QuotaProtectionConfig; // [NEW] 配额保护配置
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表
-    circuit_breaker: CircuitBreakerConfig; // [NEW] 熔断器配置
     outbound_proxy?: string; // [NEW] 出口网络代理
     proxy: ProxyConfig;
     cloudflared: CloudflaredConfig; // [NEW] Cloudflared 配置

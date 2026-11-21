@@ -21,7 +21,7 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     const [showGuide, setShowGuide] = useState(false);
     const [isClearing, setIsClearing] = useState(false);
     const { t } = useTranslation();
-    const { clearAccountForbidden, warmUpAccount } = useAccountStore();
+    const { clearAccountForbidden, refreshQuota } = useAccountStore();
     if (!account) return null;
 
     const isForbidden = !!account.quota?.is_forbidden;
@@ -170,19 +170,19 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
         setIsClearing(true);
         try {
             await clearAccountForbidden(account.id);
-            showToast(t('accounts.clear_forbidden_success', '已成功清除 403 锁定状态，正在重新测活...'), 'success');
+            showToast(t('accounts.clear_forbidden_success', '已成功清除 403 锁定状态，正在重新刷新配额...'), 'success');
             try {
-                await warmUpAccount(account.id);
-                showToast(t('accounts.warmup_success', '账号重新测活成功！已恢复正常'), 'success');
-            } catch (warmUpErr) {
-                const detail = formatWarmUpErrorDetail(warmUpErr);
+                await refreshQuota(account.id);
+                showToast(t('accounts.refresh_quota_success', '账号配额刷新成功！已恢复正常'), 'success');
+            } catch (refreshErr) {
+                const detail = formatWarmUpErrorDetail(refreshErr);
                 showToast(
                     detail
-                        ? t('accounts.warmup_failed_warning_with_reason', {
+                        ? t('accounts.refresh_failed_warning_with_reason', {
                             reason: detail,
-                            defaultValue: '锁定已清除，但测活未通过：{{reason}}',
+                            defaultValue: '锁定已清除，但配额刷新未通过：{{reason}}',
                         })
-                        : t('accounts.warmup_failed_warning', '锁定已清除，但测活仍未完全通过，请检查代理节点'),
+                        : t('accounts.refresh_failed_warning', '锁定已清除，但刷新仍未完全通过，请检查代理节点'),
                     'warning',
                     5000
                 );

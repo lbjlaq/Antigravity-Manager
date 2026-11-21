@@ -53,23 +53,23 @@ pub async fn try_handle_cli(args: &[String]) -> Result<bool, String> {
 
 fn print_cli_help() {
     println!(
-        "\x1b[1mAntigravity Manager CLI\x1b[0m\n\n\
-        Usage: antigravity-manager <command> [options]\n\n\
+        "\x1b[1mAntigravity Manager CLI (am)\x1b[0m\n\n\
+        Usage: am <command> [options]  (or: antigravity-manager <command>)\n\n\
         Commands:\n  \
-          switch [account]   Switch current account (supports email, index, name, or auto round-robin)\n  \
-          import <file>      High-performance batch import accounts from JSON (with auto-backup)\n  \
-          export [file]      Fast export all accounts to JSON (default: accounts_export.json)\n  \
-          list, ls           List all accounts with active status and quota\n  \
-          current, whoami    Show currently active accounts across clients (IDE / agy CLI)\n  \
-          help               Show this help message\n\n\
+          switch, s [account] Switch current account (supports email, index, name, or auto round-robin)\n  \
+          import, im <file>   High-performance batch import accounts from JSON (with auto-backup)\n  \
+          export, ex [file]   Fast export all accounts to JSON (default: accounts_export.json)\n  \
+          list, ls            List all accounts with active status and quota\n  \
+          current, whoami     Show currently active accounts across clients (IDE / agy CLI)\n  \
+          help                Show this help message\n\n\
         Options for `switch`:\n  \
-          --target <target>  Target client: 'agy' (default), 'acp' ('plugin'), 'ide', or 'classic'\n  \
-          -c, --continue     Automatically resume agy conversation via `agy --continue` after switch\n\n\
+          --target <target>   Target client: 'agy' (default), 'acp' ('plugin'), 'ide', or 'classic'\n  \
+          -c, --continue      Automatically resume agy conversation via `agy --continue` after switch\n\n\
         Examples:\n  \
-          antigravity-manager switch                     # Auto round-robin to next normal account\n  \
-          antigravity-manager switch 1                   # Switch to account #1\n  \
-          antigravity-manager switch work@gmail.com      # Switch by email or prefix\n  \
-          antigravity-manager switch 2 --continue        # Switch to #2 and resume conversation\n"
+          am switch                     # Auto round-robin to next normal account\n  \
+          am switch 1                   # Switch to account #1\n  \
+          am switch work@gmail.com      # Switch by email or prefix\n  \
+          am switch 2 --continue        # Switch to #2 and resume conversation\n"
     );
 }
 
@@ -178,7 +178,7 @@ async fn handle_list_command() -> Result<(), String> {
         );
     }
 
-    println!("\n提示: 运行 `antigravity-manager switch` 自动顺延，或 `antigravity-manager switch <序号/邮箱>`。\n");
+    println!("\n提示: 运行 `am switch` 自动顺延，或 `am switch <序号/邮箱>`。\n");
     Ok(())
 }
 

@@ -20,6 +20,10 @@ crate-type = ["rlib"]
 name = "antigravity-manager"
 path = "src/main.rs"
 
+[[bin]]
+name = "am"
+path = "src/bin/am.rs"
+
 [build-dependencies]
 tauri-build = { version = "^2.2.5", features = [] }
 

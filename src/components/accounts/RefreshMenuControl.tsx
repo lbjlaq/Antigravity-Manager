@@ -53,7 +53,6 @@ export default function RefreshMenuControl({
         ? rawSlideDelay
         : 0.2;
     const autoRefreshEnabled = !!config?.auto_refresh;
-    const isQuotaProtectionLocked = !!config?.quota_protection?.enabled;
 
     useEffect(() => {
         setConcurrencyDraft(String(concurrency));
@@ -412,20 +411,14 @@ export default function RefreshMenuControl({
                                                     {t('settings.account.auto_refresh', '后台自动刷新')}
                                                 </div>
                                                 <p className="mt-0.5 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
-                                                    {isQuotaProtectionLocked
-                                                        ? t('settings.account.auto_refresh_locked_hint', '配额保护已开启，后台自动刷新强制保持常驻')
-                                                        : t('settings.account.auto_refresh_desc')}
+                                                    {t('settings.account.auto_refresh_desc')}
                                                 </p>
                                             </div>
-                                            <label className={cn(
-                                                "relative inline-flex items-center shrink-0",
-                                                isQuotaProtectionLocked ? "cursor-not-allowed opacity-80" : "cursor-pointer"
-                                            )}>
+                                            <label className="relative inline-flex items-center shrink-0 cursor-pointer">
                                                 <input
                                                     type="checkbox"
                                                     className="sr-only peer"
                                                     checked={autoRefreshEnabled}
-                                                    disabled={isQuotaProtectionLocked}
                                                     onChange={() => void persist({ auto_refresh: !autoRefreshEnabled })}
                                                 />
                                                 <div className="w-9 h-5 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>

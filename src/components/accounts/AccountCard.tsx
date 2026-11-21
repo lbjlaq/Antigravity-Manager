@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2, X } from 'lucide-react';
+import { RefreshCw, Lock, Ban, Diamond, Gem, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2, X } from 'lucide-react';
 import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
-import { useConfigStore } from '../../stores/useConfigStore';
 import { useAccountStore } from '../../stores/useAccountStore';
-import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { showToast } from '../common/ToastContainer';
@@ -36,16 +34,12 @@ interface AccountCardProps {
     onExport: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
-    onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
 }
 
-function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, activeClients, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError }: AccountCardProps) {
+function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, activeClients, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onUpdateLabel, onViewError }: AccountCardProps) {
     const { t } = useTranslation();
-    const { config } = useConfigStore();
-    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
-    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
     const isDisabled = Boolean(account.disabled);
     const isBanned = Boolean(account.banned);
     const isValidationBlocked = isValidationBlockActive(account);
@@ -109,30 +103,15 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
     const tags = useMemo(() => parseTags(account.custom_label), [account.custom_label]);
 
-    const isGroupProtected = (key: 'gemini' | 'claude' | 'argon') => {
-        if (!config?.quota_protection?.enabled) return false;
-        if (!account.protected_models || account.protected_models.length === 0) return false;
-        if (key === 'argon') {
-            return account.protected_models.some(isFlagshipModel);
-        }
-        if (key === 'gemini') {
-            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && !isFlagshipModel(m));
-        } else {
-            return account.protected_models.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
-        }
-    };
-
     return (
         <motion.div
             whileHover={{ y: -2 }}
             transition={{ duration: 0.15 }}
             className={cn(
                 "flex flex-col p-3 rounded-xl border transition-all hover:shadow-md",
-                isPedaling
-                    ? "bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-500/50 ring-2 ring-amber-400/60 shadow-xs"
-                    : (isCurrent
-                        ? "bg-blue-50/30 border-blue-200 dark:bg-blue-900/10 dark:border-blue-900/30"
-                        : "bg-white dark:bg-base-100 border-gray-200 dark:border-base-300"),
+                isCurrent
+                    ? "bg-blue-50/30 border-blue-200 dark:bg-blue-900/10 dark:border-blue-900/30"
+                    : "bg-white dark:bg-base-100 border-gray-200 dark:border-base-300",
                 (isRefreshing || isDisabled) && "opacity-70"
             )}
         >
@@ -293,25 +272,13 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     );
                                 }
                             })()}
-                            {/* 蹬额度中高亮标识 */}
-                            {isPedaling && (
-                                <span
-                                    className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse motion-reduce:animate-none"
-                                    title={t('pedal.account_pedaling_tooltip', '该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)')}
-                                >
-                                    <Zap className="w-2.5 h-2.5 fill-current text-amber-500" />
-                                    {t('pedal.account_pedaling_badge', '⚡ 蹬额度中')}
-                                </span>
-                            )}
                             {/* 优先级 */}
                             <span
                                 className={cn(
                                     "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
-                                    isPedaling
-                                        ? "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border border-amber-300/80 dark:border-amber-700/80 shadow-2xs"
-                                        : hasCustomModelPriorities(account)
-                                            ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
-                                            : "bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
+                                    hasCustomModelPriorities(account)
+                                        ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
+                                        : "bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
                                 )}
                                 title={
                                     hasCustomModelPriorities(account)
@@ -429,7 +396,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                 <GroupQuotaCard
                                     key={summary.key}
                                     summary={summary}
-                                    isProtected={isGroupProtected(summary.key)}
+                                    isProtected={false}
                                     liveLimit={summary.key === 'gemini' ? getLiveLimitForModel(account, 'gemini-pro') : getLiveLimitForModel(account, 'claude')}
                                 />
                             ))}
@@ -441,7 +408,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                 <div className="w-full">
                                     <GroupQuotaCard
                                         summary={argon}
-                                        isProtected={isGroupProtected('argon')}
+                                        isProtected={false}
                                         liveLimit={getLiveLimitForModel(account, 'gemini-4-neon') || getLiveLimitForModel(account, 'gemini-4-argon')}
                                         fullWidth
                                     />
@@ -518,7 +485,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                 onClose={() => setIsActionsModalOpen(false)}
                 account={account}
                 onSwitch={onSwitch}
-                onWarmup={onWarmup}
                 onViewDevice={() => {
                     setIsActionsModalOpen(false);
                     onViewDevice();
@@ -534,7 +500,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                     onDelete();
                 }}
                 isSwitching={isSwitching}
-                isRefreshing={isRefreshing}
             />
         </motion.div>
     );

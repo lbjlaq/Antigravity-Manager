@@ -9,8 +9,6 @@ import HelpTooltip from '../components/common/HelpTooltip';
 import { showToast } from '../components/common/ToastContainer';
 import { copyToClipboard } from '../utils/clipboard';
 import { cn } from '../utils/cn';
-import QuotaProtection from '../components/settings/QuotaProtection';
-import SmartWarmup from '../components/settings/SmartWarmup';
 import ClassicAutoSwitch from '../components/settings/ClassicAutoSwitch';
 import { useDebugConsole } from '../stores/useDebugConsole';
 
@@ -86,15 +84,6 @@ function Settings() {
                 account_bindings: {}
             }
         },
-        scheduled_warmup: {
-            enabled: false,
-            monitored_models: []
-        },
-        quota_protection: {
-            enabled: false,
-            threshold_percentage: 10,
-            monitored_models: []
-        },
         pinned_quota_models: {
             models: ['gemini-3.1-pro-high', 'gemini-3.8-flash-high', 'gemini-3.1-flash-image', 'claude-opus-4-6-thinking']
         },
@@ -103,10 +92,6 @@ function Settings() {
             mode: 'quick',
             port: 7860,
             use_http2: true
-        },
-        circuit_breaker: {
-            enabled: true,
-            backoff_steps: [60, 300, 1800, 7200]
         },
         hidden_menu_items: [],  // 菜单显示设置：默认不隐藏任何菜单项
 
@@ -199,7 +184,7 @@ function Settings() {
         // 获取应用真实版本号
         if (isTauri()) {
             import('@tauri-apps/api/app').then(({ getVersion }) => {
-                getVersion().then(v => setAppVersion(v)).catch(() => {});
+                getVersion().then(v => setAppVersion(v)).catch(() => { });
             });
         }
 
@@ -236,7 +221,7 @@ function Settings() {
             // 刷新当前 Hub 指纹状态
             invoke<HubFingerprint>('get_hub_fingerprint')
                 .then(fp => setHubFingerprint(fp))
-                .catch(() => {});
+                .catch(() => { });
 
             // 如果修改了代理配置，提示用户需要重启
             if (proxyEnabled && proxyUrl) {
@@ -878,11 +863,10 @@ function Settings() {
                                                     showToast(`${t('common.error')}: ${err}`, 'error');
                                                 }
                                             }}
-                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                                                (formData.update_channel || 'stable') === 'stable'
-                                                    ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm'
-                                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${(formData.update_channel || 'stable') === 'stable'
+                                                ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm'
+                                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                                }`}
                                         >
                                             {t('settings.about.channel_stable')}
                                         </button>
@@ -902,11 +886,10 @@ function Settings() {
                                                     showToast(`${t('common.error')}: ${err}`, 'error');
                                                 }
                                             }}
-                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
-                                                formData.update_channel === 'beta'
-                                                    ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm'
-                                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${formData.update_channel === 'beta'
+                                                ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm'
+                                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                                }`}
                                         >
                                             <span>{t('settings.about.channel_beta')}</span>
                                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -1049,95 +1032,95 @@ function Settings() {
                                 )}
                             </div>
 
-                                {/* 菜单显示设置 */}
-                                <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
-                                    <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.menu.title')}</h3>
-                                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                                        {t('settings.menu.desc')}
-                                    </p>
-                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {[
-                                            { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
-                                            { path: '/accounts', label: t('nav.accounts'), icon: Users },
-                                            { path: '/settings', label: t('nav.settings'), icon: SettingsIcon },
-                                        ].map((item) => {
-                                            const hiddenItems = formData.hidden_menu_items || [];
-                                            const isVisible = !hiddenItems.includes(item.path);
-                                            const isSettings = item.path === '/settings';
+                            {/* 菜单显示设置 */}
+                            <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
+                                <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.menu.title')}</h3>
+                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                                    {t('settings.menu.desc')}
+                                </p>
+                                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {[
+                                        { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
+                                        { path: '/accounts', label: t('nav.accounts'), icon: Users },
+                                        { path: '/settings', label: t('nav.settings'), icon: SettingsIcon },
+                                    ].map((item) => {
+                                        const hiddenItems = formData.hidden_menu_items || [];
+                                        const isVisible = !hiddenItems.includes(item.path);
+                                        const isSettings = item.path === '/settings';
 
-                                            return (
-                                                <div
-                                                    key={item.path}
-                                                    onClick={async () => {
-                                                        if (!isSettings) {
-                                                            const originalConfig = { ...formData };
-                                                            const hiddenItems = formData.hidden_menu_items || [];
-                                                            const newHiddenItems = isVisible
-                                                                ? [...hiddenItems, item.path]
-                                                                : hiddenItems.filter(p => p !== item.path);
+                                        return (
+                                            <div
+                                                key={item.path}
+                                                onClick={async () => {
+                                                    if (!isSettings) {
+                                                        const originalConfig = { ...formData };
+                                                        const hiddenItems = formData.hidden_menu_items || [];
+                                                        const newHiddenItems = isVisible
+                                                            ? [...hiddenItems, item.path]
+                                                            : hiddenItems.filter(p => p !== item.path);
 
-                                                            // 乐观更新 UI
-                                                            const newConfig = {
-                                                                ...formData,
-                                                                hidden_menu_items: newHiddenItems
-                                                            };
-                                                            setFormData(newConfig);
+                                                        // 乐观更新 UI
+                                                        const newConfig = {
+                                                            ...formData,
+                                                            hidden_menu_items: newHiddenItems
+                                                        };
+                                                        setFormData(newConfig);
 
-                                                            // 尝试保存
-                                                            try {
-                                                                await saveConfig(newConfig);
-                                                            } catch (error) {
-                                                                // 保存失败，回滚到原始快照
-                                                                setFormData(originalConfig);
-                                                                showToast(`保存失败，已恢复设置: ${error}`, 'error');
-                                                            }
+                                                        // 尝试保存
+                                                        try {
+                                                            await saveConfig(newConfig);
+                                                        } catch (error) {
+                                                            // 保存失败，回滚到原始快照
+                                                            setFormData(originalConfig);
+                                                            showToast(`保存失败，已恢复设置: ${error}`, 'error');
                                                         }
-                                                    }}
-                                                    className={`
+                                                    }
+                                                }}
+                                                className={`
                                                         relative flex flex-col items-center justify-center gap-3 p-4 rounded-xl border-2 transition-all cursor-pointer select-none
                                                         ${isSettings
-                                                            ? 'bg-gray-50 dark:bg-base-200 border-gray-100 dark:border-base-300 opacity-60 cursor-not-allowed'
-                                                            : isVisible
-                                                                ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-500 dark:border-blue-500 shadow-sm'
-                                                                : 'bg-white dark:bg-base-100 border-gray-200 dark:border-base-300 hover:border-gray-300 dark:hover:border-base-content/20 text-gray-500'
-                                                        }
+                                                        ? 'bg-gray-50 dark:bg-base-200 border-gray-100 dark:border-base-300 opacity-60 cursor-not-allowed'
+                                                        : isVisible
+                                                            ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-500 dark:border-blue-500 shadow-sm'
+                                                            : 'bg-white dark:bg-base-100 border-gray-200 dark:border-base-300 hover:border-gray-300 dark:hover:border-base-content/20 text-gray-500'
+                                                    }
                                                     `}
-                                                >
-                                                    {/* 选中标记 */}
-                                                    {isVisible && (
-                                                        <div className="absolute top-2 right-2 text-blue-500">
-                                                            <CheckCircle2 size={16} fill="currentColor" className="text-white dark:text-base-100" />
-                                                        </div>
-                                                    )}
+                                            >
+                                                {/* 选中标记 */}
+                                                {isVisible && (
+                                                    <div className="absolute top-2 right-2 text-blue-500">
+                                                        <CheckCircle2 size={16} fill="currentColor" className="text-white dark:text-base-100" />
+                                                    </div>
+                                                )}
 
-                                                    {isSettings && (
-                                                        <div className="absolute top-2 right-2 text-xs font-bold text-gray-400 bg-gray-200 dark:bg-base-300 px-1.5 py-0.5 rounded">
-                                                            {t('settings.menu.required')}
-                                                        </div>
-                                                    )}
+                                                {isSettings && (
+                                                    <div className="absolute top-2 right-2 text-xs font-bold text-gray-400 bg-gray-200 dark:bg-base-300 px-1.5 py-0.5 rounded">
+                                                        {t('settings.menu.required')}
+                                                    </div>
+                                                )}
 
-                                                    <div className={`
+                                                <div className={`
                                                         p-3 rounded-xl transition-colors
                                                         ${isVisible
-                                                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                                                            : 'bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-base-content/50'
-                                                        }
+                                                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                                                        : 'bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-base-content/50'
+                                                    }
                                                     `}>
-                                                        <item.icon size={24} />
-                                                    </div>
-
-                                                    <span className={`font-medium text-sm ${isVisible ? 'text-blue-900 dark:text-blue-100' : 'text-gray-500'}`}>
-                                                        {item.label}
-                                                    </span>
+                                                    <item.icon size={24} />
                                                 </div>
-                                            );
-                                        })}
-                                    </div>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 flex items-center gap-1.5">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
-                                        {t('settings.menu.selected_items_note')}
-                                    </p>
+
+                                                <span className={`font-medium text-sm ${isVisible ? 'text-blue-900 dark:text-blue-100' : 'text-gray-500'}`}>
+                                                    {item.label}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 flex items-center gap-1.5">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
+                                    {t('settings.menu.selected_items_note')}
+                                </p>
+                            </div>
                         </div>
                     )}
 
@@ -1156,12 +1139,11 @@ function Settings() {
                                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t('settings.account.auto_refresh_desc')}</p>
                                         </div>
                                     </div>
-                                    <label className={`relative inline-flex items-center ${formData.quota_protection.enabled ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}>
+                                    <label className="relative inline-flex items-center cursor-pointer">
                                         <input
                                             type="checkbox"
                                             className="sr-only peer"
                                             checked={formData.auto_refresh}
-                                            disabled={formData.quota_protection.enabled}
                                             onChange={async (e) => {
                                                 const enabled = e.target.checked;
                                                 const newConfig = { ...formData, auto_refresh: enabled };
@@ -1174,7 +1156,7 @@ function Settings() {
                                                 }
                                             }}
                                         />
-                                        <div className={`w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner ${formData.quota_protection.enabled ? 'peer-checked:bg-blue-500' : ''}`}></div>
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
                                     </label>
                                 </div>
 
@@ -1250,55 +1232,6 @@ function Settings() {
                                             classic_auto_switch: newConfig
                                         };
                                         setFormData(newFormData);
-                                        try {
-                                            await saveConfig(newFormData);
-                                        } catch (error) {
-                                            showToast(`${t('common.error')}: ${error}`, 'error');
-                                        }
-                                    }}
-                                />
-                            </div>
-
-                            {/* 7天周配额智能预热 (Smart Warmup) */}
-                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-orange-200 transition-all duration-300 shadow-sm">
-                                <SmartWarmup
-                                    config={formData.scheduled_warmup}
-                                    onChange={async (newConfig) => {
-                                        const newFormData = {
-                                            ...formData,
-                                            scheduled_warmup: newConfig
-                                        };
-                                        setFormData(newFormData);
-                                        // Hot Save
-                                        try {
-                                            await saveConfig(newFormData);
-                                        } catch (error) {
-                                            showToast(`${t('common.error')}: ${error}`, 'error');
-                                        }
-                                    }}
-                                />
-                            </div>
-
-                            {/* 配额保护 (Quota Protection) */}
-                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-rose-200 transition-all duration-300 shadow-sm">
-                                <QuotaProtection
-                                    config={formData.quota_protection}
-                                    onChange={async (newConfig) => {
-                                        const updates: any = {
-                                            quota_protection: newConfig
-                                        };
-                                        // 联动逻辑：开启配额保护时，强制开启后台自动刷新 (不仅仅是预热)
-                                        if (newConfig.enabled) {
-                                            updates.auto_refresh = true;
-                                        }
-
-                                        const newFormData = {
-                                            ...formData,
-                                            ...updates
-                                        };
-                                        setFormData(newFormData);
-
-                                        // Hot Save
                                         try {
                                             await saveConfig(newFormData);
                                         } catch (error) {
@@ -1471,7 +1404,7 @@ function Settings() {
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                                         {t('settings.advanced.antigravity_cli_path_desc', '设置您的命令行客户端 (agy) 的可执行文件路径，用于一键解除账号限制。')}
                                     </p>
-                                    
+
                                     {/* 新增：解密/修补准入限制一键修补按钮 */}
                                     <div className={`mt-3 flex items-center gap-4 p-3 rounded-lg border ${formData.antigravity_cli_executable ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
                                         <div className="flex-1">
@@ -1594,8 +1527,8 @@ function Settings() {
                                                 )}>
                                                     {hubFingerprint.source === 'custom' ? t('proxy.config.hub.source_custom', { defaultValue: '自定义' })
                                                         : hubFingerprint.source === 'remote' ? t('proxy.config.hub.source_remote', { defaultValue: '远端探测' })
-                                                        : hubFingerprint.source === 'local' ? t('proxy.config.hub.source_local', { defaultValue: '本地应用' })
-                                                        : t('proxy.config.hub.source_baseline', { defaultValue: '稳态基准' })}
+                                                            : hubFingerprint.source === 'local' ? t('proxy.config.hub.source_local', { defaultValue: '本地应用' })
+                                                                : t('proxy.config.hub.source_baseline', { defaultValue: '稳态基准' })}
                                                 </span>
                                             )}
                                         </div>
@@ -1974,11 +1907,10 @@ function Settings() {
                                                         showToast(`${t('common.error')}: ${err}`, 'error');
                                                     }
                                                 }}
-                                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                                                    (formData.update_channel || 'stable') === 'stable'
-                                                        ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm'
-                                                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                                                }`}
+                                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${(formData.update_channel || 'stable') === 'stable'
+                                                    ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm'
+                                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                                    }`}
                                             >
                                                 {t('settings.about.channel_stable')}
                                             </button>
@@ -1998,11 +1930,10 @@ function Settings() {
                                                         showToast(`${t('common.error')}: ${err}`, 'error');
                                                     }
                                                 }}
-                                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
-                                                    formData.update_channel === 'beta'
-                                                        ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm'
-                                                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                                                }`}
+                                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${formData.update_channel === 'beta'
+                                                    ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm'
+                                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                                    }`}
                                             >
                                                 <span>{t('settings.about.channel_beta')}</span>
                                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />

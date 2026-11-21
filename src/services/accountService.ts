@@ -250,15 +250,6 @@ export async function bindDeviceProfileWithProfile(accountId: string, profile: D
     return await invoke('bind_device_profile_with_profile', { accountId, profile });
 }
 
-// 预热相关
-export async function warmUpAllAccounts(): Promise<string> {
-    return await invoke('warm_up_all_accounts');
-}
-
-export async function warmUpAccount(accountId: string): Promise<string> {
-    return await invoke('warm_up_account', { accountId });
-}
-
 // 导出账号相关
 export interface ExportAccountItem {
     email: string;

@@ -7,7 +7,6 @@ import {
     Terminal,
     ArrowRightLeft,
     Tag,
-    Sparkles,
     Smartphone,
     Info,
     Download,
@@ -28,7 +27,6 @@ export interface AccountActionsModalProps {
     onClose: () => void;
     account: Account;
     onSwitch: (targetIde: 'classic' | 'ide' | 'agy' | 'acp') => void;
-    onWarmup?: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
     onExport: () => void;
@@ -36,7 +34,6 @@ export interface AccountActionsModalProps {
     onOpenTagEditor?: () => void;
     onDelete: () => void;
     isSwitching?: boolean;
-    isRefreshing?: boolean;
 }
 
 const PRESET_TAGS = ['主力', '备用', '高配', '测试', 'Claude', 'Gemini'];
@@ -46,7 +43,6 @@ export default function AccountActionsModal({
     onClose,
     account,
     onSwitch,
-    onWarmup,
     onViewDevice,
     onViewDetails,
     onExport,
@@ -54,7 +50,6 @@ export default function AccountActionsModal({
     onOpenTagEditor,
     onDelete,
     isSwitching = false,
-    isRefreshing = false,
 }: AccountActionsModalProps) {
     const { t } = useTranslation();
     const [currentView, setCurrentView] = useState<'menu' | 'tags'>('menu');
@@ -346,29 +341,6 @@ export default function AccountActionsModal({
                                             )}
                                         </div>
                                     </button>
-
-                                    {/* Warmup */}
-                                    {onWarmup && (
-                                        <button
-                                            disabled={isRefreshing}
-                                            onClick={onWarmup}
-                                            className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-200 dark:border-base-200 hover:border-cyan-500 dark:hover:border-cyan-500 hover:bg-cyan-50/40 dark:hover:bg-cyan-500/10 transition-all text-left group"
-                                        >
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2 rounded-lg bg-cyan-50 text-cyan-600 dark:bg-cyan-500/15 dark:text-cyan-400 flex-shrink-0">
-                                                    {isRefreshing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs font-semibold text-gray-900 dark:text-base-content">
-                                                        {t('accounts.actions_modal.tools.warmup')}
-                                                    </div>
-                                                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                                                        {t('accounts.actions_modal.tools.warmup_desc')}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </button>
-                                    )}
 
                                     {/* Device Fingerprint */}
                                     <button

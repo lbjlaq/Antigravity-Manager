@@ -453,10 +453,6 @@ pub fn run() {
                 modules::startup_refresh::spawn_startup_quota_refresh(Some(handle));
             });
 
-            // Start smart scheduler for 7-day weekly reset warmup
-            modules::scheduler::start_scheduler(Some(app.handle().clone()));
-            info!("Smart scheduler (7-Day Weekly Reset Warmup) initialized.");
-
             // Start background auto-refresh scheduler (Fixes #3958)
             modules::auto_refresh::start_auto_refresh(Some(app.handle().clone()));
             info!("Background auto-refresh scheduler initialized.");
@@ -634,9 +630,6 @@ pub fn run() {
             // Autostart commands
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
-            // Warmup commands
-            commands::warm_up_all_accounts,
-            commands::warm_up_account,
             commands::update_account_label,
             commands::update_account_priority,
             commands::update_account_project_id,

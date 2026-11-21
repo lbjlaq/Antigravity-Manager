@@ -4473,82 +4473,6 @@ pub fn update_account_quota_internal(
         }
     }
 
-    // --- Quota protection logic start ---
-    if let Ok(config) = crate::modules::config::load_app_config() {
-        if config.quota_protection.enabled {
-            if let Some(ref q) = account.quota {
-                let threshold = config.quota_protection.threshold_percentage as i32;
-
-                let mut group_max_percentage: HashMap<String, i32> = HashMap::new();
-
-                for model in &q.models {
-                    if let Some(std_id) =
-                        crate::utils::model::normalize_to_standard_id(&model.name)
-                    {
-                        let entry = group_max_percentage.entry(std_id).or_insert(-1);
-                        if model.percentage > *entry {
-                            *entry = model.percentage;
-                        }
-                    }
-                }
-
-                for std_id in &config.quota_protection.monitored_models {
-                    let lookup_key =
-                        crate::utils::model::normalize_to_standard_id(std_id)
-                            .unwrap_or_else(|| std_id.clone());
-                    let max_pct = group_max_percentage
-                        .get(&lookup_key)
-                        .cloned()
-                        .unwrap_or(100);
-
-                    if max_pct < threshold {
-                        if !account.protected_models.contains(&lookup_key) {
-                            crate::modules::logger::log_info(&format!(
-                                "[Quota] Triggering model protection: {} (Group: {} Max: {}% < Thres: {}%)",
-                                account.email, lookup_key, max_pct, threshold
-                            ));
-                            account.protected_models.insert(lookup_key.clone());
-                        }
-                    } else {
-                        if account.protected_models.contains(&lookup_key) {
-                            crate::modules::logger::log_info(&format!(
-                                "[Quota] Model protection recovered: {} (Group: {} Max: {}% >= Thres: {}%)",
-                                account.email, lookup_key, max_pct, threshold
-                            ));
-                            account.protected_models.remove(&lookup_key);
-                        }
-                    }
-                }
-
-                // [Compatibility] Migrate from account-level to model-level protection if previously disabled for quota
-                if account.proxy_disabled
-                    && account
-                        .proxy_disabled_reason
-                        .as_ref()
-                        .map_or(false, |r| r == "quota_protection")
-                {
-                    crate::modules::logger::log_info(&format!(
-                        "[Quota] Migrating account {} from account-level to model-level protection",
-                        account.email
-                    ));
-                    account.proxy_disabled = false;
-                    account.proxy_disabled_reason = None;
-                    account.proxy_disabled_at = None;
-                }
-            }
-        } else {
-            // [FIX] 当配额保护在全局关闭时，清空受保护模型列表，避免遗留历史锁
-            if !account.protected_models.is_empty() {
-                crate::modules::logger::log_info(&format!(
-                    "[Quota] Quota protection disabled globally, clearing protected models for {}",
-                    account.email
-                ));
-                account.protected_models.clear();
-            }
-        }
-    }
-    // --- Quota protection logic end ---
-
     // If quota retrieval succeeded and quota is not forbidden, auto-recover quota_protection locks
     if let Some(ref q) = account.quota {
         if !q.is_forbidden && !account.banned {
@@ -6286,51 +6210,12 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         elapsed.as_millis()
     ));
 
-    // After quota refresh, immediately check and trigger warmup for weekly recovered models
-    tokio::spawn(async {
-        check_and_trigger_warmup_for_recovered_models().await;
-    });
-
     Ok(RefreshStats {
         total,
         success,
         failed,
         details,
     })
-}
-
-/// Check and trigger warmup for models that have recovered to 100%
-/// Called automatically after quota refresh to enable immediate warmup
-pub async fn check_and_trigger_warmup_for_recovered_models() {
-    let accounts = match list_accounts() {
-        Ok(acc) => acc,
-        Err(_) => return,
-    };
-
-    // Load config to check if scheduled warmup is enabled
-    let app_config = match crate::modules::config::load_app_config() {
-        Ok(cfg) => cfg,
-        Err(_) => return,
-    };
-
-    if !app_config.scheduled_warmup.enabled {
-        return;
-    }
-
-    crate::modules::logger::log_info(&format!(
-        "[Warmup] Checking {} accounts for recovered models after quota refresh...",
-        accounts.len()
-    ));
-
-    for account in accounts {
-        // Skip disabled accounts
-        if account.disabled || account.proxy_disabled || account.banned {
-            continue;
-        }
-
-        // Trigger warmup check for this account
-        crate::modules::scheduler::trigger_warmup_for_account(&account).await;
-    }
 }
 
 /// [NEW #3726] 通用账号凭据提取解析器：兼容各类历史版本格式

@@ -35,13 +35,7 @@ pub struct AppConfig {
     #[serde(default = "default_quiet_autostart")]
     pub quiet_autostart: bool,
     #[serde(default)]
-    pub scheduled_warmup: ScheduledWarmupConfig, // [NEW] Scheduled warmup configuration
-    #[serde(default)]
-    pub quota_protection: QuotaProtectionConfig, // [NEW] Quota protection configuration
-    #[serde(default)]
     pub pinned_quota_models: PinnedQuotaModelsConfig, // [NEW] Pinned quota models list
-    #[serde(default)]
-    pub circuit_breaker: CircuitBreakerConfig, // [NEW] Circuit breaker configuration
     #[serde(default)]
     pub hidden_menu_items: Vec<String>, // Hidden menu item path list
     #[serde(default)]
@@ -80,80 +74,6 @@ fn default_refresh_concurrency() -> u32 {
 
 fn default_refresh_slide_delay_secs() -> f64 {
     0.2
-}
-
-/// Scheduled warmup configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScheduledWarmupConfig {
-    /// Whether smart warmup is enabled
-    pub enabled: bool,
-
-    /// List of models to warmup
-    #[serde(default = "default_warmup_models")]
-    pub monitored_models: Vec<String>,
-}
-
-fn default_warmup_models() -> Vec<String> {
-    vec![
-        "gemini-3.8-flash".to_string(),
-        "claude".to_string(),
-        "gemini-3.1-pro-high".to_string(),
-        "gemini-3.1-flash-image".to_string(),
-    ]
-}
-
-impl ScheduledWarmupConfig {
-    pub fn new() -> Self {
-        Self {
-            enabled: false,
-            monitored_models: default_warmup_models(),
-        }
-    }
-}
-
-impl Default for ScheduledWarmupConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Quota protection configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuotaProtectionConfig {
-    /// Whether quota protection is enabled
-    pub enabled: bool,
-
-    /// Reserved quota percentage (1-99)
-    pub threshold_percentage: u32,
-
-    /// List of monitored models (e.g. gemini-3-flash, gemini-3-pro-high, gemini-3.1-pro-high, claude-sonnet-4-6)
-    #[serde(default = "default_monitored_models")]
-    pub monitored_models: Vec<String>,
-}
-
-fn default_monitored_models() -> Vec<String> {
-    vec![
-        "claude".to_string(),
-        "gemini-3.1-pro-high".to_string(),
-        "gemini-3.8-flash".to_string(),
-        "gemini-3.1-flash-image".to_string(),
-    ]
-}
-
-impl QuotaProtectionConfig {
-    pub fn new() -> Self {
-        Self {
-            enabled: false,
-            threshold_percentage: 10, // Default 10% reserve
-            monitored_models: default_monitored_models(),
-        }
-    }
-}
-
-impl Default for QuotaProtectionConfig {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Classic auto-switch configuration
@@ -224,46 +144,6 @@ impl Default for PinnedQuotaModelsConfig {
     }
 }
 
-/// Circuit breaker configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CircuitBreakerConfig {
-    /// Whether circuit breaker is enabled
-    pub enabled: bool,
-
-    /// Unified backoff steps (seconds)
-    /// Default: [60, 300, 1800, 7200]
-    #[serde(default = "default_backoff_steps")]
-    pub backoff_steps: Vec<u64>,
-
-    /// Optional 5h zero-quota lock; exhausted weekly quota always blocks scheduling.
-    #[serde(default = "default_lock_on_zero_quota")]
-    pub lock_on_zero_quota: bool,
-}
-
-fn default_backoff_steps() -> Vec<u64> {
-    vec![60, 300, 1800, 7200]
-}
-
-fn default_lock_on_zero_quota() -> bool {
-    false
-}
-
-impl CircuitBreakerConfig {
-    pub fn new() -> Self {
-        Self {
-            enabled: true,
-            backoff_steps: default_backoff_steps(),
-            lock_on_zero_quota: false,
-        }
-    }
-}
-
-impl Default for CircuitBreakerConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AppConfig {
     pub fn new() -> Self {
         Self {
@@ -285,10 +165,7 @@ impl AppConfig {
             antigravity_args: None,
             auto_launch: false,
             quiet_autostart: true,
-            scheduled_warmup: ScheduledWarmupConfig::default(),
-            quota_protection: QuotaProtectionConfig::default(),
             pinned_quota_models: PinnedQuotaModelsConfig::default(),
-            circuit_breaker: CircuitBreakerConfig::default(),
             hidden_menu_items: Vec::new(),
             cloudflared: serde_json::json!({}),
             lightweight_mode: false,
