@@ -1,53 +1,77 @@
-use crate::types::{Account, ActiveHostStatus, TargetHost};
+use crate::types::TargetHost;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::fs;
-use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+use std::path::PathBuf;
+use sysinfo::{ProcessesToUpdate, System};
 
 pub struct SwitchEngine;
 
 impl SwitchEngine {
-    /// 执行热切换核心逻辑
-    pub fn switch(account: &Account, target: TargetHost, restart: bool) -> Result<()> {
-        let targets = match target {
-            TargetHost::All => vec![
-                TargetHost::App,
-                TargetHost::Ide,
-                TargetHost::Plugin,
-                TargetHost::Agy,
-            ],
-            single => vec![single],
-        };
-
-        for t in targets {
-            match t {
-                TargetHost::App => Self::switch_desktop_target(account, "Antigravity", restart)?,
-                TargetHost::Ide => {
-                    Self::switch_desktop_target(account, "Antigravity IDE", restart)?
-                }
-                TargetHost::Plugin => Self::switch_plugin_target(account)?,
-                TargetHost::Agy => Self::switch_cli_target(account)?,
-                TargetHost::All => unreachable!(),
+    /// 执行针对特定单一目标或全部目标的切换
+    pub fn switch(account: &crate::types::Account, target: TargetHost, force_restart: bool) -> Result<()> {
+        match target {
+            TargetHost::App => {
+                Self::switch_desktop_target(account, "Antigravity", force_restart)?;
+            }
+            TargetHost::Ide => {
+                Self::switch_desktop_target(account, "Antigravity IDE", force_restart)?;
+            }
+            TargetHost::Plugin => {
+                Self::switch_acp_plugin(account)?;
+            }
+            TargetHost::Agy => {
+                Self::switch_cli_agy(account)?;
+            }
+            TargetHost::All => {
+                let _ = Self::switch_desktop_target(account, "Antigravity", force_restart);
+                let _ = Self::switch_desktop_target(account, "Antigravity IDE", force_restart);
+                let _ = Self::switch_acp_plugin(account);
+                let _ = Self::switch_cli_agy(account);
             }
         }
-
         Ok(())
     }
 
-    /// 切换 Antigravity / Antigravity IDE 宿主 (写 state.vscdb + storage.json，并热杀子进程)
-    fn switch_desktop_target(account: &Account, app_folder: &str, force_restart: bool) -> Result<()> {
-        let home = dirs::home_dir().context("No home dir")?;
-        let user_storage = home
-            .join("Library/Application Support")
-            .join(app_folder)
-            .join("User/globalStorage");
-
-        if !user_storage.exists() {
-            // 如果该目标未安装/未初始化，则跳过
-            return Ok(());
+    /// 解析指定应用在不同操作系统的配置存储根目录
+    pub fn resolve_app_user_storage_dir(app_folder: &str) -> Option<PathBuf> {
+        #[cfg(target_os = "macos")]
+        {
+            dirs::home_dir().map(|h| {
+                h.join("Library/Application Support")
+                    .join(app_folder)
+                    .join("User/globalStorage")
+            })
         }
 
-        // 1. 写入设备指纹到 storage.json
+        #[cfg(target_os = "windows")]
+        {
+            dirs::config_dir().map(|c| c.join(app_folder).join("User/globalStorage"))
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            dirs::config_dir().map(|c| c.join(app_folder).join("User/globalStorage"))
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            None
+        }
+    }
+
+    /// 切换 Antigravity / Antigravity IDE 宿主 (深层隔离设备指纹 + SQLite 遥测，并热杀子进程)
+    fn switch_desktop_target(
+        account: &crate::types::Account,
+        app_folder: &str,
+        force_restart: bool,
+    ) -> Result<()> {
+        let user_storage = match Self::resolve_app_user_storage_dir(app_folder) {
+            Some(p) if p.exists() => p,
+            _ => return Ok(()), // 该宿主未安装或未初始化，安全跳过
+        };
+
+        // 1. 深度写入设备指纹到 storage.json
         if let Some(ref profile) = account.device_profile {
             let storage_json_path = user_storage.join("storage.json");
             let mut root: serde_json::Value = if storage_json_path.exists() {
@@ -63,132 +87,244 @@ impl SwitchEngine {
             root["telemetry.devDeviceId"] =
                 serde_json::Value::String(profile.dev_device_id.clone());
             root["telemetry.sqmId"] = serde_json::Value::String(profile.sqm_id.clone());
+            // 核心深度细节：写入 storage.serviceMachineId 对齐 devDeviceId，防止底座基于 MAC 重新哈希计算
+            root["storage.serviceMachineId"] =
+                serde_json::Value::String(profile.dev_device_id.clone());
 
             let _ = fs::write(storage_json_path, serde_json::to_string_pretty(&root)?);
         }
 
-        // 2. 写入 Token 到 state.vscdb
+        // 2. 深度写入 Token 与设备识别符到 state.vscdb
         let db_path = user_storage.join("state.vscdb");
         if db_path.exists() {
             let conn = Connection::open(&db_path)?;
-            // 构造 state 字符串
             let json_state = serde_json::json!({
                 "state": "signedIn",
                 "context": {
                     "project": account.token.project_id.clone().unwrap_or_default(),
                     "showProjectError": false,
                     "errorMessage": "",
-                    "ineligibleMessage": ""
                 },
-                "token": {
-                    "accessToken": account.token.access_token,
-                    "refreshToken": account.token.refresh_token,
-                    "expiry": account.token.expiry_timestamp.unwrap_or(0) * 1000
+                "user": {
+                    "email": account.email,
+                    "name": account.name.clone().unwrap_or_default()
                 }
-            })
-            .to_string();
+            });
 
-            // 生成 Protobuf 统一主题格式
-            let proto_b64 = encode_oauth_token_topic(&json_state);
-
+            let state_str = serde_json::to_string(&json_state)?;
             conn.execute(
-                "INSERT INTO ItemTable (key, value) VALUES ('antigravityUnifiedStateSync.oauthToken', ?1)
-                 ON CONFLICT(key) DO UPDATE SET value = ?1",
-                [&proto_b64],
+                "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('cloudcode.userState', ?1)",
+                [&state_str],
             )?;
 
-            // 保持 storage.serviceMachineId 与 devDeviceId 一致
+            // 写入 Protobuf 编码的 OAuth Token
+            let pb_bytes = Self::encode_oauth_token_protobuf(&account.token.access_token, &account.token.refresh_token);
+            conn.execute(
+                "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('google.cloud-code.token', ?1)",
+                [&pb_bytes],
+            )?;
+
+            // 同步写入设备机器码到 SQLite，并重置上一账号的旧遥测会话
             if let Some(ref profile) = account.device_profile {
                 let _ = conn.execute(
-                    "INSERT INTO ItemTable (key, value) VALUES ('storage.serviceMachineId', ?1)
-                     ON CONFLICT(key) DO UPDATE SET value = ?1",
+                    "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('storage.serviceMachineId', ?1)",
                     [&profile.dev_device_id],
+                );
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('telemetry.serviceMachineId', ?1)",
+                    [&profile.dev_device_id],
+                );
+                // 清理可能串联的会话标记
+                let _ = conn.execute(
+                    "DELETE FROM ItemTable WHERE key = 'telemetry.currentSessionId'",
+                    [],
                 );
             }
         }
 
-        // 3. 热切换处理：优先仅终止 language_server 子进程；若要求 restart 则杀主进程重启
+        // 3. 执行重启或零停机热重载
         if force_restart {
-            kill_processes_by_pattern(app_folder);
+            Self::restart_application(app_folder)?;
         } else {
-            // 原地无感热切：只杀后台 language_server 子进程
-            let killed = kill_processes_by_pattern("language_server");
-            tracing::info!(
-                "Hot-switched account for {}. Terminated {} language_server subprocess(es).",
-                app_folder,
-                killed
-            );
+            Self::hot_reload_by_killing_language_server(app_folder)?;
         }
 
         Ok(())
     }
 
-    /// 切换 IDE 插件版 (antigravity-acp)
-    fn switch_plugin_target(account: &Account) -> Result<()> {
+    /// 切换 ACP 插件 (VSCode / Cursor 插件守护进程)
+    fn switch_acp_plugin(account: &crate::types::Account) -> Result<()> {
         let home = dirs::home_dir().context("No home dir")?;
         let acp_dir = home.join(".gemini/antigravity-acp");
         if !acp_dir.exists() {
             fs::create_dir_all(&acp_dir)?;
         }
 
-        let token_path = acp_dir.join("acp_token.json");
-        let cred = serde_json::json!({
+        let acp_token_path = acp_dir.join("acp_token.json");
+        let token_payload = serde_json::json!({
             "access_token": account.token.access_token,
             "refresh_token": account.token.refresh_token,
-            "token_type": "Bearer",
-            "expiry": account.token.expiry_timestamp.unwrap_or(0),
-            "email": account.email
+            "expiry_timestamp": account.token.expiry_timestamp,
+            "email": account.email,
+            "project_id": account.token.project_id
         });
-        fs::write(token_path, serde_json::to_string_pretty(&cred)?)?;
 
-        // 终止后台正在运行的 agy_acp_server
-        let killed = kill_processes_by_pattern("agy_acp_server");
-        tracing::info!("Plugin switched. Terminated {} agy_acp_server(s).", killed);
+        fs::write(acp_token_path, serde_json::to_string_pretty(&token_payload)?)?;
+        Self::kill_process_by_name("agy_acp_server");
         Ok(())
     }
 
-    /// 切换 CLI 终端 (agy)
-    fn switch_cli_target(account: &Account) -> Result<()> {
+    /// 切换 CLI 命令行 (agy)
+    fn switch_cli_agy(account: &crate::types::Account) -> Result<()> {
         let home = dirs::home_dir().context("No home dir")?;
         let agy_dir = home.join(".gemini/antigravity");
         if !agy_dir.exists() {
             fs::create_dir_all(&agy_dir)?;
         }
-        let cred = serde_json::json!({
+
+        let active_account_path = agy_dir.join("active_account.json");
+        let payload = serde_json::json!({
+            "id": account.id,
             "email": account.email,
+            "access_token": account.token.access_token,
             "refresh_token": account.token.refresh_token,
-            "access_token": account.token.access_token
+            "project_id": account.token.project_id,
+            "updated_at": chrono::Utc::now().timestamp()
         });
-        fs::write(
-            agy_dir.join("active_account.json"),
-            serde_json::to_string_pretty(&cred)?,
-        )?;
+
+        fs::write(active_account_path, serde_json::to_string_pretty(&payload)?)?;
         Ok(())
     }
 
-    /// 探测各宿主当前活跃运行状态
-    pub fn detect_active_hosts() -> ActiveHostStatus {
-        let mut sys = System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
-        );
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    /// 编码 Google Cloud Code 识别的标准 Protobuf Token 结构
+    fn encode_oauth_token_protobuf(access_token: &str, refresh_token: &str) -> Vec<u8> {
+        let mut buf = Vec::new();
+        // Field 1: access_token
+        let acc_bytes = access_token.as_bytes();
+        buf.push(0x0a);
+        Self::encode_varint(acc_bytes.len() as u64, &mut buf);
+        buf.extend_from_slice(acc_bytes);
+
+        // Field 2: refresh_token
+        let ref_bytes = refresh_token.as_bytes();
+        buf.push(0x12);
+        Self::encode_varint(ref_bytes.len() as u64, &mut buf);
+        buf.extend_from_slice(ref_bytes);
+
+        buf
+    }
+
+    fn encode_varint(mut val: u64, buf: &mut Vec<u8>) {
+        while val >= 0x80 {
+            buf.push((val as u8 & 0x7F) | 0x80);
+            val >>= 7;
+        }
+        buf.push(val as u8);
+    }
+
+    /// 跨平台宿主探测与精准杀掉 language_server 触发零感知热重载
+    pub fn hot_reload_by_killing_language_server(app_hint: &str) -> Result<()> {
+        let mut sys = System::new_all();
+        sys.refresh_processes(ProcessesToUpdate::All);
+
+        let ls_names = ["language_server", "language_server.exe"];
+        let app_lower = app_hint.to_lowercase();
+
+        for (_pid, process) in sys.processes() {
+            let proc_name = process.name().to_string_lossy().to_string();
+            let matches_ls = ls_names.iter().any(|name| proc_name.eq_ignore_ascii_case(name));
+
+            if matches_ls {
+                let cmdline = process
+                    .cmd()
+                    .iter()
+                    .map(|s| s.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                // 关联当前宿主路径（如 Antigravity 或 Antigravity IDE）
+                if cmdline.to_lowercase().contains(&app_lower) || cmdline.contains("cloudcode") {
+                    let _ = process.kill();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 跨平台通过进程名关闭进程
+    pub fn kill_process_by_name(name: &str) {
+        let mut sys = System::new_all();
+        sys.refresh_processes(ProcessesToUpdate::All);
+
+        for (_pid, process) in sys.processes() {
+            let proc_name = process.name().to_string_lossy();
+            if proc_name.eq_ignore_ascii_case(name)
+                || proc_name.eq_ignore_ascii_case(&format!("{}.exe", name))
+            {
+                let _ = process.kill();
+            }
+        }
+    }
+
+    /// 重启整个宿主应用
+    pub fn restart_application(app_folder: &str) -> Result<()> {
+        Self::kill_process_by_name(app_folder);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        #[cfg(target_os = "macos")]
+        {
+            let app_name = if app_folder.contains("IDE") {
+                "Antigravity IDE.app"
+            } else {
+                "Antigravity.app"
+            };
+            let _ = std::process::Command::new("open")
+                .arg("-a")
+                .arg(app_name)
+                .spawn();
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(local_app) = dirs::data_local_dir() {
+                let exe = local_app.join("Programs").join(app_folder).join(format!("{}.exe", app_folder));
+                if exe.exists() {
+                    let _ = std::process::Command::new(exe).spawn();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 探测各宿主在系统中的实时激活与运行状态 (跨平台)
+    pub fn detect_active_hosts() -> crate::types::ActiveHostStatus {
+        let mut sys = System::new_all();
+        sys.refresh_processes(ProcessesToUpdate::All);
 
         let mut app_running = false;
         let mut ide_running = false;
         let mut plugin_running = false;
 
-        for process in sys.processes().values() {
+        let app_patterns = ["Antigravity", "Antigravity.exe", "antigravity"];
+        let ide_patterns = ["Antigravity IDE", "Antigravity IDE.exe", "antigravity-ide"];
+
+        for (_, process) in sys.processes() {
             let name = process.name().to_string_lossy();
-            if name.contains("Antigravity IDE") {
+            if ide_patterns.iter().any(|p| name.eq_ignore_ascii_case(p)) {
                 ide_running = true;
-            } else if name.contains("Antigravity") && !name.contains("IDE") {
+            } else if app_patterns.iter().any(|p| name.eq_ignore_ascii_case(p)) {
                 app_running = true;
-            } else if name.contains("agy_acp_server") {
+            }
+
+            if name.eq_ignore_ascii_case("agy_acp_server")
+                || name.eq_ignore_ascii_case("agy_acp_server.exe")
+            {
                 plugin_running = true;
             }
         }
 
-        ActiveHostStatus {
+        crate::types::ActiveHostStatus {
             app_account: None,
             app_running,
             ide_account: None,
@@ -198,59 +334,4 @@ impl SwitchEngine {
             agy_account: None,
         }
     }
-}
-
-/// 简单 Protobuf 打包 helper
-fn encode_oauth_token_topic(json_state: &str) -> String {
-    let mut buf = Vec::new();
-    // Sentinel Key
-    let key = b"authStateWithContextSentinelKey";
-    let val = json_state.as_bytes();
-
-    // Field 1: key (tag 10: (1 << 3) | 2)
-    buf.push(10);
-    write_varint(&mut buf, key.len() as u64);
-    buf.extend_from_slice(key);
-
-    // Field 2: value (tag 18: (2 << 3) | 2)
-    buf.push(18);
-    let mut val_buf = Vec::new();
-    val_buf.push(10);
-    write_varint(&mut val_buf, val.len() as u64);
-    val_buf.extend_from_slice(val);
-
-    write_varint(&mut buf, val_buf.len() as u64);
-    buf.extend_from_slice(&val_buf);
-
-    let mut outer = Vec::new();
-    outer.push(10);
-    write_varint(&mut outer, buf.len() as u64);
-    outer.extend_from_slice(&buf);
-
-    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &outer)
-}
-
-fn write_varint(buf: &mut Vec<u8>, mut val: u64) {
-    while val >= 0x80 {
-        buf.push(((val & 0x7F) | 0x80) as u8);
-        val >>= 7;
-    }
-    buf.push(val as u8);
-}
-
-fn kill_processes_by_pattern(pattern: &str) -> usize {
-    let mut sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
-    );
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
-
-    let mut count = 0;
-    for process in sys.processes().values() {
-        let name = process.name().to_string_lossy();
-        if name.contains(pattern) {
-            let _ = process.kill();
-            count += 1;
-        }
-    }
-    count
 }

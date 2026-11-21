@@ -1,7 +1,6 @@
 pub mod fingerprint;
 
 use crate::types::{ModelQuota, QuotaSummary};
-use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 /// Google 官方三大内部控制面端点 (按官方故障自愈优先级排序: Daily -> Sandbox -> Prod)
@@ -20,6 +19,16 @@ const USER_QUOTA_SUMMARY_ENDPOINTS: [&str; 2] = [
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
     "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
 ];
+
+/// 官方配额请求返回的结构化结果，包含可能的自愈诊断
+#[derive(Debug)]
+pub enum QuotaFetchResult {
+    Success(QuotaSummary),
+    /// 需要自动标记 Disable 的永久性异常 (如 401 token expired, 403 location, 403 subscription)
+    NeedDisable { reason: String },
+    /// 临时性网络异常
+    TransientError(String),
+}
 
 pub struct QuotaClient {
     client: reqwest::Client,
@@ -53,7 +62,10 @@ impl QuotaClient {
             {
                 if res.status().is_success() {
                     if let Ok(val) = res.json::<Value>().await {
-                        if let Some(pid) = val.get("cloudaicompanionProject").and_then(|p| p.as_str()) {
+                        if let Some(pid) = val
+                            .get("cloudaicompanionProject")
+                            .and_then(|v| v.as_str())
+                        {
                             return Some(pid.to_string());
                         }
                     }
@@ -63,161 +75,130 @@ impl QuotaClient {
         None
     }
 
-    /// 第二步：查询用户当前详细配额 (优先带 Project 参数，并对齐官方端点与响应结构)
-    pub async fn fetch_quota(&self, access_token: &str, project_id: Option<&str>) -> Result<QuotaSummary> {
-        let payload = if let Some(pid) = project_id {
+    /// 第二步：查询当前账号的配额明细（含错误模式自愈分析）
+    pub async fn fetch_quota_safe(
+        &self,
+        access_token: &str,
+        project_id: Option<&str>,
+    ) -> QuotaFetchResult {
+        let body = if let Some(pid) = project_id {
             serde_json::json!({ "project": pid })
         } else {
             serde_json::json!({})
         };
 
-        // 1. 尝试从 retrieveUserQuotaSummary 查询（主要额度源）
+        let mut last_status = reqwest::StatusCode::OK;
+        let mut last_err_body = String::new();
+
         for endpoint in USER_QUOTA_SUMMARY_ENDPOINTS {
-            let res = self
+            match self
                 .client
                 .post(endpoint)
                 .bearer_auth(access_token)
                 .header(reqwest::header::USER_AGENT, &self.ua)
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&payload)
+                .json(&body)
                 .send()
-                .await;
-
-            if let Ok(resp) = res {
-                let status = resp.status();
-                if status.is_success() {
-                    let val: Value = resp.json().await?;
-                    return Ok(parse_quota_summary_response(&val));
-                } else if status == reqwest::StatusCode::FORBIDDEN {
-                    let text = resp.text().await.unwrap_or_default();
-                    return Err(anyhow!("Account Forbidden (403): {}", text));
+                .await
+            {
+                Ok(res) => {
+                    let status = res.status();
+                    last_status = status;
+                    if status.is_success() {
+                        if let Ok(val) = res.json::<Value>().await {
+                            let summary = Self::parse_quota_summary(&val);
+                            return QuotaFetchResult::Success(summary);
+                        }
+                    } else {
+                        let text = res.text().await.unwrap_or_default();
+                        last_err_body = text;
+                    }
+                }
+                Err(e) => {
+                    return QuotaFetchResult::TransientError(format!("Network request failed: {}", e));
                 }
             }
         }
 
-        // 2. 备用兜底：从 fetchAvailableModels 获取模型配额信息
+        // 尝试 fallback: fetchAvailableModels
         for endpoint in FETCH_MODELS_ENDPOINTS {
-            let res = self
+            if let Ok(res) = self
                 .client
                 .post(endpoint)
                 .bearer_auth(access_token)
                 .header(reqwest::header::USER_AGENT, &self.ua)
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&payload)
+                .json(&body)
                 .send()
-                .await;
-
-            if let Ok(resp) = res {
-                if resp.status().is_success() {
-                    let val: Value = resp.json().await?;
-                    return Ok(parse_fetch_models_response(&val));
-                }
-            }
-        }
-
-        Err(anyhow!("Failed to retrieve quota from all upstream endpoints"))
-    }
-}
-
-/// 解析 retrieveUserQuotaSummary 官方结构
-fn parse_quota_summary_response(val: &Value) -> QuotaSummary {
-    let mut models_list = Vec::new();
-    let mut gemini_pct: Option<f64> = None;
-    let mut claude_pct: Option<f64> = None;
-
-    if let Some(groups) = val.get("groups").and_then(|g| g.as_array()) {
-        for group in groups {
-            if let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) {
-                for bucket in buckets {
-                    let name = bucket.get("displayName").and_then(|d| d.as_str()).unwrap_or_default();
-                    let remaining_fraction = bucket.get("remainingFraction").and_then(|f| f.as_f64()).unwrap_or(0.0);
-                    let percentage = remaining_fraction * 100.0;
-                    let reset_time = bucket.get("resetTime").and_then(|r| r.as_str()).map(|s| s.to_string());
-
-                    models_list.push(ModelQuota {
-                        name: name.to_string(),
-                        percentage,
-                        reset_time,
-                        display_name: Some(name.to_string()),
-                    });
-
-                    let lower = name.to_ascii_lowercase();
-                    if lower.contains("gemini") || lower.contains("pro") || lower.contains("flash") {
-                        gemini_pct = match gemini_pct {
-                            Some(prev) => Some(prev.min(percentage)),
-                            None => Some(percentage),
-                        };
-                    } else if lower.contains("claude") || lower.contains("anthropic") {
-                        claude_pct = match claude_pct {
-                            Some(prev) => Some(prev.min(percentage)),
-                            None => Some(percentage),
-                        };
+                .await
+            {
+                if res.status().is_success() {
+                    if let Ok(val) = res.json::<Value>().await {
+                        let summary = Self::parse_quota_summary(&val);
+                        return QuotaFetchResult::Success(summary);
                     }
                 }
             }
         }
-    }
 
-    QuotaSummary {
-        gemini_percentage: gemini_pct,
-        claude_percentage: claude_pct,
-        models: models_list,
-        last_updated: Some(chrono::Utc::now().timestamp()),
-    }
-}
-
-/// 解析 fetchAvailableModels 官方结构
-fn parse_fetch_models_response(val: &Value) -> QuotaSummary {
-    let mut models_list = Vec::new();
-    let mut gemini_pct: Option<f64> = None;
-    let mut claude_pct: Option<f64> = None;
-
-    if let Some(models) = val.get("models").and_then(|m| m.as_object()) {
-        for (name, model_info) in models {
-            let percentage = model_info
-                .get("quotaInfo")
-                .and_then(|q| q.get("remainingFraction"))
-                .and_then(|f| f.as_f64())
-                .map(|f| f * 100.0)
-                .unwrap_or(100.0);
-
-            let reset_time = model_info
-                .get("quotaInfo")
-                .and_then(|q| q.get("resetTime"))
-                .and_then(|r| r.as_str())
-                .map(|s| s.to_string());
-
-            let display_name = model_info
-                .get("displayName")
-                .and_then(|d| d.as_str())
-                .map(|s| s.to_string());
-
-            models_list.push(ModelQuota {
-                name: name.clone(),
-                percentage,
-                reset_time,
-                display_name,
-            });
-
-            let lower = name.to_ascii_lowercase();
-            if lower.contains("flash") || lower.contains("pro") {
-                gemini_pct = match gemini_pct {
-                    Some(prev) => Some(prev.min(percentage)),
-                    None => Some(percentage),
+        // 诊断错误原因，判断是否需要标记为 Disable
+        if last_status == reqwest::StatusCode::UNAUTHORIZED {
+            return QuotaFetchResult::NeedDisable {
+                reason: "Token expired or revoked by Google (401)".to_string(),
+            };
+        } else if last_status == reqwest::StatusCode::FORBIDDEN {
+            if last_err_body.contains("UNSUPPORTED_LOCATION") {
+                return QuotaFetchResult::NeedDisable {
+                    reason: "Gemini Code Assist not available in your location (403)".to_string(),
                 };
-            } else if lower.contains("claude") || lower.contains("anthropic") {
-                claude_pct = match claude_pct {
-                    Some(prev) => Some(prev.min(percentage)),
-                    None => Some(percentage),
+            } else if last_err_body.contains("SUBSCRIPTION_REQUIRED") {
+                return QuotaFetchResult::NeedDisable {
+                    reason: "Subscription or active billing required (403)".to_string(),
+                };
+            } else {
+                return QuotaFetchResult::NeedDisable {
+                    reason: "Google Account Forbidden (403)".to_string(),
                 };
             }
         }
+
+        QuotaFetchResult::TransientError(format!("Status {}: {}", last_status, last_err_body))
     }
 
-    QuotaSummary {
-        gemini_percentage: gemini_pct,
-        claude_percentage: claude_pct,
-        models: models_list,
-        last_updated: Some(chrono::Utc::now().timestamp()),
+    /// 解析 Google 配额响应 JSON
+    fn parse_quota_summary(val: &Value) -> QuotaSummary {
+        let mut models = Vec::new();
+        let mut gemini_pct: Option<f64> = None;
+        let mut claude_pct: Option<f64> = None;
+
+        if let Some(arr) = val.get("models").and_then(|v| v.as_array()) {
+            for item in arr {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let percentage = item.get("percentage").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let reset_time = item.get("resetTime").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let display_name = item.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                let lower = name.to_lowercase();
+                if lower.contains("claude") {
+                    claude_pct = Some(claude_pct.map_or(percentage, |prev| prev.max(percentage)));
+                } else if lower.contains("gemini") {
+                    gemini_pct = Some(gemini_pct.map_or(percentage, |prev| prev.max(percentage)));
+                }
+
+                models.push(ModelQuota {
+                    name,
+                    percentage,
+                    reset_time,
+                    display_name,
+                });
+            }
+        }
+
+        QuotaSummary {
+            gemini_percentage: gemini_pct,
+            claude_percentage: claude_pct,
+            models,
+            last_updated: Some(chrono::Utc::now().timestamp()),
+        }
     }
 }

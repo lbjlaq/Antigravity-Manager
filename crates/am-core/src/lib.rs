@@ -8,8 +8,12 @@ pub mod types;
 
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
+pub use quota::QuotaFetchResult;
 pub use strategy::*;
 pub use types::*;
+
+/// 默认配额缓存保鲜时长 (2 小时)
+pub const DEFAULT_QUOTA_TTL_SECS: i64 = 2 * 3600;
 
 /// Antigravity Manager 统一门面 API
 #[derive(Clone)]
@@ -55,6 +59,24 @@ impl AntigravityManager {
     pub fn delete_account(&self, query: &str) -> Result<bool> {
         let acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
         self.storage.delete_account(&acc.id)
+    }
+
+    /// 手动禁用账号
+    pub fn disable_account(&self, query: &str, reason: Option<&str>) -> Result<Account> {
+        let mut acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
+        acc.disabled = true;
+        acc.disabled_reason = reason.map(String::from).or_else(|| Some("Manually disabled".to_string()));
+        self.storage.save_account(&acc)?;
+        Ok(acc)
+    }
+
+    /// 手动启用账号
+    pub fn enable_account(&self, query: &str) -> Result<Account> {
+        let mut acc = self.find_account(query)?.ok_or_else(|| anyhow!("Account not found: {}", query))?;
+        acc.disabled = false;
+        acc.disabled_reason = None;
+        self.storage.save_account(&acc)?;
+        Ok(acc)
     }
 
     /// 标签管理：添加标签到账号
@@ -180,16 +202,11 @@ impl AntigravityManager {
         };
 
         match prefer {
-            ModelPoolPreference::Claude => {
-                quota.claude_percentage.unwrap_or(0.0)
-            }
-            ModelPoolPreference::Gemini => {
-                quota.gemini_percentage.unwrap_or(0.0)
-            }
+            ModelPoolPreference::Claude => quota.claude_percentage.unwrap_or(0.0),
+            ModelPoolPreference::Gemini => quota.gemini_percentage.unwrap_or(0.0),
             ModelPoolPreference::Balanced => {
                 let c = quota.claude_percentage.unwrap_or(0.0);
                 let g = quota.gemini_percentage.unwrap_or(0.0);
-                // 平衡策略：若 Claude 和 Gemini 都存在，则以较低者为木桶瓶颈或二者加权，这里优先保障双池都有额度
                 if quota.claude_percentage.is_some() && quota.gemini_percentage.is_some() {
                     (c * 0.5) + (g * 0.5)
                 } else {
@@ -205,7 +222,6 @@ impl AntigravityManager {
         let prefer = filter.prefer_pool.unwrap_or(ModelPoolPreference::Balanced);
         let strategy = filter.strategy.unwrap_or(SwitchStrategy::MaxQuota);
 
-        // 1. 过滤
         candidates.retain(|acc| {
             if filter.healthy_only && (acc.disabled || acc.banned) {
                 return false;
@@ -229,7 +245,6 @@ impl AntigravityManager {
             return Ok(None);
         }
 
-        // 2. 按策略挑选
         match strategy {
             SwitchStrategy::MaxQuota => {
                 candidates.sort_by(|a, b| {
@@ -240,7 +255,6 @@ impl AntigravityManager {
                 Ok(candidates.into_iter().next())
             }
             SwitchStrategy::LeastUsed => {
-                // 最久未被使用
                 candidates.sort_by_key(|a| a.last_used.unwrap_or(0));
                 Ok(candidates.into_iter().next())
             }
@@ -256,7 +270,7 @@ impl AntigravityManager {
         }
     }
 
-    /// 刷新单个账号配额 (对齐原生: 自动尝试发现并携带 Project ID)
+    /// 刷新单个账号配额 (支持失败模式智能诊断与自愈标记)
     pub async fn refresh_account_quota(&self, account_id: &str) -> Result<QuotaSummary> {
         let mut account = self
             .storage
@@ -264,10 +278,19 @@ impl AntigravityManager {
             .ok_or_else(|| anyhow!("Account not found: {}", account_id))?;
 
         // 1. 先使用 refresh_token 换取有效 access_token
-        let refreshed_token = self
-            .oauth
-            .refresh_access_token(&account.token.refresh_token)
-            .await?;
+        let refreshed_token = match self.oauth.refresh_access_token(&account.token.refresh_token).await {
+            Ok(tok) => tok,
+            Err(e) => {
+                // 如果 refresh_token 换取直接报错 invalid_grant，自动打标禁用
+                let err_str = e.to_string();
+                if err_str.contains("invalid_grant") || err_str.contains("revoked") {
+                    account.disabled = true;
+                    account.disabled_reason = Some("Refresh token revoked or expired".to_string());
+                    let _ = self.storage.save_account(&account);
+                }
+                return Err(e);
+            }
+        };
         account.token = refreshed_token;
 
         // 2. 检查或自动发现 Project ID
@@ -277,17 +300,31 @@ impl AntigravityManager {
             }
         }
 
-        // 3. 查询最新配额
-        let quota = self
+        // 3. 查询最新配额并自愈
+        let fetch_res = self
             .quota
-            .fetch_quota(&account.token.access_token, account.token.project_id.as_deref())
-            .await?;
-        account.quota = Some(quota.clone());
-        account.last_used = Some(chrono::Utc::now().timestamp());
+            .fetch_quota_safe(&account.token.access_token, account.token.project_id.as_deref())
+            .await;
 
-        // 4. 回写持久化
-        self.storage.save_account(&account)?;
-        Ok(quota)
+        match fetch_res {
+            QuotaFetchResult::Success(quota) => {
+                account.quota = Some(quota.clone());
+                // 成功时解除以往的临时错误标记
+                if account.disabled && account.disabled_reason.as_deref().unwrap_or("").contains("403") {
+                    account.disabled = false;
+                    account.disabled_reason = None;
+                }
+                self.storage.save_account(&account)?;
+                Ok(quota)
+            }
+            QuotaFetchResult::NeedDisable { reason } => {
+                account.disabled = true;
+                account.disabled_reason = Some(reason.clone());
+                self.storage.save_account(&account)?;
+                Err(anyhow!("Account Disabled: {}", reason))
+            }
+            QuotaFetchResult::TransientError(msg) => Err(anyhow!("Transient error: {}", msg)),
+        }
     }
 
     /// 批量并发刷新所有账号配额 (带请求节流与智能限频，防 429)
@@ -312,21 +349,17 @@ impl AntigravityManager {
             .find_account(query)?
             .ok_or_else(|| anyhow!("Account not found matching query: {}", query))?;
 
-        // 确保有设备指纹隔离配置，若无则自动生成并持久化
         if account.device_profile.is_none() {
             let profile = device::generate_device_profile();
             account.device_profile = Some(profile);
             let _ = self.storage.save_account(&account);
         }
 
-        // 执行切换
         switcher::SwitchEngine::switch(&account, target, restart)?;
 
-        // 更新最后使用时间
         account.last_used = Some(chrono::Utc::now().timestamp());
         let _ = self.storage.save_account(&account);
 
-        // 更新激活记录
         let target_str = match target {
             TargetHost::App => "app",
             TargetHost::Ide => "ide",
@@ -369,8 +402,6 @@ impl AntigravityManager {
         };
 
         self.storage.save_account(&account)?;
-
-        // 立即尝试刷新一次初始配额
         let _ = self.refresh_account_quota(&id).await;
 
         self.storage.get_account(&id)?.ok_or_else(|| anyhow!("Failed to load saved account"))

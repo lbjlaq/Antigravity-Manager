@@ -1,7 +1,7 @@
 use am_core::types::TargetHost;
 use am_core::{
     AccountSelectionFilter, AccountSortOrder, AntigravityManager, ModelPoolPreference,
-    SwitchStrategy,
+    SwitchStrategy, DEFAULT_QUOTA_TTL_SECS,
 };
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
@@ -49,11 +49,15 @@ enum Commands {
     #[command(alias = "whoami")]
     Current,
 
-    /// ⚡ Switch active account across host targets (manual or smart auto-selection) (alias: use)
+    /// ⚡ Switch active account for a SPECIFIC target host (alias: use)
     #[command(alias = "use")]
     Switch {
         /// Target account ID, email, or prefix (optional if --auto is specified)
         account: Option<String>,
+
+        /// Target host (MANDATORY): ide, app, cli, plugin, or all
+        #[arg(short = 't', long = "target")]
+        target: String,
 
         /// Automatically pick the optimal account based on strategy
         #[arg(short, long)]
@@ -71,16 +75,12 @@ enum Commands {
         #[arg(long)]
         tag: Option<String>,
 
-        /// Target host: all, app, ide, plugin, agy (default: all)
-        #[arg(short, long, default_value = "all")]
-        target: String,
-
         /// Force restart the host application instead of hot reload
         #[arg(short, long)]
         restart: bool,
     },
 
-    /// 🏷 Manage account tags (add, remove, set)
+    /// 🏷 Manage account tags (add, remove, set, ls)
     Tag {
         /// Target account ID, email, or prefix
         account: String,
@@ -96,7 +96,7 @@ enum Commands {
         account: Option<String>,
     },
 
-    /// 🔐 Authenticate and add account via official Google OAuth
+    /// 🔐 Authenticate and add account via official Google OAuth (dynamic ephemeral port)
     Login {
         /// Manual mode: print auth URL and paste authorization code manually (for headless/SSH)
         #[arg(short, long)]
@@ -114,6 +114,18 @@ enum Commands {
         tags: Vec<String>,
     },
 
+    /// 🚫 Manually disable an account
+    Disable {
+        account: String,
+        #[arg(short, long)]
+        reason: Option<String>,
+    },
+
+    /// 🟢 Manually enable a disabled account
+    Enable {
+        account: String,
+    },
+
     /// 🗑 Delete one or multiple accounts
     #[command(alias = "rm")]
     Delete {
@@ -121,7 +133,7 @@ enum Commands {
         accounts: Vec<String>,
     },
 
-    /// 🔍 Inspect active Hub client fingerprint and local app alignment
+    /// 🔍 Inspect active Hub client fingerprint and local/remote alignment
     Fingerprint,
 }
 
@@ -173,15 +185,15 @@ async fn main() -> Result<()> {
             handle_current(&manager)?;
         }
         Some(Commands::Fingerprint) => {
-            handle_fingerprint()?;
+            handle_fingerprint().await?;
         }
         Some(Commands::Switch {
             account,
+            target,
             auto,
             strategy,
             prefer,
             tag,
-            target,
             restart,
         }) => {
             let target_host: TargetHost = target.parse().map_err(|e| anyhow!("{}", e))?;
@@ -194,10 +206,31 @@ async fn main() -> Result<()> {
                 tag.as_deref(),
                 target_host,
                 restart,
-            )?;
+            )
+            .await?;
         }
         Some(Commands::Tag { account, action }) => {
             handle_tag_command(&manager, &account, action)?;
+        }
+        Some(Commands::Disable { account, reason }) => {
+            let acc = manager.disable_account(&account, reason.as_deref())?;
+            println!(
+                "{}",
+                format!(
+                    "🚫 Account {} ({}) is now DISABLED: {}",
+                    acc.email,
+                    &acc.id[..8],
+                    acc.disabled_reason.as_deref().unwrap_or("No reason")
+                )
+                .yellow()
+            );
+        }
+        Some(Commands::Enable { account }) => {
+            let acc = manager.enable_account(&account)?;
+            println!(
+                "{}",
+                format!("🟢 Account {} ({}) is now ENABLED!", acc.email, &acc.id[..8]).green()
+            );
         }
         Some(Commands::Refresh { account }) => {
             handle_refresh(&manager, account.as_deref()).await?;
@@ -237,6 +270,7 @@ fn handle_list(
         return Ok(());
     }
 
+    let now = chrono::Utc::now().timestamp();
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -251,18 +285,31 @@ fn handle_list(
     ]);
 
     for acc in accounts {
+        let is_stale = acc
+            .quota
+            .as_ref()
+            .and_then(|q| q.last_updated)
+            .map(|t| (now - t) > DEFAULT_QUOTA_TTL_SECS)
+            .unwrap_or(true);
+
+        let stale_suffix = if is_stale && acc.quota.is_some() {
+            " (stale)"
+        } else {
+            ""
+        };
+
         let gemini_str = acc
             .quota
             .as_ref()
             .and_then(|q| q.gemini_percentage)
-            .map(|p| format!("{:.0}%", p))
+            .map(|p| format!("{:.0}%{}", p, stale_suffix))
             .unwrap_or_else(|| "-".to_string());
 
         let claude_str = acc
             .quota
             .as_ref()
             .and_then(|q| q.claude_percentage)
-            .map(|p| format!("{:.0}%", p))
+            .map(|p| format!("{:.0}%{}", p, stale_suffix))
             .unwrap_or_else(|| "-".to_string());
 
         let tags_str = if acc.tags.is_empty() {
@@ -278,7 +325,8 @@ fn handle_list(
             .unwrap_or_else(|| "Never".to_string());
 
         let status_str = if acc.disabled {
-            "🔴 Disabled".red().to_string()
+            let reason = acc.disabled_reason.as_deref().unwrap_or("Disabled");
+            format!("🔴 {}", reason).red().to_string()
         } else if acc.banned {
             "🚫 Banned".red().bold().to_string()
         } else {
@@ -324,7 +372,7 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
         } else {
             "⚪ No"
         }),
-        Cell::new("Official Desktop App (/Applications/Antigravity.app)"),
+        Cell::new("Official Desktop App (Target: app)"),
     ]));
 
     table.add_row(Row::from(vec![
@@ -334,7 +382,7 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
         } else {
             "⚪ No"
         }),
-        Cell::new("VSCode-based IDE (/Applications/Antigravity IDE.app)"),
+        Cell::new("VSCode-based IDE (Target: ide)"),
     ]));
 
     table.add_row(Row::from(vec![
@@ -344,20 +392,20 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
         } else {
             "⚪ No"
         }),
-        Cell::new("IDE Plugin Daemon (agy_acp_server)"),
+        Cell::new("IDE Plugin Daemon (Target: plugin)"),
     ]));
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity CLI (agy)"),
         Cell::new("🟢 Ready"),
-        Cell::new("Standalone Terminal CLI (~/.local/bin/agy)"),
+        Cell::new("Standalone Terminal CLI (Target: cli / agy)"),
     ]));
 
     println!("{table}");
     Ok(())
 }
 
-fn handle_switch_command(
+async fn handle_switch_command(
     manager: &AntigravityManager,
     account_query: Option<&str>,
     auto: bool,
@@ -375,10 +423,11 @@ fn handle_switch_command(
         println!(
             "{}",
             format!(
-                "🤖 Smart Account Selection: strategy='{}', prefer='{}', tag={:?}...",
+                "🤖 Smart Account Selection: strategy='{}', prefer='{}', tag={:?} for target [{:?}]...",
                 strategy_str,
                 prefer_str,
-                tag.unwrap_or("none")
+                tag.unwrap_or("none"),
+                target
             )
             .cyan()
         );
@@ -415,16 +464,16 @@ fn handle_switch_command(
 
     println!(
         "{}",
-        format!("⚡ Switching target {:?} to account '{}'...", target, target_query).cyan()
+        format!("⚡ Switching target [{:?}] to account '{}'...", target, target_query).cyan()
     );
     let switched = manager.switch_account(&target_query, target, restart)?;
     println!(
         "{}",
         format!(
-            "✅ Successfully switched to {} ({}) across {:?}!",
+            "✅ Successfully switched [{:?}] to {} ({})!",
+            target,
             switched.email,
-            &switched.id[..8],
-            target
+            &switched.id[..8]
         )
         .green()
     );
@@ -432,7 +481,7 @@ fn handle_switch_command(
     if !restart {
         println!(
             "{}",
-            "💡 Language Server hot-reloaded seamlessly. No IDE/App restart needed!".dimmed()
+            "💡 Language Server hot-reloaded seamlessly. No application restart needed!".dimmed()
         );
     }
     Ok(())
@@ -496,8 +545,10 @@ async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str
                 "{}",
                 format!("🔄 Refreshing quota for {}...", acc.email).cyan()
             );
-            let quota = manager.refresh_account_quota(&acc.id).await?;
-            print_quota_summary(&acc.email, &quota);
+            match manager.refresh_account_quota(&acc.id).await {
+                Ok(quota) => print_quota_summary(&acc.email, &quota),
+                Err(e) => println!("  {} Failed: {}", "✖".red(), e),
+            }
         }
         None => {
             println!(
@@ -507,6 +558,7 @@ async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str
             );
             let results = manager.refresh_all_quotas().await?;
             let mut success = 0;
+            let mut disabled_count = 0;
             let mut failed = 0;
             for (email, res) in results {
                 match res {
@@ -516,16 +568,22 @@ async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str
                         success += 1;
                     }
                     Err(e) => {
-                        println!("  {} Failed {}: {}", "✖".red(), email, e);
-                        failed += 1;
+                        let msg = e.to_string();
+                        if msg.contains("Disabled") {
+                            println!("  {} Account Auto-Disabled {}: {}", "🚫".yellow(), email, msg);
+                            disabled_count += 1;
+                        } else {
+                            println!("  {} Failed {}: {}", "✖".red(), email, e);
+                            failed += 1;
+                        }
                     }
                 }
             }
             println!(
                 "\n{}",
                 format!(
-                    "✨ Sync complete: {} succeeded, {} failed.",
-                    success, failed
+                    "✨ Sync complete: {} succeeded, {} auto-disabled, {} failed.",
+                    success, disabled_count, failed
                 )
                 .green()
             );
@@ -555,10 +613,6 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let oauth = am_core::auth::OAuthClient::new();
-    let port = 8085;
-    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
-    let state = uuid::Uuid::new_v4().to_string();
-    let auth_url = am_core::auth::OAuthClient::build_auth_url(&redirect_uri, &state);
 
     println!(
         "{}",
@@ -566,12 +620,16 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
     );
 
     if manual {
+        let redirect_uri = "http://127.0.0.1/callback";
+        let state = uuid::Uuid::new_v4().to_string();
+        let auth_url = am_core::auth::OAuthClient::build_auth_url(redirect_uri, &state);
+
         println!("\nOpen this URL in your browser:\n{}", auth_url.bold());
-        println!("\nEnter the authorization code callback URL or code:");
+        println!("\nEnter the authorization code or full callback URL:");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         let code = input.trim();
-        let token_info = oauth.exchange_code(code, &redirect_uri).await?;
+        let token_info = oauth.exchange_code(code, redirect_uri).await?;
         let user_info = oauth.fetch_user_info(&token_info.access_token).await?;
         println!(
             "{}",
@@ -584,11 +642,17 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
         return Ok(());
     }
 
-    println!("Opening browser for authentication...");
+    // 绑定系统随机空闲端口 (:0)，彻底避免冲突
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+    let state = uuid::Uuid::new_v4().to_string();
+    let auth_url = am_core::auth::OAuthClient::build_auth_url(&redirect_uri, &state);
+
+    println!("Opening browser for authentication (Allocated loopback port: {})...", port);
     let _ = open::that(&auth_url);
     println!("Listening on {} for callback...", redirect_uri);
 
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
     if let Ok((mut socket, _)) = listener.accept().await {
         let mut buf = [0u8; 2048];
         let n = socket.read(&mut buf).await?;
@@ -610,7 +674,7 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
                 let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
                     <html><body style='font-family:sans-serif;text-align:center;padding:50px;'>\
                     <h1 style='color:green;'>✅ Authorization Successful!</h1>\
-                    <p>You can close this tab and return to the terminal.</p>\
+                    <p>Antigravity Manager has securely linked your Google account. You may close this tab.</p>\
                     </body></html>";
                 let _ = socket.write_all(resp.as_bytes()).await;
 
@@ -672,7 +736,7 @@ fn handle_delete(manager: &AntigravityManager, accounts: Vec<String>) -> Result<
     Ok(())
 }
 
-fn handle_fingerprint() -> Result<()> {
+async fn handle_fingerprint() -> Result<()> {
     let fp = am_core::quota::fingerprint::get_active_fingerprint();
     println!(
         "{}",
@@ -700,5 +764,21 @@ fn handle_fingerprint() -> Result<()> {
         );
     }
     println!("  {} Outbound UA:  {}", "•".blue(), fp.user_agent.dimmed());
+
+    // 远程源版本感知
+    print!("  {} Checking Google Hub releases... ", "•".blue());
+    if let Some(remote) = am_core::quota::fingerprint::check_remote_hub_release().await {
+        println!("{}", format!("Latest Remote: v{}", remote.version).green());
+        if remote.version != fp.version {
+            println!(
+                "    {} Google released newer Hub v{}. Update your native App to sync signature.",
+                "⚠️".yellow(),
+                remote.version
+            );
+        }
+    } else {
+        println!("{}", "(Remote check offline)".dimmed());
+    }
+
     Ok(())
 }

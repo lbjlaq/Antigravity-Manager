@@ -43,7 +43,7 @@ impl OAuthClient {
         }
     }
 
-    /// 构造授权 URL
+    /// 构造授权 URL (对齐 Google RFC 8252 规范)
     pub fn build_auth_url(redirect_uri: &str, state: &str) -> String {
         let scopes = OAUTH_SCOPES.join(" ");
         format!(
@@ -52,11 +52,11 @@ impl OAuthClient {
             urlencoding::encode(OFFICIAL_CLIENT_ID),
             urlencoding::encode(redirect_uri),
             urlencoding::encode(&scopes),
-            urlencoding::encode(state),
+            urlencoding::encode(state)
         )
     }
 
-    /// 使用授权 Code 换取 Token
+    /// 使用授权码 code 换取令牌组
     pub async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<TokenInfo> {
         let mut params = HashMap::new();
         params.insert("client_id", OFFICIAL_CLIENT_ID);
@@ -72,30 +72,34 @@ impl OAuthClient {
             .send()
             .await?;
 
-        if !res.status().is_success() {
-            let err_text = res.text().await.unwrap_or_default();
-            return Err(anyhow!("Failed to exchange oauth code: {}", err_text));
+        let status = res.status();
+        let body = res.text().await?;
+
+        if !status.is_success() {
+            return Err(anyhow!(
+                "OAuth exchange failed with status {}: {}",
+                status,
+                body
+            ));
         }
 
-        let token_resp: GoogleTokenResponse = res.json().await?;
-        let refresh_token = token_resp
-            .refresh_token
-            .ok_or_else(|| anyhow!("No refresh_token returned from Google OAuth"))?;
-
+        let token_resp: GoogleTokenResponse = serde_json::from_str(&body)?;
         let now = chrono::Utc::now().timestamp();
-        let expiry = token_resp.expires_in.map(|exp| now + exp);
+        let expires_in = token_resp.expires_in.unwrap_or(3600);
 
         Ok(TokenInfo {
             access_token: token_resp.access_token,
-            refresh_token,
-            expires_in: token_resp.expires_in,
+            refresh_token: token_resp
+                .refresh_token
+                .ok_or_else(|| anyhow!("No refresh_token returned by Google"))?,
+            expires_in: Some(expires_in),
             token_type: token_resp.token_type,
-            expiry_timestamp: expiry,
+            expiry_timestamp: Some(now + expires_in),
             project_id: None,
         })
     }
 
-    /// 使用 refresh_token 刷新 access_token
+    /// 刷新 Access Token
     pub async fn refresh_access_token(&self, refresh_token: &str) -> Result<TokenInfo> {
         let mut params = HashMap::new();
         params.insert("client_id", OFFICIAL_CLIENT_ID);
@@ -110,28 +114,34 @@ impl OAuthClient {
             .send()
             .await?;
 
-        if !res.status().is_success() {
-            let err_text = res.text().await.unwrap_or_default();
-            return Err(anyhow!("Failed to refresh token: {}", err_text));
+        let status = res.status();
+        let body = res.text().await?;
+
+        if !status.is_success() {
+            return Err(anyhow!(
+                "OAuth refresh failed with status {}: {}",
+                status,
+                body
+            ));
         }
 
-        let token_resp: GoogleTokenResponse = res.json().await?;
+        let token_resp: GoogleTokenResponse = serde_json::from_str(&body)?;
         let now = chrono::Utc::now().timestamp();
-        let expiry = token_resp.expires_in.map(|exp| now + exp);
+        let expires_in = token_resp.expires_in.unwrap_or(3600);
 
         Ok(TokenInfo {
             access_token: token_resp.access_token,
             refresh_token: token_resp
                 .refresh_token
                 .unwrap_or_else(|| refresh_token.to_string()),
-            expires_in: token_resp.expires_in,
+            expires_in: Some(expires_in),
             token_type: token_resp.token_type,
-            expiry_timestamp: expiry,
+            expiry_timestamp: Some(now + expires_in),
             project_id: None,
         })
     }
 
-    /// 获取用户信息 (email, name)
+    /// 获取 Google 账号用户信息
     pub async fn fetch_user_info(&self, access_token: &str) -> Result<GoogleUserInfo> {
         let res = self
             .client
@@ -140,18 +150,14 @@ impl OAuthClient {
             .send()
             .await?;
 
-        if !res.status().is_success() {
-            let err_text = res.text().await.unwrap_or_default();
-            return Err(anyhow!("Failed to fetch user info: {}", err_text));
+        let status = res.status();
+        let body = res.text().await?;
+
+        if !status.is_success() {
+            return Err(anyhow!("Failed to fetch userinfo: status {}", status));
         }
 
-        let user_info: GoogleUserInfo = res.json().await?;
+        let user_info: GoogleUserInfo = serde_json::from_str(&body)?;
         Ok(user_info)
-    }
-}
-
-mod urlencoding {
-    pub fn encode(s: &str) -> String {
-        url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
     }
 }

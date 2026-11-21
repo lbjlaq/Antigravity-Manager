@@ -1,5 +1,6 @@
 /// 官方标准 Antigravity Hub 出站指纹常量与动态指纹检测器
 /// 对齐原生 /Applications/Antigravity.app
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -7,6 +8,9 @@ pub const OFFICIAL_HUB_VERSION: &str = "2.33.0";
 pub const OFFICIAL_HUB_CL: &str = "1023160026";
 pub const HUB_FINGERPRINT_OS: &str = "windows";
 pub const HUB_FINGERPRINT_ARCH: &str = "amd64";
+
+pub const HUB_RELEASES_URL: &str =
+    "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/releases";
 
 /// 指纹来源
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +38,13 @@ pub struct HubFingerprint {
     pub user_agent: String,
     pub source: FingerprintSource,
     pub local_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemoteRelease {
+    pub version: String,
+    #[serde(default)]
+    pub execution_id: Option<String>,
 }
 
 static DETECTED_FINGERPRINT: OnceLock<HubFingerprint> = OnceLock::new();
@@ -79,8 +90,22 @@ pub fn get_official_user_agent() -> String {
     get_active_fingerprint().user_agent.clone()
 }
 
+/// 异步探测官方云端最新 Hub 发布信息 (不影响主流程)
+pub async fn check_remote_hub_release() -> Option<RemoteRelease> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .ok()?;
+    let resp = client.get(HUB_RELEASES_URL).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let list: Vec<RemoteRelease> = resp.json().await.ok()?;
+    list.into_iter().find(|r| is_acceptable_hub_version(&r.version))
+}
+
 /// 检查版本号是否为合法的 2.x Hub 版本线
-fn is_acceptable_hub_version(v: &str) -> bool {
+pub fn is_acceptable_hub_version(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
     parts.len() == 3
         && parts[0] == "2"
@@ -89,7 +114,6 @@ fn is_acceptable_hub_version(v: &str) -> bool {
 
 /// 探测本地已安装的语言服务与版本
 fn try_detect_local() -> Option<(String, String, PathBuf)> {
-    // 候选路径探测列表
     let mut candidate_dirs = Vec::new();
 
     #[cfg(target_os = "macos")]
@@ -123,14 +147,12 @@ fn try_detect_local() -> Option<(String, String, PathBuf)> {
             continue;
         }
 
-        // 1. 尝试读取版本
         let version = detect_version_from_dir(&app_dir);
         let version = match version {
             Some(v) if is_acceptable_hub_version(&v) => v,
             _ => continue,
         };
 
-        // 2. 寻找 language_server 并提取 CL
         let ls_candidates = [
             app_dir.join("Contents/Resources/bin/language_server"),
             app_dir.join("Contents/Resources/bin/language_server.exe"),
@@ -159,7 +181,6 @@ fn detect_version_from_dir(app_dir: &Path) -> Option<String> {
         let plist_path = app_dir.join("Contents/Info.plist");
         if plist_path.is_file() {
             if let Ok(content) = std::fs::read_to_string(&plist_path) {
-                // 简单高效解析 Info.plist 避免引入重量级 plist 依赖
                 if let Some(idx) = content.find("CFBundleShortVersionString") {
                     let rest = &content[idx..];
                     if let Some(s_idx) = rest.find("<string>") {
@@ -174,7 +195,6 @@ fn detect_version_from_dir(app_dir: &Path) -> Option<String> {
         }
     }
 
-    // Windows / Linux / macOS package.json 兜底检测
     let pkg_json = app_dir.join("resources/app/package.json");
     if pkg_json.is_file() {
         if let Ok(content) = std::fs::read_to_string(pkg_json) {
