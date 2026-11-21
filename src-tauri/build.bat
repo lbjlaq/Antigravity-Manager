@@ -1,1 +1,0 @@
-cargo build --release --target-dir "D:\temp_a"
