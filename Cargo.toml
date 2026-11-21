@@ -2,5 +2,6 @@
 members = [
     "crates/am-core",
     "crates/am-cli",
+    "crates/am-gui/src-tauri",
 ]
 resolver = "2"
