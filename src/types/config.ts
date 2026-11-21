@@ -348,6 +348,7 @@ export interface AppConfig {
     quota_protection: QuotaProtectionConfig; // [NEW] 配额保护配置
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表
     circuit_breaker: CircuitBreakerConfig; // [NEW] 熔断器配置
+    outbound_proxy?: string; // [NEW] 出口网络代理
     proxy: ProxyConfig;
     cloudflared: CloudflaredConfig; // [NEW] Cloudflared 配置
     lightweight_mode?: boolean; // [NEW] 轻量模式：关闭到托盘时释放 WebView

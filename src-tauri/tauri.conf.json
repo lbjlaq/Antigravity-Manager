@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Antigravity Tools",
+  "productName": "Antigravity Manager",
   "version": "5.0.4",
-  "identifier": "com.lbjlaq.antigravity-tools",
+  "identifier": "com.lbjlaq.antigravity-manager",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -15,7 +15,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Antigravity Tools",
+        "title": "Antigravity Manager",
         "width": 1024,
         "height": 700,
         "titleBarStyle": "Overlay",

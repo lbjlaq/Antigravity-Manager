@@ -27,14 +27,14 @@ pub fn get_category_percentage(quota: &QuotaData, category: &str) -> Option<i32>
                 if nl.contains("-disabled") || nl.ends_with("_disabled") {
                     None
                 } else {
-                    crate::proxy::common::model_mapping::extract_gemini4_codename(&nl)
+                    crate::utils::model::extract_gemini4_codename(&nl)
                 }
             })
             .collect();
         for group in groups {
             let name = group.display_name.to_lowercase();
             let is_dedicated_g4 =
-                crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+                crate::utils::model::extract_group_g4_codename_with_known(
                     &name,
                     "",
                     &known_codenames,
@@ -43,7 +43,7 @@ pub fn get_category_percentage(quota: &QuotaData, category: &str) -> Option<i32>
                     || group.buckets.iter().any(|b| {
                         let bid = b.bucket_id.to_lowercase();
                         let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
-                        crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+                        crate::utils::model::extract_group_g4_codename_with_known(
                             &bname,
                             &bid,
                             &known_codenames,
@@ -349,7 +349,6 @@ pub fn find_best_candidate(
 
 /// 检查并执行经典款配额耗尽自动热切换
 pub async fn check_and_auto_switch_classic(
-    proxy_state: &crate::commands::proxy::ProxyServiceState,
     app_handle: Option<&tauri::AppHandle>,
 ) -> Result<Option<String>, String> {
     // 1. 配置检查
@@ -450,11 +449,6 @@ pub async fn check_and_auto_switch_classic(
     {
         let mut last_switch = LAST_CLASSIC_AUTO_SWITCH.lock().unwrap();
         *last_switch = Some(Instant::now());
-    }
-
-    // 同步反代（如果已启动，同时涵盖 instance 与 admin_server）
-    for tm in proxy_state.active_token_managers().await {
-        let _ = tm.reload_all_accounts().await;
     }
 
     // 9. 界面与系统通知提醒

@@ -1,5 +1,5 @@
 import { useState, useEffect, startTransition } from 'react';
-import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, Copy, Check, ShieldAlert } from 'lucide-react';
+import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Settings as SettingsIcon, CheckCircle2, Globe, Send, Copy, Check } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -20,7 +20,6 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { emit } from '@tauri-apps/api/event';
 
 import DebugConsole from '../components/debug/DebugConsole';
-import ProxyPoolSettings from '../components/settings/ProxyPoolSettings';
 import { motion } from 'framer-motion';
 import { ZOOM_LEVELS, getStoredZoom, applyZoom } from '../utils/zoom';
 
@@ -45,7 +44,7 @@ function Settings() {
     const { t } = useTranslation();
     const { config, loadConfig, saveConfig, updateLanguage, updateTheme } = useConfigStore();
     const { enable, disable, isEnabled } = useDebugConsole();
-    const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
+    const [activeTab, setActiveTab] = useState<'general' | 'account' | 'advanced' | 'debug' | 'about'>('general');
     const [appVersion, setAppVersion] = useState<string>('5.0.4');
     const [formData, setFormData] = useState<AppConfig>({
         language: 'zh',
@@ -611,15 +610,6 @@ function Settings() {
                             {t('settings.tabs.account')}
                         </button>
                         <button
-                            className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'proxy'
-                                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                                }`}
-                            onClick={() => startTransition(() => setActiveTab('proxy'))}
-                        >
-                            {t('settings.tabs.proxy')}
-                        </button>
-                        <button
                             className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'advanced'
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
@@ -987,22 +977,88 @@ function Settings() {
                                 </div>
                             )}
 
+                            {/* 出口网络代理 (Outbound Proxy) */}
+                            <div className="p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                            <Globe size={16} />
+                                        </div>
+                                        <div>
+                                            <div className="font-medium text-gray-900 dark:text-base-content text-sm">
+                                                {t('proxy.config.upstream_proxy.title', '网络出口代理 (Outbound Proxy)')}
+                                            </div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                                {t('proxy.config.upstream_proxy.desc_short', '用于 Google OAuth 授权与配额查询的上游网络代理')}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.proxy?.upstream_proxy?.enabled ?? false}
+                                            onChange={(e) => {
+                                                const enabled = e.target.checked;
+                                                const updated = {
+                                                    ...formData,
+                                                    outbound_proxy: enabled ? (formData.proxy?.upstream_proxy?.url || '') : '',
+                                                    proxy: {
+                                                        ...formData.proxy,
+                                                        upstream_proxy: {
+                                                            ...formData.proxy?.upstream_proxy,
+                                                            enabled,
+                                                        }
+                                                    }
+                                                };
+                                                setFormData(updated);
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
+                                    </label>
+                                </div>
+                                {formData.proxy?.upstream_proxy?.enabled && (
+                                    <div className="mt-3 pt-3 border-t border-gray-200/60 dark:border-base-300/60 space-y-2">
+                                        <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                            {t('proxy.config.upstream_proxy.url', '代理地址')}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="w-full px-3 py-2 bg-white dark:bg-base-100 border border-gray-200 dark:border-base-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm font-mono text-gray-800 dark:text-gray-200"
+                                            placeholder="http://127.0.0.1:7890 或 socks5h://127.0.0.1:1080"
+                                            value={formData.proxy?.upstream_proxy?.url || ''}
+                                            onChange={(e) => {
+                                                const url = e.target.value;
+                                                setFormData({
+                                                    ...formData,
+                                                    outbound_proxy: url,
+                                                    proxy: {
+                                                        ...formData.proxy,
+                                                        upstream_proxy: {
+                                                            ...formData.proxy?.upstream_proxy,
+                                                            url,
+                                                        }
+                                                    }
+                                                });
+                                            }}
+                                        />
+                                        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                                            {t('proxy.config.upstream_proxy.socks5h_hint', '支持 HTTP(S) 与 SOCKS5 代理。在国内/受限网络环境下访问 Google API 时推荐开启。')}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
                                 {/* 菜单显示设置 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
                                     <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.menu.title')}</h3>
                                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                                         {t('settings.menu.desc')}
                                     </p>
-                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                                         {[
                                             { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
                                             { path: '/accounts', label: t('nav.accounts'), icon: Users },
-                                            { path: '/api-proxy', label: t('nav.proxy'), icon: Network },
-                                            { path: '/apikey-fun', label: t('nav.apikey_fun', '中转站'), icon: KeyRound },
-                                            { path: '/monitor', label: t('nav.call_records'), icon: Activity },
-                                            { path: '/token-stats', label: t('nav.token_stats'), icon: BarChart3 },
-                                            { path: '/user-token', label: t('nav.user_token', 'User Tokens'), icon: Users },
-                                            { path: '/security', label: t('nav.security'), icon: Lock },
                                             { path: '/settings', label: t('nav.settings'), icon: SettingsIcon },
                                         ].map((item) => {
                                             const hiddenItems = formData.hidden_menu_items || [];
@@ -1783,159 +1839,6 @@ function Settings() {
                                     </div>
                                 </div>
                             )}
-                        </div>
-                    )}
-
-                    {/* 代理设置 */}
-                    {activeTab === 'proxy' && (
-                        <div className="space-y-4 animate-in fade-in duration-300">
-                            <ProxyPoolSettings
-                                config={formData.proxy?.proxy_pool || {
-                                    enabled: false,
-                                    proxies: [],
-                                    health_check_interval: 300,
-                                    auto_failover: true,
-                                    strategy: 'priority'
-                                }}
-                                onChange={(newConfig, silent = false) => {
-                                    const updatedFormData = {
-                                        ...formData,
-                                        proxy: {
-                                            ...formData.proxy,
-                                            proxy_pool: newConfig
-                                        }
-                                    };
-                                    setFormData(updatedFormData);
-
-                                    // [FIX] Silent updates (like health polling) should NOT trigger saveConfig
-                                    // to prevent race conditions where old memory state rolls back new manual changes
-                                    if (silent) {
-                                        console.log('Proxy status sync (silent)');
-                                        return;
-                                    }
-
-                                    // Hot reload: save immediately for manual changes
-                                    saveConfig({ ...updatedFormData, auto_refresh: true })
-                                        .then(() => {
-                                            console.log('Proxy config saved');
-                                        })
-                                        .catch(err => console.error('Save failed:', err));
-                                }}
-                            />
-
-                            {/* [FIX #1701] 恢复全局上游代理设置 */}
-                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-blue-200 transition-all duration-300 shadow-sm relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 -mr-12 -mt-12 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors"></div>
-                                <div className="flex items-center justify-between mb-5 relative z-10">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-all duration-300 shadow-sm">
-                                            <Globe size={18} />
-                                        </div>
-                                        <div>
-                                            <div className="font-bold text-gray-900 dark:text-gray-100 text-sm">{t('proxy.config.upstream_proxy.title')}</div>
-                                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight max-w-[280px]">
-                                                {t('proxy.config.upstream_proxy.desc_short')}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <label className="relative inline-flex items-center cursor-pointer scale-90">
-                                        <input
-                                            type="checkbox"
-                                            className="sr-only peer"
-                                            checked={formData.proxy?.upstream_proxy?.enabled ?? false}
-                                            onChange={(e) => setFormData({
-                                                ...formData,
-                                                proxy: {
-                                                    ...formData.proxy,
-                                                    upstream_proxy: {
-                                                        ...formData.proxy?.upstream_proxy,
-                                                        enabled: e.target.checked
-                                                    }
-                                                }
-                                            })}
-                                        />
-                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
-                                    </label>
-                                </div>
-
-                                {formData.proxy?.upstream_proxy?.enabled && (
-                                    <div className="space-y-4 animate-in slide-in-from-top-2 duration-300 relative z-10">
-                                        <div className="pt-4 border-t border-gray-50 dark:border-base-300">
-                                            <label className="block text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2.5">
-                                                {t('proxy.config.upstream_proxy.url')}
-                                            </label>
-                                            <div className="relative group/input">
-                                                <input
-                                                    type="text"
-                                                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm font-medium transition-all shadow-inner"
-                                                    placeholder={t('proxy.config.upstream_proxy.url_placeholder')}
-                                                    value={formData.proxy?.upstream_proxy?.url || ''}
-                                                    onChange={(e) => setFormData({
-                                                        ...formData,
-                                                        proxy: {
-                                                            ...formData.proxy,
-                                                            upstream_proxy: {
-                                                                ...formData.proxy?.upstream_proxy,
-                                                                url: e.target.value
-                                                            }
-                                                        }
-                                                    })}
-                                                />
-                                            </div>
-                                            <div className="mt-4 bg-amber-50/40 dark:bg-amber-900/10 rounded-xl p-3.5 border border-amber-100/50 dark:border-amber-800/20 text-[11px] text-amber-700 dark:text-amber-400 flex items-start gap-3 transition-colors hover:bg-amber-50/60">
-                                                <div className="mt-0.5 p-1 bg-amber-100/80 dark:bg-amber-800/40 rounded-lg shadow-sm">
-                                                    <Network size={12} className="text-amber-600 dark:text-amber-400" />
-                                                </div>
-                                                <div className="leading-relaxed">
-                                                    <span className="font-bold mr-1.5 opacity-80 uppercase tracking-tighter">Tip:</span>
-                                                    {t('proxy.config.upstream_proxy.socks5h_hint')}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* 遇到限流账号自动进小黑屋 (QoS 降速熔断) 开关 */}
-                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-amber-200 transition-all duration-300 shadow-sm relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 -mr-12 -mt-12 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-colors"></div>
-                                <div className="flex items-center justify-between relative z-10">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center text-amber-500 group-hover:bg-amber-500 group-hover:text-white transition-all duration-300 shadow-sm">
-                                            <ShieldAlert size={18} />
-                                        </div>
-                                        <div>
-                                            <div className="font-bold text-gray-900 dark:text-gray-100 text-sm">
-                                                {t('dashboard.qos_auto_jail', '自动小黑屋')} (QoS)
-                                            </div>
-                                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight max-w-[340px]">
-                                                {t('dashboard.qos_auto_jail_enabled_tip', '开启后遇响应过长的限速账号将自动隔离并解绑会话；关闭时直接忽略校验时长。')}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <label className="relative inline-flex items-center cursor-pointer scale-90">
-                                        <input
-                                            type="checkbox"
-                                            className="sr-only peer"
-                                            checked={formData.proxy?.qos_auto_jail ?? false}
-                                            onChange={(e) => {
-                                                const nextVal = e.target.checked;
-                                                const updated = {
-                                                    ...formData,
-                                                    proxy: {
-                                                        ...formData.proxy,
-                                                        qos_auto_jail: nextVal,
-                                                    },
-                                                };
-                                                setFormData(updated);
-                                                saveConfig({ ...updated, auto_refresh: true })
-                                                    .catch(err => console.error('Save failed:', err));
-                                            }}
-                                        />
-                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 shadow-inner"></div>
-                                    </label>
-                                </div>
-                            </div>
                         </div>
                     )}
 

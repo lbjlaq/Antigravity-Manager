@@ -25,6 +25,7 @@ pub struct QuotaBucket {
 
 impl QuotaBucket {
     /// Valid current weekly interval, with an inclusive start and exclusive reset.
+    #[allow(dead_code)]
     pub(crate) fn weekly_cycle_bounds(&self, now: i64) -> Option<(i64, i64)> {
         let window = format!("{} {}", self.window, self.bucket_id).to_lowercase();
         if !(window.contains("week") || window.contains("7d"))

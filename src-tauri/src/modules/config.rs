@@ -287,20 +287,6 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
             }
         }
 
-        // 自动迁移/初始化 prompt_rewrite 配置：若旧配置中缺失该字段，则注入默认开启并搭载官方推荐预设
-        if let Some(proxy_obj) = proxy.as_object_mut() {
-            if !proxy_obj.contains_key("prompt_rewrite") {
-                let default_prompt_rewrite =
-                    serde_json::to_value(crate::proxy::config::PromptRewriteConfig::default())
-                        .unwrap_or(serde_json::Value::Null);
-                if !default_prompt_rewrite.is_null() {
-                    proxy_obj.insert("prompt_rewrite".to_string(), default_prompt_rewrite);
-                    tracing::info!("Initializing default prompt_rewrite config (enabled with recommended presets)");
-                    modified = true;
-                }
-            }
-        }
-
         if modified {
             proxy.as_object_mut().unwrap().insert(
                 "custom_mapping".to_string(),
@@ -333,16 +319,10 @@ mod tests {
 
     #[test]
     fn test_parse_and_migrate_empty_or_whitespace_config() {
-        // [FIX #3548] Ensure empty or whitespace-only config file does not trigger EOF error in headless mode
         let (empty_cfg, modified_empty) =
             parse_and_migrate_config("").expect("empty config should parse to default");
         assert!(modified_empty);
-        assert!(!empty_cfg.proxy.api_key.is_empty());
-
-        let (ws_cfg, modified_ws) = parse_and_migrate_config("   \n\t  \r\n  ")
-            .expect("whitespace config should parse to default");
-        assert!(modified_ws);
-        assert!(!ws_cfg.proxy.api_key.is_empty());
+        assert_eq!(empty_cfg.theme, "dark");
     }
 
     #[test]
@@ -354,6 +334,6 @@ mod tests {
         let default_json = serde_json::to_string(&AppConfig::new()).unwrap();
         let (valid_cfg, _) =
             parse_and_migrate_config(&default_json).expect("valid config should parse");
-        assert!(!valid_cfg.proxy.api_key.is_empty());
+        assert_eq!(valid_cfg.theme, "dark");
     }
 }

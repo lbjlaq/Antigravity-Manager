@@ -1,6 +1,5 @@
 use crate::models::AccountBanInfo;
 use crate::models::QuotaData;
-use crate::modules::config;
 use once_cell::sync::Lazy;
 use rquest;
 use serde::{Deserialize, Serialize};
@@ -9,14 +8,14 @@ use serde_json::json;
 /// 配额模块专属端点健康追踪器（独立观察期 60s），
 /// 与主代理网关的 GLOBAL_ENDPOINT_HEALTH 严格解耦，
 /// 坚决杜绝后台配额轮询与 project_id 探针超时污染推理主力端点（Issue #3506, PR #3680）
-static QUOTA_ENDPOINT_HEALTH: Lazy<crate::proxy::upstream::client::EndpointHealthTracker> =
+static QUOTA_ENDPOINT_HEALTH: Lazy<crate::utils::model::EndpointHealthTracker> =
     Lazy::new(|| {
-        crate::proxy::upstream::client::EndpointHealthTracker::new(std::time::Duration::from_secs(
+        crate::utils::model::EndpointHealthTracker::new(std::time::Duration::from_secs(
             60,
         ))
     });
 
-pub fn get_quota_endpoint_health() -> &'static crate::proxy::upstream::client::EndpointHealthTracker
+pub fn get_quota_endpoint_health() -> &'static crate::utils::model::EndpointHealthTracker
 {
     &QUOTA_ENDPOINT_HEALTH
 }
@@ -249,14 +248,11 @@ pub async fn probe_account_ban(
         "session_id": session_id
     });
 
-    let payload = crate::proxy::mappers::gemini::wrapper::wrap_request(
-        &base_request,
-        project_id.unwrap_or(""),
-        BAN_PROBE_MODEL,
-        account_id,
-        Some(&session_id),
-        None,
-    );
+    let payload = serde_json::json!({
+        "project": project_id.unwrap_or(""),
+        "model": BAN_PROBE_MODEL,
+        "request": base_request
+    });
 
     let mut last_outcome = BanProbeOutcome::Unknown;
 
@@ -313,22 +309,14 @@ pub async fn probe_account_ban(
 }
 
 /// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
-async fn create_standard_client(account_id: Option<&str>) -> rquest::Client {
-    if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15).await
-    } else {
-        crate::utils::http::get_standard_client()
-    }
+async fn create_standard_client(_account_id: Option<&str>) -> rquest::Client {
+    crate::utils::http::get_standard_client()
 }
 
 /// Get shared HTTP Client (60s timeout) for pure info fetching (No JA3)
 #[allow(dead_code)] // 预留给预热/后台任务调用
-async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client {
-    if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60).await
-    } else {
-        crate::utils::http::get_long_standard_client()
-    }
+async fn create_long_standard_client(_account_id: Option<&str>) -> rquest::Client {
+    crate::utils::http::get_long_standard_client()
 }
 
 // 项目 / 档位解析端点（fallback order: Daily → Sandbox → Prod）
@@ -431,7 +419,7 @@ async fn fetch_project_id(
                         return (project_id, subscription_tier, Some(raw_tier));
                     }
                 } else {
-                    if crate::proxy::upstream::client::should_try_next_endpoint_for_url(
+                    if crate::utils::model::should_try_next_endpoint_for_url(
                         status, ep_url,
                     ) {
                         health_tracker.mark_failure(ep_url);
@@ -548,7 +536,7 @@ pub async fn fetch_quota_with_cache(
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
 
-                    if crate::proxy::upstream::client::should_try_next_endpoint_for_url(
+                    if crate::utils::model::should_try_next_endpoint_for_url(
                         status, ep_url,
                     ) {
                         health_tracker.mark_failure(ep_url);
@@ -706,7 +694,7 @@ pub async fn fetch_quota_with_cache(
                         continue;
                     }
                     if let Some(code) =
-                        crate::proxy::common::model_mapping::extract_gemini4_codename(&nl)
+                        crate::utils::model::extract_gemini4_codename(&nl)
                     {
                         if !known_g4_codenames.iter().any(|c| c == &code) {
                             known_g4_codenames.push(code);
@@ -733,7 +721,7 @@ pub async fn fetch_quota_with_cache(
 
                     // 仅保留当前账号官方实际支持且符合旗舰基准线的模型（彻底剔除 2.5、3.5-flash-low、3-flash-agent、chat_* 等遗留内部条目）
                     if !in_official_sort
-                        || !crate::proxy::common::model_mapping::is_model_compliant_with_baseline(
+                        || !crate::utils::model::is_model_compliant_with_baseline(
                             &name,
                         )
                     {
@@ -903,7 +891,7 @@ pub async fn fetch_quota_with_cache(
                     });
                     if (has_argon_group || is_ultra)
                         && !quota_data.models.iter().any(|m| {
-                            crate::proxy::common::model_mapping::extract_gemini4_codename(
+                            crate::utils::model::extract_gemini4_codename(
                                 &m.name.to_lowercase(),
                             )
                             .as_deref()
@@ -1056,7 +1044,7 @@ async fn fetch_quota_summary(
             Ok(response) => {
                 let status = response.status();
                 if !status.is_success() {
-                    if crate::proxy::upstream::client::should_try_next_endpoint_for_url(
+                    if crate::utils::model::should_try_next_endpoint_for_url(
                         status, ep_url,
                     ) {
                         health_tracker.mark_failure(ep_url);
@@ -1210,36 +1198,30 @@ pub async fn warmup_model_directly(
     email: &str,
     percentage: i32,
     account_id: Option<&str>,
-    probe_intent: bool,
+    _probe_intent: bool,
 ) -> bool {
-    // Get currently configured proxy port
-    let port = config::load_app_config()
-        .map(|c| c.proxy.port)
-        .unwrap_or(8045);
-
-    let warmup_url = format!("http://127.0.0.1:{}/internal/warmup", port);
-    let mut body = json!({
-        "email": email,
+    let client = create_standard_client(account_id).await;
+    let payload = json!({
+        "project": project_id,
         "model": model_name,
-        "access_token": access_token,
-        "project_id": project_id,
-        "probe_intent": probe_intent
+        "request": {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": "ping"}]
+            }]
+        }
     });
-    if let Some(acc_id) = account_id {
-        body["account_id"] = json!(acc_id);
-    }
 
-    // Use a no-proxy client for local loopback requests
-    // This prevents Docker environments from routing localhost through external proxies
-    let client = rquest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .no_proxy()
-        .build()
-        .unwrap_or_else(|_| rquest::Client::new());
     let resp = client
-        .post(&warmup_url)
-        .header("Content-Type", "application/json")
-        .json(&body)
+        .post("https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent")
+        .timeout(std::time::Duration::from_secs(15))
+        .bearer_auth(access_token)
+        .header(
+            rquest::header::USER_AGENT,
+            crate::constants::current_egress_user_agent().as_str(),
+        )
+        .header(rquest::header::CONNECTION, "close")
+        .json(&payload)
         .send()
         .await;
 
@@ -1255,7 +1237,7 @@ pub async fn warmup_model_directly(
             } else {
                 let text = response.text().await.unwrap_or_default();
                 crate::modules::logger::log_error(&format!(
-                    "[Warmup] ✗ {} for {} (was {}%): HTTP {} - {} (非服务端故障)",
+                    "[Warmup] ✗ {} for {} (was {}%): HTTP {} - {}",
                     model_name, email, percentage, status, text
                 ));
                 false
@@ -1263,8 +1245,8 @@ pub async fn warmup_model_directly(
         }
         Err(e) => {
             crate::modules::logger::log_error(&format!(
-                "[Warmup] ✗ {} for {} (was {}%): {} (网络请求异常，非服务端故障)",
-                model_name, email, percentage, e
+                "[Warmup] ✗ {} for {} error: {}",
+                model_name, email, e
             ));
             false
         }
@@ -1623,7 +1605,7 @@ fn is_dedicated_g4_group(
     known_codenames: &[String],
 ) -> bool {
     let gname = group.display_name.to_lowercase();
-    if crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+    if crate::utils::model::extract_group_g4_codename_with_known(
         &gname,
         "",
         known_codenames,
@@ -1635,7 +1617,7 @@ fn is_dedicated_g4_group(
     group.buckets.iter().any(|b| {
         let bid = b.bucket_id.to_lowercase();
         let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
-        crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+        crate::utils::model::extract_group_g4_codename_with_known(
             &bname,
             &bid,
             known_codenames,
@@ -1667,7 +1649,7 @@ fn find_general_gemini_group<'a>(
 
 /// Extract a Gemini 4+ codename (e.g. "argon", "hydrogen", "carbon") when present.
 fn extract_g4_codename(name_lower: &str) -> Option<String> {
-    crate::proxy::common::model_mapping::extract_gemini4_codename(name_lower)
+    crate::utils::model::extract_gemini4_codename(name_lower)
 }
 
 /// Match a model from `fetchAvailableModels` against `retrieveUserQuotaSummary` groups.
@@ -1794,7 +1776,7 @@ mod tests {
 
     #[test]
     fn test_quota_and_load_project_endpoints_health_reordering() {
-        let tracker = crate::proxy::upstream::client::EndpointHealthTracker::new(
+        let tracker = crate::utils::model::EndpointHealthTracker::new(
             std::time::Duration::from_secs(60),
         );
 
@@ -1844,7 +1826,7 @@ mod tests {
     /// 而它报告的 Gemini 配额与 Daily / Sandbox 不一致；两份列表一旦再次分叉，这里会失败。
     #[test]
     fn test_quota_endpoints_only_use_inference_hosts() {
-        use crate::proxy::upstream::client::{
+        use crate::utils::model::{
             extract_endpoint_host, V1_INTERNAL_BASE_URL_FALLBACKS,
         };
 

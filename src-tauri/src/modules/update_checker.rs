@@ -144,15 +144,30 @@ pub const PREVIEW_UPDATER_JSON_URL: &str =
 
 pub fn get_upstream_proxy_url() -> Option<String> {
     if let Ok(config) = crate::modules::config::load_app_config() {
-        if config.proxy.upstream_proxy.enabled && !config.proxy.upstream_proxy.url.trim().is_empty()
-        {
-            let url = config.proxy.upstream_proxy.url.trim();
-            let normalized = if !url.contains("://") {
-                format!("http://{}", url)
-            } else {
-                url.to_string()
-            };
-            return Some(normalized);
+        if let Some(ref p) = config.outbound_proxy {
+            if !p.trim().is_empty() {
+                let url = p.trim();
+                let normalized = if !url.contains("://") {
+                    format!("http://{}", url)
+                } else {
+                    url.to_string()
+                };
+                return Some(normalized);
+            }
+        }
+        if let Some(proxy_val) = config.proxy.get("upstream_proxy") {
+            if proxy_val.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if let Some(url) = proxy_val.get("url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        let normalized = if !url.contains("://") {
+                            format!("http://{}", url)
+                        } else {
+                            url.to_string()
+                        };
+                        return Some(normalized);
+                    }
+                }
+            }
         }
     }
 

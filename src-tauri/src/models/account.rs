@@ -46,6 +46,7 @@ pub(crate) fn deserialize_model_priorities<'de, D: serde::Deserializer<'de>>(
     validate_model_priorities(&raw).map_err(serde::de::Error::custom)
 }
 
+#[allow(dead_code)]
 pub(crate) fn deserialize_optional_model_priorities<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<HashMap<String, u8>>, D::Error> {
@@ -59,6 +60,7 @@ pub(crate) fn deserialize_optional_model_priorities<'de, D: serde::Deserializer<
 }
 
 /// Map any requested or normalized model identifier to its canonical scheduling priority family ("gemini" or "claude").
+#[allow(dead_code)]
 pub(crate) fn resolve_model_priority_group(
     target_model: &str,
     normalized_target: &str,
@@ -477,12 +479,12 @@ pub(crate) fn model_scope_matches(scope: &str, model: &str) -> bool {
     if scope.is_empty() || target.is_empty() {
         return false;
     }
-    let scope_base = crate::proxy::common::model_mapping::strip_tier_suffix(&scope);
-    let target_base = crate::proxy::common::model_mapping::strip_tier_suffix(&target);
+    let scope_base = crate::utils::model::strip_tier_suffix(&scope);
+    let target_base = crate::utils::model::strip_tier_suffix(&target);
 
     // 生图变体剥离（如 -4k / -2k）
-    let scope_img_base = crate::proxy::common::model_mapping::strip_image_variant_suffix(&scope);
-    let target_img_base = crate::proxy::common::model_mapping::strip_image_variant_suffix(&target);
+    let scope_img_base = crate::utils::model::strip_image_variant_suffix(&scope);
+    let target_img_base = crate::utils::model::strip_image_variant_suffix(&target);
 
     // 文本模型严禁误伤生图模型：若 target 属于生图但 scope 并不声明生图，不匹配
     let target_is_image = target.contains("image") || target.starts_with("imagen");

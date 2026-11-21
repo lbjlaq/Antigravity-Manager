@@ -111,15 +111,28 @@ pub fn get_long_standard_client() -> Client {
 /// 应用当前上游代理配置到 builder 上。
 fn apply_upstream_proxy(builder: rquest::ClientBuilder, label: &str) -> rquest::ClientBuilder {
     if let Ok(config) = load_app_config() {
-        let proxy_config = config.proxy.upstream_proxy;
-        if proxy_config.enabled && !proxy_config.url.is_empty() {
-            match Proxy::all(&proxy_config.url) {
-                Ok(proxy) => {
-                    tracing::info!("{} enabled upstream proxy: {}", label, proxy_config.url);
-                    return builder.proxy(proxy);
+        if let Some(ref proxy_url) = config.outbound_proxy {
+            if !proxy_url.trim().is_empty() {
+                match Proxy::all(proxy_url.trim()) {
+                    Ok(proxy) => {
+                        tracing::info!("{} enabled outbound proxy: {}", label, proxy_url);
+                        return builder.proxy(proxy);
+                    }
+                    Err(e) => {
+                        tracing::warn!("{} failed to set outbound proxy ({}): {}", label, proxy_url, e);
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("invalid_proxy_url: {}, error: {}", proxy_config.url, e);
+            }
+        } else if let Some(proxy_obj) = config.proxy.as_object() {
+            if let Some(up) = proxy_obj.get("upstream_proxy") {
+                if up.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if let Some(url) = up.get("url").and_then(|v| v.as_str()) {
+                        if !url.trim().is_empty() {
+                            if let Ok(proxy) = Proxy::all(url.trim()) {
+                                return builder.proxy(proxy);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -154,6 +167,9 @@ fn create_standard_client(timeout_secs: u64) -> Client {
 }
 
 #[cfg(test)]
+static TEST_HTTP_LOCK: Lazy<std::sync::Mutex<()>> = Lazy::new(|| std::sync::Mutex::new(()));
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -163,7 +179,7 @@ mod tests {
 
     #[test]
     fn shared_client_is_cached_until_invalidated() {
-        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+        let _guard = TEST_HTTP_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         invalidate_shared_clients();
@@ -187,7 +203,7 @@ mod tests {
     /// 否则它们会带着**旧代理**继续跑（token 刷新 / 配额刷新 / 项目解析）。
     #[test]
     fn invalidate_drops_clients_so_they_rebuild_with_current_proxy() {
-        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+        let _guard = TEST_HTTP_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
 

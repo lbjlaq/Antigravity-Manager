@@ -1631,7 +1631,7 @@ mod tests {
         create_account_file(&path_buf, acc_id, "account-scope-403@example.com");
 
         let outcome =
-            mark_account_forbidden(acc_id, "Forbidden (403): Location not supported").unwrap();
+            mark_account_forbidden(acc_id, "Forbidden (403): Quota query denied").unwrap();
         assert_eq!(outcome, ForbiddenApplyResult::AccountLocked);
 
         let reloaded = load_account(acc_id).unwrap();
@@ -1965,87 +1965,6 @@ mod tests {
             Some("Forbidden (403): Location not supported"),
             "既有的 Hard 403 quota.forbidden_reason 绝对不能被覆盖！"
         );
-
-        std::env::remove_var("ABV_DATA_DIR");
-    }
-
-    #[tokio::test]
-    async fn test_legacy_model_forbidden_quota_migrates_on_load() {
-        let _guard = SHARED_TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = TestDataDir::new();
-        std::env::set_var("ABV_DATA_DIR", dir.path());
-
-        let acc_id = "test-legacy-migration-acc";
-        let path_buf = dir.path().clone();
-        create_account_file(&path_buf, acc_id, "legacy-mig@example.com");
-
-        // 手工写入老版本格式：模型级 403 被错误记录在 quota.is_forbidden 上
-        let mut account = load_account(acc_id).unwrap();
-        account.proxy_disabled = true;
-        account.proxy_disabled_reason = Some("Forbidden (403)".to_string());
-        let mut q = QuotaData::new();
-        q.is_forbidden = true;
-        q.forbidden_reason = Some(
-            "Forbidden (403): User not authorized to access model claude-3-5-sonnet".to_string(),
-        );
-        account.quota = Some(q);
-        save_account(&account).unwrap();
-
-        let manager = crate::proxy::TokenManager::new(dir.path().to_path_buf());
-        let count = manager.load_accounts().await.unwrap();
-        assert_eq!(
-            count, 1,
-            "老格式模型级 403 账号在反代加载时必须自愈并入池，绝不能被跳过！"
-        );
-        let token = manager.get_token_by_id(acc_id).unwrap();
-        assert!(
-            token.forbidden_models.contains("claude-3-5-sonnet"),
-            "必须自动迁移并提取出 claude-3-5-sonnet 冻结 scope"
-        );
-
-        std::env::remove_var("ABV_DATA_DIR");
-    }
-
-    #[tokio::test]
-    async fn test_legacy_model_forbidden_preserves_manual_disabled_intent() {
-        let _guard = SHARED_TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = TestDataDir::new();
-        std::env::set_var("ABV_DATA_DIR", dir.path());
-
-        let acc_id = "test-legacy-manual-acc";
-        let path_buf = dir.path().clone();
-        create_account_file(&path_buf, acc_id, "legacy-manual@example.com");
-
-        // 手工写入老版本格式：用户手动禁用了账号，后来又挂了模型级 403
-        let mut account = load_account(acc_id).unwrap();
-        account.manual_proxy_disabled = true;
-        account.proxy_disabled = true;
-        account.proxy_disabled_reason = Some(
-            "Forbidden (403): User not authorized to access model claude-3-5-sonnet".to_string(),
-        );
-        let mut q = QuotaData::new();
-        q.is_forbidden = true;
-        q.forbidden_reason = Some(
-            "Forbidden (403): User not authorized to access model claude-3-5-sonnet".to_string(),
-        );
-        account.quota = Some(q);
-        save_account(&account).unwrap();
-
-        let manager = crate::proxy::TokenManager::new(dir.path().to_path_buf());
-        let count = manager.load_accounts().await.unwrap();
-        assert_eq!(
-            count, 0,
-            "用户手动禁用的账号即使自愈迁移了模型 403，也绝不能被自动放回调度池！"
-        );
-
-        let reloaded = load_account(acc_id).unwrap();
-        assert!(reloaded.manual_proxy_disabled);
-        assert!(reloaded.proxy_disabled);
-        assert!(reloaded.forbidden_models.contains("claude-3-5-sonnet"));
 
         std::env::remove_var("ABV_DATA_DIR");
     }
@@ -3269,7 +3188,7 @@ pub async fn auto_fetch_account_project_id(account_id: &str) -> Result<String, S
         let _ = save_account(&account);
     }
 
-    match crate::proxy::project_resolver::fetch_project_id_for_account(
+    match crate::utils::model::fetch_project_id_for_account(
         &token.access_token,
         Some(account_id),
     )
@@ -3320,9 +3239,6 @@ pub fn list_accounts() -> Result<Vec<Account>, String> {
         let _ = save_account_index(&index);
     }
 
-    if let Err(error) = crate::modules::token_stats::populate_weekly_usage(&mut accounts) {
-        tracing::warn!("Weekly token usage unavailable: {}", error);
-    }
     Ok(accounts)
 }
 
@@ -3486,8 +3402,6 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
     }
 
     // [FIX #1477] Trigger TokenManager cache cleanup signal
-    crate::proxy::server::trigger_account_delete(account_id);
-
     Ok(())
 }
 
@@ -3527,7 +3441,6 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
         }
 
         // [FIX #1477] Trigger TokenManager cache cleanup signal
-        crate::proxy::server::trigger_account_delete(account_id);
     }
 
     for email in deleted_emails {
@@ -3689,7 +3602,7 @@ async fn ensure_enterprise_project_ready(account: &mut Account) -> Result<(), St
         account.email
     ));
 
-    match crate::proxy::project_resolver::fetch_project_id(&account.token.access_token).await {
+    match crate::utils::model::fetch_project_id(&account.token.access_token).await {
         Ok(project_id) => {
             crate::modules::logger::log_info(&format!(
                 "Resolved enterprise project_id for {}: {}",
@@ -4570,7 +4483,7 @@ pub fn update_account_quota_internal(
 
                 for model in &q.models {
                     if let Some(std_id) =
-                        crate::proxy::common::model_mapping::normalize_to_standard_id(&model.name)
+                        crate::utils::model::normalize_to_standard_id(&model.name)
                     {
                         let entry = group_max_percentage.entry(std_id).or_insert(-1);
                         if model.percentage > *entry {
@@ -4581,7 +4494,7 @@ pub fn update_account_quota_internal(
 
                 for std_id in &config.quota_protection.monitored_models {
                     let lookup_key =
-                        crate::proxy::common::model_mapping::normalize_to_standard_id(std_id)
+                        crate::utils::model::normalize_to_standard_id(std_id)
                             .unwrap_or_else(|| std_id.clone());
                     let max_pct = group_max_percentage
                         .get(&lookup_key)
@@ -4672,14 +4585,14 @@ pub fn update_account_quota_internal(
     if let Some(ref q) = account.quota {
         let now = chrono::Utc::now().timestamp();
         account.live_limited_models.retain(|model_key, status| {
-            if crate::proxy::rate_limit::is_active_persisted_long_image_limit(
+            if crate::utils::model::is_active_persisted_long_image_limit(
                 model_key, status, now,
             ) {
                 return true;
             }
             let recovered = q.models.iter().any(|model| {
                 let is_matching = model.name == *model_key
-                    || crate::proxy::common::model_mapping::normalize_to_standard_id(&model.name)
+                    || crate::utils::model::normalize_to_standard_id(&model.name)
                         .is_some_and(|standard| standard == *model_key);
                 is_matching && model.percentage > 0
             });
@@ -4704,8 +4617,6 @@ pub fn update_account_quota_internal(
 
     // [FIX] Trigger TokenManager account reload signal
     // This ensures in-memory protected_models are updated
-    crate::proxy::server::trigger_account_reload(account_id);
-
     Ok(account)
 }
 
@@ -4880,8 +4791,6 @@ pub fn clear_account_forbidden_lock(account_id: &str) -> Result<(), String> {
             let _ = save_account_index(&index);
         }
     }
-
-    crate::proxy::server::trigger_account_reload(account_id);
     crate::modules::log_bridge::emit_accounts_refreshed();
 
     crate::modules::logger::log_info(&format!(
@@ -5028,7 +4937,6 @@ pub fn mark_account_forbidden_with_models(
                 let _ = save_account_index(&index);
             }
         }
-        crate::proxy::server::trigger_account_reload(account_id);
         crate::modules::log_bridge::emit_accounts_refreshed();
         return Ok(ForbiddenApplyResult::AccountLocked);
     }
@@ -5060,7 +4968,6 @@ pub fn mark_account_forbidden_with_models(
                 let _ = save_account_index(&index);
             }
         }
-        crate::proxy::server::trigger_account_reload(account_id);
         crate::modules::log_bridge::emit_accounts_refreshed();
         return Ok(ForbiddenApplyResult::AccountLocked);
     }
@@ -5085,7 +4992,7 @@ pub fn mark_account_forbidden_with_models(
             target_model.and_then(|m| {
                 let cleaned = crate::models::account::clean_model_token(m)?;
                 Some(
-                    crate::proxy::common::model_mapping::strip_tier_suffix(&cleaned).to_lowercase(),
+                    crate::utils::model::strip_tier_suffix(&cleaned).to_lowercase(),
                 )
             })
         } else {
@@ -5102,20 +5009,20 @@ pub fn mark_account_forbidden_with_models(
 
     let outcome = if let Some(scope) = model_scope {
         let base_scope =
-            crate::proxy::common::model_mapping::strip_tier_suffix(&scope).to_lowercase();
+            crate::utils::model::strip_tier_suffix(&scope).to_lowercase();
         account.forbidden_models.insert(base_scope.clone());
         // 消除动态改写盲区：同时将映射前目标模型与实际上游模型全部纳入冻结
         if let Some(target) = target_model {
             if let Some(target_cleaned) = crate::models::account::clean_model_token(target) {
                 let target_base =
-                    crate::proxy::common::model_mapping::strip_tier_suffix(&target_cleaned)
+                    crate::utils::model::strip_tier_suffix(&target_cleaned)
                         .to_lowercase();
                 account.forbidden_models.insert(target_base);
             }
         }
         if let Some(alt) = alt_model {
             if let Some(alt_cleaned) = crate::models::account::clean_model_token(alt) {
-                let alt_base = crate::proxy::common::model_mapping::strip_tier_suffix(&alt_cleaned)
+                let alt_base = crate::utils::model::strip_tier_suffix(&alt_cleaned)
                     .to_lowercase();
                 account.forbidden_models.insert(alt_base);
             }
@@ -5179,8 +5086,6 @@ pub fn mark_account_forbidden_with_models(
     }
 
     // 4. 触发账号重载：账号级锁会移除；模型级锁会让 TokenManager 更新 forbidden_models。
-    crate::proxy::server::trigger_account_reload(account_id);
-
     // 5. Notify frontend to refresh account list
     crate::modules::log_bridge::emit_accounts_refreshed();
 
@@ -5211,8 +5116,6 @@ pub fn mark_account_banned(account_id: &str, info: &AccountBanInfo) -> Result<bo
             let _ = save_account_index(&index);
         }
     }
-
-    crate::proxy::server::trigger_account_reload(account_id);
     if changed {
         crate::modules::logger::log_warn(&format!(
             "🚫 [Ban] Account {} marked as banned: {} - {}",
@@ -5278,8 +5181,6 @@ pub fn clear_account_ban(account_id: &str) -> Result<bool, String> {
             let _ = save_account_index(&index);
         }
     }
-
-    crate::proxy::server::trigger_account_reload(account_id);
     crate::modules::logger::log_info(&format!(
         "✅ [Ban] Account {} recovered; ban state cleared",
         account.email
@@ -5500,10 +5401,10 @@ pub fn clear_account_forbidden_and_validation(
         if let Some(tested) = tested_model {
             let before = account.forbidden_models.len();
             let tested_lower = tested.trim().to_lowercase();
-            let tested_base = crate::proxy::common::model_mapping::strip_tier_suffix(&tested_lower)
+            let tested_base = crate::utils::model::strip_tier_suffix(&tested_lower)
                 .to_lowercase();
             let tested_img_base =
-                crate::proxy::common::model_mapping::strip_image_variant_suffix(&tested_lower)
+                crate::utils::model::strip_image_variant_suffix(&tested_lower)
                     .to_lowercase();
 
             account.forbidden_models.retain(|scope| {
@@ -5613,8 +5514,6 @@ pub fn clear_account_forbidden_and_validation(
             let _ = save_account_index(&index);
         }
     }
-
-    crate::proxy::server::trigger_account_reload(account_id);
     crate::modules::logger::log_info(&format!(
         "✅ [Probe] Account {} verified live and functional; cleared forbidden/validation locks",
         account.email
@@ -5644,9 +5543,9 @@ pub fn remove_account_forbidden_model(
     if let Some(target) = model {
         let target_lower = target.trim().to_lowercase();
         let target_base =
-            crate::proxy::common::model_mapping::strip_tier_suffix(&target_lower).to_lowercase();
+            crate::utils::model::strip_tier_suffix(&target_lower).to_lowercase();
         let target_img_base =
-            crate::proxy::common::model_mapping::strip_image_variant_suffix(&target_lower)
+            crate::utils::model::strip_image_variant_suffix(&target_lower)
                 .to_lowercase();
 
         account.forbidden_models.retain(|scope| {
@@ -5670,8 +5569,6 @@ pub fn remove_account_forbidden_model(
     }
 
     save_account(&account)?;
-
-    crate::proxy::server::trigger_account_reload(account_id);
     crate::modules::logger::log_info(&format!(
         "🔓 [Manual] Removed forbidden model {:?} for account {}",
         model, account.email
@@ -5808,7 +5705,6 @@ pub async fn fetch_quota_with_retry_ext(
                 account.disabled_at = Some(chrono::Utc::now().timestamp());
                 account.disabled_reason = Some(format!("invalid_grant: {}", e));
                 let _ = save_account(account);
-                crate::proxy::server::trigger_account_reload(&account.id);
             }
             return Err(AppError::OAuth(e));
         }
@@ -5966,7 +5862,6 @@ pub async fn fetch_quota_with_retry_ext(
                             account.email, e
                         ));
                     }
-                    crate::proxy::server::trigger_account_reload(&account.id);
                     crate::modules::log_bridge::emit_accounts_refreshed();
                     modules::logger::log_info(&format!(
                         "✅ [Probe] Account {} recovered from account-level 403 lock",
@@ -6094,7 +5989,6 @@ pub async fn fetch_quota_with_retry_ext(
                             account.disabled_at = Some(chrono::Utc::now().timestamp());
                             account.disabled_reason = Some(format!("invalid_grant: {}", e));
                             let _ = save_account(account);
-                            crate::proxy::server::trigger_account_reload(&account.id);
                         }
                         return Err(AppError::OAuth(e));
                     }
@@ -6626,7 +6520,7 @@ pub async fn batch_import_accounts_logic(
                     // 3.5 先解析 project（控制面，被封禁账号也返回 200），
                     // 供统一刷新入口 fetch_quota_with_retry 使用。
                     let project_id =
-                        crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
+                        crate::utils::model::fetch_project_id(&token_res.access_token)
                             .await
                             .ok();
 

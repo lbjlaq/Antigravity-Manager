@@ -60,11 +60,7 @@ pub fn set_internal_error_log_budget_bytes(bytes: u64) {
 }
 
 pub fn sync_internal_error_log_budget_from_config() {
-    let bytes = crate::modules::config::load_app_config()
-        .ok()
-        .map(|c| c.proxy.internal_error_log_retention.budget_bytes())
-        .unwrap_or(DEFAULT_ERROR_LOG_BUDGET_BYTES);
-    set_internal_error_log_budget_bytes(bytes);
+    set_internal_error_log_budget_bytes(DEFAULT_ERROR_LOG_BUDGET_BYTES);
 }
 
 /// Apply the sliding window: over budget, drop oldest 30% of the budget and keep appending.

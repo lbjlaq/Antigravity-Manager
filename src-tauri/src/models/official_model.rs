@@ -118,7 +118,7 @@ const LIVE_CACHE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct LiveCatalogCacheFile {
+pub(crate) struct LiveCatalogCacheFile {
     #[serde(default)]
     schema_version: u32,
     #[serde(default)]
@@ -586,19 +586,7 @@ impl OfficialModelCatalog {
             return Some(info.clone());
         }
 
-        // 2. 通过项目已有别名表解析归一化 ID 匹配
-        let aliased = crate::proxy::model_specs::resolve_alias(model_id);
-        if let Some(info) = lock.get(&aliased) {
-            return Some(info.clone());
-        }
-
-        // 2.5 通过路由映射解析匹配
-        let routed = crate::proxy::common::model_mapping::map_claude_model_to_gemini(model_id);
-        if let Some(info) = lock.get(&routed) {
-            return Some(info.clone());
-        }
-
-        // 3. 忽略大小写的精确匹配
+        // 2. 忽略大小写的精确匹配
         let lower = model_id.to_lowercase();
         for (k, v) in lock.iter() {
             if k.to_lowercase() == lower {

@@ -531,60 +531,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         #[cfg(target_os = "linux")]
                         crate::linux_display_guard::mark_user_initiated_exit();
 
-                        let app_handle = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            tracing::info!("[Tray] 退出网关触发，开始全面清理服务与端口...");
-
-                            let state =
-                                app_handle.state::<crate::commands::proxy::ProxyServiceState>();
-                            let cf_state = app_handle
-                                .state::<crate::commands::cloudflared::CloudflaredState>();
-
-                            // 1. 终止 cloudflared 隧道子进程
-                            let _ = tokio::time::timeout(
-                                std::time::Duration::from_millis(500),
-                                cf_state.stop(),
-                            )
-                            .await;
-
-                            // 2. 停止 Admin Server（关闭 TCP 监听器和所有活动连接）
-                            if let Ok(mut lock) = tokio::time::timeout(
-                                std::time::Duration::from_millis(1000),
-                                state.admin_server.write(),
-                            )
-                            .await
-                            {
-                                if let Some(admin) = lock.take() {
-                                    admin.stop().await;
-                                }
-                            }
-
-                            // 3. 停止业务代理实例及后台任务
-                            if let Ok(mut lock) = tokio::time::timeout(
-                                std::time::Duration::from_millis(1000),
-                                state.instance.write(),
-                            )
-                            .await
-                            {
-                                if let Some(inst) = lock.take() {
-                                    let _ = tokio::time::timeout(
-                                        std::time::Duration::from_millis(500),
-                                        inst.token_manager.graceful_shutdown(
-                                            std::time::Duration::from_millis(400),
-                                        ),
-                                    )
-                                    .await;
-                                    inst.axum_server.set_running(false).await;
-                                    inst.axum_server.stop();
-                                }
-                            }
-
-                            // 4. 给予底层套接字彻底注销的微小缓冲，然后干净退出进程
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            // `process::exit` 会绕过 Tauri 事件循环，签名缓存必须在退出前主动 flush。
-                            crate::proxy::signature_cache::flush_on_exit();
-                            std::process::exit(0);
-                        });
+                        std::process::exit(0);
                     }
                     "refresh_curr" => {
                         tauri::async_runtime::spawn(async move {

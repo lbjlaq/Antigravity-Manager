@@ -23,7 +23,6 @@ static STARTUP_REFRESH_TRIGGERED: AtomicBool = AtomicBool::new(false);
 /// 在后台等待账号加载就绪，然后异步刷新一次全部账号配额。
 pub fn spawn_startup_quota_refresh(
     app_handle: Option<tauri::AppHandle>,
-    proxy_state: crate::commands::proxy::ProxyServiceState,
 ) {
     if STARTUP_REFRESH_TRIGGERED.swap(true, Ordering::SeqCst) {
         return;
@@ -84,7 +83,7 @@ pub fn spawn_startup_quota_refresh(
             account_count
         ));
 
-        match crate::commands::refresh_all_quotas_internal(&proxy_state, app_handle).await {
+        match crate::commands::refresh_all_quotas_internal(app_handle).await {
             Ok(stats) => logger::log_info(&format!(
                 "[StartupRefresh] Startup quota refresh completed: {}/{} success, {} failed",
                 stats.success, stats.total, stats.failed

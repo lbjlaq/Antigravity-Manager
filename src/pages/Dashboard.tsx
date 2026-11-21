@@ -7,7 +7,6 @@ import {
     Calendar,
     Clock,
     RefreshCw,
-    ShieldAlert,
     Sparkles,
     Zap,
 } from 'lucide-react';
@@ -20,7 +19,6 @@ import BestAccounts from '../components/dashboard/BestAccounts';
 import { extractGroupQuotaPercentage, findImageQuotaModel, findQuotaModel } from '../config/modelConfig';
 import CurrentAccount from '../components/dashboard/CurrentAccount';
 import { useAccountStore } from '../stores/useAccountStore';
-import { useConfigStore } from '../stores/useConfigStore';
 import { Account } from '../types/account';
 import { isAccountAbnormal } from '../utils/accountStatus';
 import { DashboardQuotaView } from '../utils/quotaDisplay';
@@ -40,30 +38,6 @@ function Dashboard() {
         refreshQuota,
         loading
     } = useAccountStore();
-    const { config, saveConfig } = useConfigStore();
-    const qosAutoJail = !!config?.proxy?.qos_auto_jail;
-
-    const handleToggleQoSAutoJail = async () => {
-        if (!config) return;
-        const nextVal = !qosAutoJail;
-        try {
-            await saveConfig({
-                ...config,
-                proxy: {
-                    ...config.proxy,
-                    qos_auto_jail: nextVal,
-                },
-            });
-            showToast(
-                nextVal
-                    ? t('dashboard.qos_auto_jail_on', '小黑屋: 开')
-                    : t('dashboard.qos_auto_jail_off', '小黑屋: 关'),
-                'info'
-            );
-        } catch (err) {
-            console.error('Failed to update QoS auto jail setting:', err);
-        }
-    };
 
     useEffect(() => {
         fetchAccounts();
@@ -87,52 +61,23 @@ function Dashboard() {
         };
     }, []);
 
-    const [onlyProxyPool, setOnlyProxyPool] = useState<boolean>(() => {
-        const saved = localStorage.getItem('dashboard_filter_proxy_pool');
-        return saved !== null ? saved === 'true' : true;
-    });
-
     const [quotaView, setQuotaView] = useState<DashboardQuotaView>(() => {
         const saved = localStorage.getItem('dashboard_quota_view');
         return (saved === '5h' || saved === 'weekly' || saved === 'weighted') ? saved : 'weighted';
     });
 
     useEffect(() => {
-        localStorage.setItem('dashboard_filter_proxy_pool', String(onlyProxyPool));
-    }, [onlyProxyPool]);
-
-    useEffect(() => {
         localStorage.setItem('dashboard_quota_view', quotaView);
     }, [quotaView]);
 
-    // 全维度账号健康与配额计算矩阵 (状态由风控定生死，底座池支持仅可用账号与全部正常账号无缝切换)
+    // 全维度账号健康与配额计算矩阵
     const stats = useMemo(() => {
-        // 1. 账号生态健康状态分类（风控与启用状态定生死，不以额度定生死）
-        // 异常账号：触发 Google 验证码/风控阻断，或配额接口返回 403 Forbidden 封禁
+        // 1. 账号生态健康状态分类
         const abnormalAccounts = accounts.filter(isAccountAbnormal);
-        // 全量正常状态账号（彻底剔除风控异常账号）
         const normalAccounts = accounts.filter(a => !isAccountAbnormal(a));
-        // 完全被用户手动停用的账号 (disabled 为 true)
-        const fullyDisabledAccounts = normalAccounts.filter(
-            a => a.disabled
-        );
-        // 可用正常账号（非异常且未停用，可供客户端登录或调度）
-        const availableAccounts = normalAccounts.filter(
-            a => !a.disabled
-        );
-        // 反代在线账号（可用且未禁用反代，真正加入反代服务池）
-        const proxyOnlineAccounts = availableAccounts.filter(
-            a => !a.proxy_disabled
-        );
-        // 仅禁用反代的正常账号 (未停用但禁用了反代)
-        const proxyDisabledAccounts = availableAccounts.filter(
-            a => a.proxy_disabled
-        );
-
-        // 依据按钮状态选择底座统计池：默认看反代在线账号，切换看全部可用账号
-        const basePool = onlyProxyPool
-            ? (proxyOnlineAccounts.length > 0 ? proxyOnlineAccounts : availableAccounts)
-            : availableAccounts;
+        const fullyDisabledAccounts = normalAccounts.filter(a => a.disabled);
+        const availableAccounts = normalAccounts.filter(a => !a.disabled);
+        const basePool = availableAccounts;
 
         // 2. 单账号配额提取辅助函数
         const get5hQuota = (a: Account, modelKey: 'gemini-pro' | 'gemini-image' | 'claude'): number | null => {
@@ -263,10 +208,7 @@ function Dashboard() {
         return {
             total: accounts.length,
             available: availableAccounts.length,
-            proxyOnline: proxyOnlineAccounts.length,
-            proxyDisabled: proxyDisabledAccounts.length,
-            fullyDisabled: fullyDisabledAccounts.length,
-            disabled: fullyDisabledAccounts.length + proxyDisabledAccounts.length,
+            disabled: fullyDisabledAccounts.length,
             abnormal: abnormalAccounts.length,
             normalCount: normalAccounts.length,
             basePoolCount: basePool.length,
@@ -274,7 +216,7 @@ function Dashboard() {
             geminiImage,
             claude,
         };
-    }, [accounts, onlyProxyPool]);
+    }, [accounts]);
 
     const geminiQuotaValue = quotaView === '5h'
         ? stats.gemini.avg5h
@@ -426,62 +368,6 @@ function Dashboard() {
                                 <span>{t('dashboard.view_mode_weekly', '7天周配额')}</span>
                             </button>
                         </div>
-
-                        {/* 3. 账号池范围筛选: 反代账号 vs 可用账号 */}
-                        <div className="flex items-center bg-gray-100 dark:bg-white/[0.04] p-1 rounded-xl text-xs dark:border dark:border-white/[0.08]">
-                            <button
-                                type="button"
-                                onClick={() => setOnlyProxyPool(true)}
-                                className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                                    onlyProxyPool
-                                        ? 'bg-white dark:bg-zinc-800 text-emerald-600 dark:text-emerald-300 shadow-sm font-bold dark:border dark:border-white/[0.12]'
-                                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
-                                }`}
-                                title={t('dashboard.btn_title_proxy_online', '当前：仅统计参与反代分发的在线账号配额')}
-                            >
-                                {t('dashboard.btn_proxy_online', { count: stats.proxyOnline, defaultValue: `反代账号 (${stats.proxyOnline})` })}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setOnlyProxyPool(false)}
-                                className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                                    !onlyProxyPool
-                                        ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-300 shadow-sm font-bold dark:border dark:border-white/[0.12]'
-                                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
-                                }`}
-                                title={t('dashboard.btn_title_all_available', '当前：统计所有正常未停用的可用账号配额')}
-                            >
-                                {t('dashboard.btn_all_available', { count: stats.available, defaultValue: `可用账号 (${stats.available})` })}
-                            </button>
-                        </div>
-
-                        {/* 4. 自动限流进小黑屋 (QoS 降速熔断) 开关 */}
-                        <div className="flex items-center bg-gray-100 dark:bg-white/[0.04] p-1 rounded-xl text-xs dark:border dark:border-white/[0.08]">
-                            <button
-                                type="button"
-                                onClick={handleToggleQoSAutoJail}
-                                className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
-                                    qosAutoJail
-                                        ? 'bg-white dark:bg-zinc-800 text-amber-600 dark:text-amber-300 shadow-sm font-bold dark:border dark:border-white/[0.12]'
-                                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
-                                }`}
-                                title={
-                                    qosAutoJail
-                                        ? t('dashboard.qos_auto_jail_enabled_tip', '当前：已开启自动限流进小黑屋。遇响应过长的限速账号将自动隔离并解绑会话（点击关闭）')
-                                        : t('dashboard.qos_auto_jail_disabled_tip', '当前：已关闭自动小黑屋。直接忽略校验时长，不因首字延迟过长标记疑似限速或解绑会话（点击开启）')
-                                }
-                            >
-                                <ShieldAlert className={`w-3.5 h-3.5 ${qosAutoJail ? 'text-amber-500 dark:text-amber-400' : 'text-gray-400 dark:text-zinc-500'}`} />
-                                <span>{t('dashboard.qos_auto_jail', '自动小黑屋')}</span>
-                                <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
-                                    qosAutoJail
-                                        ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold'
-                                        : 'bg-gray-200 dark:bg-white/[0.08] text-gray-400 dark:text-zinc-500'
-                                }`}>
-                                    {qosAutoJail ? t('dashboard.qos_auto_jail_badge_on', '开') : t('dashboard.qos_auto_jail_badge_off', '关')}
-                                </span>
-                            </button>
-                        </div>
                     </div>
 
                             {/* 右侧：纯粹通透的大字 KPI 矩阵 (Requests · Avg response · Spend 灵感) */}
@@ -497,10 +383,10 @@ function Dashboard() {
                                 <div className="h-6 w-px bg-gray-200 dark:bg-white/[0.08]" />
                                 <div>
                                     <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-emerald-600 dark:text-emerald-400 leading-none">
-                                        {stats.proxyOnline}
+                                        {stats.available}
                                     </div>
                                     <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium mt-1">
-                                        {t('dashboard.proxy_online_unit', '反代服务在线')}
+                                        {t('dashboard.available_accounts', '可用账号就绪')}
                                     </div>
                                 </div>
                                 <div className="h-6 w-px bg-gray-200 dark:bg-white/[0.08]" />
@@ -548,9 +434,9 @@ function Dashboard() {
                                             </span>
                                         </div>
                                         <div className="text-[11px] text-gray-400 dark:text-zinc-400 mt-1 font-medium">
-                                            {stats.proxyOnline > 0
-                                                ? t('dashboard.proxy_joined_pool', { count: stats.proxyOnline, defaultValue: `✓ ${stats.proxyOnline} 个账号已加入反代服务池` })
-                                                : t('dashboard.disabled_accounts_desc', '手动停用/待开启')
+                                            {stats.disabled > 0
+                                                ? t('dashboard.disabled_accounts_desc', { count: stats.disabled, defaultValue: `${stats.disabled} 个账号已停用` })
+                                                : t('dashboard.all_accounts_ready', '全部纳管账号就绪')
                                             }
                                         </div>
                                     </div>

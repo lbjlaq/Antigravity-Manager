@@ -1,5 +1,3 @@
-use crate::modules::cloudflared::CloudflaredConfig;
-use crate::proxy::ProxyConfig;
 use serde::{Deserialize, Serialize};
 
 /// Application configuration
@@ -23,7 +21,9 @@ pub struct AppConfig {
     pub sync_interval: i32, // minutes
     pub default_export_path: Option<String>,
     #[serde(default)]
-    pub proxy: ProxyConfig,
+    pub proxy: serde_json::Value,
+    #[serde(default)]
+    pub outbound_proxy: Option<String>,
     pub antigravity_executable: Option<String>, // [NEW] Manually specified Antigravity executable path
     pub antigravity_ide_executable: Option<String>, // [NEW] Manually specified Antigravity IDE executable path
     pub antigravity_cli_executable: Option<String>, // [NEW] Manually specified Antigravity CLI (agy) path
@@ -45,7 +45,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub hidden_menu_items: Vec<String>, // Hidden menu item path list
     #[serde(default)]
-    pub cloudflared: CloudflaredConfig, // [NEW] Cloudflared configuration
+    pub cloudflared: serde_json::Value, // [NEW] Cloudflared configuration
     #[serde(default)]
     pub lightweight_mode: bool, // [NEW] Lightweight mode: destroy webview on minimize/close to tray
     #[serde(default)]
@@ -268,7 +268,7 @@ impl AppConfig {
     pub fn new() -> Self {
         Self {
             language: crate::modules::i18n::default_language(),
-            theme: "system".to_string(),
+            theme: "dark".to_string(),
             auto_refresh: true,
             refresh_interval: 10,
             startup_refresh: true,
@@ -277,7 +277,8 @@ impl AppConfig {
             auto_sync: false,
             sync_interval: 5,
             default_export_path: None,
-            proxy: ProxyConfig::default(),
+            proxy: serde_json::json!({}),
+            outbound_proxy: None,
             antigravity_executable: None,
             antigravity_ide_executable: None,
             antigravity_cli_executable: None,
@@ -289,7 +290,7 @@ impl AppConfig {
             pinned_quota_models: PinnedQuotaModelsConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             hidden_menu_items: Vec::new(),
-            cloudflared: CloudflaredConfig::default(),
+            cloudflared: serde_json::json!({}),
             lightweight_mode: false,
             suggestion_delete_thinking_store: None,
             thinking_cleanup_dismissed: None,

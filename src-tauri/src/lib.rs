@@ -7,13 +7,11 @@ pub mod linux_display_guard;
 mod linux_graphics;
 pub mod models;
 pub mod modules;
-pub mod proxy; // Proxy service module
 pub mod utils;
 
 use modules::logger;
-use std::sync::Arc;
 use tauri::Manager;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Clone, Copy)]
 struct AppRuntimeFlags {
@@ -129,204 +127,7 @@ fn apply_login_launch_policy(app: &tauri::App) {
     }
 }
 
-/// Run headless server with optional port, host, and web UI toggles
-pub async fn run_headless_server(
-    port_override: Option<u16>,
-    host_override: Option<String>,
-    disable_web_override: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // If disable_web_override is explicitly true, set ABV_DISABLE_WEB env
-    if disable_web_override {
-        std::env::set_var("ABV_DISABLE_WEB", "1");
-    }
 
-    // Initialize logger
-    logger::init_logger();
-
-    // Initialize databases
-    if let Err(e) = modules::token_stats::init_db() {
-        error!("Failed to initialize token stats database: {}", e);
-    }
-    if let Err(e) = modules::security_db::init_db() {
-        error!("Failed to initialize security database: {}", e);
-    }
-    if let Err(e) = modules::user_token_db::init_db() {
-        error!("Failed to initialize user token database: {}", e);
-    }
-
-    info!("Starting in HEADLESS mode...");
-
-    let proxy_state = commands::proxy::ProxyServiceState::new();
-    let cf_state = Arc::new(commands::cloudflared::CloudflaredState::new());
-
-    // Load config
-    let mut config = modules::config::load_app_config().unwrap_or_default();
-    let mut modified = false;
-
-    if let Some(port) = port_override {
-        config.proxy.port = port;
-        modified = true;
-    }
-
-    if let Some(host) = host_override {
-        if host == "127.0.0.1" || host == "localhost" {
-            config.proxy.allow_lan_access = false;
-        } else {
-            config.proxy.allow_lan_access = true;
-        }
-        modified = true;
-    } else {
-        // Headless/docker 默认允许 LAN 访问（绑定 0.0.0.0）
-        // 若设置 ABV_BIND_LOCAL_ONLY，则仅绑定 127.0.0.1
-        let bind_local_only = std::env::var("ABV_BIND_LOCAL_ONLY")
-            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false);
-        if bind_local_only {
-            config.proxy.allow_lan_access = false;
-            modified = true;
-        } else {
-            config.proxy.allow_lan_access = true;
-        }
-    }
-
-    // Force auth mode to AllExceptHealth in headless mode if it's Off or Auto
-    if matches!(
-        config.proxy.auth_mode,
-        crate::proxy::ProxyAuthMode::Off | crate::proxy::ProxyAuthMode::Auto
-    ) {
-        info!("Headless mode: Forcing auth_mode to AllExceptHealth for Web UI security");
-        config.proxy.auth_mode = crate::proxy::ProxyAuthMode::AllExceptHealth;
-        modified = true;
-    }
-
-    // Support API Key override from env
-    let env_key = std::env::var("ABV_API_KEY")
-        .or_else(|_| std::env::var("API_KEY"))
-        .ok();
-    if let Some(key) = env_key {
-        if !key.trim().is_empty() {
-            info!("Using API Key from environment variable");
-            config.proxy.api_key = key;
-            modified = true;
-        }
-    }
-
-    // Support Web UI Password override from env
-    let env_web_password = std::env::var("ABV_WEB_PASSWORD")
-        .or_else(|_| std::env::var("WEB_PASSWORD"))
-        .ok();
-    if let Some(pwd) = env_web_password {
-        if !pwd.trim().is_empty() {
-            info!("Using Web UI Password from environment variable");
-            config.proxy.admin_password = Some(pwd);
-            modified = true;
-        }
-    }
-
-    // Support Auth Mode override from env
-    let env_auth_mode = std::env::var("ABV_AUTH_MODE")
-        .or_else(|_| std::env::var("AUTH_MODE"))
-        .ok();
-    if let Some(mode_str) = env_auth_mode {
-        let mode = match mode_str.to_lowercase().as_str() {
-            "off" => Some(crate::proxy::ProxyAuthMode::Off),
-            "strict" => Some(crate::proxy::ProxyAuthMode::Strict),
-            "all_except_health" => Some(crate::proxy::ProxyAuthMode::AllExceptHealth),
-            "auto" => Some(crate::proxy::ProxyAuthMode::Auto),
-            _ => {
-                warn!("Invalid AUTH_MODE: {}, ignoring", mode_str);
-                None
-            }
-        };
-        if let Some(m) = mode {
-            info!("Using Auth Mode from environment variable: {:?}", m);
-            config.proxy.auth_mode = m;
-            modified = true;
-        }
-    }
-
-    let is_web_disabled = std::env::var("ABV_DISABLE_WEB")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false);
-
-    info!("--------------------------------------------------");
-    info!("🚀 Headless mode proxy service starting...");
-    info!("📍 Port: {}", config.proxy.port);
-    info!(
-        "🔑 Current API Key: {}",
-        credential_state(&config.proxy.api_key)
-    );
-    if is_web_disabled {
-        info!("🌐 Web UI: Disabled (--no-web pure proxy mode)");
-    } else {
-        if let Some(ref pwd) = config.proxy.admin_password {
-            info!("🔐 Web UI Password: {}", credential_state(pwd));
-        } else {
-            info!("🔐 Web UI Password: (Same as API Key)");
-        }
-        info!(
-            "💡 Tips: Access Web UI at http://127.0.0.1:{}",
-            config.proxy.port
-        );
-    }
-    info!(
-        "🤖 API Endpoints: http://127.0.0.1:{}/v1",
-        config.proxy.port
-    );
-    info!("--------------------------------------------------");
-
-    if modified {
-        if let Err(e) = modules::config::save_app_config(&config) {
-            error!("Failed to persist environment overrides: {}", e);
-        } else {
-            info!("Environment overrides persisted to gui_config.json");
-        }
-    }
-
-    crate::modules::hub_version::update_hub_fingerprint(
-        config.proxy.hub_version.as_deref(),
-        config.proxy.hub_cl.as_deref(),
-    );
-
-    // Start proxy service
-    if let Err(e) = commands::proxy::internal_start_proxy_service(
-        config.proxy,
-        &proxy_state,
-        crate::modules::integration::SystemManager::Headless,
-        cf_state.clone(),
-    )
-    .await
-    {
-        error!("Failed to start proxy service in headless mode: {}", e);
-        return Err(e.into());
-    }
-
-    info!("Headless proxy service is running.");
-
-    // Start smart scheduler for 7-day weekly reset warmup
-    modules::scheduler::start_scheduler(None, proxy_state.clone());
-    info!("Smart scheduler (7-Day Weekly Reset Warmup) started in headless mode.");
-
-    // Start background auto-refresh scheduler for periodic quota maintenance in headless mode (Fixes #3958)
-    modules::auto_refresh::start_auto_refresh(None, proxy_state.clone());
-    info!("Background auto-refresh scheduler started in headless mode.");
-
-    // 账号在 internal_start_proxy_service 中已完成加载，异步刷新一次全量配额
-    modules::startup_refresh::spawn_startup_quota_refresh(None, proxy_state.clone());
-
-    // Wait for Ctrl-C
-    tokio::signal::ctrl_c().await.ok();
-    info!("Headless mode shutting down");
-    Ok(())
-}
-
-fn credential_state(value: &str) -> &'static str {
-    if value.trim().is_empty() {
-        "not set"
-    } else {
-        "set"
-    }
-}
 
 #[cfg(target_os = "linux")]
 fn nvidia_proprietary_loaded() -> bool {
@@ -540,8 +341,6 @@ pub fn run() {
         }
     }
 
-    let is_headless = args.iter().any(|arg| arg == "--headless");
-
     // Increase file descriptor limit (Unix: macOS/Linux)
     #[cfg(unix)]
     increase_nofile_limit();
@@ -551,30 +350,6 @@ pub fn run() {
 
     #[cfg(target_os = "linux")]
     configure_linux_graphics();
-
-    // Initialize token stats database
-    if let Err(e) = modules::token_stats::init_db() {
-        error!("Failed to initialize token stats database: {}", e);
-    }
-
-    // Initialize security database
-    if let Err(e) = modules::security_db::init_db() {
-        error!("Failed to initialize security database: {}", e);
-    }
-
-    // Initialize user token database
-    if let Err(e) = modules::user_token_db::init_db() {
-        error!("Failed to initialize user token database: {}", e);
-    }
-
-    if is_headless {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-        if let Err(e) = rt.block_on(run_headless_server(None, None, false)) {
-            error!("Headless server exited with error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
 
     let tray_enabled = should_enable_tray();
 
@@ -616,8 +391,6 @@ pub fn run() {
                 let _ = modules::lightweight::exit_lightweight_mode(app);
             }
         }))
-        .manage(commands::proxy::ProxyServiceState::new())
-        .manage(commands::cloudflared::CloudflaredState::new())
         .manage(AppRuntimeFlags { tray_enabled })
         .setup(|app| {
             info!("Setup starting...");
@@ -666,7 +439,6 @@ pub fn run() {
                 });
             }
 
-
             let runtime_flags = app.state::<AppRuntimeFlags>();
             if runtime_flags.tray_enabled {
                 modules::tray::create_tray(app.handle())?;
@@ -675,79 +447,19 @@ pub fn run() {
                 info!("Tray disabled for this session");
             }
 
-            // 立即启动管理服务器 (8045)，以便 Web 端能访问
+            // 启动时异步刷新全量配额
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Load config
-                if let Ok(config) = modules::config::load_app_config() {
-                    crate::modules::hub_version::update_hub_fingerprint(
-                        config.proxy.hub_version.as_deref(),
-                        config.proxy.hub_cl.as_deref(),
-                    );
-                    let state = handle.state::<commands::proxy::ProxyServiceState>();
-                    let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
-                    let integration =
-                        crate::modules::integration::SystemManager::Desktop(handle.clone());
-
-                    // 1. 确保管理后台开启
-                    if let Err(e) = commands::proxy::ensure_admin_server(
-                        config.proxy.clone(),
-                        &state,
-                        integration.clone(),
-                        Arc::new(cf_state.inner().clone()),
-                    )
-                    .await
-                    {
-                        error!("Failed to start admin server: {}", e);
-                    } else {
-                        info!(
-                            "Admin server (port {}) started successfully",
-                            config.proxy.port
-                        );
-                    }
-
-                    // 2. 自动启动转发逻辑
-                    if config.proxy.auto_start {
-                        if let Err(e) = commands::proxy::internal_start_proxy_service(
-                            config.proxy,
-                            &state,
-                            integration,
-                            Arc::new(cf_state.inner().clone()),
-                        )
-                        .await
-                        {
-                            error!("Failed to auto-start proxy service: {}", e);
-                        } else {
-                            info!("Proxy service auto-started successfully");
-                        }
-                    }
-
-                    // 3. 账号加载与代理启动就绪后，异步刷新一次全量配额
-                    //    由 startup_refresh 配置开关控制，单进程仅触发一次，避免启动阶段全量轰炸
-                    modules::startup_refresh::spawn_startup_quota_refresh(
-                        Some(handle.clone()),
-                        state.inner().clone(),
-                    );
-                } else {
-                    // 配置加载失败不能再被静默吞掉：否则重启后“服务没起来”时无任何痕迹可查。
-                    error!(
-                        "Failed to load app config at startup; admin server and proxy service were NOT started. \
-                         Fix or reset the config file and restart the app."
-                    );
-                }
+                modules::startup_refresh::spawn_startup_quota_refresh(Some(handle));
             });
 
             // Start smart scheduler for 7-day weekly reset warmup
-            let scheduler_state = app.handle().state::<commands::proxy::ProxyServiceState>();
-            modules::scheduler::start_scheduler(Some(app.handle().clone()), scheduler_state.inner().clone());
+            modules::scheduler::start_scheduler(Some(app.handle().clone()));
             info!("Smart scheduler (7-Day Weekly Reset Warmup) initialized.");
 
             // Start background auto-refresh scheduler (Fixes #3958)
-            modules::auto_refresh::start_auto_refresh(Some(app.handle().clone()), scheduler_state.inner().clone());
+            modules::auto_refresh::start_auto_refresh(Some(app.handle().clone()));
             info!("Background auto-refresh scheduler initialized.");
-
-            // [PHASE 1] 已整合至 Axum 端口 (8045)，不再单独启动 19527 端口
-            info!("Management API integrated into main proxy server (port 8045)");
 
             apply_login_launch_policy(app);
 
@@ -777,8 +489,6 @@ pub fn run() {
                     }
                     tracing::info!("[Linux Display Guard] Received termination signal in background mode, shutting down cleanly.");
                     linux_display_guard::mark_user_initiated_exit();
-                    // 信号退出不会走 Tauri 事件循环，签名缓存同样需要尽力落盘。
-                    crate::proxy::signature_cache::flush_on_exit();
                     std::process::exit(0);
                 });
             }
@@ -921,50 +631,6 @@ pub fn run() {
             commands::update_last_check_time,
             commands::toggle_proxy_status,
             commands::clear_account_forbidden,
-            // Proxy service commands
-            commands::proxy::start_proxy_service,
-            commands::proxy::stop_proxy_service,
-            commands::proxy::get_proxy_status,
-            commands::proxy::get_proxy_stats,
-            commands::proxy::get_proxy_logs,
-            commands::proxy::get_proxy_logs_paginated,
-            commands::proxy::get_proxy_log_detail,
-            commands::proxy::get_proxy_logs_count,
-            commands::proxy::export_proxy_logs,
-            commands::proxy::export_proxy_logs_json,
-            commands::proxy::get_proxy_logs_count_filtered,
-            commands::proxy::get_proxy_logs_filtered,
-            commands::proxy::set_proxy_monitor_enabled,
-            commands::proxy::set_proxy_capture_health_logs,
-            commands::proxy::clear_proxy_logs,
-            commands::proxy::clear_thinking_store,
-            commands::proxy::get_signature_cache_stats,
-            commands::proxy::clear_signature_cache,
-            commands::proxy::get_thinking_store_count,
-            commands::proxy::get_proxy_db_disk_size,
-            commands::proxy::test_model_connectivity,
-            commands::proxy::generate_api_key,
-            commands::proxy::reload_proxy_accounts,
-            commands::proxy::update_model_mapping,
-            commands::proxy::check_proxy_health,
-            commands::proxy::get_proxy_pool_config,
-            commands::proxy::get_proxy_scheduling_config,
-            commands::proxy::update_proxy_scheduling_config,
-            commands::proxy::clear_proxy_session_bindings,
-            commands::proxy::set_preferred_account,
-            commands::proxy::get_preferred_account,
-            commands::proxy::get_hub_fingerprint,
-            commands::proxy::detect_remote_hub_fingerprint,
-            commands::proxy::check_hub_update,
-            commands::proxy::get_effective_first_byte_timeouts,
-            commands::proxy::get_effective_timeout_config,
-            commands::proxy::clear_proxy_rate_limit,
-            commands::proxy::clear_all_proxy_rate_limits,
-            // Proxy Pool Binding commands
-            commands::proxy_pool::bind_account_proxy,
-            commands::proxy_pool::unbind_account_proxy,
-            commands::proxy_pool::get_account_proxy_binding,
-            commands::proxy_pool::get_all_account_bindings,
             // Autostart commands
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
@@ -975,99 +641,12 @@ pub fn run() {
             commands::update_account_priority,
             commands::update_account_project_id,
             commands::auto_fetch_account_project_id,
-            // HTTP API settings commands
-            commands::get_http_api_settings,
-            commands::save_http_api_settings,
-            // Token 统计命令
-            commands::get_token_stats_minute,
-            commands::get_token_stats_hourly,
-            commands::get_token_stats_daily,
-            commands::get_token_stats_weekly,
-            commands::get_token_stats_by_account,
-            commands::get_token_stats_summary,
-            commands::get_token_stats_by_model,
-            commands::get_token_stats_model_trend_minute,
-            commands::get_token_stats_model_trend_hourly,
-            commands::get_token_stats_model_trend_daily,
-            commands::get_token_stats_account_trend_minute,
-            commands::get_token_stats_account_trend_hourly,
-            commands::get_token_stats_account_trend_daily,
-            proxy::cli_sync::get_cli_sync_status,
-            proxy::cli_sync::execute_cli_sync,
-            proxy::cli_sync::execute_cli_restore,
-            proxy::cli_sync::get_cli_config_content,
-            proxy::opencode_sync::get_opencode_sync_status,
-            proxy::opencode_sync::get_opencode_providers,
-            proxy::opencode_sync::get_canonical_families,
-            proxy::opencode_sync::execute_opencode_sync,
-            proxy::opencode_sync::execute_opencode_openai_sync,
-            proxy::opencode_sync::execute_opencode_remove_provider,
-            proxy::opencode_sync::execute_opencode_restore,
-            proxy::opencode_sync::get_opencode_config_content,
-            proxy::opencode_sync::execute_opencode_clear,
-            proxy::hermes_sync::get_hermes_sync_status,
-            proxy::hermes_sync::execute_hermes_sync,
-            proxy::hermes_sync::execute_hermes_restore,
-            proxy::hermes_sync::execute_hermes_clear,
-            proxy::hermes_sync::get_hermes_config_content,
-            proxy::openclaw_sync::get_openclaw_sync_status,
-            proxy::openclaw_sync::execute_openclaw_sync,
-            proxy::openclaw_sync::execute_openclaw_restore,
-            proxy::openclaw_sync::execute_openclaw_clear,
-            proxy::openclaw_sync::get_openclaw_config_content,
-            proxy::droid_sync::get_droid_sync_status,
-            proxy::droid_sync::execute_droid_sync,
-            proxy::droid_sync::execute_droid_restore,
-            proxy::droid_sync::get_droid_config_content,
-            // Security/IP monitoring commands
-            commands::security::get_ip_access_logs,
-            commands::security::get_ip_stats,
-            commands::security::get_ip_token_stats,
-            commands::security::clear_ip_access_logs,
-            commands::security::get_ip_blacklist,
-            commands::security::add_ip_to_blacklist,
-            commands::security::remove_ip_from_blacklist,
-            commands::security::clear_ip_blacklist,
-            commands::security::check_ip_in_blacklist,
-            commands::security::get_ip_whitelist,
-            commands::security::add_ip_to_whitelist,
-            commands::security::remove_ip_from_whitelist,
-            commands::security::clear_ip_whitelist,
-            commands::security::check_ip_in_whitelist,
-            commands::security::get_security_config,
-            commands::security::update_security_config,
-            // Cloudflared commands
-            commands::cloudflared::cloudflared_check,
-            commands::cloudflared::cloudflared_install,
-            commands::cloudflared::cloudflared_start,
-            commands::cloudflared::cloudflared_stop,
-            commands::cloudflared::cloudflared_get_status,
             // Debug console commands
             modules::log_bridge::enable_debug_console,
             modules::log_bridge::disable_debug_console,
             modules::log_bridge::is_debug_console_enabled,
             modules::log_bridge::get_debug_console_logs,
             modules::log_bridge::clear_debug_console_logs,
-            // User Token commands
-            commands::user_token::list_user_tokens,
-            commands::user_token::create_user_token,
-            commands::user_token::update_user_token,
-            commands::user_token::delete_user_token,
-            commands::user_token::renew_user_token,
-            commands::user_token::get_token_ip_bindings,
-            commands::user_token::get_user_token_summary,
-            commands::user_token::get_user_token_stats,
-            commands::user_token::get_user_tokens_ranking,
-            commands::query_transit_info,
-            // Patch commands
-            commands::patch_agy_binary,
-            commands::list_claude_installations,
-            commands::check_claude_cowork_patch,
-            commands::apply_claude_cowork_patch,
-            commands::revert_claude_cowork_patch,
-            commands::is_claude_desktop_running,
-            commands::close_claude_desktop,
-            commands::launch_claude_desktop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1090,41 +669,9 @@ pub fn run() {
                         api.prevent_exit();
                     }
                 }
-                // Handle app exit - cleanup background tasks and release ports
+                // Handle app exit
                 tauri::RunEvent::Exit => {
-                    tracing::info!("Application exiting, cleaning up background tasks and releasing ports...");
-                    // 尽力把签名缓存队列刷入 SQLite，避免直接退出丢失最近写入。
-                    crate::proxy::signature_cache::flush_on_exit();
-                    if let Some(state) =
-                        app_handle.try_state::<crate::commands::proxy::ProxyServiceState>()
-                    {
-                        let cf_state = app_handle.try_state::<crate::commands::cloudflared::CloudflaredState>();
-                        tauri::async_runtime::block_on(async {
-                            // 1. 停止 cloudflared 隧道
-                            if let Some(cf) = cf_state {
-                                let _ = tokio::time::timeout(std::time::Duration::from_millis(500), cf.stop()).await;
-                            }
-
-                            // 2. 停止 Admin Server（释放 TCP 监听器和 Socket）
-                            if let Ok(mut lock) = tokio::time::timeout(std::time::Duration::from_millis(1000), state.admin_server.write()).await {
-                                if let Some(admin) = lock.take() {
-                                    admin.stop().await;
-                                }
-                            }
-
-                            // 3. 停止业务代理实例及后台任务
-                            if let Ok(mut lock) = tokio::time::timeout(std::time::Duration::from_millis(1000), state.instance.write()).await {
-                                if let Some(instance) = lock.take() {
-                                    let _ = tokio::time::timeout(
-                                        std::time::Duration::from_millis(500),
-                                        instance.token_manager.graceful_shutdown(std::time::Duration::from_millis(400)),
-                                    ).await;
-                                    instance.axum_server.set_running(false).await;
-                                    instance.axum_server.stop();
-                                }
-                            }
-                        });
-                    }
+                    tracing::info!("Application exiting...");
                 }
                 // Handle macOS dock icon click to reopen window
                 #[cfg(target_os = "macos")]
@@ -1143,7 +690,7 @@ fn ensure_cli_symlinks() {
         if !local_bin.exists() {
             let _ = std::fs::create_dir_all(&local_bin);
         }
-        for name in &["antigravity-tools", "at"] {
+        for name in &["antigravity-manager", "am", "antigravity-tools", "at"] {
             let link = local_bin.join(name);
             if !link.exists() {
                 let _ = std::os::unix::fs::symlink(&current_exe, &link);

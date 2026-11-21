@@ -102,15 +102,13 @@ fn pick_model_for_group(
             return m.clone();
         }
         // Gemini 兜底：取号池最新 flash-low，无 low 档则取无后缀衍生 flash；都没有则返回空串由调用方跳过
-        let pool: std::collections::HashSet<String> = pool_models.iter().cloned().collect();
-        crate::proxy::common::model_gate::pick_background_model(&pool).unwrap_or_default()
+        "gemini-3.8-flash".to_string()
     }
 }
 
 /// Start smart weekly scheduler
 pub fn start_scheduler(
     app_handle: Option<tauri::AppHandle>,
-    proxy_state: crate::commands::proxy::ProxyServiceState,
 ) {
     tauri::async_runtime::spawn(async move {
         logger::log_info(
@@ -275,7 +273,6 @@ pub fn start_scheduler(
                 ));
 
                 let handle_for_warmup = app_handle.clone();
-                let state_for_warmup = proxy_state.clone();
 
                 tokio::spawn(async move {
                     for (acc_id, email, model, token, pid, history_key) in tasks_to_run {
@@ -309,7 +306,6 @@ pub fn start_scheduler(
                     // Refresh UI
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     let _ = crate::commands::refresh_all_quotas_internal(
-                        &state_for_warmup,
                         handle_for_warmup,
                     )
                     .await;
