@@ -2,6 +2,7 @@ import i18n from '../i18n';
 import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult, ModelPriorities } from '../types/account';
 export type { ImportAccountEntry, BatchImportResult };
 import { request as invoke } from '../utils/request';
+import { normalizeModelPrioritiesPayload } from '../utils/modelPriority';
 
 export async function updateAccountPriority(
     accountId: string,
@@ -12,18 +13,17 @@ export async function updateAccountPriority(
         throw new Error(i18n.t('accounts.priority_invalid'));
     }
     const normalizedModelPriorities: Record<string, number> | undefined =
-        modelPriorities !== undefined ? {} : undefined;
-    if (modelPriorities && normalizedModelPriorities) {
-        for (const key of ['gemini', 'claude'] as const) {
-            const val = modelPriorities[key];
-            if (val !== undefined && val !== null) {
-                if (!Number.isInteger(val) || val < 1 || val > 100) {
-                    throw new Error(i18n.t('accounts.priority_invalid'));
-                }
-                normalizedModelPriorities[key] = val;
-            }
-        }
-    }
+        modelPriorities !== undefined
+            ? normalizeModelPrioritiesPayload(
+                  modelPriorities,
+                  i18n.t('accounts.priority_invalid'),
+                  key =>
+                      i18n.t('accounts.priority_key_invalid', {
+                          defaultValue: 'Invalid model priority key: {{key}}',
+                          key,
+                      })
+              )
+            : undefined;
     await invoke('update_account_priority', {
         accountId,
         priority,

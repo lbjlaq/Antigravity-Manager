@@ -547,6 +547,41 @@ async function runTests() {
         assertEqual(state.targetAccountIds.length, 1);
     });
 
+    await test('19. Clears shadowing target-family per-model overrides during Pedal Mode and restores all per-model overrides on exit', async () => {
+        const fineGrainedAcc = {
+            ...makeAccount('acc-fine', 'Fine Grained Account', 40, soonReset, 85, farReset, false, 50),
+            model_priorities: {
+                gemini: 70,
+                'gemini-3.8-flash': 90,
+                'gemini-4-argon': 10,
+                claude: 60,
+                'claude-opus-5-5': 5,
+            },
+        } as Account;
+
+        const updates: Array<{ id: string; priority: number; modelPriorities?: Record<string, number> }> = [];
+        const mockSetPriority = async (id: string, priority: number, modelPriorities?: any) => {
+            updates.push({ id, priority, modelPriorities });
+        };
+
+        await store.activatePedalMode('gemini', ['acc-fine'], [acc1, fineGrainedAcc], mockSetPriority);
+        assertEqual(updates.length, 1);
+        assertEqual(updates[0].modelPriorities?.gemini, 1, 'Target family boosted to 1');
+        assertEqual(updates[0].modelPriorities?.['gemini-3.8-flash'], undefined, 'Target-family per-model override cleared during boost');
+        assertEqual(updates[0].modelPriorities?.['gemini-4-argon'], undefined, 'Target-family series override cleared during boost');
+        assertEqual(updates[0].modelPriorities?.claude, 60, 'Other family priority preserved');
+        assertEqual(updates[0].modelPriorities?.['claude-opus-5-5'], 5, 'Other family per-model override preserved');
+
+        updates.length = 0;
+        await store.manualExit(mockSetPriority);
+        assertEqual(updates.length, 1);
+        assertEqual(updates[0].priority, 50, 'Default priority restored');
+        assertEqual(updates[0].modelPriorities?.gemini, 70, 'Original gemini override restored');
+        assertEqual(updates[0].modelPriorities?.['gemini-3.8-flash'], 90, 'Original gemini-3.8-flash override restored');
+        assertEqual(updates[0].modelPriorities?.['gemini-4-argon'], 10, 'Original gemini-4-argon override restored');
+        assertEqual(updates[0].modelPriorities?.['claude-opus-5-5'], 5, 'Original claude-opus-5-5 override restored');
+    });
+
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);
     if (failed > 0) {
         throw new Error(`Pedal Mode tests failed: ${failed}`);
