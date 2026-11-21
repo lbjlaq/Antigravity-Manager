@@ -239,6 +239,11 @@ pub async fn internal_start_proxy_service(
         tracing::info!("🔒 [FIX #820] Fixed account mode restored: {}", account_id);
     }
 
+    // 🆕 [FIX #4004] 恢复模型账号绑定设置
+    token_manager
+        .update_model_bindings(config.model_bindings.clone())
+        .await;
+
     // 3. 加載賬號（即使当前 0 个启用账号也完成反代状态与实例初始化，
     // 避免后续在管理界面启用/刷新账号时陷入 instance=None 的分裂状态）
     let active_accounts = token_manager.load_accounts().await.unwrap_or(0);

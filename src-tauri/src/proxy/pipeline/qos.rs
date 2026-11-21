@@ -480,6 +480,7 @@ mod tests {
             model_quota_windows: std::collections::HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
         let mut acc_b = acc_a.clone();
         acc_b.account_id = "acc_b".to_string();

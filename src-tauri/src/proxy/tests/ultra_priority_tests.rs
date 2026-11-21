@@ -65,6 +65,7 @@ fn create_test_token(
         model_quota_windows: HashMap::new(),
         is_gcp_tos: false,
         raw_tier: None,
+        model_access: None,
     }
 }
 

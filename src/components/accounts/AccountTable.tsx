@@ -43,6 +43,7 @@ import {
     Check,
     Trash2,
     X,
+    Shield,
 } from 'lucide-react';
 import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -531,6 +532,24 @@ function AccountRowContent({
                             size="md"
                             onRelease={handleReleaseJail}
                         />
+
+                        {account.model_access && account.model_access.mode !== 'all' && (
+                            <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm border cursor-default ${
+                                    account.model_access.mode === 'allow'
+                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200/50'
+                                        : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border-rose-200/50'
+                                }`}
+                                title={account.model_access.patterns?.join(', ') || ''}
+                            >
+                                <Shield className="w-2.5 h-2.5" />
+                                <span>
+                                    {account.model_access.mode === 'allow'
+                                        ? t('accounts.model_access.badge_allow', '白名单')
+                                        : t('accounts.model_access.badge_deny', '黑名单')}
+                                </span>
+                            </span>
+                        )}
 
 
                         {/* 订阅类型徽章 */}

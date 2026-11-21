@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2, X } from 'lucide-react';
+import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2, X, Shield } from 'lucide-react';
 import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountFlagshipCapability, hasCustomModelPriorities } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -260,6 +260,21 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                 size="sm"
                                 onRelease={handleReleaseJail}
                             />
+                            {account.model_access && account.model_access.mode !== 'all' && (
+                                <span
+                                    className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold flex items-center gap-1 shadow-sm border ${
+                                        account.model_access.mode === 'allow'
+                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200/50'
+                                            : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200/50'
+                                    }`}
+                                    title={account.model_access.patterns?.join(', ') || ''}
+                                >
+                                    <Shield className="w-2.5 h-2.5" />
+                                    {account.model_access.mode === 'allow'
+                                        ? t('accounts.model_access.badge_allow', '白名单')
+                                        : t('accounts.model_access.badge_deny', '黑名单')}
+                                </span>
+                            )}
                             {/* 订阅类型徽章 */}
                             {(() => {
                                 const tier = getAccountTier(account);

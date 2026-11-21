@@ -341,6 +341,20 @@
         "forbidden_badge": "403",
         "forbidden_tooltip": "API returned 403 Forbidden, account has no permission for Gemini Code Assist",
         "forbidden_msg": "Forbidden, skip auto-refresh",
+        "model_access": {
+            "title": "Model Access Control",
+            "desc": "Controls which model requests this account is allowed or denied to handle. Responds to all models by default.",
+            "mode_all": "Allow All (Default)",
+            "mode_allow": "Allowlist Only",
+            "mode_deny": "Denylist Only",
+            "badge_allow": "Allowlist",
+            "badge_deny": "Denylist",
+            "empty_allow_hint": "No patterns added. This account will serve no models.",
+            "empty_deny_hint": "No patterns added. No models will be blocked.",
+            "presets": "Wildcard Presets:",
+            "pattern_placeholder": "e.g. *claude*, gemini-2.5*"
+        },
+        "model_access_updated": "Model access rule updated",
         "status": {
             "forbidden": "403 Forbidden",
             "disabled": "Account Disabled",
@@ -1698,6 +1712,25 @@
             "original_placeholder": "Original model (e.g. gemini-3.x-flash, x must be > 8)",
             "wildcard_rule_notice": "Wildcard rule (x must be > 8, e.g. 3.9, 3.10 routed to 3.x-flash-tiered)",
             "wildcard_only_gemini_3x": "Only wildcard gemini-3.x-flash (x > 8) is supported, please specify exact model ID for others"
+        },
+        "model_bindings": {
+            "title": "Global Model-Account Bindings",
+            "subtitle": "Pin or prioritize specific model patterns to designated account subsets.",
+            "add_rule": "Add Pinning Rule",
+            "empty": "No pinning rules configured. All models follow global load balancing and account access rules.",
+            "pattern_label": "Model Pattern (Wildcard)",
+            "pattern_placeholder": "e.g. *claude*, *gemini*pro*, *opus*",
+            "policy_label": "Scheduling Policy",
+            "policy_exclusive": "Exclusive Lock (Exclusive)",
+            "policy_exclusive_desc": "Strictly restricted to designated accounts. Requests fail when all designated accounts are depleted or limited, never leaking to other accounts.",
+            "policy_priority": "Priority Scheduling (Priority)",
+            "policy_priority_desc": "Prefer designated accounts first; gracefully fall back to the general account pool when designated accounts are depleted or cooling down.",
+            "accounts_label": "Target Account Set",
+            "accounts_selected": "{{count}} accounts selected",
+            "select_all": "Select All",
+            "deselect_all": "Clear Selection",
+            "enabled_label": "Status",
+            "specificity_tip": "Specificity Score: {{spec}} (More non-wildcard chars give higher priority; exclusive policy takes precedence on ties)"
         },
         "multi_protocol": {
             "title": "Model Catalog & Protocols",

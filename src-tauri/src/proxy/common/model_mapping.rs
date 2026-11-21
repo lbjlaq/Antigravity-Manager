@@ -2126,6 +2126,7 @@ mod tests {
             model_quota_windows: std::collections::HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         });
 
         let custom = tokio::sync::RwLock::new(std::collections::HashMap::new());

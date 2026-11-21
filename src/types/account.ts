@@ -7,12 +7,20 @@ export interface ModelPriorities {
     claude?: number;
 }
 
+export type ModelAccessMode = 'all' | 'allow' | 'deny';
+
+export interface ModelAccessRule {
+    mode: ModelAccessMode;
+    patterns?: string[];
+}
+
 export interface Account {
     id: string;
     email: string;
     name?: string;
     priority?: number;
     model_priorities?: ModelPriorities;
+    model_access?: ModelAccessRule;
     token: TokenData;
     device_profile?: DeviceProfile;
     device_history?: DeviceProfileVersion[];

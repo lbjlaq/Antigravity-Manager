@@ -5994,6 +5994,7 @@ mod tests {
             model_quota_windows: std::collections::HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
 
         let mut gen_cfg = json!({"maxOutputTokens": 200000});

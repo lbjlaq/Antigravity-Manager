@@ -56,7 +56,9 @@ import PromptRewriteSettings from '../components/settings/PromptRewriteSettings'
 import ImageThinkingMode from '../components/settings/ImageThinkingMode';
 import ThinkingBudget from '../components/settings/ThinkingBudget';
 import MultimodalSettings from '../components/settings/MultimodalSettings';
-import TimeoutSettings from '../components/settings/TimeoutSettings';import AgentSettings from '../components/settings/AgentSettings';
+import TimeoutSettings from '../components/settings/TimeoutSettings';
+import AgentSettings from '../components/settings/AgentSettings';
+import ModelAccountBindingManager from '../components/settings/proxy/ModelAccountBindingManager';
 import { CircuitBreakerConfig } from '../types/config';
 import { RequestDetailModal, ProxyRequestLog } from '../components/proxy/RequestDetailModal';
 
@@ -1482,6 +1484,12 @@ print(response.choices[0].message.content)`;
                             </div>
                         </div>
                     </div>
+
+                    {/* 全局模型-账号定向绑定 (Fixes #4004) */}
+                    <ModelAccountBindingManager
+                        bindings={appConfig.proxy.model_bindings}
+                        onChange={(newBindings) => updateProxyConfig({ model_bindings: newBindings })}
+                    />
 
                     <div className="flex items-center justify-between mb-3">
                         <div className="flex flex-col gap-1">

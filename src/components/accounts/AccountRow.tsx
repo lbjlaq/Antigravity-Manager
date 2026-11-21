@@ -1,4 +1,4 @@
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint, Shield } from 'lucide-react';
 import { Account, getAccountTier } from '../../types/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../../utils/format';
 import { cn } from '../../utils/cn';
@@ -143,6 +143,24 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                         )}
 
                         <QoSStatusBadge status={account.qos_status} size="md" />
+
+                        {account.model_access && account.model_access.mode !== 'all' && (
+                            <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm border cursor-default ${
+                                    account.model_access.mode === 'allow'
+                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200/50'
+                                        : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border-rose-200/50'
+                                }`}
+                                title={account.model_access.patterns?.join(', ') || ''}
+                            >
+                                <Shield className="w-2.5 h-2.5" />
+                                <span>
+                                    {account.model_access.mode === 'allow'
+                                        ? t('accounts.model_access.badge_allow', '白名单')
+                                        : t('accounts.model_access.badge_deny', '黑名单')}
+                                </span>
+                            </span>
+                        )}
 
                         {/* 订阅类型徽章 */}
                         {(() => {

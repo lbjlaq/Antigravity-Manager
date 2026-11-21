@@ -972,6 +972,7 @@ pub fn run() {
             commands::warm_up_all_accounts,
             commands::warm_up_account,
             commands::update_account_label,
+            commands::update_account_model_access,
             commands::update_account_priority,
             commands::update_account_project_id,
             commands::auto_fetch_account_project_id,

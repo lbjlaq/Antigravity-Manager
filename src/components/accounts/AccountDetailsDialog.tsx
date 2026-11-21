@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Clock, AlertCircle, Bot, Ban, ExternalLink, Copy } from 'lucide-react';
+import { X, Clock, AlertCircle, Bot, Ban, ExternalLink, Copy, Shield, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { Account, getAccountTier, getTierLabel, ModelPriorities } from '../../types/account';
+import { Account, getAccountTier, getTierLabel, ModelPriorities, ModelAccessMode, ModelAccessRule } from '../../types/account';
 import { formatDate, formatTimeRemaining } from '../../utils/format';
 import { useTranslation } from 'react-i18next';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { isSupportedDisplayModel } from '../../utils/quotaDisplay';
 import { showToast } from '../common/ToastContainer';
 import { copyToClipboard } from '../../utils/clipboard';
+import { updateAccountModelAccess } from '../../services/accountService';
 
 interface AccountDetailsDialogProps {
     account: Account | null;
     onClose: () => void;
     onUpdatePriority: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>;
+    onUpdateModelAccess?: (accountId: string, modelAccess: ModelAccessRule | null) => Promise<void>;
     onUpdateProjectId?: (accountId: string, projectId: string) => Promise<void>;
     onAutoFetchProjectId?: (accountId: string) => Promise<string>;
 }
@@ -21,6 +23,7 @@ export default function AccountDetailsDialog({
     account,
     onClose,
     onUpdatePriority,
+    onUpdateModelAccess,
     onUpdateProjectId,
     onAutoFetchProjectId,
 }: AccountDetailsDialogProps) {
@@ -33,6 +36,10 @@ export default function AccountDetailsDialog({
     const [projectIdInput, setProjectIdInput] = useState('');
     const [savingProjectId, setSavingProjectId] = useState(false);
     const [fetchingProjectId, setFetchingProjectId] = useState(false);
+    const [accessMode, setAccessMode] = useState<ModelAccessMode>('all');
+    const [accessPatterns, setAccessPatterns] = useState<string[]>([]);
+    const [newPatternInput, setNewPatternInput] = useState('');
+    const [savingModelAccess, setSavingModelAccess] = useState(false);
 
     const displayGroups = useMemo(() => {
         return account?.quota?.quota_groups || [];
@@ -56,12 +63,16 @@ export default function AccountDetailsDialog({
                 : ''
         );
         setProjectIdInput(account?.token?.project_id || '');
+        setAccessMode(account?.model_access?.mode || 'all');
+        setAccessPatterns(account?.model_access?.patterns ? [...account.model_access.patterns] : []);
+        setNewPatternInput('');
     }, [
         account?.id,
         account?.priority,
         account?.model_priorities?.gemini,
         account?.model_priorities?.claude,
         account?.token?.project_id,
+        account?.model_access,
     ]);
 
     if (!account) return null;
@@ -74,6 +85,53 @@ export default function AccountDetailsDialog({
         priorityInput.trim() !== String(account.priority ?? 50) ||
         geminiPriorityInput.trim() !== currentGeminiStr ||
         claudePriorityInput.trim() !== currentClaudeStr;
+
+    const isModelAccessDirty = (() => {
+        const origMode = account.model_access?.mode || 'all';
+        const origPatterns = account.model_access?.patterns || [];
+        if (accessMode !== origMode) return true;
+        if (accessMode === 'all') return false;
+        if (accessPatterns.length !== origPatterns.length) return true;
+        return accessPatterns.some((p, i) => p !== origPatterns[i]);
+    })();
+
+    const addPattern = (patternToAdd?: string) => {
+        const p = (patternToAdd ?? newPatternInput).trim().toLowerCase();
+        if (!p) return;
+        if (!accessPatterns.includes(p)) {
+            setAccessPatterns(prev => [...prev, p]);
+        }
+        if (!patternToAdd) {
+            setNewPatternInput('');
+        }
+    };
+
+    const removePattern = (indexToRemove: number) => {
+        setAccessPatterns(prev => prev.filter((_, i) => i !== indexToRemove));
+    };
+
+    const saveModelAccess = async () => {
+        setSavingModelAccess(true);
+        try {
+            const rule: ModelAccessRule | null =
+                accessMode === 'all'
+                    ? null
+                    : {
+                          mode: accessMode,
+                          patterns: accessPatterns.map(p => p.trim()).filter(Boolean),
+                      };
+            if (onUpdateModelAccess) {
+                await onUpdateModelAccess(account.id, rule);
+            } else {
+                await updateAccountModelAccess(account.id, rule);
+            }
+            showToast(t('accounts.model_access_updated', '模型准入规则已更新'), 'success');
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setSavingModelAccess(false);
+        }
+    };
 
     const savePriority = async () => {
         const priority = Number(priorityInput);
@@ -415,6 +473,182 @@ export default function AccountDetailsDialog({
                                 {savingProjectId ? t('common.saving') : t('common.save')}
                             </button>
                         </div>
+                    </div>
+
+                    {/* 模型准入控制 (Fixes #4004) */}
+                    <div className="p-4 rounded-xl border border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/40 flex flex-col gap-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                                    <Shield size={15} className="text-blue-500" />
+                                    <span>{t('accounts.model_access.title', '模型准入控制')}</span>
+                                    {accessMode !== 'all' && (
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                                            accessMode === 'allow'
+                                                ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
+                                                : 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300'
+                                        }`}>
+                                            {accessMode === 'allow'
+                                                ? t('accounts.model_access.mode_allow', '仅允许白名单')
+                                                : t('accounts.model_access.mode_deny', '拒绝黑名单')}
+                                            ({accessPatterns.length})
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500 leading-relaxed max-w-xl">
+                                    {t('accounts.model_access.desc', '控制当前账号允许或拒绝处理的模型请求。未配置时默认响应所有模型。')}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                                {isModelAccessDirty && (
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-xs text-gray-500 hover:text-gray-700 dark:text-gray-400"
+                                        disabled={savingModelAccess}
+                                        onClick={() => {
+                                            setAccessMode(account.model_access?.mode || 'all');
+                                            setAccessPatterns(account.model_access?.patterns ? [...account.model_access.patterns] : []);
+                                            setNewPatternInput('');
+                                        }}
+                                    >
+                                        {t('common.reset', '重置')}
+                                    </button>
+                                )}
+                                <button
+                                    className="btn btn-primary btn-sm px-4"
+                                    onClick={saveModelAccess}
+                                    disabled={savingModelAccess || !isModelAccessDirty}
+                                >
+                                    {savingModelAccess ? t('common.saving') : t('common.save')}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Mode toggle pills */}
+                        <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-200/60 dark:border-base-300/60">
+                            <button
+                                type="button"
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    accessMode === 'all'
+                                        ? 'bg-blue-600 text-white shadow-sm'
+                                        : 'bg-white dark:bg-base-100 text-gray-600 dark:text-gray-400 border border-gray-200/80 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200'
+                                }`}
+                                onClick={() => setAccessMode('all')}
+                            >
+                                {t('accounts.model_access.mode_all', '全部允许 (默认)')}
+                            </button>
+                            <button
+                                type="button"
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    accessMode === 'allow'
+                                        ? 'bg-emerald-600 text-white shadow-sm'
+                                        : 'bg-white dark:bg-base-100 text-gray-600 dark:text-gray-400 border border-gray-200/80 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200'
+                                }`}
+                                onClick={() => setAccessMode('allow')}
+                            >
+                                {t('accounts.model_access.mode_allow', '仅允许白名单')}
+                            </button>
+                            <button
+                                type="button"
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    accessMode === 'deny'
+                                        ? 'bg-rose-600 text-white shadow-sm'
+                                        : 'bg-white dark:bg-base-100 text-gray-600 dark:text-gray-400 border border-gray-200/80 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200'
+                                }`}
+                                onClick={() => setAccessMode('deny')}
+                            >
+                                {t('accounts.model_access.mode_deny', '拒绝黑名单')}
+                            </button>
+                        </div>
+
+                        {/* Patterns input and chips */}
+                        {accessMode !== 'all' && (
+                            <div className="flex flex-col gap-2.5 pt-2">
+                                {/* Pattern tags */}
+                                <div className="flex flex-wrap gap-1.5 items-center min-h-[32px] p-2 rounded-lg bg-white dark:bg-base-100 border border-gray-200/80 dark:border-base-300">
+                                    {accessPatterns.length === 0 ? (
+                                        <span className="text-xs text-gray-400 dark:text-gray-500 italic px-1">
+                                            {accessMode === 'allow'
+                                                ? t('accounts.model_access.empty_allow_hint', '未添加任何模式，将无法响应任何模型请求')
+                                                : t('accounts.model_access.empty_deny_hint', '未添加任何模式，将不阻止任何模型')}
+                                        </span>
+                                    ) : (
+                                        accessPatterns.map((pat, idx) => (
+                                            <span
+                                                key={idx}
+                                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-mono font-medium ${
+                                                    accessMode === 'allow'
+                                                        ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/40'
+                                                        : 'bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200/60 dark:border-rose-800/40'
+                                                }`}
+                                            >
+                                                <span>{pat}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removePattern(idx)}
+                                                    className="hover:opacity-75 focus:outline-none ml-0.5"
+                                                    title={t('common.delete', '删除')}
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </span>
+                                        ))
+                                    )}
+                                </div>
+
+                                {/* Quick Presets & Add Input */}
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-[11px] text-gray-400 dark:text-gray-500">{t('accounts.model_access.presets', '快捷通配符:')}</span>
+                                        <button
+                                            type="button"
+                                            className="btn btn-xs btn-outline border-dashed text-[11px] font-mono"
+                                            onClick={() => addPattern('*claude*')}
+                                        >
+                                            + *claude*
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn btn-xs btn-outline border-dashed text-[11px] font-mono"
+                                            onClick={() => addPattern('*gemini*pro*')}
+                                        >
+                                            + *gemini*pro*
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn btn-xs btn-outline border-dashed text-[11px] font-mono"
+                                            onClick={() => addPattern('*gemini*flash*')}
+                                        >
+                                            + *gemini*flash*
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <input
+                                            type="text"
+                                            placeholder={t('accounts.model_access.pattern_placeholder', '如 *claude*, gemini-2.5*')}
+                                            className="input input-bordered input-xs w-48 font-mono text-xs"
+                                            value={newPatternInput}
+                                            onChange={e => setNewPatternInput(e.target.value)}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    addPattern();
+                                                }
+                                            }}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="btn btn-xs btn-primary gap-1"
+                                            onClick={() => addPattern()}
+                                            disabled={!newPatternInput.trim()}
+                                        >
+                                            <Plus size={12} />
+                                            {t('common.add', '添加')}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Protected Models Section */}
