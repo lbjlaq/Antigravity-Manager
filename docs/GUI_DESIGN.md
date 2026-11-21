@@ -517,3 +517,24 @@ Antigravity Manager 桌面客户端 (`am-gui`) 是专为专业开发者打造的
 - **`NavLogo`**：品牌识别、状态心跳呼吸灯与快捷 Mini 窗口切换入口。
 - **`NavMenu`**：居中的胶囊分段导航器，支持平滑滑块（Framer Motion 滑动下划线）。
 - **`NavSettings`**：右侧常驻的语言切换、主题日光/月光扩散切换器、关于与快捷状态。
+
+---
+
+## 9. 极限性能与全平台硬件兼容规范 (Cross-Platform & Low-Spec Performance Guardrails)
+
+为了彻底根除 Webview 客户端在 **Windows (WebView2)、Linux (WebKitGTK) 以及低分辨率、低性能核显屏幕** 下的卡顿、撕裂、掉帧与高内存占用问题，前端工程全面确立以下**铁律规范**：
+
+### 9.1 动画与渲染三严禁 (Animation Anti-Patterns)
+1. **严禁使用 JS 驱动的高频逐帧动画引擎 (如 Framer Motion)**：
+   - 彻底避免每一帧在 JS 主线程与 Webview 渲染层之间传递状态，杜绝高负载业务下抢占主线程引发的界面掉帧。
+2. **严禁使用全屏像素级位图遮罩 (如 startViewTransition clip-path 截图动画)**：
+   - 全屏位图计算在无独立显卡的核显、Retina 视网膜屏或 Linux 软件光栅化环境下会导致 CPU 瞬间拉满与卡顿，甚至诱发 Linux WebKitGTK 崩溃。
+3. **严禁在高频容器上使用导致重排 (Reflow) 的 CSS 属性动画**：
+   - 动画仅允许针对 `transform: translate3d(...)` 和 `opacity` 进行 GPU 独立合成层加速，禁止针对 `width`、`height`、`margin`、`filter: blur(...)` 进行高频插值动画。
+
+### 9.2 跨平台低开销渲染基石 (The 120Hz Low-Memory Stack)
+- **动效引擎**：100% 纯 CSS GPU 硬件加速 + 经典 Apple 弹簧阻尼曲线 (`cubic-bezier(0.16, 1, 0.3, 1)`)，开启 `will-change: transform` 强制显存独立层，零运行时，真 120Hz 丝滑。
+- **组件原子**：Radix UI 无头基础组件 (Headless Primitives) + Tailwind Atomic CSS，无样式包袱，按需加载，内存占用控制在 `< 25MB`。
+- **日夜主题过渡**：采用系统级平滑透明度双向淡入 (`transition: background-color 150ms ease, border-color 150ms ease`)，在任何核显上均做到 0 延迟秒切。
+- **低分辨率屏幕自适应 (Responsive Downscaling)**：
+  - 弹性容器查询 (`@container`)，在宽屏下呈现完整图标与文字，在窄屏（< 880px）或低缩放屏幕下自适应收窄 Padding 并平滑折叠为图标模式，绝不出现内容溢出或截断。

@@ -7,7 +7,7 @@ interface NavbarProps {
   currentTab: TabId;
   onTabChange: (tab: TabId) => void;
   theme: 'light' | 'dark';
-  onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onThemeToggle: () => void;
   lang: 'zh' | 'en';
   onLanguageChange: (lang: 'zh' | 'en') => void;
 }

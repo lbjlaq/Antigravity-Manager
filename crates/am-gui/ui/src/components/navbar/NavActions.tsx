@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Sun, Moon, Languages } from 'lucide-react';
+import React from 'react';
+import { Sun, Moon, Languages, Check } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 interface NavActionsProps {
   theme: 'light' | 'dark';
-  onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onThemeToggle: () => void;
   lang: 'zh' | 'en';
   onLanguageChange: (lang: 'zh' | 'en') => void;
 }
@@ -14,71 +15,62 @@ export const NavActions: React.FC<NavActionsProps> = ({
   lang,
   onLanguageChange,
 }) => {
-  const [langOpen, setLangOpen] = useState(false);
-  const langRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (langRef.current && !langRef.current.contains(event.target as Node)) {
-        setLangOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
   return (
     <div className="flex items-center gap-2 select-none">
-      {/* 语言选择下拉菜单 (对齐主分支圆钮) */}
-      <div className="relative" ref={langRef}>
-        <button
-          onClick={() => setLangOpen(!langOpen)}
-          className="w-10 h-10 rounded-full bg-gray-100 dark:bg-[#15161b] hover:bg-gray-200 dark:hover:bg-[#26272f] flex items-center justify-center transition-colors"
-          title={lang === 'zh' ? '选择语言' : 'Select Language'}
-        >
-          <Languages className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-        </button>
+      {/* 语言选择下拉菜单 (基于 Radix UI，支持全平台键盘无障碍与零掉帧平滑弹出) */}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="w-10 h-10 rounded-full bg-gray-100 dark:bg-[#15161b] hover:bg-gray-200 dark:hover:bg-[#26272f] flex items-center justify-center transition-colors duration-150 border border-transparent dark:border-[#26272f]/40 outline-none"
+            title={lang === 'zh' ? '选择语言' : 'Select Language'}
+          >
+            <Languages className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+          </button>
+        </DropdownMenu.Trigger>
 
-        {langOpen && (
-          <div className="absolute right-0 mt-2 w-32 py-1 bg-white dark:bg-[#15161b] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-lg z-50">
-            <button
-              onClick={() => {
-                onLanguageChange('zh');
-                setLangOpen(false);
-              }}
-              className={`w-full px-4 py-2 text-left text-xs font-medium hover:bg-gray-100 dark:hover:bg-zinc-800 flex items-center justify-between ${
-                lang === 'zh' ? 'text-blue-600 font-semibold' : 'text-gray-700 dark:text-gray-300'
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="end"
+            sideOffset={8}
+            className="w-36 py-1 bg-white dark:bg-[#15161b] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-lg z-50 animate-in fade-in-0 zoom-in-95 duration-100 ease-out"
+          >
+            <DropdownMenu.Item
+              onClick={() => onLanguageChange('zh')}
+              className={`px-3 py-2 text-xs font-medium rounded-lg mx-1 flex items-center justify-between cursor-pointer outline-none transition-colors ${
+                lang === 'zh'
+                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
               }`}
             >
               <span>简体中文</span>
-              {lang === 'zh' && <span>✓</span>}
-            </button>
-            <button
-              onClick={() => {
-                onLanguageChange('en');
-                setLangOpen(false);
-              }}
-              className={`w-full px-4 py-2 text-left text-xs font-medium hover:bg-gray-100 dark:hover:bg-zinc-800 flex items-center justify-between ${
-                lang === 'en' ? 'text-blue-600 font-semibold' : 'text-gray-700 dark:text-gray-300'
+              {lang === 'zh' && <Check className="w-3.5 h-3.5" />}
+            </DropdownMenu.Item>
+
+            <DropdownMenu.Item
+              onClick={() => onLanguageChange('en')}
+              className={`px-3 py-2 text-xs font-medium rounded-lg mx-1 flex items-center justify-between cursor-pointer outline-none transition-colors ${
+                lang === 'en'
+                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
               }`}
             >
               <span>English</span>
-              {lang === 'en' && <span>✓</span>}
-            </button>
-          </div>
-        )}
-      </div>
+              {lang === 'en' && <Check className="w-3.5 h-3.5" />}
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
 
-      {/* 主题切换圆钮 (对齐主分支 w-10 h-10 rounded-full) */}
+      {/* 主题切换圆钮 (纯 CSS 硬件加速秒切，零 JS 遮罩延迟) */}
       <button
         onClick={onThemeToggle}
-        className="w-10 h-10 rounded-full bg-gray-100 dark:bg-[#15161b] hover:bg-gray-200 dark:hover:bg-[#26272f] flex items-center justify-center transition-colors"
+        className="w-10 h-10 rounded-full bg-gray-100 dark:bg-[#15161b] hover:bg-gray-200 dark:hover:bg-[#26272f] flex items-center justify-center transition-colors duration-150 border border-transparent dark:border-[#26272f]/40 outline-none"
         title={theme === 'light' ? '切换到暗色主题' : 'Switch to Light Theme'}
       >
         {theme === 'light' ? (
-          <Moon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+          <Moon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
         ) : (
-          <Sun className="w-5 h-5 text-amber-400" />
+          <Sun className="w-4 h-4 text-amber-400" />
         )}
       </button>
     </div>

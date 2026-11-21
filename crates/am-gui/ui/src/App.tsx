@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
 
@@ -16,45 +16,13 @@ export function App() {
     }
   }, [theme]);
 
-  const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
-
-    if ('startViewTransition' in document) {
-      const x = event.clientX;
-      const y = event.clientY;
-      const endRadius = Math.hypot(
-        Math.max(x, window.innerWidth - x),
-        Math.max(y, window.innerHeight - y)
-      );
-
-      // @ts-ignore
-      const transition = document.startViewTransition(() => {
-        setTheme(newTheme);
-      });
-
-      transition.ready.then(() => {
-        const isDarkMode = newTheme === 'dark';
-        const clipPath = isDarkMode
-          ? [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`]
-          : [`circle(${endRadius}px at ${x}px ${y}px)`, `circle(0px at ${x}px ${y}px)`];
-
-        document.documentElement.animate(
-          { clipPath },
-          {
-            duration: 450,
-            easing: 'ease-in-out',
-            fill: 'forwards',
-            pseudoElement: isDarkMode ? '::view-transition-old(root)' : '::view-transition-new(root)',
-          }
-        );
-      });
-    } else {
-      setTheme(newTheme);
-    }
+  // 纯 CSS 硬件加速双向淡入主题切换 (全平台零卡顿，彻底取代全屏截图)
+  const handleThemeToggle = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
   return (
-    <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100 transition-colors duration-200">
+    <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100 transition-colors duration-150 ease-out">
       {/* 顶部主分支风格 Navbar (带 pt-9 与 macOS 交通灯留白) */}
       <Navbar
         currentTab={currentTab}
@@ -67,7 +35,7 @@ export function App() {
 
       {/* 菜单栏下方内容画布 (预留空白) */}
       <main className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
-        <div className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity">
+        <div className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity duration-150">
           <p className="text-xs font-mono uppercase tracking-widest text-slate-400 dark:text-zinc-500">
             {lang === 'zh' ? '内容区域就绪 · 当前模块' : 'CANVAS READY · ACTIVE MODULE'}
           </p>
