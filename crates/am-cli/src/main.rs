@@ -149,6 +149,49 @@ enum Commands {
 
     /// 💬 Inspect active conversation context window, token breakdown & health
     Context,
+
+    /// ⚡ Realtime live telemetry & TPS monitor for active host application
+    Watch {
+        /// Polling interval in seconds (default: 2)
+        #[arg(short, long, default_value = "2")]
+        interval: u64,
+    },
+
+    /// ⚙️ Manage background daemon, auto-switch, and quota polling configuration
+    Config {
+        /// Show current configuration
+        #[arg(short, long)]
+        show: bool,
+
+        /// Toggle auto-switch on quota exhaustion: on / off
+        #[arg(long)]
+        auto_switch: Option<String>,
+
+        /// Toggle periodic background quota polling: on / off
+        #[arg(long)]
+        quota_polling: Option<String>,
+
+        /// Polling interval in minutes (5 to 1440)
+        #[arg(long)]
+        interval_minutes: Option<u64>,
+    },
+
+    /// 📦 Export all accounts into a portable backup JSON file
+    Export {
+        /// Output file path (default: ./antigravity_accounts_backup.json)
+        #[arg(short, long, default_value = "antigravity_accounts_backup.json")]
+        output: String,
+    },
+
+    /// 📥 Import accounts from a backup JSON file
+    Import {
+        /// Backup file path to import
+        input: String,
+
+        /// Overwrite existing accounts with same ID
+        #[arg(short, long)]
+        overwrite: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -206,6 +249,23 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Context) => {
             handle_context(&manager)?;
+        }
+        Some(Commands::Watch { interval }) => {
+            handle_watch(interval).await?;
+        }
+        Some(Commands::Config {
+            show,
+            auto_switch,
+            quota_polling,
+            interval_minutes,
+        }) => {
+            handle_config(show, auto_switch.as_deref(), quota_polling.as_deref(), interval_minutes)?;
+        }
+        Some(Commands::Export { output }) => {
+            handle_export(&manager, &output)?;
+        }
+        Some(Commands::Import { input, overwrite }) => {
+            handle_import(&manager, &input, overwrite)?;
         }
         Some(Commands::Switch {
             account,
@@ -1041,4 +1101,110 @@ fn format_number(num: u64) -> String {
         count += 1;
     }
     result.chars().rev().collect()
+}
+
+async fn handle_watch(interval_secs: u64) -> Result<()> {
+    println!("{}", "👀 Starting Live Antigravity Telemetry Watcher... (Ctrl+C to stop)".cyan().bold());
+    let monitor = am_core::RealtimeMonitor::new()?;
+    let path = match am_core::RealtimeMonitor::locate_latest_transcript() {
+        Some(p) => p,
+        None => {
+            println!("{}", "No active Antigravity session transcript found.".yellow());
+            return Ok(());
+        }
+    };
+
+    println!("Targeting session log: {}\n", path.display().to_string().dimmed());
+    println!("{:<10} {:<15} {:<24} {:<10} {:<10} {:<12} {:<10}", 
+        "TIME".bold(), "APP / HOST".bold(), "MODEL".bold(), "OUT TOK".bold(), "LATENCY".bold(), "SPEED (TPS)".bold(), "ACCOUNT".bold());
+    println!("{}", "─".repeat(95).dimmed());
+
+    let mut last_step = 0u64;
+
+    loop {
+        if let Ok(Some(snap)) = monitor.extract_latest_snapshot(&path) {
+            if snap.step_index != last_step {
+                last_step = snap.step_index;
+                let account = snap.account_email.unwrap_or_else(|| "current".to_string());
+                let tps_color = if snap.tps > 150.0 {
+                    format!("{:.1} tok/s", snap.tps).green().bold()
+                } else if snap.tps > 80.0 {
+                    format!("{:.1} tok/s", snap.tps).cyan()
+                } else {
+                    format!("{:.1} tok/s", snap.tps).yellow()
+                };
+
+                println!("{:<10} {:<15} {:<24} {:<10} {:<10} {:<12} {:<10}",
+                    snap.timestamp,
+                    format!("{:?}", snap.host),
+                    snap.model.dimmed(),
+                    format_tokens(snap.output_tokens),
+                    format!("{:.1}s", snap.first_token_latency_seconds),
+                    tps_color,
+                    account.cyan()
+                );
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval_secs.max(1))).await;
+    }
+}
+
+fn handle_config(
+    show: bool,
+    auto_switch: Option<&str>,
+    quota_polling: Option<&str>,
+    interval_minutes: Option<u64>,
+) -> Result<()> {
+    let mut cfg = am_core::AppConfig::load();
+    let mut modified = false;
+
+    if let Some(sw) = auto_switch {
+        let val = sw.eq_ignore_ascii_case("on") || sw.eq_ignore_ascii_case("true") || sw == "1";
+        cfg.auto_switch.enabled = val;
+        modified = true;
+        println!("⚙️ Auto-Switch on quota exhaustion: {}", if val { "ENABLED".green().bold() } else { "DISABLED".yellow() });
+    }
+
+    if let Some(qp) = quota_polling {
+        let val = qp.eq_ignore_ascii_case("on") || qp.eq_ignore_ascii_case("true") || qp == "1";
+        cfg.quota_polling.enabled = val;
+        modified = true;
+        println!("⚙️ Background Quota Polling: {}", if val { "ENABLED".green().bold() } else { "DISABLED".yellow() });
+    }
+
+    if let Some(inv) = interval_minutes {
+        let val = inv.max(5);
+        cfg.quota_polling.interval_minutes = val;
+        modified = true;
+        println!("⚙️ Polling Interval: {} minutes", val.to_string().cyan());
+    }
+
+    if modified {
+        cfg.save()?;
+        println!("{}", "✅ Configuration saved successfully!".green());
+    } else if show || (auto_switch.is_none() && quota_polling.is_none() && interval_minutes.is_none()) {
+        println!("{}", "⚙️ Current Antigravity Manager Configuration:".cyan().bold());
+        println!("{}", serde_json::to_string_pretty(&cfg)?);
+    }
+
+    Ok(())
+}
+
+fn handle_export(_manager: &AntigravityManager, output: &str) -> Result<()> {
+    let storage = am_core::storage::StorageManager::new()?;
+    let path = std::path::Path::new(output);
+    let count = am_core::storage::backup::BackupManager::export_to_file(&storage, path)?;
+    println!("{}", format!("✅ Exported {} accounts to '{}'", count, output).green().bold());
+    Ok(())
+}
+
+fn handle_import(_manager: &AntigravityManager, input: &str, overwrite: bool) -> Result<()> {
+    let storage = am_core::storage::StorageManager::new()?;
+    let path = std::path::Path::new(input);
+    let report = am_core::storage::backup::BackupManager::import_from_file(&storage, path, overwrite)?;
+    println!("{}", "📦 Import complete:".cyan().bold());
+    println!("  • Imported new: {}", report.imported.to_string().green());
+    println!("  • Overwritten:  {}", report.overwritten.to_string().yellow());
+    println!("  • Skipped:      {}", report.skipped.to_string().dimmed());
+    Ok(())
 }

@@ -1,6 +1,8 @@
 pub mod auth;
+pub mod config;
 pub mod device;
 pub mod quota;
+pub mod service;
 pub mod stats;
 pub mod storage;
 pub mod strategy;
@@ -9,7 +11,9 @@ pub mod types;
 
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
+pub use config::*;
 pub use quota::QuotaFetchResult;
+pub use service::*;
 pub use stats::*;
 pub use strategy::*;
 pub use types::*;

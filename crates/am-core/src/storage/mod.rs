@@ -1,3 +1,5 @@
+pub mod backup;
+
 use crate::types::{Account, AccountSummary};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
