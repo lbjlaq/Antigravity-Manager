@@ -248,12 +248,16 @@ export const AppleBentoView: React.FC<AppleBentoViewProps> = ({
         return sorted.slice(0, 5);
     }, [accountData]);
 
-    // 计算输入输出比例 (Apple 环形/条形对比)
+    // 计算输入输出比例 (Apple 环形/条形对比，做历史数据兼容)
     const inOutRatio = useMemo(() => {
         if (!summary || summary.total_tokens === 0) return { inputPct: 50, outputPct: 50 };
-        const total = summary.total_input_tokens + summary.total_output_tokens;
+        const cached = summary.total_cached_tokens || 0;
+        const effectiveInput = (cached > 0 && summary.total_input_tokens < cached)
+            ? summary.total_input_tokens + cached
+            : summary.total_input_tokens;
+        const total = effectiveInput + summary.total_output_tokens;
         if (total === 0) return { inputPct: 50, outputPct: 50 };
-        const inputPct = Math.round((summary.total_input_tokens / total) * 100);
+        const inputPct = Math.round((effectiveInput / total) * 100);
         return { inputPct, outputPct: 100 - inputPct };
     }, [summary]);
 

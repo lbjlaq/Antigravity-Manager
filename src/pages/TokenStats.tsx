@@ -346,9 +346,12 @@ const TokenStats: React.FC = () => {
 
     const calculateModelCost = useCallback((m: ModelTokenStats): number => {
         const p = getPricing(m.model);
-        const uncachedInput = Math.max(0, m.total_input_tokens - (m.total_cached_tokens || 0));
+        const cached = m.total_cached_tokens || 0;
+        const uncachedInput = (cached > 0 && m.total_input_tokens < cached)
+            ? m.total_input_tokens
+            : Math.max(0, m.total_input_tokens - cached);
         const inputCost = (uncachedInput * p.input) / 1_000_000;
-        const cacheCost = ((m.total_cached_tokens || 0) * p.cached) / 1_000_000;
+        const cacheCost = (cached * p.cached) / 1_000_000;
         const outputCost = (m.total_output_tokens * p.output) / 1_000_000;
         return inputCost + cacheCost + outputCost;
     }, [getPricing]);
@@ -409,12 +412,18 @@ const TokenStats: React.FC = () => {
         }));
     }, [accountData]);
 
-    // 缓存命中率与节约成本估算
+    // 缓存命中率与节约成本估算（防御性归一化：若 cached > 0 且 raw input < cached，还原真实输入上下文）
     const cacheMetrics = useMemo(() => {
         if (!summary || summary.total_tokens === 0) return { hitRate: 0, savings: 0 };
-        const totalInput = summary.total_input_tokens;
-        const cached = summary.total_cached_tokens;
-        const hitRate = totalInput > 0 ? (cached / totalInput) * 100 : 0;
+        const cached = summary.total_cached_tokens || 0;
+        let totalInput = summary.total_input_tokens || 0;
+        if (cached > 0 && totalInput < cached) {
+            totalInput = totalInput + cached;
+        } else {
+            totalInput = Math.max(totalInput, cached);
+        }
+        const rawRate = totalInput > 0 ? (cached / totalInput) * 100 : 0;
+        const hitRate = Math.min(100, Math.max(0, rawRate));
         // 估算节约：假设平均每 1M 缓存相比直接输入节省约 $1.50
         const savings = (cached * 1.5) / 1_000_000;
         return { hitRate, savings };
@@ -528,13 +537,20 @@ const TokenStats: React.FC = () => {
             setModelData(models_stats);
             setSummary(summaryData);
 
-            // 转换经典看板堆叠柱状图数据
+            // 转换经典看板堆叠柱状图数据（防御性归一化 uncached 与 total_input）
             setClassicChartData(
-                classicData.map(point => ({
-                    ...point,
-                    total_cached_tokens: point.total_cached_tokens || 0,
-                    uncached_input_tokens: Math.max((point.total_input_tokens || 0) - (point.total_cached_tokens || 0), 0),
-                }))
+                classicData.map(point => {
+                    const cached = point.total_cached_tokens || 0;
+                    const rawInput = point.total_input_tokens || 0;
+                    const totalInput = (cached > 0 && rawInput < cached) ? rawInput + cached : rawInput;
+                    const uncached = (cached > 0 && rawInput < cached) ? rawInput : Math.max(0, rawInput - cached);
+                    return {
+                        ...point,
+                        total_input_tokens: totalInput,
+                        total_cached_tokens: cached,
+                        uncached_input_tokens: uncached,
+                    };
+                })
             );
 
             // 转换 91 天热力图点
