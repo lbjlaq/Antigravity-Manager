@@ -3,6 +3,13 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.20 (2026-11-21)**:
+        -   **[Token Cache Hit Rate Overflow Defense & Financial Inversion Auto-Heal] (PR #4015, Thanks to @cubelikeplayDaniel)**:
+            -   **Cross-Protocol Prompt Cache Accounting Normalization**: Resolved an issue under the Anthropic Claude protocol where uncached incremental prompt tokens and cached tokens are reported separately (`input_tokens` vs `cache_read_input_tokens`). When computing hit rates using raw incremental tokens as total input, the rate exceeded 100% (e.g. 108.8%). Implemented non-destructive dynamic healing across `TokenStats`, `AppleBentoView`, and `CyberCockpitView` to restore effective full prompt context (`total_input + cached`), strictly clamping hit rate to `[0, 100%]`. (PR #4015, Thanks to @cubelikeplayDaniel)
+            -   **Eliminate Cost Zeroing & Savings Inversion**: Fixed `Math.max(0, total_input - cached)` in cost computation erroneously clamping to 0 when incremental input was less than cached tokens, which severely deflated total expenditure and produced inverted savings exceeding total costs. Added canonical saturating additions on the backend `token_stats.rs` insertion path to prevent future database pollution. (PR #4015, Thanks to @cubelikeplayDaniel)
+        -   **[Gemini Inbound Dynamic Thinking Budget Alignment] (Fixes #4012, PR #4014, Thanks to @vecyang1)**:
+            -   **Restore Dynamic Thinking for `thinkingBudget: -1`**: Fixed an issue where client requests passing `thinkingBudget: -1` (Gemini SDK standard for adaptive/dynamic thinking) via the Gemini protocol were erroneously mapped to `0` in `wrap_request_v2`, causing `InboundThinkingPipeline` to disable thinking and strip thought chains. Accurately identifies `-1` as enabled dynamic thinking while strictly respecting explicit `thinkingBudget: 0` and `includeThoughts: false` opt-outs. (Fixes #4012, PR #4014, Thanks to @vecyang1)
+
     *   **v5.0.4-beta.19 (2026-11-20)**:
         -   **[Zero-Tampering Finish & Usage Preservation for Thought-Only Streams] (Fixes #4008)**:
             -   **Eliminate Synthetic "task ready" Injection on Auto-Heal Collapse**: Resolved an issue where the streaming gate injected a fallback `"task ready"` text when an upstream model produced only thinking blocks without visible content and subsequent auto-heal continuation failed, violating downstream agent expectations.
