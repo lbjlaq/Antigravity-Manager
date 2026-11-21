@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod device;
 pub mod quota;
+pub mod stats;
 pub mod storage;
 pub mod strategy;
 pub mod switcher;
@@ -9,6 +10,7 @@ pub mod types;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 pub use quota::QuotaFetchResult;
+pub use stats::{HostUsageSummary, LocalUsageStats};
 pub use strategy::*;
 pub use types::*;
 
@@ -375,6 +377,11 @@ impl AntigravityManager {
     /// 获取各宿主激活状态
     pub fn get_active_hosts(&self) -> ActiveHostStatus {
         switcher::SwitchEngine::detect_active_hosts()
+    }
+
+    /// 获取本地纯数据库统计大盘 (零代理、零拦截，只读模式)
+    pub fn get_local_usage_stats(&self) -> Result<LocalUsageStats> {
+        stats::StatsEngine::collect_local_stats()
     }
 
     /// 通过已有 refresh_token 手工添加账号

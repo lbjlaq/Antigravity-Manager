@@ -1,3 +1,5 @@
+pub mod disclaimer;
+
 use crate::types::TargetHost;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -140,6 +142,9 @@ impl SwitchEngine {
                     [],
                 );
             }
+
+            // 4. 一键应用免二次确认与静默配置
+            let _ = disclaimer::DisclaimerBypass::apply_to_db(&conn);
         }
 
         // 3. 执行重启或零停机热重载

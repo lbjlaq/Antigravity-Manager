@@ -135,6 +135,13 @@ enum Commands {
 
     /// 🔍 Inspect active Hub client fingerprint and local/remote alignment
     Fingerprint,
+
+    /// 📊 View local token usage & activity statistics across 4 hosts (Zero-Proxy Local DB)
+    Stats {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -186,6 +193,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Fingerprint) => {
             handle_fingerprint().await?;
+        }
+        Some(Commands::Stats { json }) => {
+            handle_stats(&manager, json)?;
         }
         Some(Commands::Switch {
             account,
@@ -781,4 +791,68 @@ async fn handle_fingerprint() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn handle_stats(manager: &AntigravityManager, json: bool) -> Result<()> {
+    let stats = manager.get_local_usage_stats()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&stats)?);
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        "📊 Local Token Usage & Host Activity (Zero-Proxy Local SQLite)"
+            .cyan()
+            .bold()
+    );
+
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+    table.set_header(vec![
+        Cell::new("Host Target").fg(Color::Cyan),
+        Cell::new("Conversations").fg(Color::Yellow),
+        Cell::new("Total Steps").fg(Color::Magenta),
+        Cell::new("Est. Tokens").fg(Color::Green),
+        Cell::new("Latest Activity").fg(Color::Blue),
+    ]);
+
+    for host in &stats.hosts {
+        let est_tokens_str = format_number(host.estimated_tokens);
+        let latest = host.latest_activity.as_deref().unwrap_or("-");
+
+        table.add_row(Row::from(vec![
+            Cell::new(&host.host_name),
+            Cell::new(host.conversation_count.to_string()),
+            Cell::new(format_number(host.total_steps)),
+            Cell::new(est_tokens_str),
+            Cell::new(latest),
+        ]));
+    }
+
+    table.add_row(Row::from(vec![
+        Cell::new("⚡ Total Aggregated").fg(Color::Cyan),
+        Cell::new(stats.total_conversations.to_string()).fg(Color::Yellow),
+        Cell::new(format_number(stats.total_steps)).fg(Color::Magenta),
+        Cell::new(format_number(stats.total_estimated_tokens)).fg(Color::Green),
+        Cell::new("All 4 Targets").fg(Color::White),
+    ]));
+
+    println!("{table}");
+    Ok(())
+}
+
+fn format_number(num: u64) -> String {
+    let s = num.to_string();
+    let mut result = String::new();
+    let mut count = 0;
+    for c in s.chars().rev() {
+        if count > 0 && count % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+        count += 1;
+    }
+    result.chars().rev().collect()
 }
