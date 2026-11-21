@@ -1,74 +1,22 @@
-import { useState, useEffect } from 'react';
-import { flushSync } from 'react-dom';
+import { useState } from 'react';
+import { useThemeAnimation, ThemeAnimationType } from 'theme-switch-animation/react';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
 
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-  }, [theme]);
+  // 直接使用官方作者 baiwumm 原汁原味的 CIRCLE_BLUR 动画引擎
+  // 持续时间设为标准 750ms，缓动 ease-in-out，具有真正的边缘高斯模糊羽化效果
+  const { ref: themeButtonRef, toggleTheme, isDark } = useThemeAnimation<HTMLButtonElement>({
+    animationType: ThemeAnimationType.CIRCLE_BLUR,
+    duration: 750,
+    easing: 'ease-in-out',
+    blurAmount: 2,
+  });
 
-  // 跨平台（Win / Mac / Linux / 核显）极致丝滑 120Hz 硬件加速几何扩散
-  const handleThemeToggle = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
-
-    // 1. 无 View Transition 支持环境或低配环境，直接秒切
-    if (!document.startViewTransition) {
-      setTheme(newTheme);
-      return;
-    }
-
-    // 2. 获取触发按钮的几何中心点
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-
-    // 3. 计算覆盖视口最远角落的精确几何半径（无冗余放大，杜绝大屏卡顿）
-    const endRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    );
-
-    // 4. 强制 React 18 同步提交 DOM 变更
-    const transition = document.startViewTransition(() => {
-      flushSync(() => {
-        setTheme(newTheme);
-        const root = document.documentElement;
-        if (newTheme === 'dark') {
-          root.classList.add('dark');
-        } else {
-          root.classList.remove('dark');
-        }
-      });
-    });
-
-    // 5. 等待伪元素就绪
-    await transition.ready;
-
-    // 6. 驱动 GPU 片元着色器实时裁切（0 内存带宽开销，真 120Hz）
-    document.documentElement.animate(
-      {
-        clipPath: [
-          `circle(0px at ${x}px ${y}px)`,
-          `circle(${endRadius}px at ${x}px ${y}px)`,
-        ],
-      },
-      {
-        duration: 480,
-        easing: 'cubic-bezier(0.16, 1, 0.3, 1)', // Apple 标准 Spring 阻尼，轻盈且丝滑
-        pseudoElement: '::view-transition-new(root)',
-      }
-    );
-  };
+  const theme = isDark ? 'dark' : 'light';
 
   return (
     <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100">
@@ -77,7 +25,8 @@ export function App() {
         currentTab={currentTab}
         onTabChange={setCurrentTab}
         theme={theme}
-        onThemeToggle={handleThemeToggle}
+        onThemeToggle={toggleTheme}
+        themeButtonRef={themeButtonRef}
         lang={lang}
         onLanguageChange={setLang}
       />

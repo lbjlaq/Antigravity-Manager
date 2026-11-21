@@ -4,7 +4,9 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 interface NavActionsProps {
   theme: 'light' | 'dark';
-  onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onThemeToggle: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  themeButtonRef?: any;
   lang: 'zh' | 'en';
   onLanguageChange: (lang: 'zh' | 'en') => void;
 }
@@ -12,6 +14,7 @@ interface NavActionsProps {
 export const NavActions: React.FC<NavActionsProps> = ({
   theme,
   onThemeToggle,
+  themeButtonRef,
   lang,
   onLanguageChange,
 }) => {
@@ -61,8 +64,9 @@ export const NavActions: React.FC<NavActionsProps> = ({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 
-      {/* 主题切换圆钮 (波纹扩散圆心定位) */}
+      {/* 主题切换圆钮 (挂载官方 theme-switch-animation 触发引用) */}
       <button
+        ref={themeButtonRef}
         onClick={onThemeToggle}
         className="w-10 h-10 rounded-full bg-gray-100 dark:bg-[#15161b] hover:bg-gray-200 dark:hover:bg-[#26272f] flex items-center justify-center transition-colors duration-150 border border-transparent dark:border-[#26272f]/40 outline-none"
         title={theme === 'light' ? '切换到暗色主题' : 'Switch to Light Theme'}
