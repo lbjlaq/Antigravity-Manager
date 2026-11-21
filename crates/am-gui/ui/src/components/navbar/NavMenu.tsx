@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { LayoutDashboard, Users, BarChart3, Settings } from 'lucide-react';
 
 export type TabId = 'dashboard' | 'accounts' | 'stats' | 'settings';
@@ -17,8 +17,42 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
     { id: 'settings' as TabId, label: lang === 'zh' ? '系统设置' : 'Settings', icon: Settings },
   ];
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [indicatorStyle, setIndicatorStyle] = useState<{ left: number; width: number }>({
+    left: 0,
+    width: 0,
+  });
+
+  const activeIndex = tabs.findIndex((t) => t.id === currentTab);
+
+  // 毫秒级计算当前激活项的几何位置，驱动滑动滑块平移
+  useEffect(() => {
+    if (containerRef.current) {
+      const activeElement = containerRef.current.children[activeIndex + 1] as HTMLElement;
+      if (activeElement) {
+        setIndicatorStyle({
+          left: activeElement.offsetLeft,
+          width: activeElement.offsetWidth,
+        });
+      }
+    }
+  }, [activeIndex, lang]);
+
   return (
-    <nav className="flex items-center gap-1 bg-gray-100 dark:bg-[#15161b] rounded-full p-1 select-none border border-transparent dark:border-[#26272f]/40">
+    <nav
+      ref={containerRef}
+      className="relative flex items-center bg-gray-100 dark:bg-[#15161b] rounded-full p-1 select-none border border-transparent dark:border-[#26272f]/50"
+    >
+      {/* 纯 CSS 硬件加速智能滑动药丸底盘 (0延迟，真120Hz平移动效) */}
+      <div
+        className="absolute top-1 bottom-1 bg-gray-900 dark:bg-white rounded-full shadow-sm transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        style={{
+          transform: `translate3d(${indicatorStyle.left}px, 0, 0)`,
+          width: `${indicatorStyle.width}px`,
+          willChange: 'transform, width',
+        }}
+      />
+
       {tabs.map((tab) => {
         const isActive = currentTab === tab.id;
         const Icon = tab.icon;
@@ -28,7 +62,8 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
             key={tab.id}
             onClick={() => onTabChange(tab.id)}
             className={`
-              relative px-4 xl:px-5 py-2 
+              relative z-10
+              px-4 xl:px-5 py-2 
               rounded-full 
               text-xs xl:text-sm 
               font-medium 
@@ -36,15 +71,12 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
               inline-flex
               items-center
               gap-2
-              transition-colors duration-150 ease-out
+              transition-colors duration-200
               ${isActive
-                ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900 font-semibold'
-                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/80 dark:text-gray-400 dark:hover:text-white dark:hover:bg-[#26272f]'
+                ? 'text-white dark:text-gray-900 font-semibold'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
               }
             `}
-            style={{
-              willChange: 'background-color, color',
-            }}
           >
             <Icon className="w-4 h-4 shrink-0" />
             <span className="truncate">{tab.label}</span>

@@ -4,7 +4,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 interface NavActionsProps {
   theme: 'light' | 'dark';
-  onThemeToggle: () => void;
+  onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
   lang: 'zh' | 'en';
   onLanguageChange: (lang: 'zh' | 'en') => void;
 }
@@ -17,7 +17,7 @@ export const NavActions: React.FC<NavActionsProps> = ({
 }) => {
   return (
     <div className="flex items-center gap-2 select-none">
-      {/* 语言选择下拉菜单 (基于 Radix UI，支持全平台键盘无障碍与零掉帧平滑弹出) */}
+      {/* 语言选择下拉菜单 (Radix UI) */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button
@@ -61,16 +61,16 @@ export const NavActions: React.FC<NavActionsProps> = ({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 
-      {/* 主题切换圆钮 (纯 CSS 硬件加速秒切，零 JS 遮罩延迟) */}
+      {/* 主题切换圆钮 (波纹扩散圆心定位) */}
       <button
         onClick={onThemeToggle}
         className="w-10 h-10 rounded-full bg-gray-100 dark:bg-[#15161b] hover:bg-gray-200 dark:hover:bg-[#26272f] flex items-center justify-center transition-colors duration-150 border border-transparent dark:border-[#26272f]/40 outline-none"
         title={theme === 'light' ? '切换到暗色主题' : 'Switch to Light Theme'}
       >
         {theme === 'light' ? (
-          <Moon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+          <Moon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
         ) : (
-          <Sun className="w-4 h-4 text-amber-400" />
+          <Sun className="w-5 h-5 text-amber-400" />
         )}
       </button>
     </div>

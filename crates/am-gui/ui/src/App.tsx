@@ -16,13 +16,48 @@ export function App() {
     }
   }, [theme]);
 
-  // 纯 CSS 硬件加速双向淡入主题切换 (全平台零卡顿，彻底取代全屏截图)
-  const handleThemeToggle = () => {
-    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  // 主分支标准圆心波纹扩散动画 (完美消除闪烁，零黑屏/白屏跳跃)
+  const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+
+    if ('startViewTransition' in document) {
+      const x = event.clientX;
+      const y = event.clientY;
+      const endRadius = Math.hypot(
+        Math.max(x, window.innerWidth - x),
+        Math.max(y, window.innerHeight - y)
+      );
+
+      // @ts-ignore
+      const transition = document.startViewTransition(() => {
+        setTheme(newTheme);
+      });
+
+      transition.ready.then(() => {
+        const isDarkMode = newTheme === 'dark';
+        const clipPath = isDarkMode
+          ? [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`]
+          : [`circle(${endRadius}px at ${x}px ${y}px)`, `circle(0px at ${x}px ${y}px)`];
+
+        document.documentElement.animate(
+          {
+            clipPath: clipPath,
+          },
+          {
+            duration: 400,
+            easing: 'ease-in-out',
+            fill: 'forwards',
+            pseudoElement: isDarkMode ? '::view-transition-new(root)' : '::view-transition-old(root)',
+          }
+        );
+      });
+    } else {
+      setTheme(newTheme);
+    }
   };
 
   return (
-    <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100 transition-colors duration-150 ease-out">
+    <div className="w-full h-screen flex flex-col bg-[#FAFBFC] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100">
       {/* 顶部主分支风格 Navbar (带 pt-9 与 macOS 交通灯留白) */}
       <Navbar
         currentTab={currentTab}

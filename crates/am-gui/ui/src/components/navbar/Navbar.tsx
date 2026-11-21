@@ -7,7 +7,7 @@ interface NavbarProps {
   currentTab: TabId;
   onTabChange: (tab: TabId) => void;
   theme: 'light' | 'dark';
-  onThemeToggle: () => void;
+  onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
   lang: 'zh' | 'en';
   onLanguageChange: (lang: 'zh' | 'en') => void;
 }
@@ -23,7 +23,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <nav
       style={{ position: 'sticky', top: 0, zIndex: 50 }}
-      className="pt-9 transition-all duration-200 bg-[#FAFBFC] dark:bg-[#09090b]"
+      className="pt-9 transition-colors duration-200 bg-[#FAFBFC] dark:bg-[#09090b]"
     >
       {/* 顶部 Tauri 原生拖拽区域 (高为 top-9 到导航区域) */}
       <div

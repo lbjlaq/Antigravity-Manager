@@ -2,20 +2,64 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 禁止过度滚动和橡皮筋晃动 */
 html,
 body,
 #root {
   overscroll-behavior: none;
   height: 100%;
   width: 100%;
-  overflow: hidden;
+  overflow-y: hidden;
+  overflow-x: hidden;
   margin: 0;
   padding: 0;
+  border: none;
+}
+
+html {
+  background-color: #FAFBFC;
+}
+
+html.dark {
+  background-color: #09090b;
 }
 
 body {
+  margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #FAFBFC;
+}
+
+.dark body {
+  background-color: #09090b;
+}
+
+/* ==================== 彻底消除主题切换闪烁的关键 CSS 规则 (主分支经典) ==================== */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+.dark::view-transition-old(root) {
+  z-index: 9999;
+}
+
+.dark::view-transition-new(root) {
+  z-index: 1;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
 }
