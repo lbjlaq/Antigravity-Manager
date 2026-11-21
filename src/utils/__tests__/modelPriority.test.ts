@@ -1,4 +1,49 @@
-import assert from 'node:assert/strict';
+function isDeepEqual(a: unknown, b: unknown): boolean {
+    if (Object.is(a, b)) return true;
+    if (typeof a !== typeof b || a === null || b === null) return false;
+    if (Array.isArray(a) || Array.isArray(b)) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+        return a.every((item, idx) => isDeepEqual(item, b[idx]));
+    }
+    if (typeof a === 'object' && typeof b === 'object') {
+        const objA = a as Record<string, unknown>;
+        const objB = b as Record<string, unknown>;
+        const keysA = Object.keys(objA).filter(k => objA[k] !== undefined);
+        const keysB = Object.keys(objB).filter(k => objB[k] !== undefined);
+        if (keysA.length !== keysB.length) return false;
+        return keysA.every(k => Object.prototype.hasOwnProperty.call(objB, k) && isDeepEqual(objA[k], objB[k]));
+    }
+    return false;
+}
+
+const assert = {
+    equal<T>(actual: T, expected: T, msg?: string): void {
+        if (!Object.is(actual, expected)) {
+            throw new Error(`${msg ? `${msg}: ` : ''}expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+        }
+    },
+    deepEqual<T>(actual: T, expected: T, msg?: string): void {
+        if (!isDeepEqual(actual, expected)) {
+            throw new Error(`${msg ? `${msg}: ` : ''}expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+        }
+    },
+    throws(fn: () => unknown, pattern: RegExp): void {
+        let threw = false;
+        try {
+            fn();
+        } catch (err) {
+            threw = true;
+            const message = err instanceof Error ? err.message : String(err);
+            if (!pattern.test(message)) {
+                throw new Error(`Expected error matching ${pattern}, got: ${message}`);
+            }
+        }
+        if (!threw) {
+            throw new Error(`Expected function to throw matching ${pattern}, but it did not throw`);
+        }
+    },
+};
+
 import {
     buildModelPriorityPickerOptions,
     buildPedalBoostedModelPriorities,
@@ -230,5 +275,5 @@ test('normalizeModelPrioritiesPayload rejects invalid keys, duplicate normalized
 
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 if (failed > 0) {
-    process.exit(1);
+    throw new Error(`modelPriority unit tests failed: ${failed}`);
 }
