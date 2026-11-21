@@ -37,11 +37,19 @@ body {
   background-color: #09090b;
 }
 
-/* ==================== View Transitions 基础层级基线 ==================== */
+/* ==================== View Transitions 基础层级基线 (跨平台极致丝滑) ==================== */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
 }
 
 * {

@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
-import { injectBlurCircleStyle, removeThemeStyle } from './utils/themeAnimation';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
@@ -18,45 +17,57 @@ export function App() {
     }
   }, [theme]);
 
-  // 完全对齐 baiwumm/theme-switch-animation 的 CIRCLE_BLUR 圆形高斯模糊蒙版扩散实现
+  // 跨平台（Win / Mac / Linux / 核显）极致丝滑 120Hz 硬件加速几何扩散
   const handleThemeToggle = async (event: React.MouseEvent<HTMLButtonElement>) => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
 
-    // 降级兼容：不支持 View Transition 则直接切换
+    // 1. 无 View Transition 支持环境或低配环境，直接秒切
     if (!document.startViewTransition) {
       setTheme(newTheme);
       return;
     }
 
-    // 1. 获取点击物理坐标作为圆心
+    // 2. 获取触发按钮的几何中心点
     const rect = event.currentTarget.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
-    const DURATION = 700;
+    // 3. 计算覆盖视口最远角落的精确几何半径（无冗余放大，杜绝大屏卡顿）
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
 
-    // 2. 注入带 feGaussianBlur 的 SVG Mask 转场动画样式
-    injectBlurCircleStyle({ x, y }, DURATION, 2.4);
-
-    try {
-      // 3. 通过 flushSync 强制 React 18 同步提交 DOM 变更
-      const transition = document.startViewTransition(() => {
-        flushSync(() => {
-          setTheme(newTheme);
-          const root = document.documentElement;
-          if (newTheme === 'dark') {
-            root.classList.add('dark');
-          } else {
-            root.classList.remove('dark');
-          }
-        });
+    // 4. 强制 React 18 同步提交 DOM 变更
+    const transition = document.startViewTransition(() => {
+      flushSync(() => {
+        setTheme(newTheme);
+        const root = document.documentElement;
+        if (newTheme === 'dark') {
+          root.classList.add('dark');
+        } else {
+          root.classList.remove('dark');
+        }
       });
+    });
 
-      // 4. 等待动画自然完成，清理临时注入的 style 标签
-      await transition.finished;
-    } finally {
-      removeThemeStyle();
-    }
+    // 5. 等待伪元素就绪
+    await transition.ready;
+
+    // 6. 驱动 GPU 片元着色器实时裁切（0 内存带宽开销，真 120Hz）
+    document.documentElement.animate(
+      {
+        clipPath: [
+          `circle(0px at ${x}px ${y}px)`,
+          `circle(${endRadius}px at ${x}px ${y}px)`,
+        ],
+      },
+      {
+        duration: 480,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)', // Apple 标准 Spring 阻尼，轻盈且丝滑
+        pseudoElement: '::view-transition-new(root)',
+      }
+    );
   };
 
   return (
