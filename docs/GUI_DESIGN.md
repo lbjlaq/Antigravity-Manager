@@ -508,8 +508,12 @@ Antigravity Manager 桌面客户端 (`am-gui`) 是专为专业开发者打造的
 2. **卡片圆角与微边框 (Squircle & Micro-Borders)**：
    - 卡片采用 `rounded-xl (12px)` 或 `rounded-2xl (16px)`。
    - 边框采用 `border border-base-300/60 dark:border-base-300/40`，呈现微弱的半透明金属切边质感。
-3. **主题切换圆形扩散动效 (View Transition Theme Ripple)**：
-   - 继承主分支极受好评的 `startViewTransition` 圆形扩散动画：点击太阳/月亮切换按钮时，以鼠标点击坐标为圆心，向全屏发射平滑过渡的光圈遮罩。
+3. **主题切换圆形高斯模糊扩散动效 (CIRCLE_BLUR Theme Transition)**：
+   - 深度对齐开源项目 `baiwumm/theme-switch-animation` 的核心 `CIRCLE_BLUR` 算法规范：
+     - **矢量高斯模糊蒙版**：将 `<feGaussianBlur stdDeviation="..."/>` 直接烘焙进 SVG 矢量蒙版（避免 Safari/WebKit 滤镜渲染瑕疵）。
+     - **新视图挂载**：挂载于 `::view-transition-new(root)`，旧视图完整垫底，避免主题瞬间翻转。
+     - **中心几何锚定 (pinCenterGeometry)**：通过 `mask-size` 与 `mask-position` 从点击物理坐标以 `cubic-bezier(0.2, 0.8, 0.25, 1)`（700ms）向全屏外接圆柔和扩散，产生优雅的模糊光晕。
+     - **零内存残留**：转场完成后立即移除注入的临时 `<style>` 标签，零常驻开销，跨平台满帧 120Hz。
 
 ### 8.4 导航栏与布局架构 (Navbar Structure)
 
