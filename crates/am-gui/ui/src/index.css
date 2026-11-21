@@ -2,7 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 禁止过度滚动和橡皮筋晃动 */
 html,
 body,
 #root {
@@ -37,7 +36,7 @@ body {
   background-color: #09090b;
 }
 
-/* ==================== 彻底消除主题切换闪烁的关键 CSS 规则 (主分支经典) ==================== */
+/* ==================== 标准 View Transition 圆心扩散规范 (对齐 baiwumm / minhvo) ==================== */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
@@ -50,14 +49,6 @@ body {
 
 ::view-transition-new(root) {
   z-index: 9999;
-}
-
-.dark::view-transition-old(root) {
-  z-index: 9999;
-}
-
-.dark::view-transition-new(root) {
-  z-index: 1;
 }
 
 * {

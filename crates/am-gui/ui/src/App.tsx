@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
 
@@ -16,44 +17,58 @@ export function App() {
     }
   }, [theme]);
 
-  // 主分支标准圆心波纹扩散动画 (完美消除闪烁，零黑屏/白屏跳跃)
-  const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+  // 对齐 baiwumm / minhvo 的标准圆心水波纹 View Transition 扩散算法
+  const handleThemeToggle = async (event: React.MouseEvent<HTMLButtonElement>) => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
 
-    if ('startViewTransition' in document) {
-      const x = event.clientX;
-      const y = event.clientY;
-      const endRadius = Math.hypot(
-        Math.max(x, window.innerWidth - x),
-        Math.max(y, window.innerHeight - y)
-      );
-
-      // @ts-ignore
-      const transition = document.startViewTransition(() => {
-        setTheme(newTheme);
-      });
-
-      transition.ready.then(() => {
-        const isDarkMode = newTheme === 'dark';
-        const clipPath = isDarkMode
-          ? [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`]
-          : [`circle(${endRadius}px at ${x}px ${y}px)`, `circle(0px at ${x}px ${y}px)`];
-
-        document.documentElement.animate(
-          {
-            clipPath: clipPath,
-          },
-          {
-            duration: 400,
-            easing: 'ease-in-out',
-            fill: 'forwards',
-            pseudoElement: isDarkMode ? '::view-transition-new(root)' : '::view-transition-old(root)',
-          }
-        );
-      });
-    } else {
+    // 降级兼容：不支持 View Transition 则直接切换
+    if (!document.startViewTransition) {
       setTheme(newTheme);
+      return;
     }
+
+    // 1. 获取点击物理坐标作为圆心
+    const x = event.clientX;
+    const y = event.clientY;
+
+    // 2. 计算覆盖全屏所需的最大外接圆半径
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    // 3. 必须通过 flushSync 强制 React 18 同步提交 DOM 变更
+    const transition = document.startViewTransition(() => {
+      flushSync(() => {
+        setTheme(newTheme);
+        const root = document.documentElement;
+        if (newTheme === 'dark') {
+          root.classList.add('dark');
+        } else {
+          root.classList.remove('dark');
+        }
+      });
+    });
+
+    // 4. 等待视图过渡就绪
+    await transition.ready;
+
+    // 5. 驱动新视图从圆心以 cubic-bezier 展开为全屏大圆
+    const clipPath = [
+      `circle(0px at ${x}px ${y}px)`,
+      `circle(${endRadius}px at ${x}px ${y}px)`,
+    ];
+
+    document.documentElement.animate(
+      {
+        clipPath: clipPath,
+      },
+      {
+        duration: 450,
+        easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+        pseudoElement: '::view-transition-new(root)',
+      }
+    );
   };
 
   return (
