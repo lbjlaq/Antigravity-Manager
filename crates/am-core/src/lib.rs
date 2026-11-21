@@ -50,7 +50,7 @@ impl AntigravityManager {
         self.storage.delete_account(&acc.id)
     }
 
-    /// 刷新单个账号配额
+    /// 刷新单个账号配额 (对齐原生: 自动尝试发现并携带 Project ID)
     pub async fn refresh_account_quota(&self, account_id: &str) -> Result<QuotaSummary> {
         let mut account = self
             .storage
@@ -64,22 +64,36 @@ impl AntigravityManager {
             .await?;
         account.token = refreshed_token;
 
-        // 2. 查询最新配额
-        let quota = self.quota.fetch_quota(&account.token.access_token).await?;
+        // 2. 检查或自动发现 Project ID
+        if account.token.project_id.is_none() {
+            if let Some(pid) = self.quota.fetch_project_id(&account.token.access_token).await {
+                account.token.project_id = Some(pid);
+            }
+        }
+
+        // 3. 查询最新配额
+        let quota = self
+            .quota
+            .fetch_quota(&account.token.access_token, account.token.project_id.as_deref())
+            .await?;
         account.quota = Some(quota.clone());
         account.last_used = Some(chrono::Utc::now().timestamp());
 
-        // 3. 回写持久化
+        // 4. 回写持久化
         self.storage.save_account(&account)?;
         Ok(quota)
     }
 
-    /// 批量并发刷新所有账号配额
+    /// 批量并发刷新所有账号配额 (带请求节流与智能限频，防 429)
     pub async fn refresh_all_quotas(&self) -> Result<Vec<(String, Result<QuotaSummary>)>> {
         let summaries = self.storage.list_account_summaries()?;
         let mut results = Vec::new();
 
-        for s in summaries {
+        for (idx, s) in summaries.into_iter().enumerate() {
+            // 每刷新一个账号稍微平滑等待 250ms，防止并发冲击触发风控
+            if idx > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
             let res = self.refresh_account_quota(&s.id).await;
             results.push((s.email, res));
         }
