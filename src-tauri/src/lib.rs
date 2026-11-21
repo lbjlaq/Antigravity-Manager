@@ -642,19 +642,23 @@ pub fn run() {
 
             // Fixes #3993: 已对 main 设置 skip_initial_state，启动窗口的位置/尺寸恢复改在窗口
             // 构建完成后的 setup 中执行，不再嵌套于构建期间（持有 Tauri 内部 RwLock）。
+            // Fixes #3985: 初始恢复后执行多显示器边界自愈，杜绝副屏坐标漂移或出界。
             #[cfg(not(target_os = "android"))]
             if let Some(window) = app.get_webview_window("main") {
                 use tauri_plugin_window_state::{StateFlags, WindowExt};
                 let flags = StateFlags::all().difference(StateFlags::VISIBLE);
                 #[cfg(target_os = "windows")]
                 {
+                    let window_clone = window.clone();
                     modules::lightweight::defer_on_main_thread(app.handle(), move || {
-                        let _ = window.restore_state(flags);
+                        let _ = window_clone.restore_state(flags);
+                        modules::lightweight::ensure_window_on_visible_screen(&window_clone);
                     });
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
                     let _ = window.restore_state(flags);
+                    modules::lightweight::ensure_window_on_visible_screen(&window);
                 }
             }
 

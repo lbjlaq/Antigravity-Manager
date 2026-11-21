@@ -120,6 +120,106 @@ pub fn hide_mini_window(app: &tauri::AppHandle) {
     }
 }
 
+/// 智能判定托盘交互的目标显示器边界与缩放比（精确支持副显示器、负坐标扩展屏与无托盘坐标回退）
+/// Fixes #3985
+#[cfg(not(target_os = "android"))]
+fn find_target_monitor(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    rect: Option<&tauri::Rect>,
+) -> (f64, f64, f64, f64, f64) {
+    let monitors = app.available_monitors().unwrap_or_default();
+
+    // 1. 若提供了托盘物理/逻辑位置，首选包含该位置的显示器
+    if let Some(r) = rect {
+        for m in &monitors {
+            let pos = m.position();
+            let sz = m.size();
+            let sf = m.scale_factor();
+            let (px, py) = match r.position {
+                tauri::Position::Physical(p) => (p.x as f64, p.y as f64),
+                tauri::Position::Logical(p) => (p.x * sf, p.y * sf),
+            };
+            let left = pos.x as f64;
+            let top = pos.y as f64;
+            let right = left + sz.width as f64;
+            let bottom = top + sz.height as f64;
+
+            if px >= left && px <= right && py >= top && py <= bottom {
+                return (left, top, sz.width as f64, sz.height as f64, sf);
+            }
+        }
+
+        // 若因托盘边缘或自动隐藏任务栏未能精确包含，选取距托盘坐标几何中心最近的显示器
+        if let Some(best) = monitors.iter().min_by_key(|m| {
+            let pos = m.position();
+            let sz = m.size();
+            let sf = m.scale_factor();
+            let (px, py) = match r.position {
+                tauri::Position::Physical(p) => (p.x as f64, p.y as f64),
+                tauri::Position::Logical(p) => (p.x * sf, p.y * sf),
+            };
+            let center_x = pos.x as f64 + sz.width as f64 / 2.0;
+            let center_y = pos.y as f64 + sz.height as f64 / 2.0;
+            let dx = px - center_x;
+            let dy = py - center_y;
+            (dx * dx + dy * dy) as i64
+        }) {
+            let pos = best.position();
+            let sz = best.size();
+            return (
+                pos.x as f64,
+                pos.y as f64,
+                sz.width as f64,
+                sz.height as f64,
+                best.scale_factor(),
+            );
+        }
+    }
+
+    // 2. 无托盘坐标时（如从主控制台导航栏/快捷菜单呼出），优先继承主控制台当前所在的副屏/主屏
+    if let Some(main_win) = app.get_webview_window("main") {
+        if let Ok(Some(m)) = main_win.current_monitor() {
+            let pos = m.position();
+            let sz = m.size();
+            return (
+                pos.x as f64,
+                pos.y as f64,
+                sz.width as f64,
+                sz.height as f64,
+                m.scale_factor(),
+            );
+        }
+    }
+
+    // 3. 回退至迷你窗口自身所在显示器或系统主显示器
+    if let Ok(Some(m)) = window.current_monitor() {
+        let pos = m.position();
+        let sz = m.size();
+        return (
+            pos.x as f64,
+            pos.y as f64,
+            sz.width as f64,
+            sz.height as f64,
+            m.scale_factor(),
+        );
+    }
+
+    if let Ok(Some(m)) = app.primary_monitor() {
+        let pos = m.position();
+        let sz = m.size();
+        return (
+            pos.x as f64,
+            pos.y as f64,
+            sz.width as f64,
+            sz.height as f64,
+            m.scale_factor(),
+        );
+    }
+
+    (0.0, 0.0, 1920.0, 1080.0, 1.0)
+}
+
 /// 处理系统托盘点击事件：实现跨平台现代 Popover（类似腾讯 Lemon / Raycast）
 /// 默认失焦自动收起（除非用户点击图钉进行固定）
 pub fn handle_tray_click(app: &tauri::AppHandle, rect: Option<tauri::Rect>) {
@@ -152,21 +252,8 @@ pub fn handle_tray_click(app: &tauri::AppHandle, rect: Option<tauri::Rect>) {
         const MINI_WIDTH: f64 = 360.0;
         const MINI_HEIGHT: f64 = 360.0;
 
-        let monitor = window.current_monitor().ok().flatten();
-        let (mon_x, mon_y, mon_w, mon_h, scale_factor) = if let Some(ref m) = monitor {
-            let pos = m.position();
-            let sz = m.size();
-            let sf = m.scale_factor();
-            (
-                pos.x as f64,
-                pos.y as f64,
-                sz.width as f64,
-                sz.height as f64,
-                sf,
-            )
-        } else {
-            (0.0, 0.0, 1920.0, 1080.0, 1.0)
-        };
+        let (mon_x, mon_y, mon_w, mon_h, scale_factor) =
+            find_target_monitor(app, &window, rect.as_ref());
 
         let physical_w = MINI_WIDTH * scale_factor;
         let physical_h = MINI_HEIGHT * scale_factor;
