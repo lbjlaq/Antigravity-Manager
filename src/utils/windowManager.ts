@@ -46,7 +46,6 @@ export const exitMiniMode = async () => {
         // Restore to a reasonable default size
         await win.setSize(new LogicalSize(1200, 800));
         await win.setAlwaysOnTop(false);
-        await win.center();
         // Restore window decorations (title bar)
         await win.setDecorations(true);
         // Re-enable resizing
@@ -58,18 +57,12 @@ export const exitMiniMode = async () => {
 
 /**
  * Ensure window is in valid full view state (Self-healing)
- * Used on app startup to recover from improper shutdown in mini mode
+ * Fixes #3985: 避免使用 win.center() 强行将副显示器上的主控制台重置拉扯到主屏
  */
 export const ensureFullViewState = async () => {
     if (!isTauri()) return;
     try {
         const win = getCurrentWindow();
-        const size = await win.outerSize();
-        // If window is suspiciously narrow (likely leftover from Mini View), restore default size
-        if (size.width < 500) {
-            await win.setSize(new LogicalSize(1200, 800));
-            await win.center();
-        }
         // Always enforce standard window properties for Full View
         await win.setDecorations(true);
         await win.setResizable(true);
