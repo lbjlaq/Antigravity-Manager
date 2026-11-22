@@ -1,5 +1,4 @@
 import React from 'react';
-import { Clock, Sparkles } from 'lucide-react';
 
 export interface QuotaPeriod {
   percentage: number;
@@ -23,95 +22,95 @@ export const GroupQuotaCard: React.FC<GroupQuotaCardProps> = ({ summary }) => {
   const isClaude = key === 'claude';
   const isArgon = key === 'argon';
 
-  const fiveHourPct = fiveHour?.percentage ?? 0;
-  const sevenDayPct = sevenDay?.percentage ?? 0;
+  const fiveHourPct = fiveHour?.percentage ?? 100;
+  const sevenDayPct = sevenDay?.percentage ?? 100;
 
-  const getProgressColor = (pct: number, is7d = false) => {
+  // 颜色定义
+  const getPrimaryColor = (pct: number) => {
     if (pct < 20) return 'bg-rose-500';
     if (pct < 50) return 'bg-amber-500';
-    if (isClaude) return is7d ? 'bg-indigo-500' : 'bg-purple-500';
-    if (isArgon) return is7d ? 'bg-amber-500' : 'bg-orange-500';
-    return is7d ? 'bg-cyan-500' : 'bg-blue-500';
+    if (isClaude) return 'bg-purple-500';
+    if (isArgon) return 'bg-amber-500';
+    return 'bg-blue-500';
   };
 
-  const getTextColor = (pct: number) => {
-    if (pct < 20) return 'text-rose-600 dark:text-rose-400 font-bold';
-    if (pct < 50) return 'text-amber-600 dark:text-amber-400 font-bold';
-    return 'text-gray-700 dark:text-zinc-200 font-bold';
+  const getSecondaryColor = (pct: number) => {
+    if (pct < 20) return 'bg-rose-500/60';
+    if (pct < 50) return 'bg-amber-500/60';
+    if (isClaude) return 'bg-indigo-400/60';
+    if (isArgon) return 'bg-orange-400/60';
+    return 'bg-cyan-400/60';
   };
 
   return (
-    <div className="flex flex-col gap-1 w-full min-w-[170px]">
-      {/* 5小时配额胶囊条 */}
-      {fiveHour !== undefined && (
-        <div
-          className="relative h-[22px] flex items-center px-2 rounded-md overflow-hidden border border-gray-100/60 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-800/40 text-[10px] font-mono leading-none"
-          title={`${name} (5H限额: ${fiveHourPct}% · 重置: ${fiveHour.resetText})`}
-        >
-          {/* 背景填充进度条 */}
-          <div className="absolute inset-0 bg-transparent">
-            <div
-              className={`h-full opacity-20 ${getProgressColor(fiveHourPct)} transition-all duration-300`}
-              style={{ width: `${fiveHourPct}%` }}
-            />
-          </div>
+    <div className="flex flex-col gap-1 w-full min-w-[200px]">
+      {/* 头部：模型组名称 + 5h / 7d 详细数字 */}
+      <div className="flex items-center justify-between text-[11px] leading-tight">
+        <span className="font-semibold text-gray-700 dark:text-zinc-300 flex items-center gap-1">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              isClaude ? 'bg-purple-500' : isArgon ? 'bg-amber-500' : 'bg-blue-500'
+            }`}
+          />
+          <span className="truncate">{name}</span>
+        </span>
 
-          {/* 前台文本内容 */}
-          <div className="relative z-10 w-full flex items-center justify-between gap-1">
-            <div className="flex items-center gap-1 truncate text-gray-700 dark:text-zinc-200 font-medium">
-              <Sparkles className="w-2.5 h-2.5 shrink-0 opacity-70" />
-              <span className="truncate">{name}</span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[9px] text-gray-400 dark:text-zinc-500 flex items-center gap-0.5">
-                <Clock className="w-2.5 h-2.5" />
-                {fiveHour.resetText}
-              </span>
-              <span className={`w-[28px] text-right ${getTextColor(fiveHourPct)}`}>
+        {/* 5h 与 7d 的详细数据指标 */}
+        <div className="flex items-center gap-2.5 text-[10px] text-gray-500 dark:text-zinc-400 font-mono">
+          {fiveHour && (
+            <span>
+              5h:{' '}
+              <b
+                className={
+                  fiveHourPct < 25
+                    ? 'text-rose-500 font-bold'
+                    : fiveHourPct < 50
+                    ? 'text-amber-500 font-bold'
+                    : 'text-gray-700 dark:text-zinc-200'
+                }
+              >
                 {fiveHourPct}%
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 周配额胶囊条 */}
-      {sevenDay !== undefined && (
-        <div
-          className="relative h-[22px] flex items-center px-2 rounded-md overflow-hidden border border-gray-100/60 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-800/40 text-[10px] font-mono leading-none"
-          title={`${name} (周限额: ${sevenDayPct}% · 重置: ${sevenDay.resetText})`}
-        >
-          {/* 背景填充进度条 */}
-          <div className="absolute inset-0 bg-transparent">
-            <div
-              className={`h-full opacity-20 ${getProgressColor(sevenDayPct, true)} transition-all duration-300`}
-              style={{ width: `${sevenDayPct}%` }}
-            />
-          </div>
-
-          {/* 前台文本内容 */}
-          <div className="relative z-10 w-full flex items-center justify-between gap-1">
-            <div className="flex items-center gap-1 truncate text-gray-700 dark:text-zinc-200 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500/70 shrink-0" />
-              <span className="truncate">{name}</span>
-              <span className="text-[9px] px-1 py-0.2 rounded bg-gray-200/50 dark:bg-zinc-700/50 text-gray-500 dark:text-zinc-400">
-                周
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[9px] text-gray-400 dark:text-zinc-500 flex items-center gap-0.5">
-                <Clock className="w-2.5 h-2.5" />
-                {sevenDay.resetText}
-              </span>
-              <span className={`w-[28px] text-right ${getTextColor(sevenDayPct)}`}>
+              </b>{' '}
+              <span className="opacity-75">({fiveHour.resetText})</span>
+            </span>
+          )}
+          {sevenDay && (
+            <span>
+              7d:{' '}
+              <b
+                className={
+                  sevenDayPct < 25
+                    ? 'text-rose-500 font-bold'
+                    : sevenDayPct < 50
+                    ? 'text-amber-500 font-bold'
+                    : 'text-gray-700 dark:text-zinc-200'
+                }
+              >
                 {sevenDayPct}%
-              </span>
-            </div>
-          </div>
+              </b>{' '}
+              <span className="opacity-75">({sevenDay.resetText})</span>
+            </span>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* 统一融合进度条 (双时间周期合一) */}
+      <div className="w-full h-2 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden flex gap-0.5 p-0.5">
+        {fiveHour && (
+          <div
+            style={{ width: `${fiveHourPct}%` }}
+            className={`h-full rounded-full transition-all duration-300 ${getPrimaryColor(fiveHourPct)}`}
+            title={`5H 短期限额: ${fiveHourPct}%`}
+          />
+        )}
+        {sevenDay && (
+          <div
+            style={{ width: `${sevenDayPct}%` }}
+            className={`h-full rounded-full transition-all duration-300 ${getSecondaryColor(sevenDayPct)}`}
+            title={`周配额长期限额: ${sevenDayPct}%`}
+          />
+        )}
+      </div>
     </div>
   );
 };
