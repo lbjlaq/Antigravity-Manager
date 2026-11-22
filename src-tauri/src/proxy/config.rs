@@ -1388,7 +1388,7 @@ pub struct ProxyConfig {
     pub hub_cl: Option<String>,
 
     /// Hub User-Agent platform: "windows" (default) or "linux".
-    /// Linux is only applied with a matching version/CL pair.
+    /// Both platforms use the same existing Hub version/CL selection logic.
     #[serde(default)]
     pub hub_platform: Option<String>,
 
