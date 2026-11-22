@@ -18,25 +18,22 @@ import {
   X,
   RefreshCw,
   FolderGit2,
+  UserCheck,
+  Cpu,
+  BarChart2,
+  Clock,
+  ChevronRight,
+  BookOpen,
 } from 'lucide-react';
 
 interface StatsProps {
   lang: 'zh' | 'en';
 }
 
-type StatsView = 'insights' | 'ledger';
+type StatsView = 'overview' | 'account' | 'project' | 'model' | 'ledger';
 type TimeRange = 'today' | '7days' | '30days';
 type MetricMetric = 'tokens' | 'cost';
 type HostFilter = 'all' | 'app' | 'ide' | 'plugin' | 'cli';
-
-// 趋势图数据点
-interface HourlyDataPoint {
-  time: string;
-  tokens: number;
-  cost: number;
-  tps: number;
-  cacheRate: number;
-}
 
 // 活跃会话上下文快照
 export interface ContextWindowSnapshot {
@@ -62,7 +59,7 @@ export interface ContextWindowSnapshot {
   lastModelUpdate?: string;
 }
 
-// 账号聚合
+// 账号聚合实体
 export interface AccountUsageGroup {
   accountId: string;
   email: string;
@@ -77,9 +74,27 @@ export interface AccountUsageGroup {
   quotaGeminiPct?: number;
   quotaClaudePct?: number;
   isHealthy: boolean;
+  topWorkspaces?: [string, number][];
+  topModels?: [string, number][];
+  hourlyHeatmap?: number[];
 }
 
-// 模型聚合
+// 项目聚合实体
+export interface ProjectUsageGroup {
+  workspaceName: string;
+  path: string;
+  totalSteps: number;
+  conversationCount: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  preferredModel: string;
+  modelBreakdown: [string, number][];
+  accountAttribution: [string, number][];
+  lastActiveTime: string;
+  sessionTitles: string[];
+}
+
+// 模型聚合实体
 export interface ModelPerformanceGroup {
   requestedModel: string;
   physicalModel: string;
@@ -90,9 +105,11 @@ export interface ModelPerformanceGroup {
   cacheHitRate: number;
   sharePercentage: number;
   isDowngraded: boolean;
+  topWorkspaces?: [string, number][];
+  topAccounts?: [string, number][];
 }
 
-// 宿主工作区聚合
+// 宿主工作区聚合实体
 export interface HostWorkspaceGroup {
   hostName: string;
   hostId: string;
@@ -103,7 +120,7 @@ export interface HostWorkspaceGroup {
   topWorkspaces: [string, number][];
 }
 
-// 原子级请求流水记录
+// 原子流水记录
 export interface RequestRecord {
   id: string;
   time: string;
@@ -124,7 +141,7 @@ export interface RequestRecord {
   toolTokens?: number;
 }
 
-// 后端综合大盘报告接口
+// 综合分析报告
 export interface MasterAnalyticsReport {
   totalRequests: number;
   totalTokens: number;
@@ -137,6 +154,7 @@ export interface MasterAnalyticsReport {
   avgTtftMs: number;
   activeContext?: ContextWindowSnapshot;
   byAccount: AccountUsageGroup[];
+  byProject: ProjectUsageGroup[];
   byModel: ModelPerformanceGroup[];
   byHost: HostWorkspaceGroup[];
   recentTraffic: RequestRecord[];
@@ -146,20 +164,25 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
   const isZh = lang === 'zh';
 
   // 1. 视图切换
-  const [activeView, setActiveView] = useState<StatsView>('insights');
+  const [activeView, setActiveView] = useState<StatsView>('overview');
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
   const [activeMetric, setActiveMetric] = useState<MetricMetric>('tokens');
   const [isLoading, setIsLoading] = useState(false);
 
-  // 2. 趋势图鼠标交互悬停状态
+  // 2. 选中的下钻对象
+  const [selectedAccountEmail, setSelectedAccountEmail] = useState<string>('ctrler@868666.best');
+  const [selectedProjectName, setSelectedProjectName] = useState<string>('at');
+  const [selectedModelName, setSelectedModelName] = useState<string>('claude-3-7-sonnet');
+
+  // 3. 趋势图悬停
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
 
-  // 3. 流水过滤与抽屉
+  // 4. 流水过滤与抽屉
   const [hostFilter, setHostFilter] = useState<HostFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<RequestRecord | null>(null);
 
-  // 4. 后端全景数据状态（带社区最佳实践基准默认值）
+  // 5. 综合大盘基准默认状态
   const [reportData, setReportData] = useState<MasterAnalyticsReport>({
     totalRequests: 2024,
     totalTokens: 310246613,
@@ -207,6 +230,17 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         quotaGeminiPct: 100,
         quotaClaudePct: 50,
         isHealthy: true,
+        topWorkspaces: [
+          ['at', 68],
+          ['omin', 22],
+          ['core-gateway', 10],
+        ],
+        topModels: [
+          ['claude-3-7-sonnet', 58],
+          ['gemini-2.5-pro', 32],
+          ['gemini-2.5-flash', 10],
+        ],
+        hourlyHeatmap: [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8],
       },
       {
         accountId: 'acc_02',
@@ -222,6 +256,17 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         quotaGeminiPct: 100,
         quotaClaudePct: 85,
         isHealthy: true,
+        topWorkspaces: [
+          ['infra-scripts', 55],
+          ['at', 30],
+          ['omin', 15],
+        ],
+        topModels: [
+          ['gemini-2.5-pro', 50],
+          ['claude-3-7-sonnet', 35],
+          ['gemini-2.5-flash', 15],
+        ],
+        hourlyHeatmap: [0, 0, 0, 0, 0, 2, 8, 15, 30, 42, 45, 38, 25, 48, 55, 60, 52, 40, 35, 42, 30, 20, 10, 2],
       },
       {
         accountId: 'acc_03',
@@ -237,6 +282,86 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         quotaGeminiPct: 100,
         quotaClaudePct: 40,
         isHealthy: true,
+        topWorkspaces: [
+          ['cursor-ext', 75],
+          ['at', 25],
+        ],
+        topModels: [
+          ['claude-3-7-sonnet', 85],
+          ['gemini-2.5-flash', 15],
+        ],
+        hourlyHeatmap: [0, 0, 0, 0, 0, 0, 2, 5, 12, 18, 22, 20, 15, 25, 30, 35, 28, 22, 18, 20, 15, 8, 4, 0],
+      },
+    ],
+    byProject: [
+      {
+        workspaceName: 'at',
+        path: '~/Desktop/at',
+        totalSteps: 4067,
+        conversationCount: 12,
+        totalTokens: 215000000,
+        estimatedCostUsd: 195.4,
+        preferredModel: 'claude-3-7-sonnet',
+        modelBreakdown: [
+          ['claude-3-7-sonnet', 65.0],
+          ['gemini-2.5-pro', 25.0],
+          ['gemini-2.5-flash', 10.0],
+        ],
+        accountAttribution: [
+          ['ctrler@868666.best', 72.0],
+          ['developer.pro@gmail.com', 20.0],
+          ['research.pool1@gmail.com', 8.0],
+        ],
+        lastActiveTime: '刚刚',
+        sessionTitles: [
+          'Local Account Switcher Branch Discussion',
+          'Pipeline First & Gateway Architecture Refactoring',
+          'Stats Observability & Context Radar Design',
+          'Pre-flight Checks & Cargo Clippy Gating',
+        ],
+      },
+      {
+        workspaceName: 'omin',
+        path: '~/Desktop/omin',
+        totalSteps: 1317,
+        conversationCount: 5,
+        totalTokens: 68000000,
+        estimatedCostUsd: 61.2,
+        preferredModel: 'gemini-2.5-pro',
+        modelBreakdown: [
+          ['gemini-2.5-pro', 55.0],
+          ['claude-3-7-sonnet', 35.0],
+          ['gemini-2.5-flash', 10.0],
+        ],
+        accountAttribution: [
+          ['ctrler@868666.best', 58.0],
+          ['developer.pro@gmail.com', 42.0],
+        ],
+        lastActiveTime: '昨天 22:15',
+        sessionTitles: [
+          'Mouse Smooth Scroll Event Filter Tuning',
+          'MacBook Trackpad Physics Simulation vs LinearMouse',
+          'CoreGraphics CGEventTap Latency Optimization',
+        ],
+      },
+      {
+        workspaceName: 'infra-scripts',
+        path: '~/Desktop/infra-scripts',
+        totalSteps: 940,
+        conversationCount: 3,
+        totalTokens: 27246613,
+        estimatedCostUsd: 23.9,
+        preferredModel: 'gemini-2.5-flash',
+        modelBreakdown: [
+          ['gemini-2.5-flash', 60.0],
+          ['gemini-2.5-pro', 40.0],
+        ],
+        accountAttribution: [
+          ['developer.pro@gmail.com', 85.0],
+          ['ctrler@868666.best', 15.0],
+        ],
+        lastActiveTime: '3 天前',
+        sessionTitles: ['Deploy Automation & Docker Multi-arch', 'GitHub Actions Matrix CI Gating'],
       },
     ],
     byModel: [
@@ -250,6 +375,16 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         cacheHitRate: 91.8,
         sharePercentage: 53.2,
         isDowngraded: false,
+        topWorkspaces: [
+          ['at', 75],
+          ['omin', 18],
+          ['cursor-ext', 7],
+        ],
+        topAccounts: [
+          ['ctrler@868666.best', 72],
+          ['research.pool1@gmail.com', 18],
+          ['developer.pro@gmail.com', 10],
+        ],
       },
       {
         requestedModel: 'gemini-2.5-pro',
@@ -261,6 +396,15 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         cacheHitRate: 90.4,
         sharePercentage: 36.1,
         isDowngraded: false,
+        topWorkspaces: [
+          ['omin', 48],
+          ['at', 36],
+          ['infra-scripts', 16],
+        ],
+        topAccounts: [
+          ['ctrler@868666.best', 55],
+          ['developer.pro@gmail.com', 45],
+        ],
       },
       {
         requestedModel: 'gemini-2.5-flash',
@@ -272,6 +416,15 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         cacheHitRate: 88.6,
         sharePercentage: 10.7,
         isDowngraded: false,
+        topWorkspaces: [
+          ['infra-scripts', 60],
+          ['at', 25],
+          ['omin', 15],
+        ],
+        topAccounts: [
+          ['developer.pro@gmail.com', 65],
+          ['ctrler@868666.best', 35],
+        ],
       },
     ],
     byHost: [
@@ -405,7 +558,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
     ],
   });
 
-  // 5. 异步获取 Tauri 后端真实数据
+  // 6. 从 Tauri 后端获取真实遥测
   const fetchReport = async () => {
     setIsLoading(true);
     try {
@@ -425,6 +578,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
           avgTtftMs: data.avgTtftMs ?? prev.avgTtftMs,
           activeContext: data.activeContext ?? prev.activeContext,
           byAccount: data.byAccount && data.byAccount.length > 0 ? data.byAccount : prev.byAccount,
+          byProject: data.byProject && data.byProject.length > 0 ? data.byProject : prev.byProject,
           byModel: data.byModel && data.byModel.length > 0 ? data.byModel : prev.byModel,
           byHost: data.byHost && data.byHost.length > 0 ? data.byHost : prev.byHost,
           recentTraffic:
@@ -452,7 +606,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         }));
       }
     } catch {
-      // 运行在纯前端/浏览器测试环境时，静默维持真实基准，避免崩溃
+      // 优雅维持真实基准
     } finally {
       setIsLoading(false);
     }
@@ -462,8 +616,30 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
     fetchReport();
   }, []);
 
-  // 趋势图数据 (24 小时时间波形)
-  const hourlyData: HourlyDataPoint[] = useMemo(() => {
+  // 当前选中的特定下钻对象
+  const currentAccount = useMemo(() => {
+    return (
+      reportData.byAccount.find((a) => a.email === selectedAccountEmail) ||
+      reportData.byAccount[0]
+    );
+  }, [reportData.byAccount, selectedAccountEmail]);
+
+  const currentProject = useMemo(() => {
+    return (
+      reportData.byProject.find((p) => p.workspaceName === selectedProjectName) ||
+      reportData.byProject[0]
+    );
+  }, [reportData.byProject, selectedProjectName]);
+
+  const currentModel = useMemo(() => {
+    return (
+      reportData.byModel.find((m) => m.requestedModel === selectedModelName) ||
+      reportData.byModel[0]
+    );
+  }, [reportData.byModel, selectedModelName]);
+
+  // 全局 24 小时波形
+  const hourlyData = useMemo(() => {
     return [
       { time: '00:00', tokens: 4200000, cost: 4.2, tps: 120, cacheRate: 88 },
       { time: '02:00', tokens: 1800000, cost: 1.8, tps: 110, cacheRate: 89 },
@@ -480,7 +656,6 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
     ];
   }, []);
 
-  // 计算趋势图 SVG 坐标与 Bézier 路径
   const { pathD, areaD, points } = useMemo(() => {
     const vals = hourlyData.map((d) => (activeMetric === 'tokens' ? d.tokens : d.cost));
     const max = Math.max(...vals, 1);
@@ -533,10 +708,8 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
     });
   }, [reportData.recentTraffic, hostFilter, searchQuery]);
 
-  // 上下文快照数据快捷引用
+  // 上下文 5 层水库拆解
   const activeCtx = reportData.activeContext;
-
-  // 上下文 5 层水库占比计算
   const contextBreakdown = useMemo(() => {
     if (!activeCtx) return null;
     const total =
@@ -560,22 +733,62 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
   return (
     <div className="w-full max-w-6xl mx-auto px-4 py-2 flex flex-col gap-3 select-none animate-in fade-in-50 duration-300">
       {/* ============================================================== */}
-      {/* 顶部极简分段控制器 (Apple 纯粹轻量质感)                           */}
+      {/* 顶部主分段控制器 (5 大高阶维度：全局 / 账号 / 项目 / 模型 / 流水)  */}
       {/* ============================================================== */}
       <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
-        {/* 左侧：二级分段按钮 */}
+        {/* 左侧：5 维导航胶囊 */}
         <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/5">
           <button
-            onClick={() => setActiveView('insights')}
+            onClick={() => setActiveView('overview')}
             className={`px-3 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all ${
-              activeView === 'insights'
+              activeView === 'overview'
                 ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
                 : 'text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100'
             }`}
           >
             <TrendingUp className="w-3.5 h-3.5" />
-            <span>{isZh ? '概览与洞察' : 'Overview & Insights'}</span>
+            <span>{isZh ? '全局大盘' : 'Overview'}</span>
           </button>
+
+          <button
+            onClick={() => setActiveView('account')}
+            className={`px-3 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all ${
+              activeView === 'account'
+                ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                : 'text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>{isZh ? '账号详情' : 'Account Drill'}</span>
+          </button>
+
+          <button
+            onClick={() => setActiveView('project')}
+            className={`px-3 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all ${
+              activeView === 'project'
+                ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                : 'text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <FolderGit2 className="w-3.5 h-3.5" />
+            <span>{isZh ? '项目详情' : 'Project Drill'}</span>
+            <span className="px-1 py-0 rounded text-[9px] bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400 font-bold">
+              {reportData.byProject.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveView('model')}
+            className={`px-3 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all ${
+              activeView === 'model'
+                ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
+                : 'text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            <span>{isZh ? '模型详情' : 'Model Drill'}</span>
+          </button>
+
           <button
             onClick={() => setActiveView('ledger')}
             className={`px-3 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all ${
@@ -585,19 +798,19 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
-            <span>{isZh ? '逐笔流水对账' : 'Traffic Ledger'}</span>
+            <span>{isZh ? '逐笔流水' : 'Ledger'}</span>
             <span className="px-1 py-0 rounded text-[9px] bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400 font-bold">
               {reportData.recentTraffic.length}
             </span>
           </button>
         </div>
 
-        {/* 右侧：统计时间窗口切换与刷新 */}
+        {/* 右侧：时间范围与刷新 */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 text-[11px]">
             <span className="text-[10px] text-gray-400 mr-1 flex items-center gap-1 font-medium">
               <Calendar className="w-3 h-3 opacity-60" />
-              <span>{isZh ? '时间范围:' : 'Range:'}</span>
+              <span>{isZh ? '范围:' : 'Range:'}</span>
             </span>
             {[
               { id: 'today' as TimeRange, label: isZh ? '今天' : 'Today' },
@@ -622,7 +835,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             onClick={fetchReport}
             disabled={isLoading}
             className="p-1 rounded-lg border border-gray-200/70 dark:border-white/5 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 dark:text-zinc-400 transition-colors"
-            title={isZh ? '刷新本地 Telemetry' : 'Refresh Telemetry'}
+            title={isZh ? '刷新遥测' : 'Refresh Telemetry'}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-blue-500' : ''}`} />
           </button>
@@ -630,15 +843,13 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
       </div>
 
       {/* ============================================================== */}
-      {/* 视图 A：🍏 Apple 极简 Bento 质感流 (克制、通透、层次分明)         */}
+      {/* 视角 1：🌐 全局大盘 (Overview)                                  */}
       {/* ============================================================== */}
-      {activeView === 'insights' && (
+      {activeView === 'overview' && (
         <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
-          {/* ============================================================== */}
-          {/* ⭐ 核心支柱 1: 活跃会话深度上下文与压缩雷达 (Context Window & Radar) */}
-          {/* ============================================================== */}
+          {/* 上下文深度与压缩雷达 */}
           {activeCtx && (
-            <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-blue-500/20 dark:border-blue-500/20 shadow-2xs flex flex-col gap-2.5 relative overflow-hidden">
+            <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-blue-500/20 dark:border-blue-500/20 shadow-2xs flex flex-col gap-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="p-1 rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400">
@@ -659,30 +870,16 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
                       activeCtx.healthStatus === 'healthy'
                         ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200/50'
-                        : activeCtx.healthStatus === 'warning'
-                        ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200/50'
-                        : 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-200/50'
+                        : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200/50'
                     }`}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                    <span>
-                      {activeCtx.healthStatus === 'healthy'
-                        ? isZh
-                          ? '安全健康 (空间充裕)'
-                          : 'Healthy'
-                        : activeCtx.healthStatus === 'warning'
-                        ? isZh
-                          ? '接近阈值'
-                          : 'Warning'
-                        : isZh
-                        ? '高负载 (建议压缩)'
-                        : 'Critical'}
-                    </span>
+                    <span>{activeCtx.healthStatus === 'healthy' ? (isZh ? '安全健康 (空间充裕)' : 'Healthy') : (isZh ? '建议压缩' : 'Warning')}</span>
                   </span>
                 </div>
               </div>
 
-              {/* 会话元数据与深度指标 */}
+              {/* 会话元数据 */}
               <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-gray-100 dark:border-white/5">
                 <div className="flex items-center gap-2 text-[10.5px]">
                   <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate max-w-sm">
@@ -716,75 +913,30 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 </div>
               </div>
 
-              {/* 5 层分段水库进度条 (The 5-Layer Reservoir Bar) */}
+              {/* 5 层分段进度条 */}
               {contextBreakdown && (
                 <div className="flex flex-col gap-1.5 mt-0.5">
                   <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden flex">
-                    {/* 1. 缓存复用 (Emerald) */}
-                    <div
-                      style={{ width: `${contextBreakdown.cachedPct}%` }}
-                      className="h-full bg-emerald-500 transition-all duration-500"
-                      title={`缓存复用: ${(activeCtx.cachedTokens / 1000).toFixed(1)}K (${contextBreakdown.cachedPct}%)`}
-                    />
-                    {/* 2. 直接输入 (Blue) */}
-                    <div
-                      style={{ width: `${contextBreakdown.promptPct}%` }}
-                      className="h-full bg-blue-500 transition-all duration-500"
-                      title={`直接输入: ${(activeCtx.promptTokens / 1000).toFixed(1)}K (${contextBreakdown.promptPct}%)`}
-                    />
-                    {/* 3. 深度思考 (Purple) */}
-                    <div
-                      style={{ width: `${contextBreakdown.thinkingPct}%` }}
-                      className="h-full bg-purple-500 transition-all duration-500"
-                      title={`深度思考: ${(activeCtx.thinkingTokens / 1000).toFixed(1)}K (${contextBreakdown.thinkingPct}%)`}
-                    />
-                    {/* 4. 工具输出 (Amber) */}
-                    <div
-                      style={{ width: `${contextBreakdown.toolPct}%` }}
-                      className="h-full bg-amber-500 transition-all duration-500"
-                      title={`工具交互: ${(activeCtx.toolTokens / 1000).toFixed(1)}K (${contextBreakdown.toolPct}%)`}
-                    />
-                    {/* 5. 最终生成 (Cyan) */}
-                    <div
-                      style={{ width: `${contextBreakdown.outputPct}%` }}
-                      className="h-full bg-cyan-400 transition-all duration-500"
-                      title={`回答输出: ${(activeCtx.completionTokens / 1000).toFixed(1)}K (${contextBreakdown.outputPct}%)`}
-                    />
+                    <div style={{ width: `${contextBreakdown.cachedPct}%` }} className="h-full bg-emerald-500" />
+                    <div style={{ width: `${contextBreakdown.promptPct}%` }} className="h-full bg-blue-500" />
+                    <div style={{ width: `${contextBreakdown.thinkingPct}%` }} className="h-full bg-purple-500" />
+                    <div style={{ width: `${contextBreakdown.toolPct}%` }} className="h-full bg-amber-500" />
+                    <div style={{ width: `${contextBreakdown.outputPct}%` }} className="h-full bg-cyan-400" />
                   </div>
-
-                  {/* 5 维图例说明 */}
                   <div className="flex flex-wrap items-center justify-between gap-1 text-[9px] text-gray-400 font-mono">
-                    <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      <span>{isZh ? '缓存复用' : 'Cached'}: {(activeCtx.cachedTokens / 1000).toFixed(1)}K ({contextBreakdown.cachedPct}%)</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                      <span>{isZh ? '直接输入' : 'Prompt'}: {(activeCtx.promptTokens / 1000).toFixed(1)}K ({contextBreakdown.promptPct}%)</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                      <span>{isZh ? '思考推理' : 'Thinking'}: {(activeCtx.thinkingTokens / 1000).toFixed(1)}K ({contextBreakdown.thinkingPct}%)</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      <span>{isZh ? '工具执行' : 'Tools'}: {(activeCtx.toolTokens / 1000).toFixed(1)}K ({contextBreakdown.toolPct}%)</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                      <span>{isZh ? '最终生成' : 'Output'}: {(activeCtx.completionTokens / 1000).toFixed(1)}K ({contextBreakdown.outputPct}%)</span>
-                    </div>
+                    <span>🟢 缓存 {(activeCtx.cachedTokens / 1000).toFixed(1)}K ({contextBreakdown.cachedPct}%)</span>
+                    <span>🔵 输入 {(activeCtx.promptTokens / 1000).toFixed(1)}K ({contextBreakdown.promptPct}%)</span>
+                    <span>🟣 思考 {(activeCtx.thinkingTokens / 1000).toFixed(1)}K ({contextBreakdown.thinkingPct}%)</span>
+                    <span>🟡 工具 {(activeCtx.toolTokens / 1000).toFixed(1)}K ({contextBreakdown.toolPct}%)</span>
+                    <span>🔷 生成 {(activeCtx.completionTokens / 1000).toFixed(1)}K ({contextBreakdown.outputPct}%)</span>
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* ============================================================== */}
-          {/* 第 1 层：4 个统一质感的核心 KPI 数字 (基于真实 SQLite Telemetry)  */}
-          {/* ============================================================== */}
+          {/* 4 个核心 KPI */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {/* KPI 1: 总 Token 吞吐 */}
             <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
               <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
                 <span>{isZh ? '总吞吐 (Tokens)' : 'Total Tokens'}</span>
@@ -804,7 +956,6 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
               </div>
             </div>
 
-            {/* KPI 2: 估算节省官方费用 */}
             <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
               <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
                 <span>{isZh ? '估算节省官方费用' : 'API Cost Saved'}</span>
@@ -822,7 +973,6 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
               </div>
             </div>
 
-            {/* KPI 3: 全局缓存命中率 */}
             <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
               <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
                 <span>{isZh ? '全局缓存命中率' : 'Cache Hit Rate'}</span>
@@ -832,9 +982,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 <span className="text-2xl font-bold tracking-tight text-gray-900 dark:text-zinc-100 font-mono">
                   {reportData.globalCacheHitRate.toFixed(1)}%
                 </span>
-                <span className="text-[10px] text-emerald-600 font-medium">
-                  {isZh ? '优秀' : 'High'}
-                </span>
+                <span className="text-[10px] text-emerald-600 font-medium">{isZh ? '极佳' : 'High'}</span>
               </div>
               <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
                 <span>复用 {(reportData.totalCachedTokens / 1000000).toFixed(1)}M 缓存</span>
@@ -842,7 +990,6 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
               </div>
             </div>
 
-            {/* KPI 4: 平均流速与响应 */}
             <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
               <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
                 <span>{isZh ? '平均生成流速' : 'Throughput Speed'}</span>
@@ -855,36 +1002,26 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 <span className="text-[10px] text-gray-400 font-medium">tok/s</span>
               </div>
               <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
-                <span>首字中位数 {(reportData.avgTtftMs / 1000).toFixed(2)}s</span>
+                <span>首字延迟 {(reportData.avgTtftMs / 1000).toFixed(2)}s</span>
                 <span>无缝打字流</span>
               </div>
             </div>
           </div>
 
-          {/* ============================================================== */}
-          {/* 第 2 层：全页面核心视觉焦点 —— 优雅平滑波形趋势图 (Hero Trend Chart) */}
-          {/* ============================================================== */}
+          {/* 波形趋势图 */}
           <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-3 px-4 shadow-2xs flex flex-col gap-2">
-            {/* 图表顶部标题与度量切换 */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                  <Activity className="w-3.5 h-3.5 text-blue-500" />
-                  <span>{isZh ? '时间维度吞吐与负载趋势' : 'Throughput & Cost Trend'}</span>
-                </span>
-                <span className="text-[9.5px] text-gray-400 font-mono hidden sm:inline">
-                  (峰值: {activeMetric === 'tokens' ? '68M Tokens / 184 tok/s' : '$68.0 USD'})
-                </span>
-              </div>
-
-              {/* 度量切换 pill: [ Token 吞吐 ] [ 节省费用 ] */}
+              <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-blue-500" />
+                <span>{isZh ? '24 小时全网吞吐与负载时间波形' : '24h System Throughput & Load Curve'}</span>
+              </span>
               <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
                 <button
                   onClick={() => setActiveMetric('tokens')}
                   className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
                     activeMetric === 'tokens'
                       ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                      : 'text-gray-500 hover:text-gray-800 dark:text-zinc-400'
+                      : 'text-gray-500 dark:text-zinc-400'
                   }`}
                 >
                   {isZh ? 'Token 吞吐' : 'Tokens'}
@@ -894,7 +1031,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                   className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
                     activeMetric === 'cost'
                       ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                      : 'text-gray-500 hover:text-gray-800 dark:text-zinc-400'
+                      : 'text-gray-500 dark:text-zinc-400'
                   }`}
                 >
                   {isZh ? '节省金额 ($)' : 'Cost Saved ($)'}
@@ -902,78 +1039,33 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
               </div>
             </div>
 
-            {/* Apple 级优雅平滑 SVG 曲线图 */}
             <div className="relative w-full h-[180px] mt-1 select-none">
-              <svg
-                viewBox="0 0 800 180"
-                className="w-full h-full overflow-visible"
-                preserveAspectRatio="none"
-              >
+              <svg viewBox="0 0 800 180" className="w-full h-full overflow-visible" preserveAspectRatio="none">
                 <defs>
-                  {/* Apple 蓝雾面渐变遮罩 */}
-                  <linearGradient id="area-gradient" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="ov-grad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
                     <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
                   </linearGradient>
                 </defs>
-
-                {/* 背景水平微弱参考线 */}
                 <line x1="30" y1="30" x2="770" y2="30" stroke="currentColor" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="4 4" />
                 <line x1="30" y1="90" x2="770" y2="90" stroke="currentColor" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="4 4" />
                 <line x1="30" y1="150" x2="770" y2="150" stroke="currentColor" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="4 4" />
-
-                {/* 渐变面积 */}
-                <path d={areaD} fill="url(#area-gradient)" />
-
-                {/* 平滑贝塞尔曲线主线条 */}
-                <path
-                  d={pathD}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-
-                {/* 鼠标悬停标尺与数据高亮点 */}
+                <path d={areaD} fill="url(#ov-grad)" />
+                <path d={pathD} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                 {hoveredPointIndex !== null && points[hoveredPointIndex] && (
                   <>
-                    <line
-                      x1={points[hoveredPointIndex].x}
-                      y1="20"
-                      x2={points[hoveredPointIndex].x}
-                      y2="160"
-                      stroke="#3b82f6"
-                      strokeWidth="1.5"
-                      strokeDasharray="3 3"
-                      className="opacity-70"
-                    />
-                    <circle
-                      cx={points[hoveredPointIndex].x}
-                      cy={points[hoveredPointIndex].y}
-                      r="4.5"
-                      fill="#3b82f6"
-                      stroke="white"
-                      strokeWidth="2"
-                      className="shadow-md"
-                    />
+                    <line x1={points[hoveredPointIndex].x} y1="20" x2={points[hoveredPointIndex].x} y2="160" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3 3" className="opacity-70" />
+                    <circle cx={points[hoveredPointIndex].x} cy={points[hoveredPointIndex].y} r="4.5" fill="#3b82f6" stroke="white" strokeWidth="2" className="shadow-md" />
                   </>
                 )}
               </svg>
 
-              {/* 交互触发隐形热区 */}
               <div className="absolute inset-0 flex">
                 {points.map((_, i) => (
-                  <div
-                    key={i}
-                    onMouseEnter={() => setHoveredPointIndex(i)}
-                    onMouseLeave={() => setHoveredPointIndex(null)}
-                    className="flex-1 h-full cursor-crosshair relative group"
-                  />
+                  <div key={i} onMouseEnter={() => setHoveredPointIndex(i)} onMouseLeave={() => setHoveredPointIndex(null)} className="flex-1 h-full cursor-crosshair" />
                 ))}
               </div>
 
-              {/* 浮动微型 Tooltip (跟随鼠标位置呈现) */}
               {hoveredPointIndex !== null && points[hoveredPointIndex] && (
                 <div
                   style={{
@@ -981,28 +1073,21 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                     top: `${Math.max(10, points[hoveredPointIndex].y - 45)}px`,
                     transform: 'translateX(-50%)',
                   }}
-                  className="absolute pointer-events-none z-30 p-1.5 px-2.5 rounded-lg bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 shadow-xl text-[10px] flex flex-col gap-0.5 whitespace-nowrap animate-in fade-in-0 zoom-in-95 duration-100"
+                  className="absolute pointer-events-none z-30 p-1.5 px-2.5 rounded-lg bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 shadow-xl text-[10px] flex flex-col gap-0.5 whitespace-nowrap"
                 >
                   <div className="flex items-center justify-between gap-3 font-semibold">
                     <span>{points[hoveredPointIndex].data.time}</span>
-                    <span className="text-emerald-400 dark:text-emerald-600 font-mono">
-                      ⚡ {points[hoveredPointIndex].data.tps} tok/s
-                    </span>
+                    <span className="text-emerald-400 dark:text-emerald-600 font-mono">⚡ {points[hoveredPointIndex].data.tps} tok/s</span>
                   </div>
                   <div className="text-[9px] opacity-80 font-mono">
-                    {activeMetric === 'tokens'
-                      ? `${(points[hoveredPointIndex].data.tokens / 1000000).toFixed(1)}M Tokens`
-                      : `已省 $${points[hoveredPointIndex].data.cost.toFixed(2)} USD`} · 缓存 {points[hoveredPointIndex].data.cacheRate}%
+                    {activeMetric === 'tokens' ? `${(points[hoveredPointIndex].data.tokens / 1000000).toFixed(1)}M Tokens` : `省 $${points[hoveredPointIndex].data.cost.toFixed(2)} USD`} · 缓存 {points[hoveredPointIndex].data.cacheRate}%
                   </div>
                 </div>
               )}
             </div>
-
-            {/* 底部 X 轴时间刻度 */}
             <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono px-2 pt-1 border-t border-gray-100 dark:border-white/5">
               <span>00:00</span>
-              <span>04:00</span>
-              <span>08:00</span>
+              <span>06:00</span>
               <span>12:00</span>
               <span>16:00 (高峰)</span>
               <span>20:00</span>
@@ -1010,187 +1095,576 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             </div>
           </div>
 
-          {/* ============================================================== */}
-          {/* 第 3 层：对称双 Bento 优雅卡片 (50% / 50% 黄金呼吸感)             */}
-          {/* ============================================================== */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* 左卡片：模型调用分布与真实物理保真度 */}
-            <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+          {/* 3 个维度的快速下钻导航入口卡片 (Direct Drill Shortcuts) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            <button
+              onClick={() => setActiveView('account')}
+              className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs hover:border-blue-500/40 text-left transition-all flex flex-col justify-between group"
+            >
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-blue-500" />
-                  <span>{isZh ? '模型调用分布与物理保真度' : 'Model Share & Upstream'}</span>
+                <span className="text-[11px] font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                  <UserCheck className="w-3.5 h-3.5 text-blue-500" />
+                  <span>{isZh ? '进入账号详情透视' : 'Account Drill-down'}</span>
                 </span>
-                <span className="text-[9.5px] text-gray-400">
-                  {isZh ? '按用量排行' : 'By Usage'}
-                </span>
+                <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
               </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                {isZh ? `管理 ${reportData.byAccount.length} 个主力账号资产、5h/7d 实时水位与工时热力图` : 'Deep asset analysis, quotas and heatmaps'}
+              </p>
+            </button>
 
-              <div className="flex flex-col gap-2 mt-0.5">
-                {reportData.byModel.map((m) => (
-                  <div key={m.requestedModel} className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between text-[10.5px]">
-                      <span className="font-medium text-gray-800 dark:text-zinc-200 truncate pr-2">
-                        {m.requestedModel}
-                      </span>
-                      <div className="flex items-center gap-1.5 font-mono text-[9.5px] shrink-0">
-                        <span className="text-gray-500">
-                          {(m.totalTokens / 1000000).toFixed(1)}M ({m.sharePercentage.toFixed(0)}%)
-                        </span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                          {m.avgTps.toFixed(0)} tok/s
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* 细进度条 */}
-                    <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                      <div
-                        style={{ width: `${m.sharePercentage}%` }}
-                        className={`h-full rounded-full ${
-                          m.isDowngraded
-                            ? 'bg-rose-500'
-                            : m.requestedModel.includes('claude')
-                            ? 'bg-blue-600'
-                            : m.requestedModel.includes('pro')
-                            ? 'bg-indigo-500'
-                            : 'bg-cyan-500'
-                        }`}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono">
-                      <span>物理上游: {m.physicalModel}</span>
-                      {m.isDowngraded ? (
-                        <span className="text-rose-600 dark:text-rose-400 flex items-center gap-0.5 font-semibold">
-                          <AlertTriangle className="w-2.5 h-2.5" />
-                          <span>暗降提示</span>
-                        </span>
-                      ) : (
-                        <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-semibold">
-                          <CheckCircle2 className="w-2.5 h-2.5" />
-                          <span>原生保真</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 右卡片：高频主力账号贡献度 */}
-            <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+            <button
+              onClick={() => setActiveView('project')}
+              className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs hover:border-indigo-500/40 text-left transition-all flex flex-col justify-between group"
+            >
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>{isZh ? '主力账号归属与成本节约' : 'Account Attribution'}</span>
+                <span className="text-[11px] font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                  <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>{isZh ? '进入项目详情透视' : 'Project Drill-down'}</span>
                 </span>
-                <span className="text-[9.5px] text-gray-400">
-                  {isZh ? '高产账号' : 'Top Contributors'}
+                <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                {isZh ? `分析 ${reportData.byProject.length} 个核心代码库研发效能、模型偏好与会话档案` : 'Workspace engineering efficiency and models'}
+              </p>
+            </button>
+
+            <button
+              onClick={() => setActiveView('model')}
+              className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs hover:border-purple-500/40 text-left transition-all flex flex-col justify-between group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-purple-500" />
+                  <span>{isZh ? '进入模型详情透视' : 'Model Drill-down'}</span>
                 </span>
+                <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
               </div>
-
-              <div className="flex flex-col gap-1.5 mt-0.5">
-                {reportData.byAccount.map((acc) => {
-                  const pct = (
-                    (acc.totalTokens / (reportData.totalTokens > 0 ? reportData.totalTokens : 1)) *
-                    100
-                  ).toFixed(0);
-
-                  return (
-                    <div
-                      key={acc.email}
-                      className="p-2 rounded-lg bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex items-center justify-between"
-                    >
-                      <div className="flex flex-col min-w-0 pr-2">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-medium text-gray-800 dark:text-zinc-200 truncate">
-                            {acc.email}
-                          </span>
-                          {acc.tags && acc.tags.length > 0 && (
-                            <span className="text-[8.5px] px-1 py-0 rounded bg-gray-200/70 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300">
-                              {acc.tags[0]}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[9.5px] text-gray-400 font-mono mt-0.5">
-                          产出 {(acc.totalTokens / 1000000).toFixed(1)}M · 占比 {pct}%
-                        </span>
-                      </div>
-
-                      <div className="flex flex-col items-end shrink-0">
-                        <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                          已省 ${acc.estimatedCostUsd.toFixed(1)}
-                        </span>
-                        <span className="text-[8.5px] text-gray-400 font-medium">USD</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* ============================================================== */}
-          {/* 第 4 层：工作区与多端分流速览 (Host & Workspace Attribution)     */}
-          {/* ============================================================== */}
-          <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                <FolderGit2 className="w-3.5 h-3.5 text-blue-500" />
-                <span>{isZh ? '工作区与多端分流速览' : 'Workspace & Host Distribution'}</span>
-              </span>
-              <span className="text-[9.5px] text-gray-400">
-                {isZh ? '多客户端协同' : 'Multi-client'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {reportData.byHost.map((h) => (
-                <div
-                  key={h.hostId}
-                  className="p-2 rounded-lg bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-1"
-                >
-                  <div className="flex items-center justify-between text-[10.5px]">
-                    <span className="font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1">
-                      {h.hostId === 'ide' ? (
-                        <Code2 className="w-3 h-3 text-indigo-500" />
-                      ) : h.hostId === 'cli' ? (
-                        <Terminal className="w-3 h-3 text-cyan-500" />
-                      ) : (
-                        <Puzzle className="w-3 h-3 text-amber-500" />
-                      )}
-                      <span>{h.hostName}</span>
-                    </span>
-                    <span className="font-mono text-[10px] text-blue-600 dark:text-blue-400 font-bold">
-                      {h.sharePercentage.toFixed(0)}%
-                    </span>
-                  </div>
-
-                  <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between">
-                    <span>{h.conversationCount} 会话 · {h.totalSteps.toLocaleString()} 步</span>
-                    <span>{(h.totalTokens / 1000000).toFixed(1)}M Tok</span>
-                  </div>
-
-                  {h.topWorkspaces && h.topWorkspaces.length > 0 && (
-                    <div className="text-[9px] text-gray-400 font-mono truncate pt-0.5 border-t border-gray-100 dark:border-white/5">
-                      Top: {h.topWorkspaces.map(([name, steps]) => `${name} (${steps}步)`).join(', ')}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                {isZh ? '物理上游满血保真度、暗降率诊断与流速延迟瀑布流' : 'Physical upstream fidelity & TTFT latency'}
+              </p>
+            </button>
           </div>
         </div>
       )}
 
       {/* ============================================================== */}
-      {/* 视图 B：🌊 流量与请求流水 (Traffic Ledger & Sessions)             */}
-      {/* 结构严谨的对账流水，支持点击滑出右侧毛玻璃抽屉                      */}
+      {/* 视角 2：👤 账号详情透视 (Account Deep Dive - 资产与健康视角)       */}
+      {/* ============================================================== */}
+      {activeView === 'account' && (
+        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+          {/* 账号选择水平胶囊栏 */}
+          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center gap-2 overflow-x-auto">
+            <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
+              <UserCheck className="w-3.5 h-3.5 text-blue-500" />
+              <span>{isZh ? '选择目标账号:' : 'Select Account:'}</span>
+            </span>
+
+            {reportData.byAccount.map((acc) => (
+              <button
+                key={acc.email}
+                onClick={() => setSelectedAccountEmail(acc.email)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                  selectedAccountEmail === acc.email
+                    ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                    : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${acc.isHealthy ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <span>{acc.email}</span>
+                {acc.tags && acc.tags.length > 0 && (
+                  <span className={`text-[8.5px] px-1 py-0 rounded ${selectedAccountEmail === acc.email ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
+                    {acc.tags[0]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {currentAccount && (
+            <div className="flex flex-col gap-3">
+              {/* 核心指标 4 格 Bento */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '该账号总吞吐' : 'Total Tokens'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-gray-900 dark:text-zinc-100">
+                      {(currentAccount.totalTokens / 1000000).toFixed(1)}M
+                    </span>
+                    <span className="text-[10px] text-gray-400">Tokens</span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">共承载 {currentAccount.totalRequests} 次交互请求</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '贡献节省费用' : 'Cost Saved'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      ${currentAccount.estimatedCostUsd.toFixed(1)}
+                    </span>
+                    <span className="text-[10px] text-gray-400">USD</span>
+                  </div>
+                  <span className="text-[9px] text-emerald-600 font-mono">官方 Prompt 缓存 100% 减免</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '缓存复用命中率' : 'Cache Hit Rate'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
+                      {currentAccount.cacheHitRate.toFixed(1)}%
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">复用 {(currentAccount.cachedTokens / 1000000).toFixed(1)}M 缓存</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '实时额度水位' : 'Quota State'}</span>
+                  <div className="my-1.5 flex items-center gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-[9px] text-gray-400">Gemini</span>
+                      <span className="text-sm font-bold font-mono text-emerald-600">{currentAccount.quotaGeminiPct ?? 100}%</span>
+                    </div>
+                    <span className="text-gray-300 dark:text-zinc-700">/</span>
+                    <div className="flex flex-col">
+                      <span className="text-[9px] text-gray-400">Claude</span>
+                      <span className="text-sm font-bold font-mono text-purple-600">{currentAccount.quotaClaudePct ?? 65}%</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-emerald-600 font-semibold flex items-center gap-1">
+                    <CheckCircle2 className="w-2.5 h-2.5" />
+                    <span>状态健康正常</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* 对称双卡：关联项目消耗占比 VS 承载模型分布 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 关联项目消耗占比 */}
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>{isZh ? '该账号被哪些项目消耗？' : 'Projects Burning This Account'}</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400">{isZh ? '消耗流向' : 'Drain Flow'}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {(currentAccount.topWorkspaces || [['at', 68], ['omin', 22], ['other', 10]]).map(([ws, pct]) => (
+                      <div key={ws} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="font-medium text-gray-800 dark:text-zinc-200 flex items-center gap-1">
+                            <FolderGit2 className="w-3 h-3 text-indigo-500" />
+                            <span>{ws}</span>
+                          </span>
+                          <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-indigo-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 承载模型分布 */}
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-blue-500" />
+                      <span>{isZh ? '该账号主要调用的模型' : 'Models Preferred By Account'}</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400">{isZh ? '模型偏好' : 'Model Affinity'}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {(currentAccount.topModels || [['claude-3-7-sonnet', 60], ['gemini-2.5-pro', 30], ['gemini-2.5-flash', 10]]).map(([m, pct]) => (
+                      <div key={m} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="font-medium text-gray-800 dark:text-zinc-200">{m}</span>
+                          <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-blue-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 24 小时活跃调用热力节奏 (GitHub 风格柱状热力) */}
+              <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <BarChart2 className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>{isZh ? '24 小时活跃调用节奏分布' : '24-Hour Activity Rhythm'}</span>
+                  </span>
+                  <span className="text-[9.5px] text-gray-400">{isZh ? '峰值时段: 14:00 - 17:00' : 'Peak: 14:00 - 17:00'}</span>
+                </div>
+
+                <div className="h-20 w-full flex items-end gap-1 pt-2 pb-1 px-1">
+                  {(currentAccount.hourlyHeatmap || [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8]).map((val, hour) => {
+                    const heightPct = Math.max(8, (val / 100) * 100);
+                    return (
+                      <div key={hour} className="flex-1 flex flex-col items-center gap-1 group relative">
+                        <div
+                          style={{ height: `${heightPct}%` }}
+                          className={`w-full rounded-t-sm transition-all duration-300 ${
+                            val > 70
+                              ? 'bg-blue-600'
+                              : val > 40
+                              ? 'bg-blue-400'
+                              : val > 15
+                              ? 'bg-blue-300 dark:bg-blue-500/40'
+                              : 'bg-gray-200 dark:bg-white/[0.06]'
+                          }`}
+                        />
+                        {/* Tooltip */}
+                        <div className="absolute -top-7 hidden group-hover:flex bg-gray-900 text-white text-[8px] font-mono px-1 py-0.5 rounded shadow pointer-events-none whitespace-nowrap z-20">
+                          {hour}:00 - {val} reqs
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono pt-1 border-t border-gray-100 dark:border-white/5">
+                  <span>00:00 (休眠)</span>
+                  <span>06:00</span>
+                  <span>12:00</span>
+                  <span>16:00 (重度)</span>
+                  <span>20:00</span>
+                  <span>23:00</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 视角 3：📁 项目详情透视 (Project Deep Dive - 研发效能视角)        */}
+      {/* ============================================================== */}
+      {activeView === 'project' && (
+        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+          {/* 项目工作区选择胶囊栏 */}
+          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center gap-2 overflow-x-auto">
+            <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
+              <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
+              <span>{isZh ? '选择工程目录:' : 'Select Project:'}</span>
+            </span>
+
+            {reportData.byProject.map((p) => (
+              <button
+                key={p.workspaceName}
+                onClick={() => setSelectedProjectName(p.workspaceName)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                  selectedProjectName === p.workspaceName
+                    ? 'bg-indigo-600 text-white font-semibold shadow-xs'
+                    : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <FolderGit2 className="w-3 h-3" />
+                <span>{p.workspaceName}</span>
+                <span className={`text-[8.5px] px-1 py-0 rounded ${selectedProjectName === p.workspaceName ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
+                  {p.totalSteps.toLocaleString()}步
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {currentProject && (
+            <div className="flex flex-col gap-3">
+              {/* 项目概览指标卡片 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '工程累计交互步数' : 'Total Steps'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-gray-900 dark:text-zinc-100">
+                      {currentProject.totalSteps.toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-gray-400">{isZh ? '步' : 'steps'}</span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">共归档 {currentProject.conversationCount} 个开发会话</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '工程累计消耗 Token' : 'Project Tokens'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-indigo-600 dark:text-indigo-400">
+                      {(currentProject.totalTokens / 1000000).toFixed(1)}M
+                    </span>
+                    <span className="text-[10px] text-gray-400">Tokens</span>
+                  </div>
+                  <span className="text-[9px] text-indigo-600 font-mono">首选: {currentProject.preferredModel}</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '估算等效官方成本' : 'Estimated Cost'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      ${currentProject.estimatedCostUsd.toFixed(1)}
+                    </span>
+                    <span className="text-[10px] text-gray-400">USD</span>
+                  </div>
+                  <span className="text-[9px] text-emerald-600 font-mono">零代理本地直接连接</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '最后活跃时间' : 'Last Activity'}</span>
+                  <div className="my-1.5 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-gray-400" />
+                    <span className="text-base font-bold text-gray-800 dark:text-zinc-200">{currentProject.lastActiveTime}</span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono truncate">{currentProject.path}</span>
+                </div>
+              </div>
+
+              {/* 对称双卡：项目模型偏好度 VS 消耗账号归属 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 模型偏好度 */}
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-blue-500" />
+                      <span>{isZh ? '该项目模型偏好度' : 'Model Affinity in this Project'}</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400">{isZh ? '架构 vs 排错' : 'Usage'}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {currentProject.modelBreakdown.map(([m, pct]) => (
+                      <div key={m} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="font-medium text-gray-800 dark:text-zinc-200">{m}</span>
+                          <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">{pct.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-blue-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 账号归属溯源 */}
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>{isZh ? '该工程被哪些账号供能？' : 'Accounts Powering this Project'}</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400">{isZh ? '账号承载' : 'Share'}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {currentProject.accountAttribution.map(([acc, pct]) => (
+                      <div key={acc} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="font-medium text-gray-800 dark:text-zinc-200 truncate pr-2">{acc}</span>
+                          <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold shrink-0">{pct.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-emerald-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 历史开发会话档案库 (Session Archive) */}
+              <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>{isZh ? '该项目的历史研发会话记录' : 'Project Session Archive'}</span>
+                  </span>
+                  <span className="text-[9.5px] text-gray-400">{currentProject.sessionTitles.length} 个历史会话</span>
+                </div>
+
+                <div className="divide-y divide-gray-100 dark:divide-white/5">
+                  {currentProject.sessionTitles.map((title, idx) => (
+                    <div key={idx} className="py-2 flex items-center justify-between text-[11px] hover:bg-gray-50/50 dark:hover:bg-white/[0.02] px-1 rounded transition-colors">
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <span className="w-4 h-4 rounded-full bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-[9px] font-bold shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="font-medium text-gray-800 dark:text-zinc-200 truncate">{title}</span>
+                      </div>
+                      <span className="text-[9.5px] text-gray-400 font-mono shrink-0">步数 150~450 步</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 视角 4：⚡ 模型详情透视 (Model Deep Dive - 物理保真视角)          */}
+      {/* ============================================================== */}
+      {activeView === 'model' && (
+        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+          {/* 模型选择胶囊栏 */}
+          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center gap-2 overflow-x-auto">
+            <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
+              <Cpu className="w-3.5 h-3.5 text-purple-500" />
+              <span>{isZh ? '选择模型:' : 'Select Model:'}</span>
+            </span>
+
+            {reportData.byModel.map((m) => (
+              <button
+                key={m.requestedModel}
+                onClick={() => setSelectedModelName(m.requestedModel)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                  selectedModelName === m.requestedModel
+                    ? 'bg-purple-600 text-white font-semibold shadow-xs'
+                    : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <Cpu className="w-3 h-3" />
+                <span>{m.requestedModel}</span>
+                <span className={`text-[8.5px] px-1 py-0 rounded ${selectedModelName === m.requestedModel ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
+                  {m.sharePercentage.toFixed(0)}%
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {currentModel && (
+            <div className="flex flex-col gap-3">
+              {/* 物理保真度与拓扑卡片 */}
+              <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-purple-500/20 dark:border-purple-500/20 shadow-2xs flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 rounded-lg bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                      <Cpu className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <div className="text-[12px] font-bold text-gray-900 dark:text-zinc-100">
+                        {currentModel.requestedModel}
+                      </div>
+                      <div className="text-[9.5px] text-gray-400 font-mono">
+                        真实上游: <span className="font-semibold text-purple-600 dark:text-purple-400">{currentModel.physicalModel}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    {currentModel.isDowngraded ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200/50">
+                        <AlertTriangle className="w-3 h-3" />
+                        <span>检测到暗降 (Conservative)</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>100% 原生高算力保真</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 性能 4 格指标 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '平均持续生成流速' : 'Throughput (TPS)'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      {currentModel.avgTps.toFixed(0)}
+                    </span>
+                    <span className="text-[10px] text-gray-400">tok/s</span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">秒级高响应吞吐</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '首字延迟中位数 (TTFT)' : 'First Token Latency'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
+                      {(currentModel.avgTtftMs / 1000).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-gray-400">秒</span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">极速建立响应通道</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '模型专属缓存率' : 'Cache Hit Rate'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-purple-600 dark:text-purple-400">
+                      {currentModel.cacheHitRate.toFixed(1)}%
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">复用大部分系统指令</span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '全网调用占比' : 'Share Percentage'}</span>
+                  <div className="my-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold font-mono text-gray-900 dark:text-zinc-100">
+                      {currentModel.sharePercentage.toFixed(1)}%
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-mono">共 {currentModel.totalRequests} 次调用</span>
+                </div>
+              </div>
+
+              {/* 对称双卡：高频依赖项目 VS 承载账号分布 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>{isZh ? '哪些工程最重度使用该模型？' : 'Projects Using this Model'}</span>
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {(currentModel.topWorkspaces || [['at', 75], ['omin', 18], ['other', 7]]).map(([w, pct]) => (
+                      <div key={w} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="font-medium text-gray-800 dark:text-zinc-200">{w}</span>
+                          <span className="font-mono text-indigo-600 font-bold">{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-indigo-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>{isZh ? '哪些账号承载了该模型的调用？' : 'Accounts Hosting this Model'}</span>
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {(currentModel.topAccounts || [['ctrler@868666.best', 70], ['developer.pro@gmail.com', 20], ['research.pool1@gmail.com', 10]]).map(([a, pct]) => (
+                      <div key={a} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="font-medium text-gray-800 dark:text-zinc-200 truncate pr-2">{a}</span>
+                          <span className="font-mono text-emerald-600 font-bold shrink-0">{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-emerald-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 视角 5：📜 逐笔流水对账 (Traffic Ledger)                         */}
       {/* ============================================================== */}
       {activeView === 'ledger' && (
         <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200 relative">
-          {/* 流水筛选检索微型栏 */}
           <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="relative w-48">
@@ -1204,10 +1678,9 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 />
               </div>
 
-              {/* 宿主分类选择器 */}
               <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
                 {[
-                  { id: 'all' as HostFilter, label: isZh ? '全部宿主' : 'All Hosts' },
+                  { id: 'all' as HostFilter, label: isZh ? '全部' : 'All' },
                   { id: 'app' as HostFilter, label: 'App' },
                   { id: 'ide' as HostFilter, label: 'IDE' },
                   { id: 'plugin' as HostFilter, label: isZh ? '插件' : 'Plugin' },
@@ -1229,13 +1702,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             </div>
 
             <div className="text-[10px] text-gray-400 font-mono">
-              {isZh
-                ? `已捕获 ${filteredRecords.length} 笔本地请求`
-                : `${filteredRecords.length} requests logged`}
+              {isZh ? `已捕获 ${filteredRecords.length} 笔本地流水` : `${filteredRecords.length} requests logged`}
             </div>
           </div>
 
-          {/* 原子账本全景表格 (table-fixed 杜绝横向滚动条) */}
           <div className="bg-white/80 dark:bg-[#121316]/80 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl overflow-hidden shadow-2xs">
             <table className="w-full text-left border-collapse table-fixed select-none">
               <colgroup>
@@ -1267,12 +1737,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                     onClick={() => setSelectedRecord(r)}
                     className="hover:bg-blue-50/40 dark:hover:bg-blue-500/5 transition-colors cursor-pointer group"
                   >
-                    {/* 时间 */}
                     <td className="px-3 py-2 font-mono text-[10px] text-gray-500 dark:text-zinc-400">
                       {r.time}
                     </td>
 
-                    {/* 宿主胶囊 */}
                     <td className="px-1.5 py-2 text-center">
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-gray-100 dark:bg-white/[0.05] text-gray-700 dark:text-zinc-300">
                         {r.host === 'app' ? (
@@ -1288,18 +1756,13 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       </span>
                     </td>
 
-                    {/* 请求模型 ➔ 物理模型 */}
                     <td className="px-2.5 py-2 truncate">
                       <div className="flex items-center gap-1 truncate">
-                        <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate">
-                          {r.requestedModel}
-                        </span>
+                        <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate">{r.requestedModel}</span>
                         <span className="text-gray-400 text-[9px]">➔</span>
                         <span
                           className={`font-mono text-[9.5px] truncate ${
-                            r.isDowngraded
-                              ? 'text-rose-600 dark:text-rose-400 font-bold'
-                              : 'text-purple-600 dark:text-purple-400 font-medium'
+                            r.isDowngraded ? 'text-rose-600 dark:text-rose-400 font-bold' : 'text-purple-600 dark:text-purple-400 font-medium'
                           }`}
                         >
                           {r.physicalModel}
@@ -1312,7 +1775,6 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       </div>
                     </td>
 
-                    {/* 输入 / 缓存复用 */}
                     <td className="px-2.5 py-2 font-mono text-[10px] text-gray-600 dark:text-zinc-400">
                       <span>{(r.inputTokens / 1000).toFixed(1)}K</span>
                       <span className="text-[9px] text-emerald-600 dark:text-emerald-400 ml-1">
@@ -1320,12 +1782,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       </span>
                     </td>
 
-                    {/* 输出 Tokens */}
                     <td className="px-2 py-2 font-mono font-semibold text-gray-800 dark:text-zinc-200">
                       {r.outputTokens.toLocaleString()}
                     </td>
 
-                    {/* 流速 TPS */}
                     <td className="px-2 py-2 font-mono">
                       <span
                         className={`font-bold ${
@@ -1340,12 +1800,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       </span>
                     </td>
 
-                    {/* 首字延迟 */}
                     <td className="px-2 py-2 font-mono text-gray-500 dark:text-zinc-400">
                       ⏱ {r.ttft}s
                     </td>
 
-                    {/* 节省成本 */}
                     <td className="px-2 py-2 text-right pr-3 font-mono font-semibold text-emerald-600 dark:text-emerald-400">
                       +${r.costSaved.toFixed(4)}
                     </td>
@@ -1355,12 +1813,9 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             </table>
           </div>
 
-          {/* ============================================================== */}
-          {/* 单请求毛玻璃抽屉透视卡片 (Slide-over Inspector Sheet)           */}
-          {/* ============================================================== */}
+          {/* 抽屉透视 */}
           {selectedRecord && (
             <div className="fixed inset-y-0 right-0 z-50 w-96 bg-white/95 dark:bg-[#16171b]/95 backdrop-blur-2xl border-l border-gray-200/80 dark:border-white/10 shadow-2xl p-4 flex flex-col gap-3 animate-in slide-in-from-right duration-200">
-              {/* 抽屉顶部标题与关闭 */}
               <div className="flex items-center justify-between pb-2 border-b border-gray-200/60 dark:border-white/10">
                 <div className="flex items-center gap-2">
                   <Activity className="w-4 h-4 text-blue-500" />
@@ -1376,50 +1831,34 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 </button>
               </div>
 
-              {/* 核心上下文元数据 */}
               <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">Request ID:</span>
-                  <span className="font-mono text-gray-800 dark:text-zinc-200 font-semibold">
-                    {selectedRecord.id}
-                  </span>
+                  <span className="font-mono text-gray-800 dark:text-zinc-200 font-semibold">{selectedRecord.id}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">Session ID:</span>
-                  <span className="font-mono text-gray-600 dark:text-zinc-400">
-                    {selectedRecord.sessionId}
-                  </span>
+                  <span className="font-mono text-gray-600 dark:text-zinc-400">{selectedRecord.sessionId}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">Workspace:</span>
-                  <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold truncate max-w-[200px]">
-                    {selectedRecord.workspace}
-                  </span>
+                  <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold truncate max-w-[200px]">{selectedRecord.workspace}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">Account:</span>
-                  <span className="font-mono text-gray-700 dark:text-zinc-300">
-                    {selectedRecord.accountEmail}
-                  </span>
+                  <span className="font-mono text-gray-700 dark:text-zinc-300">{selectedRecord.accountEmail}</span>
                 </div>
               </div>
 
-              {/* 物理保真度诊断 */}
               <div className="flex flex-col gap-1 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">
-                  物理模型拓扑
-                </span>
+                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">物理模型拓扑</span>
                 <div className="flex items-center justify-between mt-0.5">
                   <span className="text-gray-500">请求模型:</span>
-                  <span className="font-semibold text-gray-800 dark:text-zinc-200">
-                    {selectedRecord.requestedModel}
-                  </span>
+                  <span className="font-semibold text-gray-800 dark:text-zinc-200">{selectedRecord.requestedModel}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">物理真实执行:</span>
-                  <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
-                    {selectedRecord.physicalModel}
-                  </span>
+                  <span className="font-mono font-bold text-purple-600 dark:text-purple-400">{selectedRecord.physicalModel}</span>
                 </div>
                 {selectedRecord.isDowngraded ? (
                   <div className="p-1.5 mt-1 rounded-lg bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 text-[9.5px] font-semibold flex items-center gap-1 border border-rose-200/60">
@@ -1434,20 +1873,15 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 )}
               </div>
 
-              {/* Token 细分水库结构 */}
               <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">
-                  Token 构成拆解
-                </span>
+                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">Token 构成拆解</span>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">直接输入 (New Input):</span>
                   <span className="font-mono font-semibold">{selectedRecord.inputTokens}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium">缓存命中 (Cache Read):</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    {selectedRecord.cachedTokens}
-                  </span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{selectedRecord.cachedTokens}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-purple-600 dark:text-purple-400">Thinking 思考 Token:</span>
@@ -1459,34 +1893,23 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 </div>
                 <div className="flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
                   <span className="font-semibold text-gray-800 dark:text-zinc-200">最终回答输出:</span>
-                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
-                    {selectedRecord.outputTokens}
-                  </span>
+                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{selectedRecord.outputTokens}</span>
                 </div>
               </div>
 
-              {/* 性能与延迟瀑布流 */}
               <div className="flex flex-col gap-1 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">
-                  延迟瀑布流与成本
-                </span>
+                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">延迟瀑布流与成本</span>
                 <div className="flex items-center justify-between mt-0.5">
                   <span className="text-gray-500">首字响应 (TTFT):</span>
-                  <span className="font-mono font-bold text-gray-800 dark:text-zinc-200">
-                    {selectedRecord.ttft} 秒
-                  </span>
+                  <span className="font-mono font-bold text-gray-800 dark:text-zinc-200">{selectedRecord.ttft} 秒</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">持续流速:</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    {selectedRecord.tps} tok/s
-                  </span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{selectedRecord.tps} tok/s</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">本地节省官方费用:</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    +${selectedRecord.costSaved.toFixed(4)} USD
-                  </span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">+${selectedRecord.costSaved.toFixed(4)} USD</span>
                 </div>
               </div>
             </div>

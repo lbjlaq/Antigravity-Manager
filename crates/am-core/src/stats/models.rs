@@ -90,6 +90,12 @@ pub struct AccountUsageGroup {
     pub quota_gemini_pct: Option<f64>,
     pub quota_claude_pct: Option<f64>,
     pub is_healthy: bool,
+    #[serde(default)]
+    pub top_workspaces: Vec<(String, f64)>, // (workspace, pct)
+    #[serde(default)]
+    pub top_models: Vec<(String, f64)>, // (model, pct)
+    #[serde(default)]
+    pub hourly_heatmap: Vec<u32>, // 24-hour activity counts
 }
 
 /// 视角 3: 真实模型性能矩阵 (Model Performance Matrix)
@@ -105,6 +111,10 @@ pub struct ModelPerformanceGroup {
     pub cache_hit_rate: f64,
     pub share_percentage: f64,
     pub is_downgraded: bool,
+    #[serde(default)]
+    pub top_workspaces: Vec<(String, f64)>,
+    #[serde(default)]
+    pub top_accounts: Vec<(String, f64)>,
 }
 
 /// 视角 4: 宿主与工作区分流 (Host & Workspace Distribution)
@@ -120,7 +130,24 @@ pub struct HostWorkspaceGroup {
     pub top_workspaces: Vec<(String, u64)>, // (Workspace, steps)
 }
 
-/// 视角 5: 24 小时生物钟热力分布 (Temporal Rhythm Group)
+/// 视角 5: 项目与工作区深度分析实体 (Project / Workspace Deep Dive)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectUsageGroup {
+    pub workspace_name: String,
+    pub path: String,
+    pub total_steps: u64,
+    pub conversation_count: usize,
+    pub total_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub preferred_model: String,
+    pub model_breakdown: Vec<(String, f64)>, // (model, pct)
+    pub account_attribution: Vec<(String, f64)>, // (email, pct)
+    pub last_active_time: String,
+    pub session_titles: Vec<String>,
+}
+
+/// 视角 6: 24 小时生物钟热力分布 (Temporal Rhythm Group)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemporalRhythmGroup {
@@ -147,9 +174,10 @@ pub struct MasterAnalyticsReport {
     pub avg_speed_tps: f64,
     pub avg_ttft_ms: u64,
 
-    /// 5 大多维切片投影
+    /// 多维切片投影
     pub active_context: Option<ContextWindowSnapshot>,
     pub by_account: Vec<AccountUsageGroup>,
+    pub by_project: Vec<ProjectUsageGroup>,
     pub by_model: Vec<ModelPerformanceGroup>,
     pub by_host: Vec<HostWorkspaceGroup>,
     pub timeline: Vec<TemporalRhythmGroup>,
