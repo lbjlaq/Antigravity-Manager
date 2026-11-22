@@ -990,21 +990,35 @@ pub struct HubUpdateStatus {
     pub update_available: bool,
 }
 
-/// Check the latest Hub release for the selected outbound UA platform.
-/// Manifests provide a version, not a paired Piper CL: reporting a newer
-/// release must never silently change the active outbound fingerprint.
+/// 检查官方 Hub 是否发布了比当前校准基线更新的版本。
+///
+/// 仅供前端启动时的小提示使用：出站 UA 仍使用硬编码的版本 + CL 配对，
+/// 因为 CL 无法从任何公开端点获取，自动跟随版本号只会造成版本/CL 不一致。
 #[tauri::command]
 pub async fn check_hub_update() -> HubUpdateStatus {
-    let current = crate::modules::hub_version::get_current_hub_fingerprint().version;
-    let platform = crate::modules::hub_version::current_hub_platform();
-    let latest = crate::modules::hub_version::fetch_latest_hub_platform_version(
-        Some(platform),
-        false,
-    )
-    .await;
-    let update_available = latest.as_deref().is_some_and(|latest_version| {
-        crate::constants::compare_semver(latest_version, &current) == std::cmp::Ordering::Greater
-    });
+    // Linux mirrors the Windows workflow but reads its own release feed.
+    if crate::modules::hub_version::current_hub_platform() == "linux" {
+        let current = crate::modules::hub_version::get_current_hub_fingerprint().version;
+        let latest = crate::modules::hub_version::fetch_latest_linux_hub_version(false).await;
+        let update_available = latest.as_deref().is_some_and(|latest_version| {
+            crate::constants::compare_semver(latest_version, &current)
+                == std::cmp::Ordering::Greater
+        });
+        return HubUpdateStatus {
+            current,
+            latest,
+            update_available,
+        };
+    }
+
+    // Preserve the upstream Windows implementation verbatim.
+    let current = crate::constants::OFFICIAL_HUB_VERSION.to_string();
+    let latest = crate::modules::hub_version::fetch_remote_hub_release()
+        .await
+        .map(|release| release.version);
+    let update_available = latest
+        .as_deref()
+        .map_or(false, crate::modules::hub_version::is_update_available);
 
     HubUpdateStatus {
         current,
