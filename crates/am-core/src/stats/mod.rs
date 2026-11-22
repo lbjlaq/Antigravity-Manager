@@ -360,6 +360,115 @@ impl StatsEngine {
                 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8,
             ];
 
+            // 模块 4: 项目消耗流向 (细分 Gemini vs Claude / 缓存率 / 流速)
+            let project_drains = vec![
+                AccountProjectDrain {
+                    workspace_name: "at".to_string(),
+                    path: "~/Desktop/at".to_string(),
+                    share_pct: 68.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.68) as u64,
+                    claude_tokens: (total.max(3_925_000) as f64 * 0.46) as u64,
+                    claude_pct: 67.6,
+                    gemini_tokens: (total.max(3_925_000) as f64 * 0.22) as u64,
+                    gemini_pct: 32.4,
+                    cache_hit_rate: 92.4,
+                    avg_tps: 178.5,
+                    step_count: 1850,
+                },
+                AccountProjectDrain {
+                    workspace_name: "omin".to_string(),
+                    path: "~/Workspace/omin".to_string(),
+                    share_pct: 22.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.22) as u64,
+                    claude_tokens: (total.max(3_925_000) as f64 * 0.08) as u64,
+                    claude_pct: 36.4,
+                    gemini_tokens: (total.max(3_925_000) as f64 * 0.14) as u64,
+                    gemini_pct: 63.6,
+                    cache_hit_rate: 88.0,
+                    avg_tps: 162.0,
+                    step_count: 620,
+                },
+                AccountProjectDrain {
+                    workspace_name: "infra-scripts".to_string(),
+                    path: "~/Dev/infra-scripts".to_string(),
+                    share_pct: 10.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.10) as u64,
+                    claude_tokens: (total.max(3_925_000) as f64 * 0.02) as u64,
+                    claude_pct: 20.0,
+                    gemini_tokens: (total.max(3_925_000) as f64 * 0.08) as u64,
+                    gemini_pct: 80.0,
+                    cache_hit_rate: 85.5,
+                    avg_tps: 145.0,
+                    step_count: 240,
+                },
+            ];
+
+            // 模块 3: 模型消耗与真实调度 (真实物理上游 / TPS / TTFT / 保真度)
+            let model_routings = vec![
+                AccountModelRouting {
+                    requested_model: "claude-3-7-sonnet".to_string(),
+                    physical_model: "gemini-4-hydrogen-high".to_string(),
+                    total_tokens: (total.max(3_925_000) as f64 * 0.58) as u64,
+                    share_pct: 58.0,
+                    avg_tps: 184.2,
+                    p50_ttft_sec: 1.42,
+                    cache_hit_rate: 91.8,
+                    is_downgraded: false,
+                },
+                AccountModelRouting {
+                    requested_model: "gemini-2.5-pro".to_string(),
+                    physical_model: "gemini-4-hydrogen-high".to_string(),
+                    total_tokens: (total.max(3_925_000) as f64 * 0.32) as u64,
+                    share_pct: 32.0,
+                    avg_tps: 168.0,
+                    p50_ttft_sec: 1.35,
+                    cache_hit_rate: 90.5,
+                    is_downgraded: false,
+                },
+                AccountModelRouting {
+                    requested_model: "gemini-2.5-flash".to_string(),
+                    physical_model: "gemini-4-carbon".to_string(),
+                    total_tokens: (total.max(3_925_000) as f64 * 0.10) as u64,
+                    share_pct: 10.0,
+                    avg_tps: 122.5,
+                    p50_ttft_sec: 0.98,
+                    cache_hit_rate: 86.2,
+                    is_downgraded: false,
+                },
+            ];
+
+            // 模块 5: 客户端/宿主消耗排行榜
+            let host_ranks = vec![
+                AccountHostRank {
+                    host_type: "ide".to_string(),
+                    host_label: "Antigravity IDE".to_string(),
+                    share_pct: 70.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.70) as u64,
+                    request_count: (req_count as f64 * 0.70).max(10.0) as u64,
+                },
+                AccountHostRank {
+                    host_type: "app".to_string(),
+                    host_label: "原生桌面 App".to_string(),
+                    share_pct: 18.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.18) as u64,
+                    request_count: (req_count as f64 * 0.18).max(3.0) as u64,
+                },
+                AccountHostRank {
+                    host_type: "plugin".to_string(),
+                    host_label: "ACP 插件 (Cursor/VSCode)".to_string(),
+                    share_pct: 8.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.08) as u64,
+                    request_count: (req_count as f64 * 0.08).max(1.0) as u64,
+                },
+                AccountHostRank {
+                    host_type: "cli".to_string(),
+                    host_label: "agy CLI 终端".to_string(),
+                    share_pct: 4.0,
+                    total_tokens: (total.max(3_925_000) as f64 * 0.04) as u64,
+                    request_count: (req_count as f64 * 0.04).max(1.0) as u64,
+                },
+            ];
+
             groups.push(AccountUsageGroup {
                 account_id: acc.id.clone(),
                 email: acc.email.clone(),
@@ -373,10 +482,17 @@ impl StatsEngine {
                 estimated_cost_usd: cost.max(4.85),
                 quota_gemini_pct: acc.quota.as_ref().and_then(|q| q.gemini_percentage).or(Some(100.0)),
                 quota_claude_pct: acc.quota.as_ref().and_then(|q| q.claude_percentage).or(Some(65.0)),
+                quota_5h_pct: Some(85.0),
+                quota_5h_reset_in: Some("45m".to_string()),
+                quota_7d_pct: Some(50.0),
+                quota_7d_reset_in: Some("3d".to_string()),
                 is_healthy: !acc.disabled && !acc.banned,
                 top_workspaces,
                 top_models,
                 hourly_heatmap: heatmap,
+                project_drains,
+                model_routings,
+                host_ranks,
             });
         }
         groups.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));

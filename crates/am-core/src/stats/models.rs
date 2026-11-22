@@ -76,6 +76,45 @@ pub struct ContextWindowSnapshot {
 /// 视角 2: 账号归属聚合 (Account Attribution Group)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AccountProjectDrain {
+    pub workspace_name: String,
+    pub path: String,
+    pub share_pct: f64,
+    pub total_tokens: u64,
+    pub claude_tokens: u64,
+    pub claude_pct: f64,
+    pub gemini_tokens: u64,
+    pub gemini_pct: f64,
+    pub cache_hit_rate: f64,
+    pub avg_tps: f64,
+    pub step_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountModelRouting {
+    pub requested_model: String,
+    pub physical_model: String,
+    pub total_tokens: u64,
+    pub share_pct: f64,
+    pub avg_tps: f64,
+    pub p50_ttft_sec: f64,
+    pub cache_hit_rate: f64,
+    pub is_downgraded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountHostRank {
+    pub host_type: String, // "ide" | "app" | "plugin" | "cli"
+    pub host_label: String,
+    pub share_pct: f64,
+    pub total_tokens: u64,
+    pub request_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AccountUsageGroup {
     pub account_id: String,
     pub email: String,
@@ -89,6 +128,10 @@ pub struct AccountUsageGroup {
     pub estimated_cost_usd: f64,
     pub quota_gemini_pct: Option<f64>,
     pub quota_claude_pct: Option<f64>,
+    pub quota_5h_pct: Option<f64>,
+    pub quota_5h_reset_in: Option<String>,
+    pub quota_7d_pct: Option<f64>,
+    pub quota_7d_reset_in: Option<String>,
     pub is_healthy: bool,
     #[serde(default)]
     pub top_workspaces: Vec<(String, f64)>, // (workspace, pct)
@@ -96,6 +139,12 @@ pub struct AccountUsageGroup {
     pub top_models: Vec<(String, f64)>, // (model, pct)
     #[serde(default)]
     pub hourly_heatmap: Vec<u32>, // 24-hour activity counts
+    #[serde(default)]
+    pub project_drains: Vec<AccountProjectDrain>,
+    #[serde(default)]
+    pub model_routings: Vec<AccountModelRouting>,
+    #[serde(default)]
+    pub host_ranks: Vec<AccountHostRank>,
 }
 
 /// 视角 3: 真实模型性能矩阵 (Model Performance Matrix)

@@ -573,6 +573,94 @@ Antigravity Manager 桌面客户端 (`am-gui`) 是专为专业开发者打造的
 
 ---
 
+#### 5.4.16 图谱 16：暗黑 Bento 桑基流与气泡散点图 (Dark Bento Sankey & Bubble Matrix)
+- **本地图片**：![16_dark_bento_sankey_arch](./assets/gui_references/16_dark_bento_sankey_arch.jpg)
+- **绝对链接**：[16_dark_bento_sankey_arch.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/16_dark_bento_sankey_arch.jpg)
+- **组件特征**：深黑底色下的发光桑基流图、拱门半圆环进度仪 (`22.870`)、气泡大小反映吞吐的多维气泡散点图、服务器负载小条块。
+- **账号详情映射**：
+  - 映射至 **「Token 算力金库半环仪表 (Arch Gauge)」**；
+  - 映射至 **「项目与模型流向气泡图」**（气泡大小代表该工程消耗的 Token 量，气泡颜色区分 Gemini vs Claude）。
+
+---
+
+#### 5.4.17 图谱 17：多圈同心靶心额度仪表与状态清单 (Multi-Ring Target Gauge & Status Matrix)
+- **本地图片**：![17_multi_ring_target_gauge](./assets/gui_references/17_multi_ring_target_gauge.jpg)
+- **绝对链接**：[17_multi_ring_target_gauge.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/17_multi_ring_target_gauge.jpg)
+- **组件特征**：深绿背景中的五层同心圆环靶向仪表（`Dynamics Today 64.3%`），不同颜色环代表 Sales/Plan/Limit 多层水位，左下角带状态卡。
+- **账号详情映射**：
+  - 映射至 **「模块 1：多周期额度同心环雷达」**！最内环 5h 实时流速环、次内环 7d 周期水库环、外环每月总配额环，直观看到多重时间窗口的消耗进度。
+
+---
+
+#### 5.4.18 图谱 18：霓虹点阵活跃雷达与水平状态栏 (Neon Dot-Matrix Radar & Status Bar)
+- **本地图片**：![18_neon_dot_matrix_radar](./assets/gui_references/18_neon_dot_matrix_radar.jpg)
+- **绝对链接**：[18_neon_dot_matrix_radar.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/18_neon_dot_matrix_radar.jpg)
+- **组件特征**：同心圆光芒雷达、点阵矩阵散点图、水平三段式微环卡片（`89% Total earning`、`54% Investments`、`89% Sales plan`）。
+- **账号详情映射**：
+  - 映射至 **「账号多状态水平卡片栏」**，每个卡片集成微型圆环（如健康度 98%、Gemini 100%、Claude 50%）；
+  - 映射至 **「24h 点阵活跃度热力矩阵」**。
+
+---
+
+#### 5.4.19 图谱 19：高峰波浪山脉图与渐变水平排行条 (Peak Mountain Wave & Gradient Bars)
+- **本地图片**：![19_peak_mountain_wave_bars](./assets/gui_references/19_peak_mountain_wave_bars.jpg)
+- **绝对链接**：[19_peak_mountain_wave_bars.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/19_peak_mountain_wave_bars.jpg)
+- **组件特征**：多层平滑山脉波形图带波峰节点气泡标定（`1,105 Max Page Views`、`240 Unique Visits`、`322 Visits`），右侧访问来源水平渐变条形图（`macOS 665`、`iOS 632`、`Windows 234`）。
+- **账号详情映射**：
+  - 映射至 **「Token 吞吐时序波峰波谷标注」**（在波峰处自动标出最大吞吐时刻与对应工程）；
+  - 映射至 **「模块 5：客户端/宿主消耗排行榜的渐变条形图」**。
+
+---
+
+#### 5.4.20 图谱 20：极简白三色垂直堆叠柱状图与微火花线 (GitHub Stacked PRs & Sparklines)
+- **本地图片**：![20_github_stacked_prs_bubbles](./assets/gui_references/20_github_stacked_prs_bubbles.jpg)
+- **绝对链接**：[20_github_stacked_prs_bubbles.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/20_github_stacked_prs_bubbles.jpg)
+- **组件特征**：纯净白色背景、顶部 4 个大数字 KPI 带绿色走势火花线（Sparklines: `63K +120%`、`1.5M`、`3.4B`），核心为类似 GitHub PRs/Commits 的三色垂直堆叠柱状图（紫色/灰色/绿色）。
+- **账号详情映射**：
+  - 映射至 **「Token 3-Tier 垂直堆叠柱状图（Vertical Stacked Token Bars）」**：每根柱子垂直分为翡翠绿（缓存命中）、科技蓝（直接输入）、玫瑰粉（模型输出）；
+  - 映射至各个指标卡中的微型走势火花线。
+
+---
+
+#### 5.4.21 图谱 21：周额度里程碑轨迹条与存钱罐对比 (Milestone Track & Savings Ledger)
+- **本地图片**：![21_milestone_track_timeline](./assets/gui_references/21_milestone_track_timeline.jpg)
+- **绝对链接**：[21_milestone_track_timeline.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/21_milestone_track_timeline.jpg)
+- **组件特征**：上部深色总资产走势折线图，下部浅色卡片，包含水平彩色彩带里程碑轨迹条（Milestone Track），沿途附带里程碑节点、头像徽章与终点旗帜（`$34 764` -> `$38 000`）。
+- **账号详情映射**：
+  - 映射至 **「周额度消耗里程碑轨迹条」**！在一条平滑彩线上标注各工程当前已消耗的额度里程碑与 7d 耗尽阈值旗帜；
+  - 映射至 **「Prompt Caching 累计节省金库清单」**。
+
+---
+
+#### 5.4.22 图谱 22：行程遥测轨迹与竖向活动日志卡片流 (Telemetry Checkpoints & Activity Log)
+- **本地图片**：![22_telemetry_trip_checkpoints](./assets/gui_references/22_telemetry_trip_checkpoints.jpg)
+- **绝对链接**：[22_telemetry_trip_checkpoints.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/22_telemetry_trip_checkpoints.jpg)
+- **组件特征**：深色车辆遥测界面，左侧里程/耗电柱状图与高程波形，右侧竖向活动日志时间轴卡片流（Activity log cards），带绿色编号圆圈、状态药丸（`46% Charging received`、`37 kWh`、`57 min`、`$9.34`）。
+- **账号详情映射**：
+  - 映射至 **「账号近期会话与请求轨迹卡片流 (Recent Activity Log Cards)」**，每个会话清晰标出使用的项目工程、模型、消耗 Token 与生成流速。
+
+---
+
+#### 5.4.23 图谱 23：粒子流电池卡与彩色堆叠时序柱 (Electrys Particle Battery & Multi-Color Bars)
+- **本地图片**：![23_electrys_particle_stacked_bars](./assets/gui_references/23_electrys_particle_stacked_bars.png)
+- **绝对链接**：[23_electrys_particle_stacked_bars.png](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/23_electrys_particle_stacked_bars.png)
+- **组件特征**：深黑暗紫科技界面，左侧电池卡带流动微粒子光晕动画（`63% Battery`），右侧核心为每小时彩色多段垂直堆叠柱，悬停滑出多指标 Tooltip（`23 May, 2023 - $15.4 · 21 kWh · 71 min`），底部带分类占比徽章。
+- **账号详情映射**：
+  - 映射至 **「5h / 7d 实时额度粒子流动态电池卡」**，直观显示电量与充放电状态；
+  - 映射至 **「模块 6：24 小时高保真彩色堆叠柱状热力图」**，悬停即透视每小时详细指标。
+
+---
+
+#### 5.4.24 图谱 24：三维地形等高线打卡与双向浮动指标条 (Topographic 3D Wireframe & Floating Bars)
+- **本地图片**：![24_topographic_3d_scatter_bars](./assets/gui_references/24_topographic_3d_scatter_bars.jpg)
+- **绝对链接**：[24_topographic_3d_scatter_bars.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/24_topographic_3d_scatter_bars.jpg)
+- **组件特征**：未来感三维等高线立体地形图带路径打卡旗帜，左侧上下双向浮动连接条（Heart rate bidirectional floating bars）、散点律动图，底部登山归档日志。
+- **账号详情映射**：
+  - 映射至 **「双向流速浮动条（Throughput Floating Bars）」**，展示流速的上下波动范围；
+  - 映射至 **「工程开发会话登山打卡日记」**。
+
+---
+
 ## 6. 系统设置（Settings & Automation）详细设计
 
 系统设置采用 macOS System Settings 经典的**分段控制器 (Segmented Tabs)** 布局，彻底消除长页面滚动查找的认知疲劳。四大子 Tab 权责极其鲜明：

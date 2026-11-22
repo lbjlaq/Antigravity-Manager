@@ -20,10 +20,10 @@ import {
   FolderGit2,
   UserCheck,
   Cpu,
-  BarChart2,
   Clock,
   ChevronRight,
   BookOpen,
+  ArrowRight,
 } from 'lucide-react';
 
 interface StatsProps {
@@ -59,6 +59,42 @@ export interface ContextWindowSnapshot {
   lastModelUpdate?: string;
 }
 
+// 账号关联项目流向
+export interface AccountProjectDrain {
+  workspaceName: string;
+  path: string;
+  sharePct: number;
+  totalTokens: number;
+  claudeTokens: number;
+  claudePct: number;
+  geminiTokens: number;
+  geminiPct: number;
+  cacheHitRate: number;
+  avgTps: number;
+  stepCount: number;
+}
+
+// 账号模型调度与物理上游
+export interface AccountModelRouting {
+  requestedModel: string;
+  physicalModel: string;
+  totalTokens: number;
+  sharePct: number;
+  avgTps: number;
+  p50TtftSec: number;
+  cacheHitRate: number;
+  isDowngraded: boolean;
+}
+
+// 账号宿主排行
+export interface AccountHostRank {
+  hostType: 'ide' | 'app' | 'plugin' | 'cli' | string;
+  hostLabel: string;
+  sharePct: number;
+  totalTokens: number;
+  requestCount: number;
+}
+
 // 账号聚合实体
 export interface AccountUsageGroup {
   accountId: string;
@@ -73,10 +109,17 @@ export interface AccountUsageGroup {
   estimatedCostUsd: number;
   quotaGeminiPct?: number;
   quotaClaudePct?: number;
+  quota5hPct?: number;
+  quota5hResetIn?: string;
+  quota7dPct?: number;
+  quota7dResetIn?: string;
   isHealthy: boolean;
   topWorkspaces?: [string, number][];
   topModels?: [string, number][];
   hourlyHeatmap?: number[];
+  projectDrains?: AccountProjectDrain[];
+  modelRoutings?: AccountModelRouting[];
+  hostRanks?: AccountHostRank[];
 }
 
 // 项目聚合实体
@@ -229,11 +272,15 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         estimatedCostUsd: 188.0,
         quotaGeminiPct: 100,
         quotaClaudePct: 50,
+        quota5hPct: 85,
+        quota5hResetIn: '45m',
+        quota7dPct: 50,
+        quota7dResetIn: '3天',
         isHealthy: true,
         topWorkspaces: [
           ['at', 68],
           ['omin', 22],
-          ['core-gateway', 10],
+          ['infra-scripts', 10],
         ],
         topModels: [
           ['claude-3-7-sonnet', 58],
@@ -241,6 +288,109 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
           ['gemini-2.5-flash', 10],
         ],
         hourlyHeatmap: [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8],
+        projectDrains: [
+          {
+            workspaceName: 'at',
+            path: '~/Desktop/at',
+            sharePct: 68.0,
+            totalTokens: 140800000,
+            claudeTokens: 95000000,
+            claudePct: 67.5,
+            geminiTokens: 45800000,
+            geminiPct: 32.5,
+            cacheHitRate: 92.4,
+            avgTps: 178.5,
+            stepCount: 1850,
+          },
+          {
+            workspaceName: 'omin',
+            path: '~/Workspace/omin',
+            sharePct: 22.0,
+            totalTokens: 45500000,
+            claudeTokens: 15500000,
+            claudePct: 34.1,
+            geminiTokens: 30000000,
+            geminiPct: 65.9,
+            cacheHitRate: 88.0,
+            avgTps: 162.0,
+            stepCount: 620,
+          },
+          {
+            workspaceName: 'infra-scripts',
+            path: '~/Dev/infra-scripts',
+            sharePct: 10.0,
+            totalTokens: 20810000,
+            claudeTokens: 4200000,
+            claudePct: 20.2,
+            geminiTokens: 16610000,
+            geminiPct: 79.8,
+            cacheHitRate: 85.5,
+            avgTps: 145.0,
+            stepCount: 240,
+          },
+        ],
+        modelRoutings: [
+          {
+            requestedModel: 'claude-3-7-sonnet',
+            physicalModel: 'gemini-4-hydrogen-high',
+            totalTokens: 120120000,
+            sharePct: 58.0,
+            avgTps: 184.2,
+            p50TtftSec: 1.42,
+            cacheHitRate: 91.8,
+            isDowngraded: false,
+          },
+          {
+            requestedModel: 'gemini-2.5-pro',
+            physicalModel: 'gemini-4-hydrogen-high',
+            totalTokens: 66270000,
+            sharePct: 32.0,
+            avgTps: 168.0,
+            p50TtftSec: 1.35,
+            cacheHitRate: 90.5,
+            isDowngraded: false,
+          },
+          {
+            requestedModel: 'gemini-2.5-flash',
+            physicalModel: 'gemini-4-carbon',
+            totalTokens: 20720000,
+            sharePct: 10.0,
+            avgTps: 122.5,
+            p50TtftSec: 0.98,
+            cacheHitRate: 86.2,
+            isDowngraded: false,
+          },
+        ],
+        hostRanks: [
+          {
+            hostType: 'ide',
+            hostLabel: 'Antigravity IDE',
+            sharePct: 70.0,
+            totalTokens: 145000000,
+            requestCount: 1420,
+          },
+          {
+            hostType: 'app',
+            hostLabel: '原生桌面 App',
+            sharePct: 18.0,
+            totalTokens: 37300000,
+            requestCount: 380,
+          },
+          {
+            hostType: 'plugin',
+            hostLabel: 'ACP 插件 (Cursor/VSCode)',
+            sharePct: 8.0,
+            totalTokens: 16500000,
+            requestCount: 150,
+          },
+          {
+            hostType: 'cli',
+            hostLabel: 'agy CLI 终端',
+            sharePct: 4.0,
+            totalTokens: 8310000,
+            requestCount: 74,
+          },
+        ],
       },
       {
         accountId: 'acc_02',
@@ -255,6 +405,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         estimatedCostUsd: 64.0,
         quotaGeminiPct: 100,
         quotaClaudePct: 85,
+        quota5hPct: 92,
+        quota5hResetIn: '20m',
+        quota7dPct: 78,
+        quota7dResetIn: '5天',
         isHealthy: true,
         topWorkspaces: [
           ['infra-scripts', 55],
@@ -267,6 +421,109 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
           ['gemini-2.5-flash', 15],
         ],
         hourlyHeatmap: [0, 0, 0, 0, 0, 2, 8, 15, 30, 42, 45, 38, 25, 48, 55, 60, 52, 40, 35, 42, 30, 20, 10, 2],
+        projectDrains: [
+          {
+            workspaceName: 'infra-scripts',
+            path: '~/Dev/infra-scripts',
+            sharePct: 55.0,
+            totalTokens: 39120000,
+            claudeTokens: 13700000,
+            claudePct: 35.0,
+            geminiTokens: 25420000,
+            geminiPct: 65.0,
+            cacheHitRate: 91.2,
+            avgTps: 165.0,
+            stepCount: 890,
+          },
+          {
+            workspaceName: 'at',
+            path: '~/Desktop/at',
+            sharePct: 30.0,
+            totalTokens: 21340000,
+            claudeTokens: 15000000,
+            claudePct: 70.3,
+            geminiTokens: 6340000,
+            geminiPct: 29.7,
+            cacheHitRate: 90.5,
+            avgTps: 172.0,
+            stepCount: 420,
+          },
+          {
+            workspaceName: 'omin',
+            path: '~/Workspace/omin',
+            sharePct: 15.0,
+            totalTokens: 10670000,
+            claudeTokens: 2100000,
+            claudePct: 19.7,
+            geminiTokens: 8570000,
+            geminiPct: 80.3,
+            cacheHitRate: 87.4,
+            avgTps: 154.0,
+            stepCount: 180,
+          },
+        ],
+        modelRoutings: [
+          {
+            requestedModel: 'gemini-2.5-pro',
+            physicalModel: 'gemini-4-hydrogen-high',
+            totalTokens: 35565000,
+            sharePct: 50.0,
+            avgTps: 174.0,
+            p50TtftSec: 1.30,
+            cacheHitRate: 91.5,
+            isDowngraded: false,
+          },
+          {
+            requestedModel: 'claude-3-7-sonnet',
+            physicalModel: 'gemini-4-hydrogen-high',
+            totalTokens: 24895000,
+            sharePct: 35.0,
+            avgTps: 182.0,
+            p50TtftSec: 1.38,
+            cacheHitRate: 90.2,
+            isDowngraded: false,
+          },
+          {
+            requestedModel: 'gemini-2.5-flash',
+            physicalModel: 'gemini-4-carbon',
+            totalTokens: 10670000,
+            sharePct: 15.0,
+            avgTps: 125.0,
+            p50TtftSec: 0.95,
+            cacheHitRate: 88.0,
+            isDowngraded: false,
+          },
+        ],
+        hostRanks: [
+          {
+            hostType: 'ide',
+            hostLabel: 'Antigravity IDE',
+            sharePct: 62.0,
+            totalTokens: 44100000,
+            requestCount: 304,
+          },
+          {
+            hostType: 'cli',
+            hostLabel: 'agy CLI 终端',
+            sharePct: 24.0,
+            totalTokens: 17070000,
+            requestCount: 118,
+          },
+          {
+            hostType: 'app',
+            hostLabel: '原生桌面 App',
+            sharePct: 10.0,
+            totalTokens: 7110000,
+            requestCount: 49,
+          },
+          {
+            hostType: 'plugin',
+            hostLabel: 'ACP 插件 (Cursor/VSCode)',
+            sharePct: 4.0,
+            totalTokens: 2850000,
+            requestCount: 19,
+          },
+        ],
       },
       {
         accountId: 'acc_03',
@@ -281,6 +538,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         estimatedCostUsd: 28.5,
         quotaGeminiPct: 100,
         quotaClaudePct: 40,
+        quota5hPct: 40,
+        quota5hResetIn: '1h 15m',
+        quota7dPct: 35,
+        quota7dResetIn: '2天',
         isHealthy: true,
         topWorkspaces: [
           ['cursor-ext', 75],
@@ -291,6 +552,72 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
           ['gemini-2.5-flash', 15],
         ],
         hourlyHeatmap: [0, 0, 0, 0, 0, 0, 2, 5, 12, 18, 22, 20, 15, 25, 30, 35, 28, 22, 18, 20, 15, 8, 4, 0],
+        projectDrains: [
+          {
+            workspaceName: 'cursor-ext',
+            path: '~/Plugins/cursor-ext',
+            sharePct: 75.0,
+            totalTokens: 24005000,
+            claudeTokens: 21604500,
+            claudePct: 90.0,
+            geminiTokens: 2400500,
+            geminiPct: 10.0,
+            cacheHitRate: 89.8,
+            avgTps: 180.0,
+            stepCount: 310,
+          },
+          {
+            workspaceName: 'at',
+            path: '~/Desktop/at',
+            sharePct: 25.0,
+            totalTokens: 8001613,
+            claudeTokens: 5601129,
+            claudePct: 70.0,
+            geminiTokens: 2400484,
+            geminiPct: 30.0,
+            cacheHitRate: 88.0,
+            avgTps: 175.0,
+            stepCount: 110,
+          },
+        ],
+        modelRoutings: [
+          {
+            requestedModel: 'claude-3-7-sonnet',
+            physicalModel: 'gemini-4-hydrogen-high',
+            totalTokens: 27205621,
+            sharePct: 85.0,
+            avgTps: 185.0,
+            p50TtftSec: 1.40,
+            cacheHitRate: 90.0,
+            isDowngraded: false,
+          },
+          {
+            requestedModel: 'gemini-2.5-flash',
+            physicalModel: 'gemini-4-carbon',
+            totalTokens: 4800992,
+            sharePct: 15.0,
+            avgTps: 120.0,
+            p50TtftSec: 1.05,
+            cacheHitRate: 85.0,
+            isDowngraded: false,
+          },
+        ],
+        hostRanks: [
+          {
+            hostType: 'plugin',
+            hostLabel: 'ACP 插件 (Cursor/VSCode)',
+            sharePct: 75.0,
+            totalTokens: 24005000,
+            requestCount: 145,
+          },
+          {
+            hostType: 'ide',
+            hostLabel: 'Antigravity IDE',
+            sharePct: 25.0,
+            totalTokens: 8001613,
+            requestCount: 49,
+          },
+        ],
       },
     ],
     byProject: [
@@ -1153,139 +1480,480 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
       {/* ============================================================== */}
       {activeView === 'account' && (
         <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
-          {/* 账号选择水平胶囊栏 */}
-          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center gap-2 overflow-x-auto">
-            <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
-              <UserCheck className="w-3.5 h-3.5 text-blue-500" />
-              <span>{isZh ? '选择目标账号:' : 'Select Account:'}</span>
-            </span>
+          {/* 顶部：账号选择水平胶囊栏 */}
+          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center justify-between gap-3 overflow-x-auto">
+            <div className="flex items-center gap-2 overflow-x-auto">
+              <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
+                <UserCheck className="w-3.5 h-3.5 text-blue-500" />
+                <span>{isZh ? '选择目标账号:' : 'Select Account:'}</span>
+              </span>
 
-            {reportData.byAccount.map((acc) => (
-              <button
-                key={acc.email}
-                onClick={() => setSelectedAccountEmail(acc.email)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
-                  selectedAccountEmail === acc.email
-                    ? 'bg-blue-600 text-white font-semibold shadow-xs'
-                    : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${acc.isHealthy ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                <span>{acc.email}</span>
-                {acc.tags && acc.tags.length > 0 && (
-                  <span className={`text-[8.5px] px-1 py-0 rounded ${selectedAccountEmail === acc.email ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
-                    {acc.tags[0]}
+              {reportData.byAccount.map((acc) => (
+                <button
+                  key={acc.email}
+                  onClick={() => setSelectedAccountEmail(acc.email)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                    selectedAccountEmail === acc.email
+                      ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                      : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${acc.isHealthy ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  <span>{acc.email}</span>
+                  {acc.tags && acc.tags.length > 0 && (
+                    <span className={`text-[8.5px] px-1 py-0 rounded ${selectedAccountEmail === acc.email ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
+                      {acc.tags[0]}
+                    </span>
+                  )}
+                  <span className={`text-[8.5px] px-1 py-0 rounded font-mono ${selectedAccountEmail === acc.email ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'}`}>
+                    5h: {acc.quota5hPct ?? 85}%
                   </span>
-                )}
-              </button>
-            ))}
+                </button>
+              ))}
+            </div>
+
+            {currentAccount && (
+              <div className="shrink-0 flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-500/20 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  <span>{isZh ? '挂载于 Antigravity IDE · 零暗降' : 'Attached to IDE · 100% Fidelity'}</span>
+                </span>
+              </div>
+            )}
           </div>
 
           {currentAccount && (
             <div className="flex flex-col gap-3">
-              {/* 核心指标 4 格 Bento */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '该账号总吞吐' : 'Total Tokens'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-gray-900 dark:text-zinc-100">
-                      {(currentAccount.totalTokens / 1000000).toFixed(1)}M
+              {/* ========================================================= */}
+              {/* 【顶层重磅双核卡片】：模块 1 额度同心拱门 + 模块 2 Token 算力金库 */}
+              {/* ========================================================= */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                {/* 模块 1：实时配额拱门与周期水位 (参考图谱 15, 16, 17) */}
+                <div className="lg:col-span-5 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between pb-2 border-b border-gray-100 dark:border-white/5">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      <span>{isZh ? '模块 1：实时配额拱门与周期水位' : 'Module 1: Real-time Quota Arches'}</span>
                     </span>
-                    <span className="text-[10px] text-gray-400">Tokens</span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono">共承载 {currentAccount.totalRequests} 次交互请求</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '贡献节省费用' : 'Cost Saved'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                      ${currentAccount.estimatedCostUsd.toFixed(1)}
-                    </span>
-                    <span className="text-[10px] text-gray-400">USD</span>
-                  </div>
-                  <span className="text-[9px] text-emerald-600 font-mono">官方 Prompt 缓存 100% 减免</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '缓存复用命中率' : 'Cache Hit Rate'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
-                      {currentAccount.cacheHitRate.toFixed(1)}%
+                    <span className="text-[9.5px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 font-mono font-medium">
+                      Google AI PRO
                     </span>
                   </div>
-                  <span className="text-[9px] text-gray-400 font-mono">复用 {(currentAccount.cachedTokens / 1000000).toFixed(1)}M 缓存</span>
-                </div>
 
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '实时额度水位' : 'Quota State'}</span>
-                  <div className="my-1.5 flex items-center gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-[9px] text-gray-400">Gemini</span>
-                      <span className="text-sm font-bold font-mono text-emerald-600">{currentAccount.quotaGeminiPct ?? 100}%</span>
+                  {/* 拱门半圆 SVG 仪表 */}
+                  <div className="relative flex flex-col items-center justify-center my-2">
+                    <svg viewBox="0 0 260 135" className="w-56 h-28 overflow-visible">
+                      <defs>
+                        <linearGradient id="arch-5h-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#3b82f6" />
+                          <stop offset="100%" stopColor="#10b981" />
+                        </linearGradient>
+                        <linearGradient id="arch-7d-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#8b5cf6" />
+                          <stop offset="100%" stopColor="#ec4899" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* 5h 外环底轨 */}
+                      <path
+                        d="M 35 125 A 95 95 0 0 1 225 125"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="10"
+                        strokeLinecap="round"
+                        className="text-gray-100 dark:text-white/[0.06]"
+                      />
+                      {/* 5h 外环高光轨 */}
+                      <path
+                        d="M 35 125 A 95 95 0 0 1 225 125"
+                        fill="none"
+                        stroke="url(#arch-5h-grad)"
+                        strokeWidth="10"
+                        strokeLinecap="round"
+                        strokeDasharray="298.45"
+                        strokeDashoffset={298.45 * (1 - (currentAccount.quota5hPct ?? 85) / 100)}
+                        style={{ transition: 'stroke-dashoffset 0.8s ease' }}
+                      />
+
+                      {/* 7d 内环底轨 */}
+                      <path
+                        d="M 58 125 A 72 72 0 0 1 202 125"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        className="text-gray-100 dark:text-white/[0.06]"
+                      />
+                      {/* 7d 内环高光轨 */}
+                      <path
+                        d="M 58 125 A 72 72 0 0 1 202 125"
+                        fill="none"
+                        stroke="url(#arch-7d-grad)"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        strokeDasharray="226.19"
+                        strokeDashoffset={226.19 * (1 - (currentAccount.quota7dPct ?? 50) / 100)}
+                        style={{ transition: 'stroke-dashoffset 0.8s ease' }}
+                      />
+                    </svg>
+
+                    {/* 仪表中心关键数字 */}
+                    <div className="absolute bottom-1 flex flex-col items-center">
+                      <div className="flex items-baseline gap-0.5">
+                        <span className="text-3xl font-extrabold font-mono text-gray-900 dark:text-zinc-100 tracking-tight">
+                          {currentAccount.quota5hPct ?? 85}%
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                        5h 动态额度 · {currentAccount.quota5hResetIn ?? '45m'} 后回满
+                      </span>
                     </div>
-                    <span className="text-gray-300 dark:text-zinc-700">/</span>
-                    <div className="flex flex-col">
-                      <span className="text-[9px] text-gray-400">Claude</span>
-                      <span className="text-sm font-bold font-mono text-purple-600">{currentAccount.quotaClaudePct ?? 65}%</span>
+                  </div>
+
+                  {/* 底部双水库指标拆解 */}
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 dark:border-white/5">
+                    <div className="p-2 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-gray-500 dark:text-zinc-400 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          <span>5h 实时流速</span>
+                        </span>
+                        <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          {currentAccount.quota5hPct ?? 85}%
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-gray-400 font-mono">
+                        冷却倒计时: {currentAccount.quota5hResetIn ?? '45m'}
+                      </span>
+                    </div>
+
+                    <div className="p-2 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-gray-500 dark:text-zinc-400 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                          <span>7d 周期额度</span>
+                        </span>
+                        <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
+                          {currentAccount.quota7dPct ?? 50}%
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-gray-400 font-mono">
+                        周期重置: {currentAccount.quota7dResetIn ?? '3天'}
+                      </span>
                     </div>
                   </div>
-                  <span className="text-[9px] text-emerald-600 font-semibold flex items-center gap-1">
-                    <CheckCircle2 className="w-2.5 h-2.5" />
-                    <span>状态健康正常</span>
-                  </span>
+                </div>
+
+                {/* 模块 2：Token 实耗与 5h/7d 额度双向折算金库 (参考图谱 08, 09, 11, 21) */}
+                <div className="lg:col-span-7 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-2 border-b border-gray-100 dark:border-white/5">
+                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                        <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>{isZh ? '模块 2：Token 实耗与 5h/7d 额度双向折算金库' : 'Module 2: Token Treasury & Quota Converter'}</span>
+                      </span>
+                      <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium">
+                        Prompt Caching 免计费
+                      </span>
+                    </div>
+
+                    {/* 3 格财务概览指标 */}
+                    <div className="grid grid-cols-3 gap-2 my-2.5">
+                      <div className="p-2 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col">
+                        <span className="text-[9.5px] text-gray-400">{isZh ? '累计总吞吐' : 'Total Throughput'}</span>
+                        <div className="my-0.5 flex items-baseline gap-1">
+                          <span className="text-lg font-bold font-mono text-gray-900 dark:text-zinc-100">
+                            {(currentAccount.totalTokens / 1000000).toFixed(1)}M
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-gray-400 font-mono">承载 {currentAccount.totalRequests} 次请求</span>
+                      </div>
+
+                      <div className="p-2 rounded-lg bg-emerald-50/40 dark:bg-emerald-500/5 border border-emerald-200/50 dark:border-emerald-500/10 flex flex-col">
+                        <span className="text-[9.5px] text-emerald-600/80 dark:text-emerald-400/80">{isZh ? '免计费已省金额' : 'Cash Saved'}</span>
+                        <div className="my-0.5 flex items-baseline gap-1">
+                          <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                            +${currentAccount.estimatedCostUsd.toFixed(1)}
+                          </span>
+                          <span className="text-[9px] text-emerald-600/70 font-mono">USD</span>
+                        </div>
+                        <span className="text-[9px] text-emerald-600 font-mono">实付 $0.00 (免费)</span>
+                      </div>
+
+                      <div className="p-2 rounded-lg bg-blue-50/40 dark:bg-blue-500/5 border border-blue-200/50 dark:border-blue-500/10 flex flex-col">
+                        <span className="text-[9.5px] text-blue-600/80 dark:text-blue-400/80">{isZh ? '全局缓存命中率' : 'Cache Hit Rate'}</span>
+                        <div className="my-0.5 flex items-baseline gap-1">
+                          <span className="text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
+                            {currentAccount.cacheHitRate.toFixed(1)}%
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-blue-600 font-mono">首字响应提速 3.4x</span>
+                      </div>
+                    </div>
+
+                    {/* ★ 核心技术卖点：5h / 7d 额度 ➔ Token 与金额双向折算卡片 */}
+                    <div className="p-2.5 rounded-lg bg-gradient-to-r from-blue-500/[0.07] via-purple-500/[0.07] to-emerald-500/[0.07] border border-blue-500/20 dark:border-blue-500/20 flex flex-col gap-1.5 my-2">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+                          <span>{isZh ? '5h / 7d 配额剩余 ➔ 等价 Token 与美元算力折算' : 'Remaining Quota Equivalent Valuation'}</span>
+                        </span>
+                        <span className="text-[9px] text-gray-400 font-mono">*450K/4.5M 额度模型标称</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[10.5px]">
+                        <div className="flex items-center gap-1.5 bg-white/60 dark:bg-[#1a1b1f]/60 p-1.5 px-2 rounded-md border border-white/40 dark:border-white/5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                          <div className="flex flex-col">
+                            <span className="text-[9px] text-gray-400 font-medium">5h 剩余可用算力</span>
+                            <span className="font-mono font-bold text-gray-900 dark:text-zinc-100">
+                              约 {Math.round(((currentAccount.quota5hPct ?? 85) / 100) * 450).toLocaleString()}K Token
+                              <span className="text-emerald-600 dark:text-emerald-400 text-[9.5px] ml-1">
+                                (等值 ${(((currentAccount.quota5hPct ?? 85) / 100) * 16.80).toFixed(2)})
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 bg-white/60 dark:bg-[#1a1b1f]/60 p-1.5 px-2 rounded-md border border-white/40 dark:border-white/5">
+                          <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
+                          <div className="flex flex-col">
+                            <span className="text-[9px] text-gray-400 font-medium">7d 周期剩余储备</span>
+                            <span className="font-mono font-bold text-gray-900 dark:text-zinc-100">
+                              约 {(Math.round(((currentAccount.quota7dPct ?? 50) / 100) * 4500) / 1000).toFixed(2)}M Token
+                              <span className="text-purple-600 dark:text-purple-400 text-[9.5px] ml-1">
+                                (等值 ${(((currentAccount.quota7dPct ?? 50) / 100) * 168.00).toFixed(2)})
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5 层 Token 构成水库分段条 (参考图谱 11) */}
+                  <div className="pt-2 border-t border-gray-100 dark:border-white/5 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-zinc-400">
+                      <span>5 层上下文水库构成拆解</span>
+                      <span className="font-mono text-[9px]">缓存占比 {currentAccount.cacheHitRate.toFixed(1)}%</span>
+                    </div>
+
+                    <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden flex">
+                      <div style={{ width: '90.8%' }} className="h-full bg-emerald-500" title="官方缓存命中: 188.0M" />
+                      <div style={{ width: '5.2%' }} className="h-full bg-blue-500" title="新输入 Prompt: 10.8M" />
+                      <div style={{ width: '2.4%' }} className="h-full bg-purple-500" title="深度思考: 5.0M" />
+                      <div style={{ width: '1.2%' }} className="h-full bg-amber-500" title="工具流: 2.5M" />
+                      <div style={{ width: '0.4%' }} className="h-full bg-cyan-400" title="模型输出: 710K" />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between text-[9px] text-gray-400 font-mono pt-0.5">
+                      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span>缓存 {(currentAccount.cachedTokens / 1000000).toFixed(1)}M</span>
+                      </span>
+                      <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                        <span>输入 {(currentAccount.newInputTokens / 1000000).toFixed(1)}M</span>
+                      </span>
+                      <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                        <span>思考 8.5M</span>
+                      </span>
+                      <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        <span>工具 6.2M</span>
+                      </span>
+                      <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                        <span>输出 {(currentAccount.outputTokens / 1000).toFixed(0)}K</span>
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* 对称双卡：关联项目消耗占比 VS 承载模型分布 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* 关联项目消耗占比 */}
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
+              {/* ========================================================= */}
+              {/* 【中层双列拓扑】：模块 4 项目流向矩阵 + 模块 3 模型物理调度 */}
+              {/* ========================================================= */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {/* 模块 4：项目消耗流向矩阵 (参考图谱 03, 14, 16) */}
+                <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
                     <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
                       <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>{isZh ? '该账号被哪些项目消耗？' : 'Projects Burning This Account'}</span>
+                      <span>{isZh ? '模块 4：项目消耗流向矩阵' : 'Module 4: Project Drain Flow Matrix'}</span>
                     </span>
-                    <span className="text-[9.5px] text-gray-400">{isZh ? '消耗流向' : 'Drain Flow'}</span>
+                    <span className="text-[9.5px] text-gray-400">{isZh ? '细分 Gemini 与 Claude 吞吐' : 'Gemini vs Claude breakdown'}</span>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {(currentAccount.topWorkspaces || [['at', 68], ['omin', 22], ['other', 10]]).map(([ws, pct]) => (
-                      <div key={ws} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-[10.5px]">
-                          <span className="font-medium text-gray-800 dark:text-zinc-200 flex items-center gap-1">
-                            <FolderGit2 className="w-3 h-3 text-indigo-500" />
-                            <span>{ws}</span>
+                    {(currentAccount.projectDrains || [
+                      {
+                        workspaceName: 'at',
+                        path: '~/Desktop/at',
+                        sharePct: 68.0,
+                        totalTokens: 140800000,
+                        claudeTokens: 95000000,
+                        claudePct: 67.5,
+                        geminiTokens: 45800000,
+                        geminiPct: 32.5,
+                        cacheHitRate: 92.4,
+                        avgTps: 178.5,
+                        stepCount: 1850,
+                      },
+                      {
+                        workspaceName: 'omin',
+                        path: '~/Workspace/omin',
+                        sharePct: 22.0,
+                        totalTokens: 45500000,
+                        claudeTokens: 15500000,
+                        claudePct: 34.1,
+                        geminiTokens: 30000000,
+                        geminiPct: 65.9,
+                        cacheHitRate: 88.0,
+                        avgTps: 162.0,
+                        stepCount: 620,
+                      },
+                      {
+                        workspaceName: 'infra-scripts',
+                        path: '~/Dev/infra-scripts',
+                        sharePct: 10.0,
+                        totalTokens: 20810000,
+                        claudeTokens: 4200000,
+                        claudePct: 20.2,
+                        geminiTokens: 16610000,
+                        geminiPct: 79.8,
+                        cacheHitRate: 85.5,
+                        avgTps: 145.0,
+                        stepCount: 240,
+                      },
+                    ]).map((pd) => (
+                      <div
+                        key={pd.workspaceName}
+                        className="p-2.5 rounded-lg bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/5 flex flex-col gap-1.5"
+                      >
+                        {/* 头部：名称与总耗 */}
+                        <div className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
+                            <span className="font-semibold text-gray-900 dark:text-zinc-100">{pd.workspaceName}</span>
+                            <span className="text-[9px] text-gray-400 font-mono">{pd.path}</span>
+                          </div>
+                          <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                            {(pd.totalTokens / 1000000).toFixed(1)}M ({pd.sharePct}%)
                           </span>
-                          <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">{pct}%</span>
                         </div>
-                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-indigo-500" />
+
+                        {/* 双核心模型分段条：Claude (紫) vs Gemini (青绿) */}
+                        <div className="w-full h-1.5 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden flex">
+                          <div style={{ width: `${pd.claudePct}%` }} className="h-full bg-purple-500" title={`Claude: ${pd.claudePct}%`} />
+                          <div style={{ width: `${pd.geminiPct}%` }} className="h-full bg-emerald-400" title={`Gemini: ${pd.geminiPct}%`} />
+                        </div>
+
+                        {/* 指标明细行 */}
+                        <div className="flex items-center justify-between text-[9px] font-mono text-gray-500 dark:text-zinc-400 pt-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-purple-600 dark:text-purple-400 font-medium">
+                              Claude: {(pd.claudeTokens / 1000000).toFixed(1)}M ({pd.claudePct.toFixed(0)}%)
+                            </span>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                              Gemini: {(pd.geminiTokens / 1000000).toFixed(1)}M ({pd.geminiPct.toFixed(0)}%)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-emerald-600">缓存 {pd.cacheHitRate}%</span>
+                            <span className="text-blue-600">⚡ {pd.avgTps} tok/s</span>
+                            <span className="text-gray-400">{pd.stepCount}步</span>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* 承载模型分布 */}
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
+                {/* 模块 3：模型消耗与真实物理调度 (参考图谱 01, 04, 15) */}
+                <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
                     <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-blue-500" />
-                      <span>{isZh ? '该账号主要调用的模型' : 'Models Preferred By Account'}</span>
+                      <Cpu className="w-3.5 h-3.5 text-purple-500" />
+                      <span>{isZh ? '模块 3：模型消耗与真实物理调度' : 'Module 3: Model Usage & Physical Upstream'}</span>
                     </span>
-                    <span className="text-[9.5px] text-gray-400">{isZh ? '模型偏好' : 'Model Affinity'}</span>
+                    <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-500" />
+                      <span>{isZh ? '上游物理保真度 100%' : '100% Upstream Fidelity'}</span>
+                    </span>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {(currentAccount.topModels || [['claude-3-7-sonnet', 60], ['gemini-2.5-pro', 30], ['gemini-2.5-flash', 10]]).map(([m, pct]) => (
-                      <div key={m} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-[10.5px]">
-                          <span className="font-medium text-gray-800 dark:text-zinc-200">{m}</span>
-                          <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">{pct}%</span>
+                    {(currentAccount.modelRoutings || [
+                      {
+                        requestedModel: 'claude-3-7-sonnet',
+                        physicalModel: 'gemini-4-hydrogen-high',
+                        totalTokens: 120120000,
+                        sharePct: 58.0,
+                        avgTps: 184.2,
+                        p50TtftSec: 1.42,
+                        cacheHitRate: 91.8,
+                        isDowngraded: false,
+                      },
+                      {
+                        requestedModel: 'gemini-2.5-pro',
+                        physicalModel: 'gemini-4-hydrogen-high',
+                        totalTokens: 66270000,
+                        sharePct: 32.0,
+                        avgTps: 168.0,
+                        p50TtftSec: 1.35,
+                        cacheHitRate: 90.5,
+                        isDowngraded: false,
+                      },
+                      {
+                        requestedModel: 'gemini-2.5-flash',
+                        physicalModel: 'gemini-4-carbon',
+                        totalTokens: 20720000,
+                        sharePct: 10.0,
+                        avgTps: 122.5,
+                        p50TtftSec: 0.98,
+                        cacheHitRate: 86.2,
+                        isDowngraded: false,
+                      },
+                    ]).map((mr) => (
+                      <div
+                        key={mr.requestedModel}
+                        className="p-2.5 rounded-lg bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/5 flex flex-col gap-1.5"
+                      >
+                        {/* 模型请求 ➔ 物理调度 */}
+                        <div className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-gray-900 dark:text-zinc-100">{mr.requestedModel}</span>
+                            <ArrowRight className="w-3 h-3 text-gray-400" />
+                            <span className="font-mono text-purple-600 dark:text-purple-400 font-bold">{mr.physicalModel}</span>
+                          </div>
+                          <span className="font-mono font-bold text-gray-800 dark:text-zinc-200">
+                            {(mr.totalTokens / 1000000).toFixed(1)}M ({mr.sharePct}%)
+                          </span>
                         </div>
-                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-blue-500" />
+
+                        {/* 进度条 */}
+                        <div className="w-full h-1.5 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden">
+                          <div style={{ width: `${mr.sharePct}%` }} className="h-full rounded-full bg-purple-500" />
+                        </div>
+
+                        {/* 硬核技术指标网格 */}
+                        <div className="grid grid-cols-4 gap-1 text-[9.5px] font-mono pt-0.5">
+                          <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
+                            <span>⚡ {mr.avgTps} tok/s</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-gray-600 dark:text-zinc-400">
+                            <span>⏱ {mr.p50TtftSec}s TTFT</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                            <span>缓存 {mr.cacheHitRate}%</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 font-sans font-semibold">
+                              满血保真
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1293,48 +1961,160 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 </div>
               </div>
 
-              {/* 24 小时活跃调用热力节奏 (GitHub 风格柱状热力) */}
-              <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                    <BarChart2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>{isZh ? '24 小时活跃调用节奏分布' : '24-Hour Activity Rhythm'}</span>
-                  </span>
-                  <span className="text-[9.5px] text-gray-400">{isZh ? '峰值时段: 14:00 - 17:00' : 'Peak: 14:00 - 17:00'}</span>
+              {/* ========================================================= */}
+              {/* 【底层双列指标】：模块 5 客户端消耗排行 + 模块 6 24小时热力图 */}
+              {/* ========================================================= */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                {/* 模块 5：客户端/宿主消耗排行榜 (参考图谱 04, 19) */}
+                <div className="lg:col-span-5 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                        <AppWindow className="w-3.5 h-3.5 text-blue-500" />
+                        <span>{isZh ? '模块 5：客户端消耗排行' : 'Module 5: Host Matrix Ranking'}</span>
+                      </span>
+                      <span className="text-[9.5px] text-gray-400">{isZh ? '消耗宿主分布' : 'Clients'}</span>
+                    </div>
+
+                    <div className="flex flex-col gap-2 mt-2">
+                      {(currentAccount.hostRanks || [
+                        {
+                          hostType: 'ide',
+                          hostLabel: 'Antigravity IDE',
+                          sharePct: 70.0,
+                          totalTokens: 145000000,
+                          requestCount: 1420,
+                        },
+                        {
+                          hostType: 'app',
+                          hostLabel: '原生桌面 App',
+                          sharePct: 18.0,
+                          totalTokens: 37300000,
+                          requestCount: 380,
+                        },
+                        {
+                          hostType: 'plugin',
+                          hostLabel: 'ACP 插件 (Cursor/VSCode)',
+                          sharePct: 8.0,
+                          totalTokens: 16500000,
+                          requestCount: 150,
+                        },
+                        {
+                          hostType: 'cli',
+                          hostLabel: 'agy CLI 终端',
+                          sharePct: 4.0,
+                          totalTokens: 8310000,
+                          requestCount: 74,
+                        },
+                      ]).map((hr, idx) => {
+                        const IconComponent =
+                          hr.hostType === 'ide'
+                            ? Code2
+                            : hr.hostType === 'app'
+                            ? AppWindow
+                            : hr.hostType === 'plugin'
+                            ? Puzzle
+                            : Terminal;
+
+                        return (
+                          <div key={hr.hostType} className="flex flex-col gap-1">
+                            <div className="flex items-center justify-between text-[10.5px]">
+                              <span className="font-medium text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                                <span className="w-3.5 h-3.5 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center text-[9px] font-bold">
+                                  {idx + 1}
+                                </span>
+                                <IconComponent className="w-3 h-3 text-blue-500" />
+                                <span>{hr.hostLabel}</span>
+                              </span>
+                              <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                                <span className="font-bold text-blue-600 dark:text-blue-400">{hr.sharePct}%</span>
+                                <span className="text-gray-400">({(hr.totalTokens / 1000000).toFixed(1)}M)</span>
+                              </div>
+                            </div>
+
+                            <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                              <div
+                                style={{ width: `${hr.sharePct}%` }}
+                                className={`h-full rounded-full ${
+                                  idx === 0
+                                    ? 'bg-blue-600'
+                                    : idx === 1
+                                    ? 'bg-blue-400'
+                                    : idx === 2
+                                    ? 'bg-indigo-400'
+                                    : 'bg-gray-400'
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-gray-100 dark:border-white/5 text-[9px] text-gray-400 font-mono flex items-center justify-between">
+                    <span>主力战场: Antigravity IDE (70%)</span>
+                    <span>共承载 4 种开发宿主</span>
+                  </div>
                 </div>
 
-                <div className="h-20 w-full flex items-end gap-1 pt-2 pb-1 px-1">
-                  {(currentAccount.hourlyHeatmap || [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8]).map((val, hour) => {
-                    const heightPct = Math.max(8, (val / 100) * 100);
-                    return (
-                      <div key={hour} className="flex-1 flex flex-col items-center gap-1 group relative">
-                        <div
-                          style={{ height: `${heightPct}%` }}
-                          className={`w-full rounded-t-sm transition-all duration-300 ${
-                            val > 70
-                              ? 'bg-blue-600'
-                              : val > 40
-                              ? 'bg-blue-400'
-                              : val > 15
-                              ? 'bg-blue-300 dark:bg-blue-500/40'
-                              : 'bg-gray-200 dark:bg-white/[0.06]'
-                          }`}
-                        />
-                        {/* Tooltip */}
-                        <div className="absolute -top-7 hidden group-hover:flex bg-gray-900 text-white text-[8px] font-mono px-1 py-0.5 rounded shadow pointer-events-none whitespace-nowrap z-20">
-                          {hour}:00 - {val} reqs
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono pt-1 border-t border-gray-100 dark:border-white/5">
-                  <span>00:00 (休眠)</span>
-                  <span>06:00</span>
-                  <span>12:00</span>
-                  <span>16:00 (重度)</span>
-                  <span>20:00</span>
-                  <span>23:00</span>
+                {/* 模块 6：24 小时活跃调用时间热力图 (参考图谱 10, 18, 23) */}
+                <div className="lg:col-span-7 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>{isZh ? '模块 6：24 小时活跃调用时间热力图' : 'Module 6: Circadian Activity Heatmap'}</span>
+                      </span>
+                      <span className="text-[9.5px] text-gray-400 font-mono">{isZh ? '峰值时段: 14:00 - 17:00 (192 tok/s)' : 'Peak: 14:00 - 17:00'}</span>
+                    </div>
+
+                    <div className="h-28 w-full flex items-end gap-1 pt-3 pb-1 px-1">
+                      {(currentAccount.hourlyHeatmap || [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8]).map((val, hour) => {
+                        const heightPct = Math.max(10, (val / 100) * 100);
+                        return (
+                          <div key={hour} className="flex-1 flex flex-col items-center gap-1 group relative">
+                            <div
+                              style={{ height: `${heightPct}%` }}
+                              className={`w-full rounded-t-sm transition-all duration-300 ${
+                                val > 70
+                                  ? 'bg-gradient-to-t from-blue-600 to-indigo-500'
+                                  : val > 40
+                                  ? 'bg-gradient-to-t from-blue-500 to-blue-400'
+                                  : val > 15
+                                  ? 'bg-blue-300 dark:bg-blue-500/40'
+                                  : 'bg-gray-200 dark:bg-white/[0.06]'
+                              }`}
+                            />
+                            {/* 悬停微型交互 Tooltip */}
+                            <div className="absolute -top-8 hidden group-hover:flex bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 text-[8.5px] font-mono px-1.5 py-0.5 rounded-md shadow-xl pointer-events-none whitespace-nowrap z-20 flex-col items-center">
+                              <span>{hour}:00 - {val} 次请求</span>
+                              <span className="text-[7.5px] opacity-80">约 {(val * 0.2).toFixed(1)}M Tokens</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono pt-1.5 border-t border-gray-100 dark:border-white/5">
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-zinc-600" />
+                      <span>00:00 (休眠待机)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                      <span>09:00 (晨间架构)</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                      <span>15:00 (午后重度波峰)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-300" />
+                      <span>21:00 (夜间验证)</span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
