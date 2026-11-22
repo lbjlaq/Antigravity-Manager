@@ -271,7 +271,10 @@ static LINUX_VERSION_CACHE: Lazy<RwLock<Option<(std::time::Instant, String)>>> =
     Lazy::new(|| RwLock::new(None));
 
 pub async fn fetch_latest_linux_hub_version(force: bool) -> Option<String> {
-    let cached = LINUX_VERSION_CACHE.read().ok().and_then(|cache| cache.clone());
+    let cached = LINUX_VERSION_CACHE
+        .read()
+        .ok()
+        .and_then(|cache| cache.clone());
     if !force {
         if let Some((fetched_at, version)) = cached.as_ref() {
             if fetched_at.elapsed() < REMOTE_RELEASE_TTL {
@@ -285,11 +288,12 @@ pub async fn fetch_latest_linux_hub_version(force: bool) -> Option<String> {
         .build()
         .ok()?;
     let result = match client.get(LINUX_HUB_MANIFEST_URL).send().await {
-        Ok(response) if response.status().is_success() => {
-            response.text().await.ok()
-                .and_then(|body| parse_hub_version_from_manifest(&body))
-                .filter(|version| is_valid_hub_version(version))
-        }
+        Ok(response) if response.status().is_success() => response
+            .text()
+            .await
+            .ok()
+            .and_then(|body| parse_hub_version_from_manifest(&body))
+            .filter(|version| is_valid_hub_version(version)),
         Ok(response) => {
             debug!(status = %response.status(), "Linux Hub manifest returned an error");
             None
@@ -630,7 +634,8 @@ pub async fn detect_and_update_hub_fingerprint_with(
     force_remote: bool,
 ) -> HubFingerprint {
     let resolved =
-        resolve_hub_fingerprint_async_with(custom_version, custom_cl, hub_platform, force_remote).await;
+        resolve_hub_fingerprint_async_with(custom_version, custom_cl, hub_platform, force_remote)
+            .await;
     info!(
         version = %resolved.version,
         cl = %resolved.cl,
@@ -682,8 +687,12 @@ mod tests {
         assert_eq!(linux_baseline.version, windows_baseline.version);
         assert_eq!(linux_baseline.cl, windows_baseline.cl);
         assert_eq!(linux_baseline.source, windows_baseline.source);
-        assert!(linux_baseline.user_agent.contains("os_type=linux; arch=amd64"));
-        assert!(windows_baseline.user_agent.contains("os_type=windows; arch=amd64"));
+        assert!(linux_baseline
+            .user_agent
+            .contains("os_type=linux; arch=amd64"));
+        assert!(windows_baseline
+            .user_agent
+            .contains("os_type=windows; arch=amd64"));
     }
 
     #[test]
