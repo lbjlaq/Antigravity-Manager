@@ -92,7 +92,7 @@ pub fn get_official_updater_manifest_url() -> &'static str {
     }
 }
 
-/// Windows x64 remains the calibrated default. Linux requires a matching version/CL pair.
+/// User-selected UA platform. Windows is the default for backward compatibility.
 fn build_hub_user_agent_for_platform(version: &str, cl: &str, linux: bool) -> String {
     let os_type = if linux { "linux" } else { "windows" };
     format!(
@@ -431,24 +431,6 @@ pub fn resolve_hub_fingerprint_sync(
         );
     }
 
-    // A Linux UA is only constructed from a matching locally installed Linux binary
-    // or an explicitly supplied version/CL pair, never from the Windows baseline.
-    if linux && cfg!(target_os = "linux") && clean_ver.is_none() && clean_cl.is_none() {
-        if let Some((v, c)) = try_detect_local_hub_fingerprint() {
-            return HubFingerprint {
-                version: v.clone(),
-                cl: c.clone(),
-                user_agent: build_hub_user_agent_for_platform(&v, &c, true),
-                source: HubFingerprintSource::Local,
-                latest_remote_version: None,
-                update_available: false,
-            };
-        }
-    }
-    if linux {
-        tracing::warn!("Linux Hub UA needs a matching version/CL pair; using Windows baseline instead");
-    }
-
     // 2. 稳态基准兜底（硬编码校准值：版本与 CL 必须严格成对人工校准同源）
     // Google Piper monorepo 的 CL 严格单调递增，版本号与 CL 必须人工校准成对（如 2.33.0 对应 1023160026）。
     // 严禁将本地已安装旧版或远程未校准版本与基准 CL 错配拼接；错配的弗兰肯斯坦指纹
@@ -456,7 +438,7 @@ pub fn resolve_hub_fingerprint_sync(
     HubFingerprint {
         version: OFFICIAL_HUB_VERSION.to_string(),
         cl: OFFICIAL_HUB_CL.to_string(),
-        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
+        user_agent: build_hub_user_agent_for_platform(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL, linux),
         source: HubFingerprintSource::Baseline,
         latest_remote_version: None,
         update_available: false,
@@ -502,13 +484,8 @@ pub async fn resolve_hub_fingerprint_async_with(
         };
     }
 
-    // Only use locally detected CL when the selected platform matches the host OS.
-    let may_use_local = (linux && cfg!(target_os = "linux"))
-        || (!linux && cfg!(target_os = "windows"));
-    if let Some((local_ver, local_cl)) = may_use_local
-        .then(try_detect_local_hub_fingerprint)
-        .flatten()
-    {
+    // Keep the existing local version/CL detection unchanged for both selected platforms.
+    if let Some((local_ver, local_cl)) = try_detect_local_hub_fingerprint() {
         let update_avail = latest_remote_ver.as_deref().map_or(false, |latest| {
             crate::constants::compare_semver(latest, &local_ver) == std::cmp::Ordering::Greater
         });
@@ -522,10 +499,6 @@ pub async fn resolve_hub_fingerprint_async_with(
         };
     }
 
-    if linux {
-        tracing::warn!("No matching Linux Hub fingerprint detected; using Windows baseline instead");
-    }
-
     // 3. 稳态基准兜底
     let update_avail = latest_remote_ver
         .as_deref()
@@ -534,7 +507,7 @@ pub async fn resolve_hub_fingerprint_async_with(
     HubFingerprint {
         version: OFFICIAL_HUB_VERSION.to_string(),
         cl: OFFICIAL_HUB_CL.to_string(),
-        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
+        user_agent: build_hub_user_agent_for_platform(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL, linux),
         source: HubFingerprintSource::Baseline,
         latest_remote_version: latest_remote_ver,
         update_available: update_avail,
@@ -626,12 +599,22 @@ mod tests {
     }
 
     #[test]
-    fn test_linux_platform_requires_matching_pair() {
+    fn test_selected_platform_changes_only_user_agent_os_type() {
         let linux = resolve_hub_fingerprint_sync(Some("2.33.0"), Some("1023160026"), Some("linux"));
-        assert!(linux.user_agent.contains("os_type=linux; arch=amd64"));
-        assert_eq!(linux.source, HubFingerprintSource::Custom);
         let windows = resolve_hub_fingerprint_sync(Some("2.33.0"), Some("1023160026"), None);
+        assert_eq!(linux.version, windows.version);
+        assert_eq!(linux.cl, windows.cl);
+        assert_eq!(linux.source, windows.source);
+        assert!(linux.user_agent.contains("os_type=linux; arch=amd64"));
         assert!(windows.user_agent.contains("os_type=windows; arch=amd64"));
+
+        let linux_baseline = resolve_hub_fingerprint_sync(None, None, Some("linux"));
+        let windows_baseline = resolve_hub_fingerprint_sync(None, None, None);
+        assert_eq!(linux_baseline.version, windows_baseline.version);
+        assert_eq!(linux_baseline.cl, windows_baseline.cl);
+        assert_eq!(linux_baseline.source, windows_baseline.source);
+        assert!(linux_baseline.user_agent.contains("os_type=linux; arch=amd64"));
+        assert!(windows_baseline.user_agent.contains("os_type=windows; arch=amd64"));
     }
 
     #[test]
