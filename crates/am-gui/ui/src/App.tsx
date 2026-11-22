@@ -4,9 +4,10 @@ import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
 import { Dashboard } from './pages/Dashboard';
 import { Accounts } from './pages/Accounts';
+import { Stats } from './pages/Stats';
 
 export function App() {
-  const [currentTab, setCurrentTab] = useState<TabId>('accounts');
+  const [currentTab, setCurrentTab] = useState<TabId>('stats');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
 
@@ -88,6 +89,8 @@ export function App() {
           <Dashboard lang={lang} />
         ) : currentTab === 'accounts' ? (
           <Accounts lang={lang} />
+        ) : currentTab === 'stats' ? (
+          <Stats lang={lang} />
         ) : (
           <div className="w-full h-full min-h-[500px] flex flex-col items-center justify-center">
             <div
