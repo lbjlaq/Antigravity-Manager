@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
 import { Dashboard } from './pages/Dashboard';
+import { Accounts } from './pages/Accounts';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
@@ -85,6 +86,8 @@ export function App() {
       <main className="flex-1 overflow-y-auto px-4 py-2 relative">
         {currentTab === 'dashboard' ? (
           <Dashboard lang={lang} />
+        ) : currentTab === 'accounts' ? (
+          <Accounts lang={lang} />
         ) : (
           <div className="w-full h-full min-h-[500px] flex flex-col items-center justify-center">
             <div
