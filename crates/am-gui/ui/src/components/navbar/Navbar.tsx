@@ -23,29 +23,23 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <nav
       style={{ position: 'sticky', top: 0, zIndex: 50 }}
-      className="pt-9 transition-colors duration-200 bg-[#FAFBFC] dark:bg-[#09090b]"
+      className="pt-7 transition-colors duration-200 bg-[#FAFBFC] dark:bg-[#09090b] select-none"
+      data-tauri-drag-region
     >
-      {/* 顶部 Tauri 原生拖拽区域 (高为 top-9 到导航区域) */}
-      <div
-        className="absolute top-0 left-0 right-0 h-24"
-        style={{ zIndex: 5, backgroundColor: 'rgba(0,0,0,0.001)', cursor: 'default' }}
-        data-tauri-drag-region
-      />
-
-      <div className="max-w-7xl mx-auto px-8 relative" style={{ zIndex: 10 }}>
-        <div className="flex items-center h-16 gap-4 justify-between">
-          {/* 左侧 Logo */}
-          <div className="basis-[220px] shrink-0">
+      <div className="max-w-7xl mx-auto px-6 relative" data-tauri-drag-region>
+        <div className="flex items-center h-14 gap-4 justify-between" data-tauri-drag-region>
+          {/* 左侧 Logo (支持拖拽区域) */}
+          <div className="basis-[220px] shrink-0" data-tauri-drag-region>
             <NavLogo />
           </div>
 
           {/* 中间 导航胶囊 */}
-          <div className="flex-1 flex justify-center">
+          <div className="flex-1 flex justify-center" data-tauri-drag-region>
             <NavMenu currentTab={currentTab} onTabChange={onTabChange} lang={lang} />
           </div>
 
           {/* 右侧 语言与主题切换圆钮群 */}
-          <div className="basis-[220px] shrink-0 flex justify-end">
+          <div className="basis-[220px] shrink-0 flex justify-end" data-tauri-drag-region>
             <NavActions
               theme={theme}
               onThemeToggle={onThemeToggle}

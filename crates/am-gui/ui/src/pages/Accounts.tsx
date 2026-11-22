@@ -299,10 +299,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     const is5hShorter = len5h <= len7d;
 
     return (
-      <div className="flex flex-col gap-1 w-full group/bar">
-        {/* 顶部指标文字行与色点标定 */}
-        <div className="flex items-center justify-between text-[11px] leading-tight">
-          <span className="font-semibold text-gray-700 dark:text-zinc-300 flex items-center gap-1.5">
+      <div className="flex flex-col gap-0.5 w-full group/bar">
+        {/* 顶部指标文字行与色点标定 (微调至与菜单栏极其和谐的 10px / 9.5px) */}
+        <div className="flex items-center justify-between text-[10px] leading-tight">
+          <span className="font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1">
             <span
               className={`w-1.5 h-1.5 rounded-full ${
                 is5hZero ? 'bg-rose-500 animate-pulse' : isClaude ? 'bg-purple-500' : isArgon ? 'bg-amber-500' : 'bg-blue-500'
@@ -311,45 +311,45 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             <span className="truncate">{name}</span>
           </span>
 
-          <div className="flex items-center gap-2 text-[10px] text-gray-500 dark:text-zinc-400 font-mono">
+          <div className="flex items-center gap-1.5 text-[9.5px] text-gray-500 dark:text-zinc-400 font-mono">
             {/* 5h 指标 + 实心圆点 (●) */}
             {fiveHour && (
               <span
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-all ${
+                className={`inline-flex items-center gap-1 px-1 py-0.2 rounded transition-all ${
                   is5hZero
-                    ? 'text-rose-600 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40'
+                    ? 'text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40'
                     : 'bg-gray-100/70 dark:bg-white/[0.04]'
                 }`}
                 title={`5小时短时窗口: ${p5h}% (重置倒计时: ${fiveHour.resetText})`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${is5hZero ? 'bg-rose-500 animate-ping' : color5h}`} />
-                <span className="opacity-75">5h:</span>
-                <span className="font-bold">{p5h}%</span>
-                <span className="opacity-60 text-[9px]">({fiveHour.resetText})</span>
+                <span className="opacity-70">5h:</span>
+                <span className="font-semibold">{p5h}%</span>
+                <span className="opacity-55 text-[8.5px]">({fiveHour.resetText})</span>
               </span>
             )}
 
             {/* 7d 指标 + 空心圆环 (⊚) */}
             {sevenDay && (
               <span
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-all ${
+                className={`inline-flex items-center gap-1 px-1 py-0.2 rounded transition-all ${
                   is7dZero
-                    ? 'text-rose-600 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40'
+                    ? 'text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40'
                     : 'bg-gray-100/70 dark:bg-white/[0.04]'
                 }`}
                 title={`7天宏观周期额度: ${p7d}% (重置倒计时: ${sevenDay.resetText})`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 border border-current ${color7d}`} />
-                <span className="opacity-75">7d:</span>
-                <span className="font-bold">{p7d}%</span>
-                <span className="opacity-60 text-[9px]">({sevenDay.resetText})</span>
+                <span className="opacity-70">7d:</span>
+                <span className="font-semibold">{p7d}%</span>
+                <span className="opacity-55 text-[8.5px]">({sevenDay.resetText})</span>
               </span>
             )}
           </div>
         </div>
 
-        {/* 智能双层条带轨道 (Apple HIG 级平滑堆叠) */}
-        <div className="relative w-full h-[7px] rounded-full overflow-hidden bg-gray-100 dark:bg-white/[0.08] shadow-inner">
+        {/* 智能双层条带轨道 (Apple HIG 级细腻 5px 极简微槽) */}
+        <div className="relative w-full h-[5px] rounded-full overflow-hidden bg-gray-100 dark:bg-white/[0.08] shadow-inner">
           {/* 1. 若 5h 为 0%，展示细腻警示虚线斑马纹 */}
           {is5hZero && (
             <div
@@ -399,31 +399,31 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-6 py-4 flex flex-col gap-4 select-none animate-in fade-in-50 duration-300">
+    <div className="w-full max-w-6xl mx-auto px-4 py-2 flex flex-col gap-3 select-none animate-in fade-in-50 duration-300">
       
       {/* ============================================================== */}
-      {/* 优化后的顶部自适应工具栏 (支持自动换行，消灭多余空白)             */}
+      {/* 优化后的顶部自适应工具栏 (紧凑精致，与顶部菜单栏比例完全对称)    */}
       {/* ============================================================== */}
-      <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-2xl p-3 px-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
+      <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2.5 px-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
         {/* 左侧：搜索框 + 简约 Tag 筛选下拉框 */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {/* 即时搜索框 */}
-          <div className="relative w-56">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <div className="relative w-48">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={isZh ? '搜索邮箱、备注或标签...' : 'Search accounts...'}
-              className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/50 dark:focus:border-blue-400/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500 outline-none transition-all duration-150"
+              className="w-full pl-8 pr-2.5 py-1 text-[11px] rounded-lg bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/50 dark:focus:border-blue-400/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500 outline-none transition-all duration-150"
             />
           </div>
 
           {/* 优雅紧凑的 Tag 筛选下拉选择器 (Radix Dropdown) */}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button className="px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs outline-none">
-                <Filter className="w-3.5 h-3.5 text-blue-500" />
+              <button className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-2xs outline-none">
+                <Filter className="w-3 h-3 text-blue-500" />
                 <span>
                   {selectedTag === 'all'
                     ? isZh
@@ -435,18 +435,18 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     ? '⚠️ 额度告警'
                     : `🏷️ ${selectedTag}`}
                 </span>
-                <ChevronDown className="w-3.5 h-3.5 opacity-60 ml-0.5" />
+                <ChevronDown className="w-3 h-3 opacity-60 ml-0.5" />
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 align="start"
                 sideOffset={6}
-                className="w-44 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-xs animate-in fade-in-0 zoom-in-95 duration-100"
+                className="w-44 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
               >
                 <DropdownMenu.Item
                   onClick={() => setSelectedTag('all')}
-                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                  className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
                     selectedTag === 'all'
                       ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
                       : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -457,7 +457,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   onClick={() => setSelectedTag('__pro')}
-                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                  className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
                     selectedTag === '__pro'
                       ? 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 font-semibold'
                       : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -468,7 +468,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   onClick={() => setSelectedTag('__warning')}
-                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                  className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
                     selectedTag === '__warning'
                       ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400 font-semibold'
                       : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -482,7 +482,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   <DropdownMenu.Item
                     key={t}
                     onClick={() => setSelectedTag(t)}
-                    className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                    className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
                       selectedTag === t
                         ? 'bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-semibold'
                         : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -497,300 +497,307 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
           </DropdownMenu.Root>
         </div>
 
-        {/* 右侧：紧凑工具按钮组（支持小屏自动换行，呼吸感充足） */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* 右侧：紧凑微型工具按钮组 */}
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             onClick={handleRefreshAll}
             disabled={isRefreshing}
-            className="px-2.5 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs"
             title={isZh ? '刷新全量账号配额' : 'Refresh All'}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
+            <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
             <span>{isZh ? '刷新' : 'Refresh'}</span>
           </button>
 
           <button
             onClick={() => setActiveModal({ type: 'export' })}
-            className="px-2.5 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs"
             title={isZh ? '导出账号数据备份 (JSON)' : 'Export Backup'}
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="w-3 h-3" />
             <span>{isZh ? '导出' : 'Export'}</span>
           </button>
 
           <button
             onClick={() => alert(isZh ? '支持批量导入 JSON 文件或粘贴 Token' : 'Import JSON')}
-            className="px-2.5 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs"
             title={isZh ? '从备份导入账号' : 'Import Backup'}
           >
-            <Upload className="w-3.5 h-3.5" />
+            <Upload className="w-3 h-3" />
             <span>{isZh ? '导入' : 'Import'}</span>
           </button>
 
           <button
             onClick={() => alert(isZh ? '呼起浏览器进行 Google 官方 OAuth 授权' : 'OAuth Login')}
-            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all"
+            className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold flex items-center gap-1.2 shadow-xs shadow-blue-500/20 transition-all"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3 h-3" />
             <span>{isZh ? '授权登录' : 'Add Account'}</span>
           </button>
         </div>
       </div>
 
       {/* ============================================================== */}
-      {/* 核心 4 栏式黄金表格：                                            */}
-      {/* [账号与标签] | [模型额度池] | [四宫格多端切号] | [操作工具]      */}
+      {/* 核心 4 栏黄金表格：自适应无水平滚动条排版，全分辨率自洽适配       */}
+      {/* [账号/标签] | [模型额度池 (流体自适应)] | [四宫格] | [快捷工具]  */}
       {/* ============================================================== */}
-      <div className="bg-white/80 dark:bg-[#121316]/80 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-2xl overflow-hidden shadow-xs relative">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400 select-none">
-              <tr>
-                <th className="pl-3.5 py-3 w-9">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.length === filteredAccounts.length && filteredAccounts.length > 0}
-                    onChange={handleSelectAll}
-                    className="rounded border-gray-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500/30 cursor-pointer"
-                  />
-                </th>
-                {/* 栏 1：账号与标签 */}
-                <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 w-[230px] whitespace-nowrap">
-                  <div className="flex items-center gap-1.5">
-                    <span>{isZh ? '账号 / 标签' : 'Account & Tags'}</span>
-                    <ArrowUpDown className="w-3 h-3 opacity-40" />
-                  </div>
-                </th>
-                {/* 栏 2：Gemini / Claude / Argon 统一双轨进度 */}
-                <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 min-w-[340px] whitespace-nowrap">
-                  <div className="flex items-center justify-between">
-                    <span>{isZh ? '模型额度池 (● 5h 实时流速 / ⊚ 7d 周期水库)' : 'Model Quota Pools (5h / 7d)'}</span>
-                    <span className="text-[10px] text-gray-400 font-normal">短轨浮于上层 · 耗尽显虚线</span>
-                  </div>
-                </th>
-                {/* 栏 3：四宫格快捷切换区 (精致内嵌卡片质感) */}
-                <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 w-[160px] whitespace-nowrap text-center">
-                  <span>{isZh ? '四宫格多端切号' : 'Host Matrix (4-Grid)'}</span>
-                </th>
-                {/* 栏 4：操作工具区 (自然内嵌，无缝衔接) */}
-                <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 w-[150px] text-center whitespace-nowrap">
-                  {isZh ? '快捷工具' : 'Actions'}
-                </th>
-              </tr>
-            </thead>
+      <div className="bg-white/80 dark:bg-[#121316]/80 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl overflow-hidden shadow-2xs relative w-full">
+        <table className="w-full text-left border-collapse table-fixed select-none">
+          {/* 黄金列宽约束：彻底杜绝横向滚动条，各分辨率自然舒展 */}
+          <colgroup>
+            <col className="w-8" />
+            <col className="w-[23%]" />
+            <col className="w-auto" />
+            <col className="w-[110px]" />
+            <col className="w-[118px]" />
+          </colgroup>
 
-            <tbody className="divide-y divide-gray-100 dark:divide-white/5 font-sans">
-              {filteredAccounts.map((acc) => {
-                const isSelected = selectedIds.includes(acc.id);
+          <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400">
+            <tr>
+              <th className="pl-3 py-2 w-8">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.length === filteredAccounts.length && filteredAccounts.length > 0}
+                  onChange={handleSelectAll}
+                  className="rounded border-gray-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500/30 cursor-pointer w-3.5 h-3.5"
+                />
+              </th>
+              {/* 栏 1：账号与标签 */}
+              <th className="px-2.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px]">
+                <div className="flex items-center gap-1">
+                  <span>{isZh ? '账号 / 标签' : 'Account & Tags'}</span>
+                  <ArrowUpDown className="w-2.5 h-2.5 opacity-40" />
+                </div>
+              </th>
+              {/* 栏 2：Gemini / Claude / Argon 统一双轨进度 */}
+              <th className="px-2.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px]">
+                <div className="flex items-center justify-between">
+                  <span>{isZh ? '模型额度池' : 'Model Quota Pools'}</span>
+                  <span className="text-[9px] text-gray-400 font-normal">● 5h 实时流速 / ⊚ 7d 水库 (短轨在上)</span>
+                </div>
+              </th>
+              {/* 栏 3：四宫格快捷切换区 */}
+              <th className="px-1.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
+                <span>{isZh ? '四宫格多端切号' : 'Host Matrix'}</span>
+              </th>
+              {/* 栏 4：操作工具区 */}
+              <th className="px-1.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
+                {isZh ? '快捷工具' : 'Actions'}
+              </th>
+            </tr>
+          </thead>
 
-                return (
-                  <tr
-                    key={acc.id}
-                    className={`hover:bg-gray-50/60 dark:hover:bg-zinc-800/30 transition-colors group ${
-                      isSelected
-                        ? 'bg-blue-50/50 dark:bg-blue-500/5'
-                        : acc.isForbidden
-                        ? 'bg-rose-50/30 dark:bg-rose-950/20'
-                        : ''
-                    }`}
-                  >
-                    {/* 复选框 */}
-                    <td className="pl-3.5 py-3 align-middle">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => handleToggleSelect(acc.id)}
-                        className="rounded border-gray-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500/30 cursor-pointer"
-                      />
-                    </td>
+          <tbody className="divide-y divide-gray-100 dark:divide-white/5 font-sans">
+            {filteredAccounts.map((acc) => {
+              const isSelected = selectedIds.includes(acc.id);
 
-                    {/* 栏 1：账号与标签 */}
-                    <td className="px-4 py-3 align-middle">
-                      <div className="flex flex-col gap-1.5 min-w-0 pr-2">
-                        {/* 邮箱 + PRO 徽章 + 复制 */}
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span
-                            className="font-semibold text-gray-900 dark:text-zinc-100 truncate text-xs"
-                            title={acc.email}
-                          >
-                            {acc.email}
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.2 text-[9px] font-bold rounded shrink-0 ${
-                              acc.tier === 'PRO'
-                                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-xs'
-                                : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'
-                            }`}
-                          >
-                            {acc.tier}
-                          </span>
-                          <button
-                            onClick={() => handleCopyCredentials(acc.id)}
-                            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0"
-                            title={isZh ? '复制账号凭据 (JSON)' : 'Copy Credentials'}
-                          >
-                            {copiedId === acc.id ? (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                            ) : (
-                              <BookCopy className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </div>
+              return (
+                <tr
+                  key={acc.id}
+                  className={`hover:bg-gray-50/60 dark:hover:bg-zinc-800/30 transition-colors group ${
+                    isSelected
+                      ? 'bg-blue-50/50 dark:bg-blue-500/5'
+                      : acc.isForbidden
+                      ? 'bg-rose-50/30 dark:bg-rose-950/20'
+                      : ''
+                  }`}
+                >
+                  {/* 复选框 */}
+                  <td className="pl-3 py-2 align-middle">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleToggleSelect(acc.id)}
+                      className="rounded border-gray-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500/30 cursor-pointer w-3.5 h-3.5"
+                    />
+                  </td>
 
-                        {/* 备注名称 */}
-                        <span className="text-xs text-gray-500 dark:text-zinc-400 truncate">
-                          {acc.alias}
+                  {/* 栏 1：账号与标签 */}
+                  <td className="px-2.5 py-2 align-middle">
+                    <div className="flex flex-col gap-1 min-w-0 pr-1">
+                      {/* 邮箱 + PRO 徽章 + 复制 */}
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span
+                          className="font-medium text-gray-900 dark:text-zinc-100 truncate text-[11px]"
+                          title={acc.email}
+                        >
+                          {acc.email}
                         </span>
-
-                        {/* 标签栏 */}
-                        <div className="flex flex-wrap items-center gap-1">
-                          {acc.tags.map((t) => (
-                            <button
-                              key={t}
-                              onClick={() => setSelectedTag(t)}
-                              className="px-1.5 py-0.2 text-[9px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5 hover:border-purple-400 transition-colors"
-                              title={`过滤标签 [${t}]`}
-                            >
-                              {t}
-                            </button>
-                          ))}
-                          <button
-                            onClick={() => setActiveModal({ type: 'tags', account: acc })}
-                            className="px-1 py-0.2 text-[9px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
-                            title={isZh ? '管理标签' : 'Manage Tags'}
-                          >
-                            + {isZh ? '标签' : 'Tag'}
-                          </button>
-                        </div>
-
-                        {/* 403 受限提示 */}
-                        {acc.isForbidden && (
-                          <div className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                            <Lock className="w-3 h-3" />
-                            <span>{isZh ? '账号受限 (403)' : 'Forbidden'}</span>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* 栏 2：Gemini / Claude / Argon 额度条 (5h 为 0 与 5h>7d 均优雅呈现) */}
-                    <td className="px-4 py-3 align-middle">
-                      {acc.isForbidden ? (
-                        <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/30 flex items-center gap-2 text-xs text-rose-700 dark:text-rose-400">
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                          <span>{isZh ? '账号存在风控拦截或订阅失效，请重登或设置网络' : 'Account rate limited or token invalid'}</span>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-2 max-w-[480px]">
-                          {/* 1. Gemini 额度 */}
-                          {renderQuotaBar('Gemini', 'gemini', acc.geminiQuota)}
-
-                          {/* 2. Claude 额度 */}
-                          {renderQuotaBar('Claude / GPT', 'claude', acc.claudeQuota)}
-
-                          {/* 3. Argon 额度 (如有) */}
-                          {acc.argonQuota && renderQuotaBar('Gemini 4 Argon', 'argon', acc.argonQuota)}
-                        </div>
-                      )}
-                    </td>
-
-                    {/* 栏 3：四宫格快捷切换区 (精致胶囊圆角，永不截断) */}
-                    <td className="px-4 py-3 align-middle">
-                      <div className="p-1.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[148px] mx-auto shadow-2xs">
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {[
-                            { id: 'app' as HostTarget, label: 'App', icon: AppWindow },
-                            { id: 'ide' as HostTarget, label: 'IDE', icon: Code2 },
-                            { id: 'plugin' as HostTarget, label: isZh ? '插件' : 'Plugin', icon: Puzzle },
-                            { id: 'cli' as HostTarget, label: 'CLI', icon: Terminal },
-                          ].map((host) => {
-                            const Icon = host.icon;
-                            const isActive = acc.activeHosts.includes(host.id);
-
-                            return (
-                              <button
-                                key={host.id}
-                                onClick={() => handleToggleHost(acc.id, host.id)}
-                                className={`px-2 py-1.5 rounded-lg text-[10px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                                  isActive
-                                    ? 'bg-blue-600 text-white shadow-xs ring-1 ring-blue-500'
-                                    : 'bg-white hover:bg-gray-100 dark:bg-[#202126] dark:hover:bg-[#282930] text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 border border-gray-200/60 dark:border-white/5'
-                                }`}
-                                title={
-                                  isActive
-                                    ? isZh
-                                      ? `已在此【${host.label}】运行 (点击可解除)`
-                                      : `Active in ${host.label} (Click to unbind)`
-                                    : isZh
-                                    ? `点击一键推送到【${host.label}】`
-                                    : `Click to switch to ${host.label}`
-                                }
-                              >
-                                <Icon className="w-3 h-3 shrink-0" />
-                                <span className="truncate">{host.label}</span>
-                                {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* 栏 4：操作工具区 (自然内嵌悬浮 Dock，消除突兀割裂感) */}
-                    <td className="px-4 py-3 align-middle text-center whitespace-nowrap">
-                      <div className="inline-flex items-center justify-center gap-1 p-1 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 shadow-2xs">
-                        {/* 1. 单账号刷新 */}
-                        <button
-                          onClick={handleRefreshAll}
-                          className="w-7 h-7 rounded-lg hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '刷新此账号配额' : 'Refresh'}
+                        <span
+                          className={`px-1 py-0 text-[8.5px] font-bold rounded shrink-0 ${
+                            acc.tier === 'PRO'
+                              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-2xs'
+                              : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'
+                          }`}
                         >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* 2. 独立设备指纹查看/重置 */}
-                        <button
-                          onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
-                          className="w-7 h-7 rounded-lg hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '独立机器码与设备指纹' : 'Device Fingerprint'}
-                        >
-                          <Fingerprint className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* 3. 标签管理 */}
-                        <button
-                          onClick={() => setActiveModal({ type: 'tags', account: acc })}
-                          className="w-7 h-7 rounded-lg hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '标签管理' : 'Manage Tags'}
-                        >
-                          <Tag className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* 4. 单账号导出 */}
+                          {acc.tier}
+                        </span>
                         <button
                           onClick={() => handleCopyCredentials(acc.id)}
-                          className="w-7 h-7 rounded-lg hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '导出账号凭据 (JSON)' : 'Export JSON'}
+                          className="p-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0"
+                          title={isZh ? '复制账号凭据 (JSON)' : 'Copy Credentials'}
                         >
-                          <Download className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* 5. 删除账号 */}
-                        <button
-                          onClick={() => handleDelete(acc.id)}
-                          className="w-7 h-7 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '删除账号' : 'Delete'}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          {copiedId === acc.id ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                          ) : (
+                            <BookCopy className="w-3 h-3" />
+                          )}
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+
+                      {/* 备注名称 */}
+                      <span className="text-[10px] text-gray-500 dark:text-zinc-400 truncate">
+                        {acc.alias}
+                      </span>
+
+                      {/* 标签栏 */}
+                      <div className="flex flex-wrap items-center gap-1">
+                        {acc.tags.map((t) => (
+                          <button
+                            key={t}
+                            onClick={() => setSelectedTag(t)}
+                            className="px-1 py-0 text-[8.5px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5 hover:border-purple-400 transition-colors"
+                            title={`过滤标签 [${t}]`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                          className="px-0.5 py-0 text-[8.5px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
+                          title={isZh ? '管理标签' : 'Manage Tags'}
+                        >
+                          + {isZh ? '标签' : 'Tag'}
+                        </button>
+                      </div>
+
+                      {/* 403 受限提示 */}
+                      {acc.isForbidden && (
+                        <div className="inline-flex items-center gap-1 text-[9px] font-semibold text-rose-600 dark:text-rose-400">
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>{isZh ? '账号受限 (403)' : 'Forbidden'}</span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* 栏 2：Gemini / Claude / Argon 额度条 (5h 为 0 与 5h>7d 均优雅呈现) */}
+                  <td className="px-2.5 py-2 align-middle">
+                    {acc.isForbidden ? (
+                      <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/30 flex items-center gap-1.5 text-[10.5px] text-rose-700 dark:text-rose-400">
+                        <AlertCircle className="w-3 h-3 shrink-0" />
+                        <span>{isZh ? '账号存在风控拦截或订阅失效，请重登或设置网络' : 'Account rate limited or token invalid'}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5 w-full pr-2">
+                        {/* 1. Gemini 额度 */}
+                        {renderQuotaBar('Gemini', 'gemini', acc.geminiQuota)}
+
+                        {/* 2. Claude 额度 */}
+                        {renderQuotaBar('Claude / GPT', 'claude', acc.claudeQuota)}
+
+                        {/* 3. Argon 额度 (如有) */}
+                        {acc.argonQuota && renderQuotaBar('Gemini 4 Argon', 'argon', acc.argonQuota)}
+                      </div>
+                    )}
+                  </td>
+
+                  {/* 栏 3：四宫格快捷切换区 (精致紧凑微型卡片，永不截断) */}
+                  <td className="px-1.5 py-2 align-middle text-center">
+                    <div className="p-1 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[104px] mx-auto shadow-2xs">
+                      <div className="grid grid-cols-2 gap-1">
+                        {[
+                          { id: 'app' as HostTarget, label: 'App', icon: AppWindow },
+                          { id: 'ide' as HostTarget, label: 'IDE', icon: Code2 },
+                          { id: 'plugin' as HostTarget, label: isZh ? '插件' : 'Plugin', icon: Puzzle },
+                          { id: 'cli' as HostTarget, label: 'CLI', icon: Terminal },
+                        ].map((host) => {
+                          const Icon = host.icon;
+                          const isActive = acc.activeHosts.includes(host.id);
+
+                          return (
+                            <button
+                              key={host.id}
+                              onClick={() => handleToggleHost(acc.id, host.id)}
+                              className={`h-[20px] px-1 rounded-md text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+                                isActive
+                                  ? 'bg-blue-600 text-white shadow-2xs font-semibold'
+                                  : 'bg-white hover:bg-gray-100 dark:bg-[#202126] dark:hover:bg-[#282930] text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 border border-gray-200/50 dark:border-white/5'
+                              }`}
+                              title={
+                                isActive
+                                  ? isZh
+                                    ? `已在此【${host.label}】运行 (点击解除)`
+                                    : `Active in ${host.label}`
+                                  : isZh
+                                  ? `推送到【${host.label}】`
+                                  : `Switch to ${host.label}`
+                              }
+                            >
+                              <Icon className="w-2.5 h-2.5 shrink-0" />
+                              <span className="truncate">{host.label}</span>
+                              {isActive && <span className="w-1 h-1 rounded-full bg-emerald-400 shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </td>
+
+                  {/* 栏 4：操作工具区 (自然内嵌悬浮 Dock，消除突兀割裂感) */}
+                  <td className="px-1.5 py-2 align-middle text-center whitespace-nowrap">
+                    <div className="inline-flex items-center justify-center gap-0.5 p-0.5 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 shadow-2xs">
+                      {/* 1. 单账号刷新 */}
+                      <button
+                        onClick={handleRefreshAll}
+                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center"
+                        title={isZh ? '刷新配额' : 'Refresh'}
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </button>
+
+                      {/* 2. 独立设备指纹查看/重置 */}
+                      <button
+                        onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
+                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center"
+                        title={isZh ? '设备指纹' : 'Fingerprint'}
+                      >
+                        <Fingerprint className="w-3 h-3" />
+                      </button>
+
+                      {/* 3. 标签管理 */}
+                      <button
+                        onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center"
+                        title={isZh ? '标签管理' : 'Tags'}
+                      >
+                        <Tag className="w-3 h-3" />
+                      </button>
+
+                      {/* 4. 单账号导出 */}
+                      <button
+                        onClick={() => handleCopyCredentials(acc.id)}
+                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center"
+                        title={isZh ? '导出凭据' : 'Export'}
+                      >
+                        <Download className="w-3 h-3" />
+                      </button>
+
+                      {/* 5. 删除账号 */}
+                      <button
+                        onClick={() => handleDelete(acc.id)}
+                        className="w-5.5 h-5.5 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center"
+                        title={isZh ? '删除账号' : 'Delete'}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       {/* 底部批量操作悬浮岛 */}
