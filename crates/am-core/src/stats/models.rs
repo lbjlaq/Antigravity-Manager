@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// 单条请求与交互的原子账本实体 (The Atomic Request Record)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RequestLedgerEntry {
     /// 唯一请求 ID / Step 标识
     pub id: String,
@@ -44,6 +45,7 @@ pub struct RequestLedgerEntry {
 
 /// 视角 1: 会话深度上下文分析 (Session Context Snapshot)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextWindowSnapshot {
     pub session_id: String,
     pub title: String,
@@ -73,6 +75,7 @@ pub struct ContextWindowSnapshot {
 
 /// 视角 2: 账号归属聚合 (Account Attribution Group)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AccountUsageGroup {
     pub account_id: String,
     pub email: String,
@@ -91,6 +94,7 @@ pub struct AccountUsageGroup {
 
 /// 视角 3: 真实模型性能矩阵 (Model Performance Matrix)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelPerformanceGroup {
     pub requested_model: String,
     pub physical_model: String,
@@ -105,6 +109,7 @@ pub struct ModelPerformanceGroup {
 
 /// 视角 4: 宿主与工作区分流 (Host & Workspace Distribution)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HostWorkspaceGroup {
     pub host_name: String,
     pub host_id: String,
@@ -117,6 +122,7 @@ pub struct HostWorkspaceGroup {
 
 /// 视角 5: 24 小时生物钟热力分布 (Temporal Rhythm Group)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TemporalRhythmGroup {
     pub time_slot: String, // "Night (00-06)", "Morning (06-12)", "Afternoon (12-18)", "Evening (18-24)"
     pub request_count: u64,
@@ -128,6 +134,7 @@ pub struct TemporalRhythmGroup {
 
 /// 综合分析大盘实体 (Master Analytics Report)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct MasterAnalyticsReport {
     /// 全局概览指标
     pub total_requests: u64,
