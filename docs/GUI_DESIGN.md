@@ -320,6 +320,259 @@ Antigravity Manager 桌面客户端 (`am-gui`) 是专为专业开发者打造的
 
 ---
 
+### 5.3 账号详情统计与三维下钻设计规范 (Account Deep Dive & 3D Telemetry Specification)
+
+为彻底解决同类工具与早期文档中“仅有初级剩余百分比、信息单薄、缺乏业务归因”的严重不足，我们将**账号详情统计**提升为专业级的**“算力资产与研发效能控制台”**。
+
+在架构上，账号详情由顶部的**账号水平选择胶囊栏 (Account Switcher Bar)** 进行快速切片，每个选中的账号展示以下 **6 大高价值技术与资产模块**：
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 👤 ctrler@868666.best [PRO] [🌟主力]  🟢 挂载于 IDE  │  5h: 85% (45m满)  │  7d: 50% (3天重置)          │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 【模块 2：Token 实耗与 5h/7d 额度双向折算金库】                                                       │
+│  • 累计总吞吐: 207.1M (命中率 91.2%)  │  等效实耗: $214.50 USD  │  缓存免计费已省: $188.00 USD        │
+│  • 💎 5h 剩余换算: 约 38.2 万 Token (折合 $14.28 算力储备)                                            │
+│  • 💎 7d 剩余换算: 约 225.0 万 Token (折合 $84.00 算力储备)                                           │
+│  • 5 层 Token 构成: 🟢缓存 188M · 🔵输入 18.4M · 🟣思考 8.5M · 🟡工具 6.2M · 🔷输出 710K              │
+├────────────────────────────────────────────┬───────────────────────────────────────────────────────────┤
+│ 【模块 4：项目消耗流向矩阵】               │ 【模块 3：模型消耗与真实物理调度】                        │
+│  (细分 Gemini vs Claude / 缓存率 / 流速)   │  (物理上游 / TPS / TTFT / 真实保真度)                     │
+│  • 📂 at (68%)                             │  • claude-3-7 ➔ gemini-4-hydrogen-high                   │
+│    Claude: 95M │ Gemini: 45M               │    120M (58%) │ ⚡ 184 tok/s │ ⏱ 1.42s                  │
+│    缓存: 92.4% │ ⚡ 178 tok/s               │  • gemini-pro ➔ gemini-4-hydrogen-high                   │
+│  • 📂 omin (22%)                           │    66M (32%)  │ ⚡ 168 tok/s │ ⏱ 1.35s                  │
+│    Claude: 15M │ Gemini: 30M               │  • gemini-flash ➔ gemini-4-carbon                        │
+│    缓存: 88.0% │ ⚡ 162 tok/s               │    21M (10%)  │ ⚡ 122 tok/s │ ⏱ 0.98s                  │
+├────────────────────────────────────────────┴───────────────────────────────────────────────────────────┤
+│ 【模块 5：客户端消耗排行】                 │ 【模块 6：24 小时活跃调用时间热力图】                      │
+│  IDE (70%) ──■■■■■■■  145M Tok             │  00:00 ── 06:00 ── 12:00 ── 16:00(峰) ── 23:00            │
+│  App (18%) ──■■       37M Tok              │  柱状高密度波形，悬停看各时段请求与流速                   │
+│  Plugin(8%) ─■        16M Tok              │                                                           │
+└────────────────────────────────────────────┴───────────────────────────────────────────────────────────┘
+```
+
+#### 5.3.1 模块 1：实时额度概览 (Real-time Quota Overview)
+- **设计哲学**：克制、纯净、无多余修饰。
+- **核心数据项**：
+  - **5h 实时流速水位**：纯净百分比数字（如 `85%`），附带冷却倒计时（如 `45m 后全满`）。
+  - **7d 周期宏观水位**：周配额剩余百分比（如 `50%`），附带距离周重置倒计时（如 `还有 3 天重置`）。
+  - **身份与挂载状态**：邮箱、标签徽章（`[🌟主力]`、`[PRO]`）以及当前生效客户端指示（`🟢 挂载于 IDE`）。
+
+#### 5.3.2 模块 2：Token 深度统计与 5h/7d 额度双向折算金库 (The Token Treasury)
+- **设计目标**：实现全网独创的“额度百分比 ➔ 等价可用 Token 与金额价值”的双向换算，让开发者建立极强的算力资产确定感。
+- **A. 历史实际消耗与免计费节省量化**：
+  - **5 层分段水库拆解**：
+    - 直接新输入（Prompt Input）：如 `18.4M`
+    - 官方缓存命中（Cache Read）：如 `188.0M`
+    - 深度思考消耗（Thinking）：如 `8.5M`
+    - 工具调用流（Tools）：如 `6.2M`
+    - 模型最终输出（Completion）：如 `710K`
+  - **全局缓存命中率**：精确百分比（如 `91.2%`），展示缓存带来的加速收益（`首字提速 3.4x`）。
+  - **实耗与省费对比**：
+    - 等效官方商用 API 未命中缓存标价：如 `$214.50 USD`。
+    - Prompt Caching 官方免计费已省金额：加粗绿色大字呈现（如 `已省 $188.00 USD`）。
+    - 开发者实际支付费用：`$0.00`。
+- **B. 5h / 7d 剩余额度 ➔ 等价 Token 与金额换算模型**：
+  - **数学建模基准**：
+    - Google AI PRO 账号的 5h 动态额度满额等同于约 **450,000 Token**（等效商业算力价值约 **$16.80 USD**）；
+    - 7d 周期额度满额等同于约 **4,500,000 Token**（等效商业算力价值约 **$168.00 USD**）；
+  - **动态计算展示**：
+    - `5h 剩余 85%` ➔ **折合剩余可用约 38.2 万 Token (等值 $14.28 算力储备)**；
+    - `7d 剩余 50%` ➔ **折合剩余可用约 225.0 万 Token (等值 $84.00 算力储备)**；
+    - 一眼可知还能跑多少次深度会话与重构任务，彻底根治额度焦虑。
+
+#### 5.3.3 模块 3：模型消耗与真实物理调度 (Model Usage & Upstream Routing)
+- **设计哲学**：拒绝冗余空泛描述，全量呈现硬核技术参数与暗降诊断。
+- **呈现列表**：按该账号调用的模型用量降序排列。
+- **核心技术列**：
+  1. **请求模型 ➔ 真实物理上游代号**：如 `claude-3-7-sonnet` ➔ `gemini-4-hydrogen-high`。
+  2. **消耗 Token 总量与占比**：如 `120M (58%)`。
+  3. **平均持续流速 (TPS)**：以加粗绿色标记（如 `⚡ 184 tok/s`）。
+  4. **首字延迟中位数 (TTFT)**：毫秒折合秒（如 `⏱ 1.42s`）。
+  5. **专属缓存命中率**：如 `91.8%`。
+  6. **暗降检测引擎**：
+     - 若物理后端退化为 `used_claude_conservative`，弹出红色暗降警示徽章，杜绝云端偷换低级模型。
+
+#### 5.3.4 模块 4：项目消耗流向矩阵 (Project Drain Flow Matrix)
+- **设计目标**：精准洞察该账号被哪些工程消耗，且在每个工程中细分模型表现。
+- **每个工程卡片/行所含指标**：
+  - **项目名称与工程路径**：如 `📂 at (Antigravity Gateway) ~/Desktop/at`。
+  - **总消耗占比**：如 `消耗 68% (140M Token)`。
+  - **双核心模型消耗拆解**：
+    - **Claude 消耗**：`95M Tokens (67.8%)`。
+    - **Gemini 消耗**：`45M Tokens (32.2%)`。
+  - **该项目专属缓存命中率**：如 `92.4%`。
+  - **该项目生成流速 (TPS)**：如 `⚡ 178 tok/s`。
+  - **该项目交互总步数**：如 `1,850 步`。
+
+#### 5.3.5 模块 5：客户端/宿主消耗排行榜 (Host Matrix Ranking)
+- **展示 4 大客户端在该账号下的消耗占比**：
+  - `1. Antigravity IDE`：`70% (145M Tokens)` · `1,420 次请求`。
+  - `2. 原生 App`：`18% (37M Tokens)` · `380 次请求`。
+  - `3. ACP 插件 (Cursor/VSCode)`：`8% (16M Tokens)` · `150 次请求`。
+  - `4. agy CLI`：`4% (8M Tokens)` · `74 次请求`。
+- 附带高质感紧凑微进度条，清晰指引主战场。
+
+#### 5.3.6 模块 6：24 小时活跃调用时间热力图 (Circadian Rhythm Heatmap)
+- **视觉形态**：24 根紧凑的高密度柱状波形（00:00 ~ 23:00）。
+- **指标呈现**：
+  - 柱体高度反映该小时内的调用请求频次。
+  - 鼠标悬停微型 Tooltip：`15:00 - 92 次请求 · 18.5M Tokens · 峰值 192 tok/s`。
+  - 底部标注昼夜生物钟阶段：`00:00 (休眠)`、`09:00 (晨间架构)`、`15:00 (午后重度编码波峰)`、`21:00 (夜间验证)`。
+
+---
+
+### 5.4 视觉参考图谱与组件映射库 (Visual Design References & Component Mapping)
+
+为了将业界最顶尖的视觉规范（包括 Dark Bento、Sankey 数据流、同心环仪表、蜂巢热力图与流线卡片）融合进 Antigravity Manager 的账号详情统计中，我们将 15 组精选 UI 组件参考图谱进行了系统化映射：
+
+#### 5.4.1 图谱 1：微型药丸条形图与卡片矩阵 (Card Metrics & Pill Bars)
+- **本地图片**：![01_card_metrics_pill_bars](./assets/gui_references/01_card_metrics_pill_bars.jpg)
+- **绝对链接**：[01_card_metrics_pill_bars.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/01_card_metrics_pill_bars.jpg)
+- **组件特征**：水平微型圆角进度胶囊、0~10 细分评分块、多维离散卡片矩阵。
+- **账号详情映射**：
+  - 映射至 **「模块 3：模型消耗列表」** 中的横向流速进度条（TPS）与多维技术参数排列；
+  - 映射至 **「模块 1：实时额度概览」** 中的 5h / 7d 水位药丸胶囊。
+
+---
+
+#### 5.4.2 图谱 2：堆叠流线图与圆环拆解 (Stack Flow & Donut Breakdown)
+- **本地图片**：![02_stack_flow_and_donut](./assets/gui_references/02_stack_flow_and_donut.jpg)
+- **绝对链接**：[02_stack_flow_and_donut.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/02_stack_flow_and_donut.jpg)
+- **组件特征**：多层垂直渐变堆叠条图、右侧环形图（Donut Chart）带外部文字引线与加粗数字。
+- **账号详情映射**：
+  - 映射至 **「模块 2：Token 5 层水库构成拆解」**（Prompt、Cache Read、Thinking、Tools、Output）；
+  - 映射至 **「Gemini vs Claude 核心消耗圆环」**。
+
+---
+
+#### 5.4.3 图谱 3：多色数据流管道拓扑 (Dataflow Pipeline Routing)
+- **本地图片**：![03_dataflow_pipeline_routing](./assets/gui_references/03_dataflow_pipeline_routing.jpg)
+- **绝对链接**：[03_dataflow_pipeline_routing.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/03_dataflow_pipeline_routing.jpg)
+- **组件特征**：源节点（Source Node）向多个目标节点分流的彩色平滑流线管道（Flow Pipes），带状态指示与数量标注。
+- **账号详情映射**：
+  - 核心映射至 **「模块 4：项目消耗流向管道（Project Drain Flow）」**！从单账号节点流向 `at`、`omin`、`infra` 多个项目，管道宽度正比于消耗 Token 量。
+
+---
+
+#### 5.4.4 图谱 4：极简浅色 Bento 看板与横向排名 (Light Dashboard KPI & Bars)
+- **本地图片**：![04_light_dashboard_kpi_bars](./assets/gui_references/04_light_dashboard_kpi_bars.png)
+- **绝对链接**：[04_light_dashboard_kpi_bars.png](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/04_light_dashboard_kpi_bars.png)
+- **组件特征**：顶部 4 格轻量 KPI 数字方块（微弱彩色图标点缀）、平滑安装量曲线、水平排行条形图。
+- **账号详情映射**：
+  - 映射至 **「模块 2：4 大核心吞吐与省费方块」**（总吞吐、实耗金额、已省金额、平均流速）；
+  - 映射至 **「模块 5：客户端消耗排行榜」**（IDE 70% / App 18% / Plugin 8% / CLI 4%）。
+
+---
+
+#### 5.4.5 图谱 5：暗夜竞技六边形能力雷达与会话表 (Dark Gaming Radar Profile)
+- **本地图片**：![05_dark_gaming_radar_profile](./assets/gui_references/05_dark_gaming_radar_profile.jpg)
+- **绝对链接**：[05_dark_gaming_radar_profile.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/05_dark_gaming_radar_profile.jpg)
+- **组件特征**：深色背景下的六边形多维能力雷达（Hexagonal Radar）、胜率折线走势图、紧凑的历史战绩对账表。
+- **账号详情映射**：
+  - 映射至 **「账号稳定性与综合算力雷达」**（吞吐量、缓存率、保真度、并发流速、抗 429 韧性）；
+  - 映射至账号详情底部的 **「最近交互会话历史记录列表」**。
+
+---
+
+#### 5.4.6 图谱 6：圆形同心环仪表与双向发散对比条 (Circular Gauges & Divergence Bar)
+- **本地图片**：![06_circular_gauges_divergence_bar](./assets/gui_references/06_circular_gauges_divergence_bar.jpg)
+- **绝对链接**：[06_circular_gauges_divergence_bar.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/06_circular_gauges_divergence_bar.jpg)
+- **组件特征**：三组同心圆形进度环（45%、78%、66%）、双向中轴发散横向柱状条（Inflow / Outflow Ratio）。
+- **账号详情映射**：
+  - 映射至 **「模块 1：5h 与 7d 同心圆环水位仪表」**；
+  - 映射至 **「模块 4：Gemini 输入 vs Claude 输出双向发散对比」**。
+
+---
+
+#### 5.4.7 图谱 7：双圆环任务仪表与彩色条形矩阵 (Dual Donut & Multi Progress)
+- **本地图片**：![07_dual_donut_multi_progress](./assets/gui_references/07_dual_donut_multi_progress.jpg)
+- **绝对链接**：[07_dual_donut_multi_progress.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/07_dual_donut_multi_progress.jpg)
+- **组件特征**：双大圆环居中数字（如 `100 tasks Full`, `150 tasks Match`）、多分类水平双色进度槽。
+- **账号详情映射**：
+  - 映射至 **「5h 与 7d 双核心额度圆环」**，中央大字标明剩余百分比与恢复时间；
+  - 映射至项目明细中各个子模块的进度细分。
+
+---
+
+#### 5.4.8 图谱 8：金融投资组合大卡与半圆弧健康仪表 (Financial Portfolio & Half Gauge)
+- **本地图片**：![08_financial_portfolio_half_gauge](./assets/gui_references/08_financial_portfolio_half_gauge.jpg)
+- **绝对链接**：[08_financial_portfolio_half_gauge.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/08_financial_portfolio_half_gauge.jpg)
+- **组件特征**：醒目的橙红渐变资产大卡片（$54,815.25 USD）、半圆弧健康度评分仪（Risk Score 72/100）、分块资产占比矩形。
+- **账号详情映射**：
+  - 核心映射至 **「模块 2：Token 换算金额大卡片（算力金库）」**，展示 `$214.50 USD` 累计价值；
+  - 映射至账号健康评分仪表（`98/100` 健康良好）。
+
+---
+
+#### 5.4.9 图谱 9：高对比度时间区间波形焦点 (Focused Time Range Wave)
+- **本地图片**：![09_focused_time_range_wave](./assets/gui_references/09_focused_time_range_wave.jpg)
+- **绝对链接**：[09_focused_time_range_wave.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/09_focused_time_range_wave.jpg)
+- **组件特征**：高对比度深黑背景折线波形、两道垂直高亮时间光标标定核心观察区间（`May 1` ~ `Aug 31`，带浮层增幅标签）。
+- **账号详情映射**：
+  - 映射至 **「账号 24 小时波峰与高负载区间标定」**，高亮突出开发者的重度编码黄金时间段。
+
+---
+
+#### 5.4.10 图谱 10：胶囊进度矩阵与甘特时间跨度 (Capsule Matrix & Project Timeline)
+- **本地图片**：![10_capsule_matrix_timeline](./assets/gui_references/10_capsule_matrix_timeline.jpg)
+- **绝对链接**：[10_capsule_matrix_timeline.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/10_capsule_matrix_timeline.jpg)
+- **组件特征**：绿黄双色圆角胶囊柱状阵列、右侧水平浮动工程时间跨度色条（Projects Timeline）。
+- **账号详情映射**：
+  - 核心映射至 **「模块 6：24 小时活跃调用时间热力胶囊（Hourly Heatmap Capsules）」**；
+  - 映射至各个项目在该账号上的活跃时间跨度甘特条。
+
+---
+
+#### 5.4.11 图谱 11：创作者多段分色条与打卡时间轴 (Creator Sheet & Segmented Bars)
+- **本地图片**：![11_creator_sheet_segmented_bars](./assets/gui_references/11_creator_sheet_segmented_bars.jpg)
+- **绝对链接**：[11_creator_sheet_segmented_bars.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/11_creator_sheet_segmented_bars.jpg)
+- **组件特征**：平滑收益曲线、顶部多段分色横向拼接进度条（`Female 60%, Male 33%, Other 7%`）、带离散刻度的打卡事件轴。
+- **账号详情映射**：
+  - 映射至 **「模块 2：Token 5 层水库横向拼接条」**（翡翠绿/蔚蓝/紫色/琥珀/粉红）；
+  - 映射至账号各次请求的离散时间打卡刻度线。
+
+---
+
+#### 5.4.12 图谱 12：六边形蜂巢高密热力图 (Honeycomb Density Heatmap)
+- **本地图片**：![12_honeycomb_heatmap](./assets/gui_references/12_honeycomb_heatmap.jpg)
+- **绝对链接**：[12_honeycomb_heatmap.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/12_honeycomb_heatmap.jpg)
+- **组件特征**：极具未来科技感的蜂巢六边形渐变高光热力分布（中心金黄高密、边缘幽蓝渐隐）。
+- **账号详情映射**：
+  - 可作为 **「极客模式：周级 7 天 × 24 小时高密调用热力图」** 的高阶视觉扩展。
+
+---
+
+#### 5.4.13 图谱 13：极坐标放射花形雷达与光芒图 (Radial Sparkburst & Radar)
+- **本地图片**：![13_radial_sparkburst_radar](./assets/gui_references/13_radial_sparkburst_radar.jpg)
+- **绝对链接**：[13_radial_sparkburst_radar.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/13_radial_sparkburst_radar.jpg)
+- **组件特征**：360 度圆周放射彩色光束图、同心圆上的波动花环雷达曲线。
+- **账号详情映射**：
+  - 映射至 **「24 小时生物钟极坐标环图」**，将 24 小时沿表盘圆周分布，直观看出午后与深夜的算力光芒喷射。
+
+---
+
+#### 5.4.14 图谱 14：暗夜微光桑基数据流图 (Glowing Sankey Dataflow)
+- **本地图片**：![14_glowing_sankey_dataflow](./assets/gui_references/14_glowing_sankey_dataflow.jpg)
+- **绝对链接**：[14_glowing_sankey_dataflow.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/14_glowing_sankey_dataflow.jpg)
+- **组件特征**：深色背景中带发光渐变的多分支桑基流（Sankey Chart），左侧输入平滑分流至右侧多条分支并标注流速与占比。
+- **账号详情映射**：
+  - 核心映射至 **「模块 4：账号 ➔ 模型 ➔ 项目的三级桑基流向图」**：
+    `[当前账号]` ➔ `[Claude 3.7 / Gemini Pro]` ➔ `[at 工程 / omin 工程 / infra 工程]`。
+
+---
+
+#### 5.4.15 图谱 15：Apple 白 Bento 全套 UI Kit (Bento UI Kit & Arch Gauge)
+- **本地图片**：![15_bento_ui_kit_sankey_arch](./assets/gui_references/15_bento_ui_kit_sankey_arch.jpg)
+- **绝对链接**：[15_bento_ui_kit_sankey_arch.jpg](file:///Users/lbjlaq/Desktop/at/docs/assets/gui_references/15_bento_ui_kit_sankey_arch.jpg)
+- **组件特征**：浅色 Apple 纯净微卡片合集，包含迷你 Sparkline 走势、圆角胶囊进度、微型桑基图以及半圆拱形进度仪（Arch Gauge: `Summary 22.870`）。
+- **账号详情映射**：
+  - 账号详情在**浅色模式 (Light Theme)** 下的终极设计蓝本；
+  - 半圆拱形进度仪完美适配 **5h 额度 / 7d 额度的拱门式仪表**。
+
+---
+
 ## 6. 系统设置（Settings & Automation）详细设计
 
 系统设置采用 macOS System Settings 经典的**分段控制器 (Segmented Tabs)** 布局，彻底消除长页面滚动查找的认知疲劳。四大子 Tab 权责极其鲜明：
