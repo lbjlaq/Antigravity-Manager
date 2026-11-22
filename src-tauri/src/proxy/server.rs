@@ -2140,6 +2140,7 @@ async fn admin_save_config(
     crate::modules::hub_version::update_hub_fingerprint(
         new_config.proxy.hub_version.as_deref(),
         new_config.proxy.hub_cl.as_deref(),
+        new_config.proxy.hub_platform.as_deref(),
     );
 
     // 同步全局内存配置（热更新思考预算、系统提示词、图像思考模式与审计策略）
@@ -3391,6 +3392,8 @@ struct DetectHubFingerprintPayload {
     custom_version: Option<String>,
     #[serde(rename = "customCl", alias = "custom_cl")]
     custom_cl: Option<String>,
+    #[serde(rename = "hubPlatform", alias = "hub_platform")]
+    hub_platform: Option<String>,
 }
 
 async fn admin_detect_remote_hub_fingerprint(
@@ -3399,6 +3402,7 @@ async fn admin_detect_remote_hub_fingerprint(
     let fp = crate::modules::hub_version::detect_and_update_hub_fingerprint_with(
         payload.custom_version.as_deref(),
         payload.custom_cl.as_deref(),
+        payload.hub_platform.as_deref(),
         true,
     )
     .await;
