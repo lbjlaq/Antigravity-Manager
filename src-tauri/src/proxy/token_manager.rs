@@ -248,18 +248,14 @@ impl ProxyToken {
         }
         false
     }
-    /// 根据当前请求的目标模型与归一化模型组，计算该账号的实际生效调度优先级。
-    /// 若设置了对应模型组（"gemini" | "claude"）的独立优先级则优先采用，否则回退至账号全局 `priority`。
+    /// 根据当前请求的目标模型与归一化模型 ID，按「具体模型 → 模型系列 → 模型族 → 账号默认」解析实际生效优先级。
     pub fn effective_priority(&self, target_model: &str, normalized_target: &str) -> u8 {
-        if self.model_priorities.is_empty() {
-            return self.priority;
-        }
-        let group =
-            crate::models::account::resolve_model_priority_group(target_model, normalized_target);
-        self.model_priorities
-            .get(group)
-            .copied()
-            .unwrap_or(self.priority)
+        crate::models::account::resolve_effective_model_priority(
+            self.priority,
+            &self.model_priorities,
+            target_model,
+            normalized_target,
+        )
     }
 
     /// 目标模型是否被模型级 403 冻结。账号级封禁/403 由加载阶段处理。
@@ -3661,10 +3657,28 @@ impl TokenManager {
     /// * `attempted` - 已尝试失败的账号 ID 集合
     /// * `normalized_target` - 归一化后的目标模型名
     /// * `quota_protection_enabled` - 是否启用配额保护
+    #[cfg(test)]
     fn select_with_p2c<'a>(
         &self,
         candidates: &'a [ProxyToken],
         attempted: &HashSet<String>,
+        normalized_target: &str,
+        quota_protection_enabled: bool,
+    ) -> Option<&'a ProxyToken> {
+        self.select_with_p2c_for_model(
+            candidates,
+            attempted,
+            normalized_target,
+            normalized_target,
+            quota_protection_enabled,
+        )
+    }
+
+    fn select_with_p2c_for_model<'a>(
+        &self,
+        candidates: &'a [ProxyToken],
+        attempted: &HashSet<String>,
+        target_model: &str,
         normalized_target: &str,
         quota_protection_enabled: bool,
     ) -> Option<&'a ProxyToken> {
@@ -3732,8 +3746,8 @@ impl TokenManager {
             let mut sorted_pool = available.clone();
             // 排序规则：当前模型的生效优先级数字越小越优先；相同优先级下，在途请求数越小越优先；最后按 account_id 稳定排序
             sorted_pool.sort_by(|a, b| {
-                a.effective_priority(normalized_target, normalized_target)
-                    .cmp(&b.effective_priority(normalized_target, normalized_target))
+                a.effective_priority(target_model, normalized_target)
+                    .cmp(&b.effective_priority(target_model, normalized_target))
                     .then_with(|| {
                         self.get_in_flight(&a.account_id)
                             .cmp(&self.get_in_flight(&b.account_id))
@@ -3787,7 +3801,7 @@ impl TokenManager {
         // Keep lower-priority groups for retries; only this draw is restricted.
         // [NEW] 并发感知与次级分流加速 (Concurrency-Aware & Priority Spillover Acceleration)：
         // 1. 获取当前可用池中针对目标模型的最高生效优先级 min_priority
-        let eff_p = |t: &ProxyToken| t.effective_priority(normalized_target, normalized_target);
+        let eff_p = |t: &ProxyToken| t.effective_priority(target_model, normalized_target);
         if let Some(min_priority) = available.iter().map(|t| eff_p(t)).min() {
             // 检查最高优先级是否有完全空闲（在途请求数 == 0）的健康账号
             let min_p_idle: Vec<&ProxyToken> = available
@@ -5116,9 +5130,10 @@ impl TokenManager {
                         }
                     }
 
-                    if let Some(selected) = self.select_with_p2c(
+                    if let Some(selected) = self.select_with_p2c_for_model(
                         &non_limited,
                         &attempted,
+                        target_model,
                         &normalized_target,
                         quota_protection_enabled,
                     ) {
@@ -5142,9 +5157,10 @@ impl TokenManager {
                     }
                 }
 
-                if let Some(selected) = self.select_with_p2c(
+                if let Some(selected) = self.select_with_p2c_for_model(
                     &non_limited,
                     &attempted,
+                    target_model,
                     &normalized_target,
                     quota_protection_enabled,
                 ) {
@@ -14166,6 +14182,107 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(id_gemini_after, "acc_personal");
+    }
+
+    #[tokio::test]
+    async fn account_model_priorities_route_individual_models_within_same_family() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let acc_ultra_file = temp_dir.path().join("acc_ultra.json");
+        let acc_pro_file = temp_dir.path().join("acc_pro.json");
+        std::fs::write(&acc_ultra_file, r#"{"disabled": false}"#).unwrap();
+        std::fs::write(&acc_pro_file, r#"{"disabled": false}"#).unwrap();
+
+        let argon_high = "gemini-4-argon-high";
+        let flash_high = "gemini-3.8-flash-high";
+        let flash_medium = "gemini-3.8-flash-medium";
+        let opus_high = "claude-opus-5-5-high";
+        let sonnet_high = "claude-sonnet-5-5-high";
+
+        let all_models = [
+            argon_high,
+            "gemini-4-argon",
+            flash_high,
+            flash_medium,
+            "gemini-3.8-flash",
+            opus_high,
+            sonnet_high,
+            "claude",
+            "gemini",
+        ];
+
+        // Ultra account: prefer Argon (1) & Opus 5.5 (1), defer Flash (85) & other Claude (80),
+        // except exact variant `gemini-3.8-flash-high` explicitly set to 10.
+        let mut ultra = create_test_token("ultra@example.com", Some("ULTRA"), 1.0, None, Some(80));
+        ultra.account_id = "acc_ultra".to_string();
+        ultra.access_token = "tok_ultra".to_string();
+        ultra.account_path = acc_ultra_file;
+        ultra.priority = 50;
+        ultra.model_priorities.insert("gemini".to_string(), 85);
+        ultra
+            .model_priorities
+            .insert("gemini-4-argon".to_string(), 1);
+        ultra
+            .model_priorities
+            .insert("gemini-3.8-flash-high".to_string(), 10);
+        ultra.model_priorities.insert("claude".to_string(), 80);
+        ultra
+            .model_priorities
+            .insert("claude-opus-5-5".to_string(), 1);
+        for m in all_models {
+            ultra.available_models.insert(m.to_string());
+            ultra.model_quotas.insert(m.to_string(), 80);
+        }
+
+        // Standard Pro pool account: flat priority 50 across all models
+        let mut pro = create_test_token("pro@example.com", Some("PRO"), 1.0, None, Some(90));
+        pro.account_id = "acc_pro".to_string();
+        pro.access_token = "tok_pro".to_string();
+        pro.account_path = acc_pro_file;
+        pro.priority = 50;
+        for m in all_models {
+            pro.available_models.insert(m.to_string());
+            pro.model_quotas.insert(m.to_string(), 90);
+        }
+
+        manager.tokens.insert("acc_ultra".to_string(), ultra);
+        manager.tokens.insert("acc_pro".to_string(), pro);
+
+        // 1. Gemini 4 Argon routes to acc_ultra (series priority 1 < 50)
+        let (_, _, _, id_argon, _) = manager
+            .get_token("gemini", false, Some("sess-argon"), argon_high)
+            .await
+            .unwrap();
+        assert_eq!(id_argon, "acc_ultra");
+
+        // 2. Gemini 3.8 Flash Medium falls back to gemini family (85 > 50) -> routes to acc_pro
+        let (_, _, _, id_flash_med, _) = manager
+            .get_token("gemini", false, Some("sess-flash-med"), flash_medium)
+            .await
+            .unwrap();
+        assert_eq!(id_flash_med, "acc_pro");
+
+        // 3. Exact variant Gemini 3.8 Flash High (10 < 50) beats family (85) -> routes to acc_ultra
+        let (_, _, _, id_flash_high, _) = manager
+            .get_token("gemini", false, Some("sess-flash-high"), flash_high)
+            .await
+            .unwrap();
+        assert_eq!(id_flash_high, "acc_ultra");
+
+        // 4. Claude Opus 5.5 High routes to acc_ultra (series 1 < 50) even though normalized_target == "claude"
+        let (_, _, _, id_opus, _) = manager
+            .get_token("claude", false, Some("sess-opus"), opus_high)
+            .await
+            .unwrap();
+        assert_eq!(id_opus, "acc_ultra");
+
+        // 5. Claude Sonnet 5.5 High falls back to claude family (80 > 50) -> routes to acc_pro
+        let (_, _, _, id_sonnet, _) = manager
+            .get_token("claude", false, Some("sess-sonnet"), sonnet_high)
+            .await
+            .unwrap();
+        assert_eq!(id_sonnet, "acc_pro");
     }
 
     #[cfg(debug_assertions)]
