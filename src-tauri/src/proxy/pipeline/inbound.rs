@@ -2006,6 +2006,53 @@ impl InboundThinkingPipeline {
                     }
                 }
             }
+        } else if let Some(level_val) = generation_config
+            .get("thinkingConfig")
+            .and_then(|tc| tc.get("thinkingLevel"))
+        {
+            // [Issue #4019 BUG-04] thinkingLevel 模型内容安全余量保护：
+            // 官方 thinkingLevel 模型无数字 thinkingBudget 字段，但思考过程同样在 maxOutputTokens 总额内扣除。
+            // 当客户端传入较小的 maxOutputTokens（或开启了结构化 JSON 输出）时，
+            // 若总额不足以容纳高思考与正文，将导致 upstream MAX_TOKENS 截断并破坏 JSON 语法结构。
+            let include_thoughts = generation_config
+                .get("thinkingConfig")
+                .and_then(|tc| tc.get("includeThoughts"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+
+            if include_thoughts {
+                let level_str = level_val.as_str().unwrap_or("MEDIUM");
+                let thinking_reserve: i64 = match level_str {
+                    "XHIGH" | "100" => 2048,
+                    "HIGH" | "3" => 1024,
+                    "LOW" | "1" => 128,
+                    _ => 512,
+                };
+
+                let is_structured = generation_config
+                    .get("responseMimeType")
+                    .and_then(Value::as_str)
+                    == Some("application/json")
+                    || generation_config.get("responseSchema").is_some();
+
+                let min_content: i64 = if is_structured {
+                    user_provided_max.unwrap_or(512).clamp(256, 512)
+                } else if let Some(user_m) = user_provided_max {
+                    user_m.min(512)
+                } else {
+                    512
+                };
+
+                let required = (thinking_reserve + min_content).min(safe_limit);
+                if current_max < required {
+                    tracing::info!(
+                        "[Pipeline-Inbound] Auto-expanded maxOutputTokens from {} to {} for thinkingLevel ({}) (is_structured={}) within safe_limit ({})",
+                        current_max, required, level_str, is_structured, safe_limit
+                    );
+                    current_max = required;
+                    generation_config["maxOutputTokens"] = json!(current_max);
+                }
+            }
         }
 
         generation_config
@@ -6512,5 +6559,67 @@ mod tests {
             pro_medium_body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "HIGH"
         );
+    }
+
+    #[test]
+    fn test_issue_4019_bug04_thinking_level_structured_output_content_headroom() {
+        // [Issue #4019 BUG-04]
+        // 验证 gemini-3.8-flash-high (thinkingLevel=HIGH) 在小 max_tokens (512) 配合结构化 JSON 输出时，
+        // 自动扩充 maxOutputTokens 为正文保留充足余量，防止思维链耗尽预算导致 JSON 截断破损。
+        let mut cfg = json!({
+            "maxOutputTokens": 512,
+            "responseMimeType": "application/json"
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-high",
+            &mut cfg,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            cfg["thinkingConfig"]["thinkingLevel"], "HIGH",
+            "thinkingLevel 应正确保持 HIGH"
+        );
+        // 1024 (HIGH 思考储备) + 512 (用户期望正文) = 1536
+        assert_eq!(
+            cfg["maxOutputTokens"], 1536,
+            "maxOutputTokens 应从 512 自动扩充为 1536 以保障 JSON 正文预算"
+        );
+
+        // 验证极小 max_tokens (20) 场景：正文至少保底 256 tokens 满足基础 JSON 闭合
+        let mut cfg_tiny = json!({
+            "maxOutputTokens": 20,
+            "responseMimeType": "application/json"
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-high",
+            &mut cfg_tiny,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        // 1024 + 256 = 1280
+        assert_eq!(
+            cfg_tiny["maxOutputTokens"], 1280,
+            "极小 max_tokens 下结构化输出应保底 1280 tokens"
+        );
+
+        // 验证已具备充足预算场景 (8192 > 1024+512) 不做不必要修改
+        let mut cfg_large = json!({
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json"
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-high",
+            &mut cfg_large,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(cfg_large["maxOutputTokens"], 8192);
     }
 }

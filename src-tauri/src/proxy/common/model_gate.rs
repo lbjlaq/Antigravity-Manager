@@ -102,6 +102,10 @@ pub fn is_retired_model_id(model: &str) -> bool {
     }
 
     if let Some(rest) = id.strip_prefix("gemini-") {
+        // [Issue #4019 BUG-06] gemini-3.1-flash-lite 为已下线实验旧模型，硬门禁拦截返回 404
+        if id == "gemini-3.1-flash-lite" {
+            return true;
+        }
         // 仅对带版本号的 Gemini ID 判定；gemini-pro / gemini-flash 这类别名交由基准线过滤器处理
         if let Some((major, _minor)) = model_mapping::parse_version_tuple(rest) {
             return major <= 2;
@@ -870,10 +874,12 @@ mod tests {
             "gemini-2.5-flash-thinking",
             "gemini-2.0-flash",
             "models/gemini-2.5-pro",
+            "gemini-3.1-flash-lite",
+            "models/gemini-3.1-flash-lite",
         ] {
             assert!(
                 is_retired_model_id(model),
-                "{model} 应判定为已下线 Gemini 2.x"
+                "{model} 应判定为已下线 Gemini 模型"
             );
         }
 
@@ -896,7 +902,7 @@ mod tests {
         }
 
         for model in [
-            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
             "gemini-3.8-flash-high",
             "gemini-4-argon",
             "claude-sonnet-4-6",
@@ -1174,5 +1180,35 @@ mod tests {
             gate_inbound_model_exists(Some("totally-fake-image-model"), &custom_mapping, &tm).await,
             ModelGate::NotFound
         );
+    }
+
+    #[tokio::test]
+    async fn test_issue_4019_bug06_deprecated_flash_lite_returns_404_not_503() {
+        // [Issue #4019 BUG-06]
+        // 验证 gemini-3.1-flash-lite 作为已下线旧模型，硬门禁必须直接判定为 NotFound (HTTP 404)，
+        // 绝不得因官方目录曾收录该条目而误判为已知模型返回 NoAvailableAccounts (HTTP 503) 引发客户端死循环重试。
+        let temp_dir =
+            std::env::temp_dir().join(format!("gate_bug06_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let tm = TokenManager::new(temp_dir.clone());
+        let custom_mapping = tokio::sync::RwLock::new(HashMap::new());
+
+        let gate_res =
+            gate_inbound_model(Some("gemini-3.1-flash-lite"), &custom_mapping, &tm).await;
+        assert_eq!(gate_res, ModelGate::NotFound);
+        assert_eq!(
+            gate_res.rejection().unwrap().0,
+            axum::http::StatusCode::NOT_FOUND
+        );
+
+        let exists_res =
+            gate_inbound_model_exists(Some("gemini-3.1-flash-lite"), &custom_mapping, &tm).await;
+        assert_eq!(exists_res, ModelGate::NotFound);
+        assert_eq!(
+            exists_res.rejection().unwrap().0,
+            axum::http::StatusCode::NOT_FOUND
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
