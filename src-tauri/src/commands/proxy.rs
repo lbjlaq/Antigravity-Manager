@@ -1154,10 +1154,12 @@ pub fn get_effective_first_byte_timeouts() -> FirstByteTimeouts {
 pub async fn detect_remote_hub_fingerprint(
     custom_version: Option<String>,
     custom_cl: Option<String>,
+    hub_platform: Option<String>,
 ) -> Result<crate::modules::hub_version::HubFingerprint, String> {
     let fp = crate::modules::hub_version::detect_and_update_hub_fingerprint_with(
         custom_version.as_deref(),
         custom_cl.as_deref(),
+        hub_platform.as_deref(),
         true,
     )
     .await;
