@@ -96,6 +96,7 @@ pub struct OpenAIChatStreamHandler {
     pub is_thinking_active: bool,
     pub has_emitted_finish_reason: bool,
     pub has_emitted_done: bool,
+    pub saw_max_tokens_finish: bool,
     pub is_structured_output: bool,
     pub fence_prefix_stripped: bool,
 }
@@ -304,7 +305,12 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
 
                     let gemini_finish_reason = raw_finish_reason.map(|f| match f {
                         "STOP" => "stop",
-                        "MAX_TOKENS" => "length",
+                        "MAX_TOKENS" => {
+                            // [FIX #4019] 标记上游已合法下发 MAX_TOKENS 截断（thinking 耗尽预算），
+                            // 供生命周期守卫放行，避免将语义截断误报为流中断。
+                            self.saw_max_tokens_finish = true;
+                            "length"
+                        }
                         "SAFETY" => "content_filter",
                         "RECITATION" => "content_filter",
                         "MALFORMED_FUNCTION_CALL" => "stop",
@@ -434,6 +440,10 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
 
     fn is_terminal(&self) -> bool {
         self.has_emitted_done
+    }
+
+    fn saw_max_tokens_finish(&self) -> bool {
+        self.saw_max_tokens_finish
     }
 
     fn emit_finalize(&mut self) -> Vec<Bytes> {
@@ -622,6 +632,7 @@ where
         is_thinking_active: false,
         has_emitted_finish_reason: false,
         has_emitted_done: false,
+        saw_max_tokens_finish: false,
         is_structured_output,
         fence_prefix_stripped: false,
     };

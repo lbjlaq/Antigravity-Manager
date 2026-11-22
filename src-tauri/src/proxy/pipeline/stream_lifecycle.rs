@@ -34,6 +34,13 @@ pub trait ProtocolStreamHandler: Send + 'static {
         false
     }
 
+    /// 可选：上游是否已通过 finishReason=MAX_TOKENS 合法截断。
+    /// 无 content 时属于 token 预算被 thinking 耗尽的正常语义截断（而非异常流中断），
+    /// 生命周期守卫应放行并交由协议终结帧表达 finish_reason=length。(Fixes #4019)
+    fn saw_max_tokens_finish(&self) -> bool {
+        false
+    }
+
     /// 检查协议是否已进入不可逆的终结状态（例如 Claude 发送了 message_stop，或流已结束）
     /// 一旦返回 true，生命周期驱动器必须立即退出轮询循环并断开下游连接，
     /// 严禁继续等待上游 TCP EOF 或发送心跳，防止客户端界面持续转圈计时或报错。
@@ -361,9 +368,13 @@ where
                             // [关键契约守卫] 若冲刷后上游仍未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
                             // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
                             // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
+                            // [FIX #4019] 例外：上游已下发 finishReason=MAX_TOKENS 时，属于 thinking
+                            // 耗尽 token 预算的正常语义截断，而非异常中断；放行并交由 emit_finalize
+                            // 下发 [DONE]，让客户端正确感知 finish_reason=length 的截断语义。
                             if !handler.is_terminal()
                                 && !handler.has_content()
                                 && !handler.finalize_without_content()
+                                && !handler.saw_max_tokens_finish()
                             {
                                 let reason = if handler.has_thinking() {
                                     "upstream stream ended after thinking without content"
@@ -515,7 +526,12 @@ where
 
         // [关键契约守卫] 若流结束且冲刷后仍未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
         // 严禁下发伪造终结帧，如实透传 Err 促使客户端原生重试
-        if !handler.is_terminal() && !handler.has_content() && !handler.finalize_without_content() {
+        // [FIX #4019] 例外：MAX_TOKENS 合法语义截断放行（详见上方循环内守卫注释）。
+        if !handler.is_terminal()
+            && !handler.has_content()
+            && !handler.finalize_without_content()
+            && !handler.saw_max_tokens_finish()
+        {
             let reason = if handler.has_thinking() {
                 "upstream stream ended after thinking without content"
             } else {
