@@ -1505,9 +1505,6 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       {acc.tags[0]}
                     </span>
                   )}
-                  <span className={`text-[8.5px] px-1 py-0 rounded font-mono ${selectedAccountEmail === acc.email ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'}`}>
-                    5h: {acc.quota5hPct ?? 85}%
-                  </span>
                 </button>
               ))}
             </div>
@@ -1525,263 +1522,370 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
           {currentAccount && (
             <div className="flex flex-col gap-3">
               {/* ========================================================= */}
-              {/* 【顶层重磅双核卡片】：模块 1 额度同心拱门 + 模块 2 Token 算力金库 */}
+              {/* 【顶层身份与微型额度 Bar】 (对齐 Accounts.tsx 真实双轨实现)   */}
               {/* ========================================================= */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                {/* 模块 1：实时配额拱门与周期水位 (参考图谱 15, 16, 17) */}
-                <div className="lg:col-span-5 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <div className="flex items-center justify-between pb-2 border-b border-gray-100 dark:border-white/5">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-amber-500" />
-                      <span>{isZh ? '模块 1：实时配额拱门与周期水位' : 'Module 1: Real-time Quota Arches'}</span>
-                    </span>
-                    <span className="text-[9.5px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 font-mono font-medium">
-                      Google AI PRO
-                    </span>
+              <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+                {/* 左侧身份卡 */}
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white font-bold text-xs shadow-xs">
+                    {currentAccount.email.charAt(0).toUpperCase()}
                   </div>
-
-                  {/* 拱门半圆 SVG 仪表 */}
-                  <div className="relative flex flex-col items-center justify-center my-2">
-                    <svg viewBox="0 0 260 135" className="w-56 h-28 overflow-visible">
-                      <defs>
-                        <linearGradient id="arch-5h-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#3b82f6" />
-                          <stop offset="100%" stopColor="#10b981" />
-                        </linearGradient>
-                        <linearGradient id="arch-7d-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#8b5cf6" />
-                          <stop offset="100%" stopColor="#ec4899" />
-                        </linearGradient>
-                      </defs>
-
-                      {/* 5h 外环底轨 */}
-                      <path
-                        d="M 35 125 A 95 95 0 0 1 225 125"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="10"
-                        strokeLinecap="round"
-                        className="text-gray-100 dark:text-white/[0.06]"
-                      />
-                      {/* 5h 外环高光轨 */}
-                      <path
-                        d="M 35 125 A 95 95 0 0 1 225 125"
-                        fill="none"
-                        stroke="url(#arch-5h-grad)"
-                        strokeWidth="10"
-                        strokeLinecap="round"
-                        strokeDasharray="298.45"
-                        strokeDashoffset={298.45 * (1 - (currentAccount.quota5hPct ?? 85) / 100)}
-                        style={{ transition: 'stroke-dashoffset 0.8s ease' }}
-                      />
-
-                      {/* 7d 内环底轨 */}
-                      <path
-                        d="M 58 125 A 72 72 0 0 1 202 125"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                        className="text-gray-100 dark:text-white/[0.06]"
-                      />
-                      {/* 7d 内环高光轨 */}
-                      <path
-                        d="M 58 125 A 72 72 0 0 1 202 125"
-                        fill="none"
-                        stroke="url(#arch-7d-grad)"
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                        strokeDasharray="226.19"
-                        strokeDashoffset={226.19 * (1 - (currentAccount.quota7dPct ?? 50) / 100)}
-                        style={{ transition: 'stroke-dashoffset 0.8s ease' }}
-                      />
-                    </svg>
-
-                    {/* 仪表中心关键数字 */}
-                    <div className="absolute bottom-1 flex flex-col items-center">
-                      <div className="flex items-baseline gap-0.5">
-                        <span className="text-3xl font-extrabold font-mono text-gray-900 dark:text-zinc-100 tracking-tight">
-                          {currentAccount.quota5hPct ?? 85}%
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-gray-900 dark:text-zinc-100">{currentAccount.email}</span>
+                      {currentAccount.tags.map((tag) => (
+                        <span key={tag} className="text-[9px] px-1.5 py-0.2 rounded bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-medium">
+                          {tag}
                         </span>
-                      </div>
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                        5h 动态额度 · {currentAccount.quota5hResetIn ?? '45m'} 后回满
+                      ))}
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-mono font-medium">
+                        PRO Tier
                       </span>
                     </div>
-                  </div>
-
-                  {/* 底部双水库指标拆解 */}
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 dark:border-white/5">
-                    <div className="p-2 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-gray-500 dark:text-zinc-400 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          <span>5h 实时流速</span>
-                        </span>
-                        <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                          {currentAccount.quota5hPct ?? 85}%
-                        </span>
-                      </div>
-                      <span className="text-[9px] text-gray-400 font-mono">
-                        冷却倒计时: {currentAccount.quota5hResetIn ?? '45m'}
-                      </span>
-                    </div>
-
-                    <div className="p-2 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-gray-500 dark:text-zinc-400 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                          <span>7d 周期额度</span>
-                        </span>
-                        <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
-                          {currentAccount.quota7dPct ?? 50}%
-                        </span>
-                      </div>
-                      <span className="text-[9px] text-gray-400 font-mono">
-                        周期重置: {currentAccount.quota7dResetIn ?? '3天'}
-                      </span>
-                    </div>
+                    <span className="text-[9.5px] text-gray-400 font-mono">
+                      Account ID: {currentAccount.accountId} · 上次同步: 刚刚
+                    </span>
                   </div>
                 </div>
 
-                {/* 模块 2：Token 实耗与 5h/7d 额度双向折算金库 (参考图谱 08, 09, 11, 21) */}
-                <div className="lg:col-span-7 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between pb-2 border-b border-gray-100 dark:border-white/5">
-                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                        <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>{isZh ? '模块 2：Token 实耗与 5h/7d 额度双向折算金库' : 'Module 2: Token Treasury & Quota Converter'}</span>
+                {/* 右侧微型双轨额度胶囊 (参考 Accounts.tsx 真实实现，优雅紧凑) */}
+                <div className="flex items-center gap-2">
+                  {/* Gemini 配额微胶囊 */}
+                  <div className="p-1 px-2 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between text-[9px] font-medium text-gray-600 dark:text-zinc-300 gap-3">
+                      <span className="flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                        <span>Gemini</span>
                       </span>
-                      <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium">
-                        Prompt Caching 免计费
-                      </span>
+                      <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">5h: 100% · 7d: 100%</span>
                     </div>
-
-                    {/* 3 格财务概览指标 */}
-                    <div className="grid grid-cols-3 gap-2 my-2.5">
-                      <div className="p-2 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col">
-                        <span className="text-[9.5px] text-gray-400">{isZh ? '累计总吞吐' : 'Total Throughput'}</span>
-                        <div className="my-0.5 flex items-baseline gap-1">
-                          <span className="text-lg font-bold font-mono text-gray-900 dark:text-zinc-100">
-                            {(currentAccount.totalTokens / 1000000).toFixed(1)}M
-                          </span>
-                        </div>
-                        <span className="text-[9px] text-gray-400 font-mono">承载 {currentAccount.totalRequests} 次请求</span>
-                      </div>
-
-                      <div className="p-2 rounded-lg bg-emerald-50/40 dark:bg-emerald-500/5 border border-emerald-200/50 dark:border-emerald-500/10 flex flex-col">
-                        <span className="text-[9.5px] text-emerald-600/80 dark:text-emerald-400/80">{isZh ? '免计费已省金额' : 'Cash Saved'}</span>
-                        <div className="my-0.5 flex items-baseline gap-1">
-                          <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                            +${currentAccount.estimatedCostUsd.toFixed(1)}
-                          </span>
-                          <span className="text-[9px] text-emerald-600/70 font-mono">USD</span>
-                        </div>
-                        <span className="text-[9px] text-emerald-600 font-mono">实付 $0.00 (免费)</span>
-                      </div>
-
-                      <div className="p-2 rounded-lg bg-blue-50/40 dark:bg-blue-500/5 border border-blue-200/50 dark:border-blue-500/10 flex flex-col">
-                        <span className="text-[9.5px] text-blue-600/80 dark:text-blue-400/80">{isZh ? '全局缓存命中率' : 'Cache Hit Rate'}</span>
-                        <div className="my-0.5 flex items-baseline gap-1">
-                          <span className="text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
-                            {currentAccount.cacheHitRate.toFixed(1)}%
-                          </span>
-                        </div>
-                        <span className="text-[9px] text-blue-600 font-mono">首字响应提速 3.4x</span>
-                      </div>
-                    </div>
-
-                    {/* ★ 核心技术卖点：5h / 7d 额度 ➔ Token 与金额双向折算卡片 */}
-                    <div className="p-2.5 rounded-lg bg-gradient-to-r from-blue-500/[0.07] via-purple-500/[0.07] to-emerald-500/[0.07] border border-blue-500/20 dark:border-blue-500/20 flex flex-col gap-1.5 my-2">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1">
-                          <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-                          <span>{isZh ? '5h / 7d 配额剩余 ➔ 等价 Token 与美元算力折算' : 'Remaining Quota Equivalent Valuation'}</span>
-                        </span>
-                        <span className="text-[9px] text-gray-400 font-mono">*450K/4.5M 额度模型标称</span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 text-[10.5px]">
-                        <div className="flex items-center gap-1.5 bg-white/60 dark:bg-[#1a1b1f]/60 p-1.5 px-2 rounded-md border border-white/40 dark:border-white/5">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                          <div className="flex flex-col">
-                            <span className="text-[9px] text-gray-400 font-medium">5h 剩余可用算力</span>
-                            <span className="font-mono font-bold text-gray-900 dark:text-zinc-100">
-                              约 {Math.round(((currentAccount.quota5hPct ?? 85) / 100) * 450).toLocaleString()}K Token
-                              <span className="text-emerald-600 dark:text-emerald-400 text-[9.5px] ml-1">
-                                (等值 ${(((currentAccount.quota5hPct ?? 85) / 100) * 16.80).toFixed(2)})
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 bg-white/60 dark:bg-[#1a1b1f]/60 p-1.5 px-2 rounded-md border border-white/40 dark:border-white/5">
-                          <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
-                          <div className="flex flex-col">
-                            <span className="text-[9px] text-gray-400 font-medium">7d 周期剩余储备</span>
-                            <span className="font-mono font-bold text-gray-900 dark:text-zinc-100">
-                              约 {(Math.round(((currentAccount.quota7dPct ?? 50) / 100) * 4500) / 1000).toFixed(2)}M Token
-                              <span className="text-purple-600 dark:text-purple-400 text-[9.5px] ml-1">
-                                (等值 ${(((currentAccount.quota7dPct ?? 50) / 100) * 168.00).toFixed(2)})
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                      </div>
+                    <div className="w-24 h-1 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden">
+                      <div style={{ width: '100%' }} className="h-full rounded-full bg-blue-500" />
                     </div>
                   </div>
 
-                  {/* 5 层 Token 构成水库分段条 (参考图谱 11) */}
-                  <div className="pt-2 border-t border-gray-100 dark:border-white/5 flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-zinc-400">
-                      <span>5 层上下文水库构成拆解</span>
-                      <span className="font-mono text-[9px]">缓存占比 {currentAccount.cacheHitRate.toFixed(1)}%</span>
-                    </div>
-
-                    <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden flex">
-                      <div style={{ width: '90.8%' }} className="h-full bg-emerald-500" title="官方缓存命中: 188.0M" />
-                      <div style={{ width: '5.2%' }} className="h-full bg-blue-500" title="新输入 Prompt: 10.8M" />
-                      <div style={{ width: '2.4%' }} className="h-full bg-purple-500" title="深度思考: 5.0M" />
-                      <div style={{ width: '1.2%' }} className="h-full bg-amber-500" title="工具流: 2.5M" />
-                      <div style={{ width: '0.4%' }} className="h-full bg-cyan-400" title="模型输出: 710K" />
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between text-[9px] text-gray-400 font-mono pt-0.5">
-                      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        <span>缓存 {(currentAccount.cachedTokens / 1000000).toFixed(1)}M</span>
-                      </span>
-                      <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        <span>输入 {(currentAccount.newInputTokens / 1000000).toFixed(1)}M</span>
-                      </span>
-                      <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400">
+                  {/* Claude 配额微胶囊 */}
+                  <div className="p-1 px-2 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between text-[9px] font-medium text-gray-600 dark:text-zinc-300 gap-3">
+                      <span className="flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                        <span>思考 8.5M</span>
+                        <span>Claude</span>
                       </span>
-                      <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        <span>工具 6.2M</span>
+                      <span className="font-mono text-purple-600 dark:text-purple-400 font-bold">
+                        5h: {currentAccount.quota5hPct ?? 85}% ({currentAccount.quota5hResetIn ?? '45m'})
                       </span>
-                      <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                        <span>输出 {(currentAccount.outputTokens / 1000).toFixed(0)}K</span>
-                      </span>
+                    </div>
+                    <div className="w-28 h-1 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden flex">
+                      <div style={{ width: `${currentAccount.quota5hPct ?? 85}%` }} className="h-full bg-purple-500" />
                     </div>
                   </div>
                 </div>
               </div>
 
               {/* ========================================================= */}
-              {/* 【中层双列拓扑】：模块 4 项目流向矩阵 + 模块 3 模型物理调度 */}
+              {/* 【第一层：算力资产与金库 Bento】 (参考图 08, 09, 11, 21)       */}
+              {/* ========================================================= */}
+              <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
+                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>{isZh ? '算力资产与价值折算金库' : 'Token Treasury & Valuation'}</span>
+                  </span>
+                  <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium">
+                    Prompt Caching 官方 100% 免费减免
+                  </span>
+                </div>
+
+                {/* 4 格核心资产指标卡 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  <div className="p-2.5 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] text-gray-400">{isZh ? '累计总吞吐' : 'Total Throughput'}</span>
+                    <div className="my-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold font-mono text-gray-900 dark:text-zinc-100">
+                        {(currentAccount.totalTokens / 1000000).toFixed(1)}M
+                      </span>
+                      <span className="text-[9.5px] text-gray-400">Tokens</span>
+                    </div>
+                    <span className="text-[9px] text-gray-400 font-mono">共承载 {currentAccount.totalRequests} 次交互请求</span>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-emerald-50/40 dark:bg-emerald-500/5 border border-emerald-200/50 dark:border-emerald-500/10 flex flex-col justify-between">
+                    <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">{isZh ? '免计费已省金额' : 'Cash Saved'}</span>
+                    <div className="my-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                        +${currentAccount.estimatedCostUsd.toFixed(1)}
+                      </span>
+                      <span className="text-[9.5px] text-emerald-600/70 font-mono">USD</span>
+                    </div>
+                    <span className="text-[9px] text-emerald-600 font-mono">等效 API 标价 $214.50</span>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-blue-50/40 dark:bg-blue-500/5 border border-blue-200/50 dark:border-blue-500/10 flex flex-col justify-between">
+                    <span className="text-[10px] text-blue-600/80 dark:text-blue-400/80">{isZh ? '全局缓存命中率' : 'Cache Hit Rate'}</span>
+                    <div className="my-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400">
+                        {currentAccount.cacheHitRate.toFixed(1)}%
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-blue-600 font-mono">首字响应提速 3.4x</span>
+                  </div>
+
+                  {/* 核心卖点：5h/7d 额度折算储备 */}
+                  <div className="p-2.5 rounded-lg bg-gradient-to-r from-blue-500/[0.08] to-purple-500/[0.08] border border-blue-500/20 dark:border-blue-500/20 flex flex-col justify-between">
+                    <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-purple-500" />
+                      <span>{isZh ? '额度折算资产储备' : 'Quota Valuation'}</span>
+                    </span>
+                    <div className="my-0.5 flex flex-col text-[10.5px] font-mono leading-tight">
+                      <span className="text-gray-900 dark:text-zinc-100 font-bold">
+                        5h: 约 {Math.round(((currentAccount.quota5hPct ?? 85) / 100) * 450).toLocaleString()}K Tok
+                        <span className="text-emerald-600 dark:text-emerald-400 text-[9px] ml-1">
+                          (${( ((currentAccount.quota5hPct ?? 85) / 100) * 16.80).toFixed(2)})
+                        </span>
+                      </span>
+                      <span className="text-gray-900 dark:text-zinc-100 font-bold">
+                        7d: 约 {(Math.round(((currentAccount.quota7dPct ?? 50) / 100) * 4500) / 1000).toFixed(1)}M Tok
+                        <span className="text-purple-600 dark:text-purple-400 text-[9px] ml-1">
+                          (${( ((currentAccount.quota7dPct ?? 50) / 100) * 168.00).toFixed(2)})
+                        </span>
+                      </span>
+                    </div>
+                    <span className="text-[8.5px] text-gray-400 font-mono">*标称 450K/4.5M 额度模型</span>
+                  </div>
+                </div>
+
+                {/* 5 层 Token 构成水库连续流胶囊条 (参考图 11) */}
+                <div className="pt-2 border-t border-gray-100 dark:border-white/5 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-zinc-400">
+                    <span className="font-medium">五层上下文水库构成拆解 (Continuous Reservoir Stream)</span>
+                    <span className="font-mono text-[9px]">缓存占比 {currentAccount.cacheHitRate.toFixed(1)}%</span>
+                  </div>
+
+                  <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden flex">
+                    <div style={{ width: '90.8%' }} className="h-full bg-emerald-500" title="官方缓存命中: 188.0M" />
+                    <div style={{ width: '5.2%' }} className="h-full bg-blue-500" title="新输入 Prompt: 10.8M" />
+                    <div style={{ width: '2.4%' }} className="h-full bg-purple-500" title="深度思考: 5.0M" />
+                    <div style={{ width: '1.2%' }} className="h-full bg-amber-500" title="工具流: 2.5M" />
+                    <div style={{ width: '0.4%' }} className="h-full bg-cyan-400" title="模型输出: 710K" />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between text-[9px] text-gray-400 font-mono pt-0.5">
+                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span>缓存 {(currentAccount.cachedTokens / 1000000).toFixed(1)}M (90.8%)</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      <span>输入 {(currentAccount.newInputTokens / 1000000).toFixed(1)}M (5.2%)</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                      <span>思考 8.5M (2.4%)</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      <span>工具 6.2M (1.2%)</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                      <span>输出 {(currentAccount.outputTokens / 1000).toFixed(0)}K (0.4%)</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ========================================================= */}
+              {/* 【第二层：6维战力雷达 + 模型圆环 VS 山脉波形曲线】 (参考图 05, 02, 19) */}
+              {/* ========================================================= */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                {/* 左卡：6 维战力雷达 + 模型圆环分布 (参考图 05 CLARITY.GG + 图 02 Donut) */}
+                <div className="lg:col-span-6 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-purple-500" />
+                      <span>{isZh ? '6 维技术战力雷达与模型分布' : 'Technical Radar & Model Donut'}</span>
+                    </span>
+                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-mono font-medium">
+                      SSS 满血旗舰
+                    </span>
+                  </div>
+
+                  {/* 左右并列：左边雷达图，右边圆环图 */}
+                  <div className="grid grid-cols-2 gap-2 items-center my-2">
+                    {/* 1. 六边形战力雷达 SVG */}
+                    <div className="flex flex-col items-center justify-center">
+                      <svg viewBox="0 0 170 160" className="w-36 h-36 overflow-visible">
+                        <defs>
+                          <radialGradient id="radar-glow" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.4" />
+                            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
+                          </radialGradient>
+                        </defs>
+                        {/* 3 层六边形底网 */}
+                        {[0.33, 0.66, 1].map((scale, sIdx) => {
+                          const r = 50 * scale;
+                          const pts = [0, 60, 120, 180, 240, 300].map((deg) => {
+                            const rad = ((deg - 90) * Math.PI) / 180;
+                            return `${85 + r * Math.cos(rad)},${80 + r * Math.sin(rad)}`;
+                          }).join(' ');
+                          return <polygon key={sIdx} points={pts} fill="none" stroke="currentColor" strokeWidth="0.8" className="text-gray-200 dark:text-white/10" strokeDasharray={sIdx < 2 ? "2 2" : undefined} />;
+                        })}
+                        {/* 6 根辐射轴线 */}
+                        {[0, 60, 120, 180, 240, 300].map((deg, aIdx) => {
+                          const rad = ((deg - 90) * Math.PI) / 180;
+                          return <line key={aIdx} x1="85" y1="80" x2={85 + 50 * Math.cos(rad)} y2={80 + 50 * Math.sin(rad)} stroke="currentColor" strokeWidth="0.8" className="text-gray-200 dark:text-white/10" />;
+                        })}
+                        {/* 数据多边形: TPS: 92, TTFT: 88, Cache: 95, Fidelity: 100, Concurrency: 98, Endurance: 75 */}
+                        {(() => {
+                          const vals = [92, 88, 95, 100, 98, 75];
+                          const pts = vals.map((val, idx) => {
+                            const deg = idx * 60;
+                            const rad = ((deg - 90) * Math.PI) / 180;
+                            const r = (50 * val) / 100;
+                            return { x: 85 + r * Math.cos(rad), y: 80 + r * Math.sin(rad) };
+                          });
+                          const polyStr = pts.map(p => `${p.x},${p.y}`).join(' ');
+                          return (
+                            <>
+                              <polygon points={polyStr} fill="url(#radar-glow)" stroke="#8b5cf6" strokeWidth="2" strokeLinejoin="round" />
+                              {pts.map((p, pIdx) => (
+                                <circle key={pIdx} cx={p.x} cy={p.y} r="2.5" fill="#8b5cf6" stroke="white" strokeWidth="1" />
+                              ))}
+                            </>
+                          );
+                        })()}
+                        {/* 6 个顶点标签 */}
+                        <text x="85" y="14" textAnchor="middle" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">流速 92</text>
+                        <text x="142" y="48" textAnchor="start" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">响应 88</text>
+                        <text x="142" y="115" textAnchor="start" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">缓存 95</text>
+                        <text x="85" y="148" textAnchor="middle" className="text-[8.5px] fill-emerald-600 dark:fill-emerald-400 font-bold">保真 100</text>
+                        <text x="28" y="115" textAnchor="end" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">并发 98</text>
+                        <text x="28" y="48" textAnchor="end" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">续航 75</text>
+                      </svg>
+                      <span className="text-[9px] text-gray-400 font-mono mt-1">6 维综合效能雷达</span>
+                    </div>
+
+                    {/* 2. 模型消耗圆环 Donut SVG */}
+                    <div className="flex flex-col items-center justify-center">
+                      <svg viewBox="0 0 160 160" className="w-36 h-36 overflow-visible">
+                        {/* 底轨 */}
+                        <circle cx="80" cy="80" r="48" fill="none" stroke="currentColor" strokeWidth="12" className="text-gray-100 dark:text-white/[0.06]" />
+                        {/* Claude 58% -> 301.59 * 0.58 = 174.92 */}
+                        <circle cx="80" cy="80" r="48" fill="none" stroke="#8b5cf6" strokeWidth="12" strokeDasharray="174.92 126.67" strokeDashoffset="0" transform="rotate(-90 80 80)" />
+                        {/* Gemini Pro 32% -> 301.59 * 0.32 = 96.51 */}
+                        <circle cx="80" cy="80" r="48" fill="none" stroke="#3b82f6" strokeWidth="12" strokeDasharray="96.51 205.08" strokeDashoffset="-174.92" transform="rotate(-90 80 80)" />
+                        {/* Gemini Flash 10% -> 301.59 * 0.10 = 30.16 */}
+                        <circle cx="80" cy="80" r="48" fill="none" stroke="#06b6d4" strokeWidth="12" strokeDasharray="30.16 271.43" strokeDashoffset="-271.43" transform="rotate(-90 80 80)" />
+                        {/* 中心文字 */}
+                        <text x="80" y="76" textAnchor="middle" className="text-sm font-bold font-mono fill-gray-900 dark:fill-zinc-100">
+                          {(currentAccount.totalTokens / 1000000).toFixed(1)}M
+                        </text>
+                        <text x="80" y="92" textAnchor="middle" className="text-[8px] fill-gray-400 font-medium">
+                          Tokens 构成
+                        </text>
+                      </svg>
+
+                      {/* 环形图图例 */}
+                      <div className="flex items-center gap-2 text-[8.5px] font-mono mt-1">
+                        <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                          <span>Claude 58%</span>
+                        </span>
+                        <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                          <span>Pro 32%</span>
+                        </span>
+                        <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                          <span>Flash 10%</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-1.5 border-t border-gray-100 dark:border-white/5 text-[9px] text-gray-400 font-mono flex items-center justify-between">
+                    <span>主力调用模型: Claude 3.7 Sonnet</span>
+                    <span>双模型组完全兼容</span>
+                  </div>
+                </div>
+
+                {/* 右卡：山脉面积波形曲线与高峰标注 (参考图 19 高峰山脉波形 + 图 04 趋势线) */}
+                <div className="lg:col-span-6 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 text-blue-500" />
+                      <span>{isZh ? 'Token 吞吐时序山脉波形与峰值标注' : 'Throughput Mountain Wave & Peak'}</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400 font-mono">
+                      波峰实时诊断 · ⚡ 192 tok/s
+                    </span>
+                  </div>
+
+                  {/* 山脉波形 SVG */}
+                  <div className="my-2 relative">
+                    <svg viewBox="0 0 520 140" className="w-full h-32 overflow-visible">
+                      <defs>
+                        <linearGradient id="peak-wave-grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.4" />
+                          <stop offset="60%" stopColor="#3b82f6" stopOpacity="0.15" />
+                          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                        </linearGradient>
+                      </defs>
+                      {/* 背景水平网格虚线 */}
+                      <line x1="20" y1="35" x2="500" y2="35" stroke="currentColor" strokeWidth="0.8" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="3 3" />
+                      <line x1="20" y1="75" x2="500" y2="75" stroke="currentColor" strokeWidth="0.8" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="3 3" />
+                      <line x1="20" y1="115" x2="500" y2="115" stroke="currentColor" strokeWidth="0.8" className="text-gray-100 dark:text-white/[0.04]" />
+
+                      {/* 填充面积 */}
+                      <path
+                        d="M 20 120 Q 70 115, 110 95 T 190 70 T 270 55 T 350 25 T 420 50 T 500 85 L 500 120 L 20 120 Z"
+                        fill="url(#peak-wave-grad)"
+                      />
+                      {/* 发光曲线 */}
+                      <path
+                        d="M 20 120 Q 70 115, 110 95 T 190 70 T 270 55 T 350 25 T 420 50 T 500 85"
+                        fill="none"
+                        stroke="#8b5cf6"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                      />
+
+                      {/* 波峰光标与提示气泡 (在 350, 25 处) */}
+                      <line x1="350" y1="25" x2="350" y2="120" stroke="#8b5cf6" strokeWidth="1" strokeDasharray="2 2" className="opacity-60" />
+                      <circle cx="350" cy="25" r="5" fill="#8b5cf6" stroke="white" strokeWidth="2" />
+                      <circle cx="350" cy="25" r="9" fill="none" stroke="#8b5cf6" strokeWidth="1" className="opacity-40 animate-ping" />
+
+                      {/* 悬停波峰气泡 */}
+                      <g transform="translate(350, 8)">
+                        <rect x="-85" y="-18" width="170" height="20" rx="5" fill="#1e1b4b" stroke="#8b5cf6" strokeWidth="1" />
+                        <text x="0" y="-4" textAnchor="middle" fill="#c4b5fd" className="text-[9px] font-mono font-semibold">
+                          🔥 16:00 峰值: 18.5M Tok · 192 tok/s
+                        </text>
+                      </g>
+                    </svg>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono pt-1.5 border-t border-gray-100 dark:border-white/5">
+                    <span>00:00 (休眠)</span>
+                    <span>06:00</span>
+                    <span>12:00</span>
+                    <span className="text-purple-600 dark:text-purple-400 font-bold">16:00 (重度编码波峰)</span>
+                    <span>20:00</span>
+                    <span>23:00</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ========================================================= */}
+              {/* 【第三层：工程管道流向矩阵 VS 真实物理调度】 (参考图 03, 14, 01, 15) */}
               {/* ========================================================= */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {/* 模块 4：项目消耗流向矩阵 (参考图谱 03, 14, 16) */}
+                {/* 模块 4：工程消耗管道流向矩阵 (参考图 03 SAP ECC 管道路由 + 图 14 发光桑基流) */}
                 <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
                   <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
                     <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
                       <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>{isZh ? '模块 4：项目消耗流向矩阵' : 'Module 4: Project Drain Flow Matrix'}</span>
+                      <span>{isZh ? '工程消耗管道流向矩阵' : 'Project Drain Flow Matrix'}</span>
                     </span>
                     <span className="text-[9.5px] text-gray-400">{isZh ? '细分 Gemini 与 Claude 吞吐' : 'Gemini vs Claude breakdown'}</span>
                   </div>
@@ -1871,16 +1975,16 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                   </div>
                 </div>
 
-                {/* 模块 3：模型消耗与真实物理调度 (参考图谱 01, 04, 15) */}
+                {/* 模块 3：模型消耗与真实物理调度 (参考图 01, 04, 15 纯技术参数行) */}
                 <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
                   <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
                     <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
                       <Cpu className="w-3.5 h-3.5 text-purple-500" />
-                      <span>{isZh ? '模块 3：模型消耗与真实物理调度' : 'Module 3: Model Usage & Physical Upstream'}</span>
+                      <span>{isZh ? '真实物理调度与保真度诊断' : 'Physical Upstream & Fidelity'}</span>
                     </span>
                     <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                       <ShieldCheck className="w-3 h-3 text-emerald-500" />
-                      <span>{isZh ? '上游物理保真度 100%' : '100% Upstream Fidelity'}</span>
+                      <span>{isZh ? '物理上游保真度 100% · 零暗降' : '100% Upstream Fidelity'}</span>
                     </span>
                   </div>
 
@@ -1962,16 +2066,16 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
               </div>
 
               {/* ========================================================= */}
-              {/* 【底层双列指标】：模块 5 客户端消耗排行 + 模块 6 24小时热力图 */}
+              {/* 【第四层：客户端消耗排行 + 24小时高密度热力柱】 (参考图 04, 19, 10, 23) */}
               {/* ========================================================= */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                {/* 模块 5：客户端/宿主消耗排行榜 (参考图谱 04, 19) */}
+                {/* 模块 5：客户端/宿主消耗排行榜 (参考图 04, 19) */}
                 <div className="lg:col-span-5 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
                       <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
                         <AppWindow className="w-3.5 h-3.5 text-blue-500" />
-                        <span>{isZh ? '模块 5：客户端消耗排行' : 'Module 5: Host Matrix Ranking'}</span>
+                        <span>{isZh ? '客户端消耗排行榜' : 'Host Matrix Ranking'}</span>
                       </span>
                       <span className="text-[9.5px] text-gray-400">{isZh ? '消耗宿主分布' : 'Clients'}</span>
                     </div>
@@ -2058,13 +2162,13 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                   </div>
                 </div>
 
-                {/* 模块 6：24 小时活跃调用时间热力图 (参考图谱 10, 18, 23) */}
+                {/* 模块 6：24 小时活跃调用时间热力图 (参考图 10, 18, 23 彩色高密度柱) */}
                 <div className="lg:col-span-7 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
                       <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>{isZh ? '模块 6：24 小时活跃调用时间热力图' : 'Module 6: Circadian Activity Heatmap'}</span>
+                        <span>{isZh ? '24 小时活跃调用时间热力图' : 'Circadian Activity Heatmap'}</span>
                       </span>
                       <span className="text-[9.5px] text-gray-400 font-mono">{isZh ? '峰值时段: 14:00 - 17:00 (192 tok/s)' : 'Peak: 14:00 - 17:00'}</span>
                     </div>
