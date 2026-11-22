@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Search,
   Plus,
@@ -16,6 +16,8 @@ import {
   Code2,
   Puzzle,
   Terminal,
+  Fingerprint,
+  X,
 } from 'lucide-react';
 
 export type HostTarget = 'app' | 'ide' | 'plugin' | 'cli';
@@ -36,11 +38,12 @@ export interface AccountItem {
   alias: string;
   tier: 'PRO' | 'FREE';
   tags: string[];
-  activeHosts: HostTarget[]; // 支持该账号在多个宿主中被激活
+  activeHosts: HostTarget[];
   geminiQuota?: ModelGroupQuota;
   claudeQuota?: ModelGroupQuota;
   argonQuota?: ModelGroupQuota;
   isForbidden?: boolean;
+  fingerprint?: string;
 }
 
 interface AccountsProps {
@@ -52,12 +55,19 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
 
   // 1. 检索与分类状态
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'pro' | 'main' | 'claude' | 'warning'>('all');
+  const [selectedTag, setSelectedTag] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // 2. 账号 Mock 数据
+  // 弹窗状态 (指纹、标签管理、JSON导入导出)
+  const [activeModal, setActiveModal] = useState<{
+    type: 'fingerprint' | 'tags' | 'export';
+    account?: AccountItem;
+  } | null>(null);
+  const [tempTagInput, setTempTagInput] = useState('');
+
+  // 2. 账号 Mock 数据 (包含 5h 为 0、5h 长于周额度等真实边缘用例)
   const [accounts, setAccounts] = useState<AccountItem[]>([
     {
       id: '1',
@@ -66,12 +76,14 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       tier: 'PRO',
       tags: ['🌟 主力', 'VIP', 'Claude池'],
       activeHosts: ['app', 'ide'],
+      fingerprint: 'fp_mac_a8f93e2b_sonoma',
       geminiQuota: {
         fiveHour: { percentage: 100, resetText: '4h 54m' },
         sevenDay: { percentage: 100, resetText: '6d 23h' },
       },
       claudeQuota: {
-        fiveHour: { percentage: 100, resetText: '4h 50m' },
+        // 典型场景：5h 为 0% 耗尽，周额度还剩 50%
+        fiveHour: { percentage: 0, resetText: '3h 15m' },
         sevenDay: { percentage: 50, resetText: '5d 13h' },
       },
       argonQuota: {
@@ -85,13 +97,15 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       tier: 'PRO',
       tags: ['🌟 主力', 'Team Pro'],
       activeHosts: ['cli'],
+      fingerprint: 'fp_win_e3c109df_rtx4090',
       geminiQuota: {
         fiveHour: { percentage: 100, resetText: '3h 12m' },
         sevenDay: { percentage: 95, resetText: '4d 08h' },
       },
       claudeQuota: {
+        // 典型场景：5h 配额为 85%，大于周额度的 40% (即 5h 比周额度长)
         fiveHour: { percentage: 85, resetText: '2h 10m' },
-        sevenDay: { percentage: 80, resetText: '4d 20h' },
+        sevenDay: { percentage: 40, resetText: '4d 20h' },
       },
     },
     {
@@ -101,6 +115,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       tier: 'FREE',
       tags: ['Claude池', '备用'],
       activeHosts: ['plugin'],
+      fingerprint: 'fp_linux_89ab32ff_debian',
       geminiQuota: {
         fiveHour: { percentage: 100, resetText: '5h 00m' },
         sevenDay: { percentage: 100, resetText: '7d 00h' },
@@ -117,6 +132,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       tier: 'FREE',
       tags: ['压力测试'],
       activeHosts: [],
+      fingerprint: 'fp_sandbox_0012ea77',
       isForbidden: true,
       geminiQuota: {
         fiveHour: { percentage: 0, resetText: '已受限' },
@@ -130,6 +146,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       tier: 'PRO',
       tags: ['VIP', 'Argon池'],
       activeHosts: [],
+      fingerprint: 'fp_mac_7721cc89_m3max',
       geminiQuota: {
         fiveHour: { percentage: 100, resetText: '4h 30m' },
         sevenDay: { percentage: 100, resetText: '6d 12h' },
@@ -140,6 +157,13 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     },
   ]);
 
+  // 提取系统中所有出现过的标签
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    accounts.forEach((a) => a.tags.forEach((t) => set.add(t)));
+    return Array.from(set);
+  }, [accounts]);
+
   // 筛选计算
   const filteredAccounts = accounts.filter((acc) => {
     const matchText =
@@ -149,11 +173,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
 
     if (!matchText) return false;
 
-    if (activeFilter === 'pro') return acc.tier === 'PRO';
-    if (activeFilter === 'main') return acc.tags.some((t) => t.includes('主力'));
-    if (activeFilter === 'claude') return acc.tags.some((t) => t.includes('Claude'));
-    if (activeFilter === 'warning') return acc.isForbidden || (acc.geminiQuota?.fiveHour?.percentage ?? 100) < 20;
-    return true;
+    if (selectedTag === 'all') return true;
+    if (selectedTag === '__pro') return acc.tier === 'PRO';
+    if (selectedTag === '__warning') return acc.isForbidden || (acc.claudeQuota?.fiveHour?.percentage === 0);
+    return acc.tags.includes(selectedTag);
   });
 
   const handleToggleSelect = (id: string) => {
@@ -168,7 +191,6 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     }
   };
 
-  // 四宫格一键直切：点击某宿主徽章，直接将该账号推向该宿主，或者取消
   const handleToggleHost = (accountId: string, host: HostTarget) => {
     setAccounts((prev) =>
       prev.map((acc) => {
@@ -179,7 +201,6 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             activeHosts: exists ? acc.activeHosts.filter((h) => h !== host) : [...acc.activeHosts, host],
           };
         }
-        // 如果宿主已被其他账号占用，将其他账号上的该宿主移除（保持宿主唯一归属）
         return {
           ...acc,
           activeHosts: acc.activeHosts.filter((h) => h !== host),
@@ -202,84 +223,104 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     setAccounts((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // 单条 5h/7d 统一进度条渲染组件
-  const renderQuotaBar = (
-    name: string,
-    key: 'gemini' | 'claude' | 'argon',
-    quota?: ModelGroupQuota
-  ) => {
+  const handleAddTagToAccount = (accountId: string, tag: string) => {
+    if (!tag.trim()) return;
+    setAccounts((prev) =>
+      prev.map((acc) => (acc.id === accountId && !acc.tags.includes(tag.trim()) ? { ...acc, tags: [...acc.tags, tag.trim()] } : acc))
+    );
+    setTempTagInput('');
+  };
+
+  const handleRemoveTagFromAccount = (accountId: string, tag: string) => {
+    setAccounts((prev) =>
+      prev.map((acc) => (acc.id === accountId ? { ...acc, tags: acc.tags.filter((t) => t !== tag) } : acc))
+    );
+  };
+
+  /**
+   * 优雅解决 5h 与 7d 相对长度颠倒及 5h 为 0 的直观双层融合进度条：
+   * 采用「外层周配额基底槽 (7d Window Track) + 内嵌/重叠 5h 短期实时流光条」
+   * - 当 5h 为 0 时：进度条清零，显示鲜明闪烁红底「5h: 0% 耗尽」
+   * - 无论 5h 比 7d 长还是短，两者各自在同一起点独立标定宽度与重置时间，绝对不会发生误导性覆盖
+   */
+  const renderQuotaBar = (name: string, key: 'gemini' | 'claude' | 'argon', quota?: ModelGroupQuota) => {
     if (!quota) return null;
     const { fiveHour, sevenDay } = quota;
     const isClaude = key === 'claude';
     const isArgon = key === 'argon';
 
-    const fiveHourPct = fiveHour?.percentage ?? 100;
+    const fiveHourPct = fiveHour?.percentage;
     const sevenDayPct = sevenDay?.percentage ?? 100;
 
-    const getPrimaryColor = (pct: number) => {
-      if (pct < 20) return 'bg-rose-500';
-      if (pct < 50) return 'bg-amber-500';
+    const is5hExhausted = fiveHourPct !== undefined && fiveHourPct === 0;
+    const is7dExhausted = sevenDayPct === 0;
+
+    const get5hColor = () => {
+      if (is5hExhausted) return 'bg-rose-500';
+      if ((fiveHourPct ?? 100) < 30) return 'bg-rose-500';
+      if ((fiveHourPct ?? 100) < 60) return 'bg-amber-500';
       if (isClaude) return 'bg-purple-500';
       if (isArgon) return 'bg-amber-500';
       return 'bg-blue-500';
     };
 
-    const getSecondaryColor = (pct: number) => {
-      if (pct < 20) return 'bg-rose-500/60';
-      if (pct < 50) return 'bg-amber-500/60';
-      if (isClaude) return 'bg-indigo-400/60';
-      if (isArgon) return 'bg-orange-400/60';
-      return 'bg-cyan-400/60';
-    };
-
     return (
       <div className="flex flex-col gap-1 w-full">
+        {/* 指标文本栏 */}
         <div className="flex items-center justify-between text-[11px] leading-tight">
           <span className="font-semibold text-gray-700 dark:text-zinc-300 flex items-center gap-1.5">
             <span
               className={`w-1.5 h-1.5 rounded-full ${
-                isClaude ? 'bg-purple-500' : isArgon ? 'bg-amber-500' : 'bg-blue-500'
+                is5hExhausted ? 'bg-rose-500 animate-ping' : isClaude ? 'bg-purple-500' : isArgon ? 'bg-amber-500' : 'bg-blue-500'
               }`}
             />
             <span className="truncate">{name}</span>
           </span>
 
-          <div className="flex items-center gap-2.5 text-[10px] text-gray-500 dark:text-zinc-400 font-mono">
+          <div className="flex items-center gap-2 text-[10px] text-gray-500 dark:text-zinc-400 font-mono">
             {fiveHour && (
-              <span>
-                5h:{' '}
-                <b className={fiveHourPct < 25 ? 'text-rose-500 font-bold' : 'text-gray-700 dark:text-zinc-200'}>
+              <span className={`flex items-center gap-1 ${is5hExhausted ? 'text-rose-600 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-950/40 px-1 py-0.2 rounded border border-rose-200/50' : ''}`}>
+                <span>5h:</span>
+                <b className={(fiveHourPct ?? 100) < 25 ? 'text-rose-500 font-bold' : 'text-gray-700 dark:text-zinc-200'}>
                   {fiveHourPct}%
-                </b>{' '}
-                <span className="opacity-75">({fiveHour.resetText})</span>
+                </b>
+                <span className="opacity-70 text-[9px]">({fiveHour.resetText})</span>
               </span>
             )}
             {sevenDay && (
-              <span>
-                7d:{' '}
+              <span className={`flex items-center gap-1 ${is7dExhausted ? 'text-rose-600 font-bold' : ''}`}>
+                <span className="opacity-75">7d:</span>
                 <b className={sevenDayPct < 25 ? 'text-rose-500 font-bold' : 'text-gray-700 dark:text-zinc-200'}>
                   {sevenDayPct}%
-                </b>{' '}
-                <span className="opacity-75">({sevenDay.resetText})</span>
+                </b>
+                <span className="opacity-70 text-[9px]">({sevenDay.resetText})</span>
               </span>
             )}
           </div>
         </div>
 
-        {/* 统一融合进度条 */}
-        <div className="w-full h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden flex gap-0.5 p-0.5">
-          {fiveHour && (
-            <div
-              style={{ width: `${fiveHourPct}%` }}
-              className={`h-full rounded-full transition-all duration-300 ${getPrimaryColor(fiveHourPct)}`}
-              title={`5H 限额: ${fiveHourPct}%`}
-            />
-          )}
+        {/* 双层同轨融合进度槽 (Dual Track in Same Capsule) */}
+        <div
+          className={`relative w-full h-[6px] rounded-full overflow-hidden transition-colors ${
+            is5hExhausted ? 'bg-rose-100/80 dark:bg-rose-950/40' : 'bg-gray-100 dark:bg-zinc-800'
+          }`}
+          title={`${name} · 5h: ${fiveHourPct ?? 'N/A'}% | 7d: ${sevenDayPct}%`}
+        >
+          {/* 1. 底层：周配额 (7d) 宽轨进度 (透明度 35%，标定宏观储备) */}
           {sevenDay && (
             <div
               style={{ width: `${sevenDayPct}%` }}
-              className={`h-full rounded-full transition-all duration-300 ${getSecondaryColor(sevenDayPct)}`}
-              title={`周限额: ${sevenDayPct}%`}
+              className={`absolute top-0 bottom-0 left-0 rounded-full transition-all duration-300 ${
+                isClaude ? 'bg-indigo-400/40' : isArgon ? 'bg-orange-400/40' : 'bg-cyan-400/40'
+              }`}
+            />
+          )}
+
+          {/* 2. 顶层：5小时 (5h) 核心流速实时条 (高亮纯色实线) */}
+          {fiveHour && (
+            <div
+              style={{ width: `${fiveHourPct}%` }}
+              className={`absolute top-0 bottom-0 left-0 rounded-full shadow-xs transition-all duration-300 ${get5hColor()}`}
             />
           )}
         </div>
@@ -290,63 +331,124 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
   return (
     <div className="w-full max-w-7xl mx-auto px-6 py-4 flex flex-col gap-4 select-none animate-in fade-in-50 duration-300">
       
-      {/* 顶部检索与透视栏 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-2xl p-4 shadow-xs">
-        <div className="flex flex-wrap items-center gap-3 flex-1">
-          <div className="relative min-w-[220px] max-w-[280px]">
+      {/* ============================================================== */}
+      {/* 顶部单行集成工具栏 (Integrated Single-Row Universal Toolbar)   */}
+      {/* 搜索 + Tag多选分类过滤 + 批量操作 + 备份导入导出与登录，均在一行内高密集成 */}
+      {/* ============================================================== */}
+      <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-2xl p-3 px-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
+        {/* 左侧：搜索框与直观 Tag 选中分类 */}
+        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[320px]">
+          {/* 即时搜索框 */}
+          <div className="relative w-52 shrink-0">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={isZh ? '搜索邮箱、备注或标签...' : 'Search email, alias, tag...'}
+              placeholder={isZh ? '搜索邮箱、备注或标签...' : 'Search accounts...'}
               className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/50 dark:focus:border-blue-400/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500 outline-none transition-all duration-150"
             />
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
-            {[
-              { id: 'all', label: isZh ? `全部 (${accounts.length})` : `All (${accounts.length})` },
-              { id: 'pro', label: isZh ? 'PRO 订阅' : 'PRO Tier' },
-              { id: 'main', label: isZh ? '🌟 主力号' : 'Primary' },
-              { id: 'claude', label: isZh ? 'Claude 池' : 'Claude Pool' },
-              { id: 'warning', label: isZh ? '⚠️ 异常/受限' : 'Alert/Limited' },
-            ].map((f) => (
+          {/* 分类与动态 Tag 筛选药丸 */}
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-full py-0.5">
+            <button
+              onClick={() => setSelectedTag('all')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                selectedTag === 'all'
+                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400 font-semibold'
+                  : 'text-gray-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              {isZh ? `全部 (${accounts.length})` : `All (${accounts.length})`}
+            </button>
+
+            <button
+              onClick={() => setSelectedTag('__pro')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                selectedTag === '__pro'
+                  ? 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400 font-semibold'
+                  : 'text-gray-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              PRO 订阅
+            </button>
+
+            <button
+              onClick={() => setSelectedTag('__warning')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                selectedTag === '__warning'
+                  ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400 font-semibold'
+                  : 'text-gray-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              ⚠️ 额度告警/受限
+            </button>
+
+            {/* 用户动态标签选择药丸 */}
+            {allTags.map((tag) => (
               <button
-                key={f.id}
-                onClick={() => setActiveFilter(f.id as any)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
-                  activeFilter === f.id
-                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400 font-semibold'
+                key={tag}
+                onClick={() => setSelectedTag(tag)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${
+                  selectedTag === tag
+                    ? 'bg-purple-50 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400 font-semibold'
                     : 'text-gray-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800/60'
                 }`}
               >
-                {f.label}
+                <span>🏷️ {tag}</span>
               </button>
             ))}
           </div>
         </div>
 
+        {/* 右侧：全功能工具按钮组（刷新、导入导出、指纹全局状态、授权登录） */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleRefreshAll}
             disabled={isRefreshing}
-            className="px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/5 bg-white dark:bg-[#16171b] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-2.5 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            title={isZh ? '刷新全量账号配额' : 'Refresh All'}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
-            <span>{isZh ? '刷新全量配额' : 'Refresh Quota'}</span>
+            <span>{isZh ? '刷新' : 'Refresh'}</span>
+          </button>
+
+          <button
+            onClick={() => setActiveModal({ type: 'export' })}
+            className="px-2.5 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            title={isZh ? '导出账号数据备份 (JSON)' : 'Export Backup'}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>{isZh ? '导出' : 'Export'}</span>
+          </button>
+
+          <button
+            onClick={() => alert(isZh ? '支持批量导入 JSON 文件或粘贴 Token' : 'Import JSON')}
+            className="px-2.5 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs"
+            title={isZh ? '从备份导入账号' : 'Import Backup'}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>{isZh ? '导入' : 'Import'}</span>
+          </button>
+
+          <button
+            onClick={() => alert(isZh ? '呼起浏览器进行 Google 官方 OAuth 授权' : 'OAuth Login')}
+            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{isZh ? '授权登录' : 'Add Account'}</span>
           </button>
         </div>
       </div>
 
       {/* ============================================================== */}
-      {/* 全新 4 栏式黄金表格：                                            */}
-      {/* [账号与标签] | [三组配额统一进度条] | [四宫格快捷切换] | [操作区] */}
+      {/* 核心 4 栏式黄金表格：                                            */}
+      {/* [账号与标签] | [模型配额池 (5h/7d)] | [四宫格多端切号] | [操作区] */}
       {/* ============================================================== */}
       <div className="bg-white/80 dark:bg-[#121316]/80 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-2xl overflow-hidden shadow-xs relative">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
-            {/* 表头 */}
             <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400 select-none">
               <tr>
                 <th className="pl-3.5 py-3 w-9">
@@ -364,22 +466,24 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     <ArrowUpDown className="w-3 h-3 opacity-40" />
                   </div>
                 </th>
-                {/* 栏 2：Gemini / Claude / Argon 三大模型额度进度 */}
+                {/* 栏 2：Gemini / Claude / Argon 统一双轨进度 */}
                 <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 min-w-[320px] whitespace-nowrap">
-                  <span>{isZh ? '模型额度池 (5h / 7d 统一进度)' : 'Quota Pools (5h / 7d Unified)'}</span>
+                  <div className="flex items-center justify-between">
+                    <span>{isZh ? '模型额度池 (5h 实时流速 / 7d 宏观槽)' : 'Model Quota Pools (5h / 7d Unified)'}</span>
+                    <span className="text-[10px] text-gray-400 font-normal">内轨 5h · 底轨 7d</span>
+                  </div>
                 </th>
                 {/* 栏 3：四宫格快捷切换区 */}
                 <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 w-[170px] whitespace-nowrap text-center">
                   <span>{isZh ? '四宫格多端切号区' : 'Host Matrix (4-Grid)'}</span>
                 </th>
-                {/* 栏 4：刷新 / 删除操作区 */}
-                <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 w-[110px] text-center sticky right-0 bg-gray-50/90 dark:bg-[#16171b]/90 backdrop-blur-md shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)]">
-                  {isZh ? '操作' : 'Actions'}
+                {/* 栏 4：操作工具区 (刷新/指纹/标签管理/删除/导出) */}
+                <th className="px-4 py-3 font-semibold text-gray-600 dark:text-zinc-300 w-[160px] text-center sticky right-0 bg-gray-50/90 dark:bg-[#16171b]/90 backdrop-blur-md shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)]">
+                  {isZh ? '操作工具' : 'Actions'}
                 </th>
               </tr>
             </thead>
 
-            {/* 表体 */}
             <tbody className="divide-y divide-gray-100 dark:divide-white/5 font-sans">
               {filteredAccounts.map((acc) => {
                 const isSelected = selectedIds.includes(acc.id);
@@ -405,7 +509,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       />
                     </td>
 
-                    {/* 栏 1：账号与标签 (上下堆叠结构) */}
+                    {/* 栏 1：账号与标签 */}
                     <td className="px-4 py-3 align-middle">
                       <div className="flex flex-col gap-1.5 min-w-0 pr-2">
                         {/* 邮箱 + PRO 徽章 + 复制 */}
@@ -443,17 +547,23 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                           {acc.alias}
                         </span>
 
-                        {/* 标签栏 */}
+                        {/* 标签栏 (点击可快速过滤或管理) */}
                         <div className="flex flex-wrap items-center gap-1">
                           {acc.tags.map((t) => (
-                            <span
+                            <button
                               key={t}
-                              className="px-1.5 py-0.2 text-[9px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5"
+                              onClick={() => setSelectedTag(t)}
+                              className="px-1.5 py-0.2 text-[9px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5 hover:border-blue-400 transition-colors"
+                              title={`点击筛选标签 [${t}]`}
                             >
                               {t}
-                            </span>
+                            </button>
                           ))}
-                          <button className="px-1 py-0.2 text-[9px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors">
+                          <button
+                            onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                            className="px-1 py-0.2 text-[9px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
+                            title={isZh ? '管理标签' : 'Manage Tags'}
+                          >
                             + {isZh ? '标签' : 'Tag'}
                           </button>
                         </div>
@@ -468,7 +578,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       </div>
                     </td>
 
-                    {/* 栏 2：Gemini / Claude / Argon 额度统一进度条 (上下三行堆叠) */}
+                    {/* 栏 2：Gemini / Claude / Argon 额度条 (5h 为 0 与 5h>7d 均清晰呈现) */}
                     <td className="px-4 py-3 align-middle">
                       {acc.isForbidden ? (
                         <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/30 flex items-center gap-2 text-xs text-rose-700 dark:text-rose-400">
@@ -489,7 +599,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       )}
                     </td>
 
-                    {/* 栏 3：四宫格快捷切换区 (Native App / IDE / Plugin / CLI 矩阵点击按钮) */}
+                    {/* 栏 3：四宫格快捷切换区 (Native App / IDE / Plugin / CLI 直点秒切) */}
                     <td className="px-4 py-3 align-middle">
                       <div className="grid grid-cols-2 gap-1.5 w-[140px] mx-auto">
                         {[
@@ -513,10 +623,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                               title={
                                 isActive
                                   ? isZh
-                                    ? `已在此【${host.label}】激活 (点击可解除)`
+                                    ? `已在此【${host.label}】激活 (点击取消绑定)`
                                     : `Active in ${host.label} (Click to unbind)`
                                   : isZh
-                                  ? `点击一键切换至【${host.label}】`
+                                  ? `点击一键推送到【${host.label}】`
                                   : `Click to switch to ${host.label}`
                               }
                             >
@@ -529,10 +639,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       </div>
                     </td>
 
-                    {/* 栏 4：刷新 / 删除等快捷操作区 */}
+                    {/* 栏 4：操作工具区 (刷新 / 指纹 / 标签管理 / 导出 / 删除) */}
                     <td className="px-4 py-3 align-middle text-center sticky right-0 bg-white/90 dark:bg-[#121316]/90 backdrop-blur-md shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)]">
                       <div className="flex items-center justify-center gap-1">
-                        {/* 刷新单账号 */}
+                        {/* 1. 单账号刷新 */}
                         <button
                           onClick={handleRefreshAll}
                           className="p-1.5 rounded-lg border border-gray-200/80 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 dark:text-zinc-400 transition-colors"
@@ -541,15 +651,34 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                           <RefreshCw className="w-3.5 h-3.5" />
                         </button>
 
-                        {/* 修改备注 */}
+                        {/* 2. 独立设备指纹查看/重置 */}
                         <button
-                          className="p-1.5 rounded-lg border border-gray-200/80 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 dark:text-zinc-400 transition-colors"
-                          title={isZh ? '修改标签与备注' : 'Edit'}
+                          onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
+                          className="p-1.5 rounded-lg border border-gray-200/80 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 hover:text-blue-600 dark:text-zinc-400 transition-colors"
+                          title={isZh ? '独立机器码与设备指纹' : 'Device Fingerprint'}
+                        >
+                          <Fingerprint className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* 3. 标签管理 */}
+                        <button
+                          onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                          className="p-1.5 rounded-lg border border-gray-200/80 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 hover:text-purple-600 dark:text-zinc-400 transition-colors"
+                          title={isZh ? '标签管理' : 'Manage Tags'}
                         >
                           <Tag className="w-3.5 h-3.5" />
                         </button>
 
-                        {/* 删除 */}
+                        {/* 4. 单账号导出 */}
+                        <button
+                          onClick={() => handleCopyCredentials(acc.id)}
+                          className="p-1.5 rounded-lg border border-gray-200/80 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 hover:text-emerald-600 dark:text-zinc-400 transition-colors"
+                          title={isZh ? '导出账号凭据 (JSON)' : 'Export JSON'}
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* 5. 删除账号 */}
                         <button
                           onClick={() => handleDelete(acc.id)}
                           className="p-1.5 rounded-lg border border-rose-200/80 dark:border-rose-900/30 hover:bg-rose-50 text-rose-600 dark:hover:bg-rose-950/20 dark:text-rose-400 transition-colors"
@@ -567,45 +696,214 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
         </div>
       </div>
 
-      {/* 底部吸底控制岛 */}
-      <div className="sticky bottom-3 z-30 bg-white/90 dark:bg-[#15161b]/90 backdrop-blur-2xl border border-gray-200/80 dark:border-white/10 rounded-2xl p-2.5 px-5 shadow-lg flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3 text-xs">
-          <span className="font-medium text-gray-500 dark:text-zinc-400">
-            {isZh ? `已选择 ${selectedIds.length} 个账号` : `Selected ${selectedIds.length}`}
-          </span>
-          {selectedIds.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <button className="px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-zinc-300 transition-colors flex items-center gap-1 font-medium">
-                <RefreshCw className="w-3 h-3" />
-                <span>{isZh ? '批量刷新' : 'Batch Refresh'}</span>
-              </button>
-              <button className="px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-zinc-300 transition-colors flex items-center gap-1 font-medium">
-                <Tag className="w-3 h-3" />
-                <span>{isZh ? '打标签' : 'Tag'}</span>
-              </button>
-              <button className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-900/30 text-rose-600 dark:text-rose-400 transition-colors flex items-center gap-1 font-medium">
-                <Trash2 className="w-3 h-3" />
-                <span>{isZh ? '删除' : 'Delete'}</span>
-              </button>
-            </div>
-          )}
-        </div>
+      {/* ============================================================== */}
+      {/* 底部批量操作悬浮岛 (仅在勾选选中账号时呼出)                    */}
+      {/* ============================================================== */}
+      {selectedIds.length > 0 && (
+        <div className="sticky bottom-4 z-30 bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 backdrop-blur-2xl rounded-2xl p-3 px-6 shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center gap-3 text-xs font-semibold">
+            <span>{isZh ? `已选中 ${selectedIds.length} 个账号` : `Selected ${selectedIds.length}`}</span>
+            <button
+              onClick={() => setSelectedIds([])}
+              className="text-xs opacity-60 hover:opacity-100 underline ml-2"
+            >
+              {isZh ? '取消选择' : 'Deselect'}
+            </button>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <button className="px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs">
-            <Upload className="w-3.5 h-3.5" />
-            <span>{isZh ? '导入 JSON' : 'Import'}</span>
-          </button>
-          <button className="px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-xs">
-            <Download className="w-3.5 h-3.5" />
-            <span>{isZh ? '备份导出' : 'Export'}</span>
-          </button>
-          <button className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all">
-            <Plus className="w-3.5 h-3.5" />
-            <span>{isZh ? '官方授权登录' : 'Add Account'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefreshAll}
+              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 dark:bg-black/10 dark:hover:bg-black/20 text-xs font-medium transition-colors flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{isZh ? '批量刷新配额' : 'Batch Refresh'}</span>
+            </button>
+            <button
+              onClick={() => {
+                const tag = prompt(isZh ? '请输入为选中账号批量添加的标签名称:' : 'Tag name:');
+                if (tag && tag.trim()) {
+                  setAccounts((prev) =>
+                    prev.map((acc) => (selectedIds.includes(acc.id) && !acc.tags.includes(tag.trim()) ? { ...acc, tags: [...acc.tags, tag.trim()] } : acc))
+                  );
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 dark:bg-black/10 dark:hover:bg-black/20 text-xs font-medium transition-colors flex items-center gap-1.5"
+            >
+              <Tag className="w-3.5 h-3.5" />
+              <span>{isZh ? '批量打标签' : 'Batch Tag'}</span>
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(isZh ? `确定删除选中的 ${selectedIds.length} 个账号吗？` : 'Delete selected?')) {
+                  setAccounts((prev) => prev.filter((a) => !selectedIds.includes(a.id)));
+                  setSelectedIds([]);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium transition-colors flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{isZh ? '批量删除' : 'Batch Delete'}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 模态浮层：设备指纹 / 标签管理 / 导出备份                       */}
+      {/* ============================================================== */}
+      {activeModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in-0 duration-150">
+          <div className="w-full max-w-md bg-white dark:bg-[#16171b] border border-gray-200 dark:border-zinc-800 rounded-2xl p-6 shadow-2xl relative">
+            <button
+              onClick={() => setActiveModal(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* 1. 独立设备指纹模态 */}
+            {activeModal.type === 'fingerprint' && activeModal.account && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                    <Fingerprint className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {isZh ? '独立硬件指纹隔离' : 'Device Fingerprint Isolation'}
+                    </h3>
+                    <p className="text-xs text-gray-400">{activeModal.account.email}</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-zinc-900/60 border border-gray-200/60 dark:border-zinc-800 text-xs space-y-2">
+                  <div className="flex justify-between items-center text-gray-500">
+                    <span>{isZh ? '机器指纹散列:' : 'Fingerprint Hash:'}</span>
+                    <span className="font-mono text-gray-900 dark:text-zinc-100 font-semibold">
+                      {activeModal.account.fingerprint || 'DEFAULT_ISOLATED_MAC_SONOMA'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-gray-500">
+                    <span>{isZh ? '风控隔离状态:' : 'Status:'}</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      {isZh ? '已完全物理隔离 · 防关联' : 'Isolated'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => {
+                      const newFp = `fp_regen_${Math.random().toString(36).substring(2, 10)}`;
+                      setAccounts((prev) =>
+                        prev.map((a) => (a.id === activeModal.account?.id ? { ...a, fingerprint: newFp } : a))
+                      );
+                      setActiveModal(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
+                  >
+                    {isZh ? '重新生成随机设备指纹' : 'Regenerate Fingerprint'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 2. 标签管理模态 */}
+            {activeModal.type === 'tags' && activeModal.account && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold">
+                    <Tag className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {isZh ? '标签管理' : 'Manage Tags'}
+                    </h3>
+                    <p className="text-xs text-gray-400">{activeModal.account.email}</p>
+                  </div>
+                </div>
+
+                {/* 现有标签 */}
+                <div className="flex flex-wrap gap-1.5 min-h-[40px] p-2.5 rounded-xl border border-gray-200/60 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-900/40">
+                  {activeModal.account.tags.map((t) => (
+                    <span
+                      key={t}
+                      className="px-2 py-1 rounded-md text-xs font-medium bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 text-gray-700 dark:text-zinc-200 flex items-center gap-1.5 shadow-xs"
+                    >
+                      <span>{t}</span>
+                      <button
+                        onClick={() => handleRemoveTagFromAccount(activeModal.account!.id, t)}
+                        className="text-gray-400 hover:text-rose-500"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {activeModal.account.tags.length === 0 && (
+                    <span className="text-xs text-gray-400 self-center">{isZh ? '暂无标签，在下方添加' : 'No tags'}</span>
+                  )}
+                </div>
+
+                {/* 输入新标签 */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={tempTagInput}
+                    onChange={(e) => setTempTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddTagToAccount(activeModal.account!.id, tempTagInput);
+                    }}
+                    placeholder={isZh ? '输入新标签按回车添加...' : 'Add new tag...'}
+                    className="flex-1 px-3 py-2 text-xs rounded-xl bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-purple-500 text-gray-900 dark:text-zinc-100 outline-none"
+                  />
+                  <button
+                    onClick={() => handleAddTagToAccount(activeModal.account!.id, tempTagInput)}
+                    className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-colors"
+                  >
+                    {isZh ? '添加' : 'Add'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 3. 导出备份模态 */}
+            {activeModal.type === 'export' && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                    <Download className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {isZh ? '全量账号数据安全导出' : 'Export Accounts Backup'}
+                    </h3>
+                    <p className="text-xs text-gray-400">{isZh ? `已收录共 ${accounts.length} 个账号` : `${accounts.length} accounts ready`}</p>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-gray-50 dark:bg-zinc-900 rounded-xl text-xs font-mono text-gray-600 dark:text-zinc-400 max-h-40 overflow-y-auto">
+                  {JSON.stringify(accounts.map((a) => ({ email: a.email, alias: a.alias, tier: a.tier, tags: a.tags })), null, 2)}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(accounts, null, 2));
+                      alert(isZh ? '已复制全量备份 JSON 到剪贴板！' : 'Copied to clipboard!');
+                      setActiveModal(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                  >
+                    {isZh ? '复制备份 JSON' : 'Copy JSON'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
