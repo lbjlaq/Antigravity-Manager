@@ -1600,7 +1600,7 @@ function Settings() {
                                         {formData.proxy?.hub_platform === 'linux' && (
                                             <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5">
                                                 {t('proxy.config.hub.platform_linux_warning', {
-                                                    defaultValue: 'Linux 与 Windows 使用相同的版本号、CL 和探测逻辑，仅将出站 User-Agent 的 os_type 改为 linux。'
+                                                    defaultValue: 'Linux 从自己的更新清单检查最新版本；实际 User-Agent 的版本与 CL 仍按现有自定义/本地探测规则管理，不会拼接尚未匹配的最新版本。'
                                                 })}
                                             </p>
                                         )}
