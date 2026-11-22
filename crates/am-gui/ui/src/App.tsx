@@ -6,7 +6,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Accounts } from './pages/Accounts';
 
 export function App() {
-  const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
+  const [currentTab, setCurrentTab] = useState<TabId>('accounts');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
 
