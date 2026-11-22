@@ -569,6 +569,34 @@ pub fn check_outdated_user_agent_issue_with_lang(
     None
 }
 
+static TOKEN_LIMIT_MAX_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)exceeds\s+the\s+maximum\s+number\s+of\s+tokens\s+allowed\s*\((\d+)\)")
+        .expect("valid regex for token limit max")
+});
+
+static TOKEN_LIMIT_INPUT_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)input\s+token\s+count[:\s]+(\d+)")
+        .expect("valid regex for token limit input")
+});
+
+/// [Fixes #4024] 解析上游 1M 上下文硬超限报错：
+/// "The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377."
+/// 返回 (最大允许 token 数, 实际输入 token 数)。
+pub fn parse_token_limit_error(status_code: u16, error_text: &str) -> Option<(u64, u64)> {
+    if status_code != 400 {
+        return None;
+    }
+    let lower = error_text.to_lowercase();
+    if !lower.contains("exceeds the maximum number of tokens") {
+        return None;
+    }
+    let max_caps = TOKEN_LIMIT_MAX_RE.captures(error_text)?;
+    let input_caps = TOKEN_LIMIT_INPUT_RE.captures(error_text)?;
+    let max = max_caps.get(1)?.as_str().parse::<u64>().ok()?;
+    let input = input_caps.get(1)?.as_str().parse::<u64>().ok()?;
+    Some((max, input))
+}
+
 /// 格式化双轨制错误报文（四大标准协议原始字段散开 + 顶层/UI层不阉割双轨诊断）
 pub fn build_dual_track_error(
     protocol: &str, // "claude", "openai", "responses", or "gemini"
@@ -656,6 +684,11 @@ pub fn build_dual_track_error_with_ua_and_lang(
 
     let is_not_found = is_model_not_found_error(status_code, error_text);
 
+    // [Fixes #4024] 上游 1M 上下文硬超限（400 "input token count exceeds ..."）：
+    // 归一化为 Anthropic 标准的 invalid_request_error + "prompt is too long"，
+    // 让 Claude Code 客户端的 prompt_too_long 恢复机制（自动压缩/降配）可以识别。
+    let token_limit = parse_token_limit_error(status_code, error_text);
+
     // 账号被上游封禁 / 权限拒绝：与「容量耗尽」「模型不存在」严格区分，
     // 避免 403 被 Claude 协议映射为 503 后与真实容量问题混淆。
     let is_account_forbidden = lower.contains("tos_violation")
@@ -733,6 +766,20 @@ pub fn build_dual_track_error_with_ua_and_lang(
             "invalid_request_error",
             "model_not_found",
         )
+    } else if let Some((max_tokens, input_tokens)) = token_limit {
+        (
+            format!(
+                "prompt is too long: {} tokens > {} maximum",
+                input_tokens, max_tokens
+            ),
+            i18n_err
+                .upstream_error_diag
+                .replace("{model}", model)
+                .replace("{status}", &status_code.to_string()),
+            i18n_err.upstream_error_sug.to_string(),
+            "invalid_request_error",
+            "prompt_too_long",
+        )
     } else if status_code == 429 || status_code == 529 {
         (
             i18n_err
@@ -766,12 +813,24 @@ pub fn build_dual_track_error_with_ua_and_lang(
     // 2. 确定散开到各自协议标准 message 字段的内容：
     //    若是网关自身限制或网络异常（无有效上游业务报文参与），则使用网关诊断文本；
     //    若是上游发生的真实报错，100% 保持上游原始报错（raw_upstream_msg），绝不被网关硬编码覆盖！
-    let effective_message =
+    let mut effective_message =
         if is_internal_limited || is_network_error || raw_upstream_msg.trim().is_empty() {
             readable_message.clone()
         } else {
             raw_upstream_msg
         };
+
+    // [Fixes #4024] 对 Claude 协议，超限终态响应的 message 必须使用 Anthropic 标准格式，
+    // 而不是保留 Gemini 原文，否则 Claude Code 客户端无法识别 prompt_too_long 触发自动压缩；
+    // 其他原生协议（如 Gemini/OpenAI）保持上游原有格式，维护多协议保真度。
+    if protocol == "claude" {
+        if let Some((max_tokens, input_tokens)) = token_limit {
+            effective_message = format!(
+                "prompt is too long: {} tokens > {} maximum",
+                input_tokens, max_tokens
+            );
+        }
+    }
 
     let gateway_error_obj = serde_json::json!({
         "error_code": err_code,
@@ -1519,5 +1578,43 @@ mod retry_after_tests {
             gemini_res["error"]["gateway_error"]["error_code"],
             "no_available_accounts"
         );
+    }
+
+    #[test]
+    fn test_parse_token_limit_error_and_claude_normalization() {
+        let raw = "HTTP 400: {\"error\":{\"code\":400,\"message\":\"The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377.\",\"status\":\"INVALID_ARGUMENT\"}}";
+
+        assert_eq!(parse_token_limit_error(400, raw), Some((1048576, 1050377)));
+        assert_eq!(parse_token_limit_error(500, raw), None);
+        assert_eq!(parse_token_limit_error(400, "some other 400 error"), None);
+
+        // Claude 协议终态报文必须归一化为 Anthropic 标准 prompt is too long，
+        // 使 Claude Code 的 prompt_too_long 恢复机制（自动压缩）能够识别
+        let res = build_dual_track_error_with_ua_and_lang(
+            "claude",
+            400,
+            "gemini-4-hydrogen",
+            raw,
+            None,
+            Some("zh"),
+        );
+        assert_eq!(res["error"]["type"], "invalid_request_error");
+        assert_eq!(res["error"]["code"], "prompt_too_long");
+        let msg = res["error"]["message"].as_str().unwrap();
+        assert_eq!(msg, "prompt is too long: 1050377 tokens > 1048576 maximum");
+
+        // Gemini 协议保持原生上游错误报文，不被 Anthropic 格式覆盖
+        let gemini_res = build_dual_track_error_with_ua_and_lang(
+            "gemini",
+            400,
+            "gemini-4-hydrogen",
+            raw,
+            None,
+            Some("zh"),
+        );
+        assert!(gemini_res["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("The input token count exceeds the maximum number of tokens allowed"));
     }
 }
