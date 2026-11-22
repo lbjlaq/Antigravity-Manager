@@ -1600,7 +1600,7 @@ function Settings() {
                                         {formData.proxy?.hub_platform === 'linux' && (
                                             <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5">
                                                 {t('proxy.config.hub.platform_linux_warning', {
-                                                    defaultValue: 'Linux 指纹必须使用对应官方客户端的版本号与 CL。请同时填写下方两个字段，或在 Linux 上安装官方客户端并尝试动态探测；若无法获取匹配指纹，实际出站仍使用 Windows 基准，避免跨平台拼接。'
+                                                    defaultValue: 'Linux 与 Windows 使用相同的版本号、CL 和探测逻辑，仅将出站 User-Agent 的 os_type 改为 linux。'
                                                 })}
                                             </p>
                                         )}
