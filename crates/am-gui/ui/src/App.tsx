@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
+import { Dashboard } from './pages/Dashboard';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<TabId>('dashboard');
@@ -80,19 +81,25 @@ export function App() {
         onLanguageChange={setLang}
       />
 
-      {/* 菜单栏下方内容画布 (预留空白，带 Tab 切换淡入平移动效) */}
-      <main className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
-        <div
-          key={currentTab}
-          className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity duration-150 animate-in fade-in zoom-in-95 duration-200"
-        >
-          <p className="text-xs font-mono uppercase tracking-widest text-slate-400 dark:text-zinc-500">
-            {lang === 'zh' ? '内容区域就绪 · 当前模块' : 'CANVAS READY · ACTIVE MODULE'}
-          </p>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-700 dark:text-zinc-300">
-            {currentTab.toUpperCase()}
-          </h2>
-        </div>
+      {/* 菜单栏下方内容画布 */}
+      <main className="flex-1 overflow-y-auto px-4 py-2 relative">
+        {currentTab === 'dashboard' ? (
+          <Dashboard lang={lang} />
+        ) : (
+          <div className="w-full h-full min-h-[500px] flex flex-col items-center justify-center">
+            <div
+              key={currentTab}
+              className="text-center space-y-2 select-none opacity-20 hover:opacity-50 transition-opacity duration-150 animate-in fade-in zoom-in-95 duration-200"
+            >
+              <p className="text-xs font-mono uppercase tracking-widest text-slate-400 dark:text-zinc-500">
+                {lang === 'zh' ? '内容区域就绪 · 当前模块' : 'CANVAS READY · ACTIVE MODULE'}
+              </p>
+              <h2 className="text-2xl font-bold tracking-tight text-slate-700 dark:text-zinc-300">
+                {currentTab.toUpperCase()}
+              </h2>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
