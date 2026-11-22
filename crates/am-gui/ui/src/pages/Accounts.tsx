@@ -548,8 +548,8 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             <col className="w-8" />
             <col className="w-[23%]" />
             <col className="w-auto" />
-            <col className="w-[110px]" />
-            <col className="w-[118px]" />
+            <col className="w-[112px]" />
+            <col className="w-[88px]" />
           </colgroup>
 
           <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400">
@@ -580,8 +580,8 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               <th className="px-1.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
                 <span>{isZh ? '四宫格多端切号' : 'Host Matrix'}</span>
               </th>
-              {/* 栏 4：操作工具区 */}
-              <th className="px-1.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
+              {/* 栏 4：操作工具区 (3 2 优雅换行，对称对齐) */}
+              <th className="px-1 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
                 {isZh ? '快捷工具' : 'Actions'}
               </th>
             </tr>
@@ -702,9 +702,9 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     )}
                   </td>
 
-                  {/* 栏 3：四宫格快捷切换区 (精致紧凑微型卡片，永不截断) */}
+                  {/* 栏 3：四宫格快捷切换区 (精致紧凑微型卡片，角标绿点绝对定位，永不截断) */}
                   <td className="px-1.5 py-2 align-middle text-center">
-                    <div className="p-1 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[104px] mx-auto shadow-2xs">
+                    <div className="p-1 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[106px] mx-auto shadow-2xs">
                       <div className="grid grid-cols-2 gap-1">
                         {[
                           { id: 'app' as HostTarget, label: 'App', icon: AppWindow },
@@ -719,9 +719,9 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                             <button
                               key={host.id}
                               onClick={() => handleToggleHost(acc.id, host.id)}
-                              className={`h-[20px] px-1 rounded-md text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+                              className={`relative h-[21px] px-1 rounded-md text-[9.5px] font-medium flex items-center justify-center gap-1 transition-all ${
                                 isActive
-                                  ? 'bg-blue-600 text-white shadow-2xs font-semibold'
+                                  ? 'bg-blue-600 text-white shadow-2xs font-semibold ring-1 ring-blue-500/50'
                                   : 'bg-white hover:bg-gray-100 dark:bg-[#202126] dark:hover:bg-[#282930] text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 border border-gray-200/50 dark:border-white/5'
                               }`}
                               title={
@@ -736,7 +736,13 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                             >
                               <Icon className="w-2.5 h-2.5 shrink-0" />
                               <span className="truncate">{host.label}</span>
-                              {isActive && <span className="w-1 h-1 rounded-full bg-emerald-400 shrink-0" />}
+                              {/* 解决绿点挤压文字截断问题：绿点以微型右上角标呈现，文字宽度 100% 完整保留 */}
+                              {isActive && (
+                                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 border border-white dark:border-[#121316]"></span>
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -744,53 +750,59 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     </div>
                   </td>
 
-                  {/* 栏 4：操作工具区 (自然内嵌悬浮 Dock，消除突兀割裂感) */}
-                  <td className="px-1.5 py-2 align-middle text-center whitespace-nowrap">
-                    <div className="inline-flex items-center justify-center gap-0.5 p-0.5 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 shadow-2xs">
-                      {/* 1. 单账号刷新 */}
-                      <button
-                        onClick={handleRefreshAll}
-                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center"
-                        title={isZh ? '刷新配额' : 'Refresh'}
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                      </button>
+                  {/* 栏 4：操作工具区 (3 2 优雅换行，视觉高度与四宫格完全平衡) */}
+                  <td className="px-1 py-2 align-middle text-center whitespace-nowrap">
+                    <div className="p-1 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[82px] mx-auto shadow-2xs flex flex-col gap-1 items-center justify-center">
+                      {/* 上排 3 键：刷新 / 指纹 / 标签 */}
+                      <div className="flex items-center justify-center gap-1">
+                        {/* 1. 单账号刷新 */}
+                        <button
+                          onClick={handleRefreshAll}
+                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center shadow-2xs"
+                          title={isZh ? '刷新配额' : 'Refresh'}
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
 
-                      {/* 2. 独立设备指纹查看/重置 */}
-                      <button
-                        onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
-                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center"
-                        title={isZh ? '设备指纹' : 'Fingerprint'}
-                      >
-                        <Fingerprint className="w-3 h-3" />
-                      </button>
+                        {/* 2. 独立设备指纹查看/重置 */}
+                        <button
+                          onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
+                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center shadow-2xs"
+                          title={isZh ? '设备指纹' : 'Fingerprint'}
+                        >
+                          <Fingerprint className="w-3 h-3" />
+                        </button>
 
-                      {/* 3. 标签管理 */}
-                      <button
-                        onClick={() => setActiveModal({ type: 'tags', account: acc })}
-                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center"
-                        title={isZh ? '标签管理' : 'Tags'}
-                      >
-                        <Tag className="w-3 h-3" />
-                      </button>
+                        {/* 3. 标签管理 */}
+                        <button
+                          onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center shadow-2xs"
+                          title={isZh ? '标签管理' : 'Tags'}
+                        >
+                          <Tag className="w-3 h-3" />
+                        </button>
+                      </div>
 
-                      {/* 4. 单账号导出 */}
-                      <button
-                        onClick={() => handleCopyCredentials(acc.id)}
-                        className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center"
-                        title={isZh ? '导出凭据' : 'Export'}
-                      >
-                        <Download className="w-3 h-3" />
-                      </button>
+                      {/* 下排 2 键居中：导出 / 删除 */}
+                      <div className="flex items-center justify-center gap-1">
+                        {/* 4. 单账号导出 */}
+                        <button
+                          onClick={() => handleCopyCredentials(acc.id)}
+                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center shadow-2xs"
+                          title={isZh ? '导出凭据' : 'Export'}
+                        >
+                          <Download className="w-3 h-3" />
+                        </button>
 
-                      {/* 5. 删除账号 */}
-                      <button
-                        onClick={() => handleDelete(acc.id)}
-                        className="w-5.5 h-5.5 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center"
-                        title={isZh ? '删除账号' : 'Delete'}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                        {/* 5. 删除账号 */}
+                        <button
+                          onClick={() => handleDelete(acc.id)}
+                          className="w-5.5 h-5.5 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center shadow-2xs"
+                          title={isZh ? '删除账号' : 'Delete'}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   </td>
                 </tr>
