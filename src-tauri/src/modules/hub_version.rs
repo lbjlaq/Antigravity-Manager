@@ -92,6 +92,24 @@ pub fn get_official_updater_manifest_url() -> &'static str {
     }
 }
 
+/// Manifest source follows the selected User-Agent OS, not the host machine.
+/// Keep the fallback Windows x64 to preserve existing installations.
+fn selected_hub_manifest_url(platform: Option<&str>) -> &'static str {
+    match platform {
+        Some("linux") => "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-x64-linux.yml",
+        _ => "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-x64-win.yml",
+    }
+}
+
+/// Read the selected OS from the active Hub fingerprint (without a separate config read).
+pub fn current_hub_platform() -> &'static str {
+    if get_current_hub_user_agent().contains("os_type=linux;") {
+        "linux"
+    } else {
+        "windows"
+    }
+}
+
 /// User-selected UA platform. Windows is the default for backward compatibility.
 fn build_hub_user_agent_for_platform(version: &str, cl: &str, linux: bool) -> String {
     let os_type = if linux { "linux" } else { "windows" };
@@ -249,6 +267,60 @@ pub fn parse_hub_version_from_manifest(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Platform-specific latest versions for the Hub User-Agent selector.
+/// Unlike the global /releases endpoint, these manifests track the selected OS.
+/// The response supplies a release version, NOT the Piper CL needed to change the
+/// outbound UA safely. Never combine a newer manifest version with an old CL.
+static PLATFORM_VERSION_CACHE: Lazy<RwLock<std::collections::HashMap<&'static str, (std::time::Instant, String)>>> =
+    Lazy::new(|| RwLock::new(std::collections::HashMap::new()));
+
+pub async fn fetch_latest_hub_platform_version(
+    platform: Option<&str>,
+    force: bool,
+) -> Option<String> {
+    let platform_key = if platform == Some("linux") { "linux" } else { "windows" };
+    let cached = PLATFORM_VERSION_CACHE
+        .read()
+        .ok()
+        .and_then(|cache| cache.get(platform_key).cloned());
+    if !force {
+        if let Some((fetched_at, version)) = cached.as_ref() {
+            if fetched_at.elapsed() < REMOTE_RELEASE_TTL {
+                return Some(version.clone());
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let result = match client.get(selected_hub_manifest_url(Some(platform_key))).send().await {
+        Ok(response) if response.status().is_success() => {
+            response.text().await.ok()
+                .and_then(|body| parse_hub_version_from_manifest(&body))
+                .filter(|version| is_valid_hub_version(version))
+        }
+        Ok(response) => {
+            debug!(status = %response.status(), platform = platform_key, "Hub platform manifest returned an error");
+            None
+        }
+        Err(e) => {
+            debug!(error = %e, platform = platform_key, "Hub platform manifest unreachable");
+            None
+        }
+    };
+    if let Some(version) = result {
+        if let Ok(mut cache) = PLATFORM_VERSION_CACHE.write() {
+            cache.insert(platform_key, (std::time::Instant::now(), version.clone()));
+        }
+        return Some(version);
+    }
+
+    // Retain last successful version when a platform feed becomes unavailable.
+    cached.map(|(_, version)| version)
 }
 
 /// 尝试从官方远程源探测最新 Hub 版本号
@@ -464,8 +536,7 @@ pub async fn resolve_hub_fingerprint_async_with(
 ) -> HubFingerprint {
     let linux = hub_platform == Some("linux");
     // 异步探测官方最新远程发布版本，用于状态感知与更新提醒
-    let remote_release = fetch_remote_hub_release_with(force_remote).await;
-    let latest_remote_ver = remote_release.map(|r| r.version);
+    let latest_remote_ver = fetch_latest_hub_platform_version(hub_platform, force_remote).await;
 
     // 1. 如果用户显式定义了自定义指纹
     let clean_ver = custom_version.map(|s| s.trim()).filter(|s| !s.is_empty());
@@ -596,6 +667,14 @@ mod tests {
                 OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL
             )
         );
+    }
+
+    #[test]
+    fn test_platform_manifest_selection() {
+        assert!(selected_hub_manifest_url(None).ends_with("latest-x64-win.yml"));
+        assert!(selected_hub_manifest_url(Some("windows")).ends_with("latest-x64-win.yml"));
+        assert!(selected_hub_manifest_url(Some("linux")).ends_with("latest-x64-linux.yml"));
+        assert!(selected_hub_manifest_url(Some("unknown")).ends_with("latest-x64-win.yml"));
     }
 
     #[test]
