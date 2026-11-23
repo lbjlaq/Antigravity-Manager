@@ -4,6 +4,9 @@
 
 *   **Version History**:
     *   **v5.0.5-beta.1 (2026-11-23)**:
+        -   **[Windows + WSL Dual-Window Account Switch Sync] (Fixes #4030, Thanks to @funzza)**:
+            -   **WSL Remote Environment Credential Sync**: Resolved an issue in dual-window development (Windows local host + Remote-WSL) where account switching only affected the host, leaving WSL remote windows desynchronized on stale accounts. Added "Sync WSL Remote Environment Account" toggle and custom UNC path options under "Settings -> Account Settings";
+            -   **Running State Probe Guard & Non-Blocking Async Injection**: Introduced a lightweight `wsl.exe` probe guard with a 2-second timeout to avoid I/O hangs from accessing stopped WSL distributions; asynchronously dual-writes `.gemini` file credentials and remote server session databases (`state.vscdb`) via UNC paths for running distributions, followed by a graceful language_server reload signal without blocking the host switch workflow. (Fixes #4030, Thanks to @funzza)
         -   **[Mini Floating Window Header 360px Clipping & Overflow Fix] (Fixes #4029, Thanks to @QGBLWQ)**:
             -   **Header Elastic Shrink & Compact Tab Layout**: Resolved an issue in the fixed 360px width window where the mini floating window header tab capsule overflowed (up to 411px) due to inflexible child widths and wide horizontal padding, causing the left "Classic" tab to be clipped upon pinning and pushing right action buttons out of viewport. Added `min-w-0` elastic shrink capability to the tab group and button items, tightened spacing to `px-0.5 gap-0.5`, and enabled single-line `truncate` on labels to eliminate overflow while keeping all five tabs and action buttons fully accessible. (Fixes #4029, Thanks to @QGBLWQ)
         -   **[Official Hub Fingerprint Platform Selection & Independent Linux Feed] (PR #4025, Thanks to @ThermalEng)**:
