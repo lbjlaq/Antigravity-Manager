@@ -234,28 +234,58 @@ pub fn try_auto_heal(
         });
     }
 
-    // 2. 强制工具调用与思考冲突：剥离 thinkingConfig 后重试
+    // 2. 强制工具调用与思考冲突/不支持的 tool_choice：剥离 thinkingConfig 与 responseSchema 后重试 (Fixes #3721, #4033)
     if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
         status_code,
         error_text,
     ) && !flags.retried_tool_choice_conflict
     {
         flags.retried_tool_choice_conflict = true;
-        if let Some(gc) = body
-            .get_mut("request")
-            .and_then(|r| r.get_mut("generationConfig"))
-            .and_then(Value::as_object_mut)
         {
-            gc.remove("thinkingConfig");
-        } else if let Some(gc) = body
-            .get_mut("generationConfig")
-            .and_then(Value::as_object_mut)
-        {
-            gc.remove("thinkingConfig");
+            let req = if body.get("request").is_some() {
+                body.get_mut("request").unwrap()
+            } else {
+                &mut *body
+            };
+            if let Some(gc) = req
+                .get_mut("generationConfig")
+                .and_then(Value::as_object_mut)
+            {
+                gc.remove("thinkingConfig");
+                if let Some(schema) = gc.remove("responseSchema") {
+                    gc.remove("responseMimeType");
+                    let schema_text = format!(
+                        "\n\n[OUTPUT INSTRUCTION: You MUST respond ONLY with a valid, raw JSON object conforming strictly to the following JSON Schema. Do NOT include markdown code blocks (```json), commentary, or any text other than the raw JSON object.]\n{}",
+                        serde_json::to_string_pretty(&schema).unwrap_or_else(|_| schema.to_string())
+                    );
+                    if let Some(contents_arr) =
+                        req.get_mut("contents").and_then(Value::as_array_mut)
+                    {
+                        let mut injected = false;
+                        for content in contents_arr.iter_mut().rev() {
+                            if content.get("role").and_then(|r| r.as_str()) == Some("user") {
+                                if let Some(parts) =
+                                    content.get_mut("parts").and_then(|p| p.as_array_mut())
+                                {
+                                    parts.push(json!({ "text": schema_text }));
+                                    injected = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !injected {
+                            contents_arr.push(json!({
+                                "role": "user",
+                                "parts": [{ "text": schema_text }]
+                            }));
+                        }
+                    }
+                }
+            }
         }
         *degraded = Some(body.clone());
         tracing::warn!(
-            "[AutoHeal] upstream 400 tool_choice/thinking conflict: stripped thinkingConfig and retrying on same account"
+            "[AutoHeal] upstream 400 tool_choice conflict: stripped thinkingConfig/responseSchema and retrying on same account (Fixes #4033)"
         );
         return Some(AutoHealOutcome {
             kind: "strip_thinking_on_tool_choice_conflict",

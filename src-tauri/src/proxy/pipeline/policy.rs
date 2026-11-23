@@ -292,7 +292,7 @@ impl UpstreamClassification {
             || ((status >= 500 || status == 408) && body.to_lowercase().contains("overloaded"))
     }
 
-    /// 是否为强制工具调用与思考冲突错误 (400 "Thinking may not be enabled when tool_choice forces tool use", Fixes #3721)
+    /// 是否为强制工具调用与思考冲突错误 (400 "Thinking may not be enabled when tool_choice forces tool use", Fixes #3721, #4033)
     pub fn is_thinking_tool_choice_conflict(status: u16, body: &str) -> bool {
         if status != 400 {
             return false;
@@ -302,6 +302,9 @@ impl UpstreamClassification {
             || (lower.contains("thinking")
                 && lower.contains("tool_choice")
                 && lower.contains("forces tool use"))
+            || (lower.contains("tool_choice")
+                && (lower.contains("are not supported for this model")
+                    || lower.contains("is not supported for this model")))
     }
 
     /// 是否为账号不支持所请求的思考档位
@@ -419,6 +422,12 @@ mod tests {
         let err_body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"Thinking may not be enabled when tool_choice forces tool use."}}"#;
         assert!(UpstreamClassification::is_thinking_tool_choice_conflict(
             400, err_body
+        ));
+        // Fixes #4033: Claude Opus 5.5 forced tool_choice rejection error
+        let err_body_opus = r#"{"error":{"code":400,"message":"tool_choice: type \"tool\" and \"any\" are not supported for this model.","status":"INVALID_ARGUMENT"}}"#;
+        assert!(UpstreamClassification::is_thinking_tool_choice_conflict(
+            400,
+            err_body_opus
         ));
         assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(
             200, err_body

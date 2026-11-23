@@ -2881,7 +2881,7 @@ impl InboundThinkingPipeline {
         }
 
         // 规范化 generationConfig 内部键序: candidateCount -> maxOutputTokens -> thinkingConfig -> 其余
-        let canonical_gc = if !gc_obj.is_empty() {
+        let mut canonical_gc = if !gc_obj.is_empty() {
             let mut ordered_gc = serde_json::Map::new();
             for key in &[
                 "candidateCount",
@@ -2934,11 +2934,66 @@ impl InboundThinkingPipeline {
             }
         });
 
-        // [Pipeline First] Gemini 上游限制：responseSchema 与 tools / toolConfig 互斥 (Fix #3710)
-        let has_response_schema = canonical_gc
-            .as_ref()
-            .and_then(|gc| gc.get("responseSchema"))
-            .is_some();
+        // [Pipeline First] Claude 模型与 responseSchema 兼容性治理 (Fixes #4033):
+        // Google Cloud Code / Antigravity 上游在转发 Claude 家族模型时，会将 generationConfig.responseSchema
+        // 强行转译为 Anthropic 协议的工具调用与强制模式 tool_choice: { type: "tool", name: "response_schema" }。
+        // 然而 Anthropic 对 Opus 5.5 以及所有思考模型施加了硬性校验，严禁强行指定 tool_choice (type "tool" and "any")，
+        // 进而直接向上游抛出不可重试的 HTTP 400 校验拒绝（如 Codex 任务标题生成时必现）。
+        //
+        // 核心解法：当目标模型为 Claude 时，在流水线层将 responseSchema 剥离，避免触发上游非法的强制工具转译；
+        // 同时将结构化 JSON Schema 约束平滑下沉为提示词指令追加至 contents 用户轮次末尾，
+        // 配合已有出站 unwrap_outer_code_fence_if_structured 机制，实现跨协议、全平台、全 Claude 模型的无感结构化输出。
+        let claude_response_schema = if target_is_claude {
+            canonical_gc.as_mut().and_then(|gc| {
+                let schema = gc
+                    .as_object_mut()
+                    .and_then(|obj| obj.remove("responseSchema"));
+                if schema.is_some() {
+                    gc.as_object_mut().map(|obj| obj.remove("responseMimeType"));
+                }
+                schema
+            })
+        } else {
+            None
+        };
+
+        if let Some(schema) = claude_response_schema.as_ref() {
+            tracing::info!(
+                "[InboundPipeline] Target is Claude model [{}]: downgraded responseSchema to prompt constraint to prevent upstream tool_choice 400 (Fixes #4033)",
+                target_model
+            );
+            let schema_text = format!(
+                "\n\n[OUTPUT INSTRUCTION: You MUST respond ONLY with a valid, raw JSON object conforming strictly to the following JSON Schema. Do NOT include markdown code blocks (```json), commentary, or any text other than the raw JSON object.]\n{}",
+                serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string())
+            );
+
+            if let Some(contents_arr) = canonical_contents.as_array_mut() {
+                let mut injected = false;
+                for content in contents_arr.iter_mut().rev() {
+                    if content.get("role").and_then(|r| r.as_str()) == Some("user") {
+                        if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut())
+                        {
+                            parts.push(json!({ "text": schema_text }));
+                            injected = true;
+                            break;
+                        }
+                    }
+                }
+                if !injected {
+                    contents_arr.push(json!({
+                        "role": "user",
+                        "parts": [{ "text": schema_text }]
+                    }));
+                }
+            }
+        }
+
+        // [Pipeline First] Gemini 上游限制：responseSchema 与 tools / toolConfig 互斥 (Fix #3710, #4033)
+        let has_response_schema = claude_response_schema.is_some()
+            || canonical_gc
+                .as_ref()
+                .and_then(|gc| gc.get("responseSchema"))
+                .is_some();
 
         if has_response_schema && canonical_tools.is_some() {
             tracing::warn!(
@@ -5705,6 +5760,136 @@ mod tests {
             gc.get("thinkingConfig").is_some(),
             "Claude 目标模型当 toolConfig 为 AUTO 时，thinkingConfig 必须正常保留"
         );
+    }
+
+    #[test]
+    fn test_claude_response_schema_degrades_to_prompt_and_suppresses_tools_issue_4033() {
+        // [Fixes #4033] 针对 Claude 族模型 (如 claude-opus-5-5-low)，generationConfig.responseSchema 会被上游
+        // 错误转译为 Anthropic 非法的 tool_choice: { type: "tool" } 并抛出 400。
+        // 流水线必须将其剥离并下沉为提示词约束，同时抑制 tools 和 toolConfig。
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Return a short title and description for 2 + 2."}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "get_example_label", "description": "Return an example label." }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "AUTO"
+                }
+            },
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "description": { "type": "string" }
+                    },
+                    "required": ["title", "description"]
+                },
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 1024
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "claude-opus-5-5-low",
+            None,
+        );
+
+        // 1. tools 与 toolConfig 必须被清空
+        assert!(
+            inner_req.get("tools").is_none(),
+            "tools must be suppressed when structured response is requested"
+        );
+        assert!(
+            inner_req.get("toolConfig").is_none(),
+            "toolConfig must be suppressed when structured response is requested"
+        );
+
+        // 2. 出站 generationConfig 中的 responseSchema 与 responseMimeType 必须被移除，杜绝上游非法工具注入
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        assert!(
+            gc.get("responseSchema").is_none(),
+            "responseSchema must be stripped for Claude to prevent upstream tool_choice 400"
+        );
+        assert!(
+            gc.get("responseMimeType").is_none(),
+            "responseMimeType must be stripped for Claude"
+        );
+        // thinkingConfig 与思考预算必须完整保全
+        assert_eq!(
+            gc["thinkingConfig"]["thinkingBudget"], 1024,
+            "thinkingConfig must be preserved"
+        );
+
+        // 3. Schema 约束必须被平滑下沉至 contents 的用户消息末尾
+        let parts = inner_req["contents"][0]["parts"].as_array().expect("parts");
+        assert_eq!(parts.len(), 2);
+        let injected_instruction = parts[1]["text"].as_str().expect("text");
+        assert!(injected_instruction.contains("[OUTPUT INSTRUCTION:"));
+        assert!(injected_instruction.contains("\"title\""));
+        assert!(injected_instruction.contains("\"description\""));
+    }
+
+    #[test]
+    fn test_gemini_response_schema_strictly_retained_issue_4033() {
+        // [Fixes #4033] 针对 Gemini 原生模型，必须保持原生支持，完整保留 generationConfig 中的 responseSchema 与 responseMimeType
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Return a structured object"}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "search", "description": "search tool" }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" }
+                    }
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "gemini-3.8-flash-high",
+            None,
+        );
+
+        // 1. tools 互斥清除
+        assert!(inner_req.get("tools").is_none());
+
+        // 2. Gemini 原生模型必须严格保留 responseSchema 与 responseMimeType
+        let gc = inner_req.get("generationConfig").expect("generationConfig");
+        assert!(gc.get("responseSchema").is_some());
+        assert_eq!(gc["responseMimeType"], "application/json");
+
+        // 3. contents 不应注入多余提示词
+        let parts = inner_req["contents"][0]["parts"].as_array().expect("parts");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], "Return a structured object");
     }
 
     #[test]

@@ -4,6 +4,9 @@
 
 *   **版本演进**:
     *   **v5.0.5-beta.1 (2026-11-23)**:
+        -   **[Claude 结构化输出降级为 Prompt 约束与 tool_choice 400 冲突自愈] (Fixes #4033, Thanks to @ALight777)**:
+            -   **Claude 目标模型 responseSchema 自动转译为 Prompt 指令**: 解决 Codex CLI 通过 OpenAI 协议 `/v1/responses` 调用 Claude Opus 5.5（开启思考能力）并携带 `text.format` JSON Schema 生成标题与摘要时，上游服务强制合成 `tool_choice: { type: "tool", name: "response_schema" }` 导致 Anthropic 报错 400（`tool_choice: type "tool" and "any" are not supported for this model`）的问题。入站流水线感知到 Claude 目标模型与结构化输出时，自动剥离出站 `responseSchema` 与 `responseMimeType` 并抑制冲突工具，将 JSON Schema 作为严格输出指令注入系统/用户提示词；配合出站层原生的 Markdown 代码块自动剥离，实现 100% 稳定交付合规的纯净 JSON，同时对 Gemini 等原生支持模型完整保留原生 Schema 调用。(Fixes #4033, Thanks to @ALight777)
+            -   **思考与强制工具冲突响应式自愈重试**: 在流式与非流式故障自愈决策层（`policy.rs` & `auto_heal.rs`）扩展上游分类器，精准识别 `tool_choice: type "tool" and "any" are not supported for this model` 报错模式；触发后自动在同账号就地自愈降级（剥离 thinkingConfig 或将 responseSchema 转为 prompt 约束后重试），彻底根除 Codex 与下游客户端的 400 异常。(Fixes #4033, Thanks to @ALight777)
         -   **[Windows + WSL 双开切号联动与远程环境登录状态同步] (Fixes #4030, Thanks to @funzza)**:
             -   **支持 WSL 远程环境凭据同步**: 解决日常开发中同时打开 Windows 本地窗口与 Remote-WSL 远程开发窗口时，切号仅生效于 Windows 宿主机、导致 WSL 远程窗口依然停留在旧账号脱节的问题。在「设置 → 账号设置」中提供「同步更新 WSL 远程环境账号」开关与自定义路径配置；
             -   **运行态探测门禁与跨环境异步安全注入**: 针对 Windows 访问 stopped 状态 WSL 子系统可能导致 I/O 挂起的隐患，引入带 2 秒超时守护的 `wsl.exe` 运行态轻量门禁；在确认处于 running 状态后，通过 UNC 共享路径异步同步写入 WSL 用户下的 `.gemini` 文件凭据与 Remote Server 会话数据库（`state.vscdb`），并向语言服务发送无感重载信号，全程非阻塞后台派发，确保宿主机切号体验丝滑。(Fixes #4030, Thanks to @funzza)
