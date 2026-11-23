@@ -617,7 +617,11 @@
             "auto_switch_gemini": "Gemini Havuzu",
             "auto_switch_gemini_desc": "Pro / Flash / Görsel dahil",
             "auto_switch_third_party": "Üçüncü Taraf Modeller",
-            "auto_switch_third_party_desc": "Claude 3.7 / 3.5 / GPT dahil"
+            "auto_switch_third_party_desc": "Claude 3.7 / 3.5 / GPT dahil",
+            "wsl_sync_enabled": "WSL Uzak Ortam Hesabını Senkronize Et",
+            "wsl_sync_enabled_desc": "Windows ana bilgisayarında hesap değiştirirken OAuth belirteçlerini yerel UNC paylaşılan yolları aracılığıyla otomatik olarak WSL2'ye senkronize eder; Remote-WSL ikili pencere geliştirmesinde hesap uyumsuzluğunu önler.",
+            "wsl_custom_home": "WSL Kullanıcı Ana Dizini (İsteğe Bağlı)",
+            "wsl_custom_home_desc": "Çalışan WSL dağıtımlarını otomatik olarak bulmak için boş bırakın. Veya bir UNC yolu girin, örn.: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "pinned_quota_models": {
             "title": "Sabitlenmiş Kota Modelleri",

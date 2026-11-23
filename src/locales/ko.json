@@ -617,7 +617,11 @@
             "auto_switch_gemini": "Gemini 연산 풀",
             "auto_switch_gemini_desc": "Pro / Flash / 이미지 생성 포함",
             "auto_switch_third_party": "타사 모델 풀",
-            "auto_switch_third_party_desc": "Claude 3.7 / 3.5 / GPT 포함"
+            "auto_switch_third_party_desc": "Claude 3.7 / 3.5 / GPT 포함",
+            "wsl_sync_enabled": "WSL 원격 환경 계정 동기화",
+            "wsl_sync_enabled_desc": "Windows 호스트에서 계정 전환 시 로컬 UNC 공유 경로를 통해 OAuth 토큰을 WSL2 환경으로 자동 동기화하여 Remote-WSL 동시 사용 시의 계정 불일치 문제를 방지합니다。",
+            "wsl_custom_home": "WSL 사용자 홈 디렉터리 (선택 사항)",
+            "wsl_custom_home_desc": "비워 두면 실행 중인 WSL 배포판을 자동으로 검색합니다. 특정 사용자를 지정하려면 UNC 경로를 입력하세요 (예: \\\\wsl.localhost\\Ubuntu\\home\\username)"
         },
         "warmup": {
             "title": "스마트 웜업",

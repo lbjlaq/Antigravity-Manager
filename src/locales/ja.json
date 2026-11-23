@@ -617,7 +617,11 @@
             "auto_switch_gemini": "Gemini プール",
             "auto_switch_gemini_desc": "Pro / Flash / 画像生成を含む",
             "auto_switch_third_party": "サードパーティモデル",
-            "auto_switch_third_party_desc": "Claude 3.7 / 3.5 / GPT を含む"
+            "auto_switch_third_party_desc": "Claude 3.7 / 3.5 / GPT を含む",
+            "wsl_sync_enabled": "WSL リモート環境のアカウントを同期",
+            "wsl_sync_enabled_desc": "Windows ホストでのアカウント切り替え時に、ローカル UNC 共有パス経由でトークンを WSL2 環境へ自動同期し、Remote-WSL の同時起動時におけるアカウント不整合を防止します。",
+            "wsl_custom_home": "WSL ユーザーホームディレクトリ（任意）",
+            "wsl_custom_home_desc": "空欄の場合は実行中の WSL ディストリビューションを自動検出します。特定ユーザーを指定する場合は UNC パスを入力してください（例: \\\\wsl.localhost\\Ubuntu\\home\\username）"
         },
         "warmup": {
             "title": "スマートウォームアップ",

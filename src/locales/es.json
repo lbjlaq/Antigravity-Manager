@@ -617,7 +617,11 @@
             "auto_switch_gemini": "Grupo Gemini",
             "auto_switch_gemini_desc": "Incluye Pro / Flash / Generación de imágenes",
             "auto_switch_third_party": "Modelos de Terceros",
-            "auto_switch_third_party_desc": "Incluye Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "Incluye Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "Sincronizar cuenta del entorno remoto WSL",
+            "wsl_sync_enabled_desc": "Sincroniza automáticamente los tokens OAuth con WSL2 mediante rutas compartidas UNC locales al cambiar de cuenta en el host de Windows, evitando la desincronización de cuentas en el desarrollo con Remote-WSL.",
+            "wsl_custom_home": "Directorio de inicio del usuario de WSL (Opcional)",
+            "wsl_custom_home_desc": "Déjelo vacío para detectar automáticamente las distribuciones de WSL en ejecución. O ingrese una ruta UNC, ej.: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "Calentamiento Inteligente",

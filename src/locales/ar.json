@@ -615,7 +615,11 @@
             "auto_switch_gemini": "مجموعة Gemini",
             "auto_switch_gemini_desc": "يشمل Pro / Flash / توليد الصور",
             "auto_switch_third_party": "نماذج الطرف الثالث",
-            "auto_switch_third_party_desc": "يشمل Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "يشمل Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "مزامنة حساب بيئة WSL البعيدة",
+            "wsl_sync_enabled_desc": "مزامنة رموز OAuth المميزة تلقائيًا مع WSL2 عبر مسارات UNC المشتركة المحلية عند تبديل الحسابات على مضيف Windows، مما يمنع عدم تطابق الحساب أثناء التطوير المزدوج باستخدام Remote-WSL.",
+            "wsl_custom_home": "دليل الصفحة الرئيسية لمستخدم WSL (اختياري)",
+            "wsl_custom_home_desc": "اتركه فارغًا لاكتشاف توزيعات WSL قيد التشغيل تلقائيًا. أو أدخل مسار UNC، على سبيل المثال: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "تنشيط ذكي",

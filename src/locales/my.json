@@ -615,7 +615,11 @@
             "auto_switch_gemini": "Kumpulan Gemini",
             "auto_switch_gemini_desc": "Termasuk Pro / Flash / Penjanaan imej",
             "auto_switch_third_party": "Model Pihak Ketiga",
-            "auto_switch_third_party_desc": "Termasuk Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "Termasuk Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "Sinkronisasi Akaun Persekitaran Jauh WSL",
+            "wsl_sync_enabled_desc": "Menyegerakkan token OAuth secara automatik ke WSL2 melalui laluan perkongsian UNC tempatan semasa menukar akaun pada hos Windows, mengelakkan ketidakpadanan akaun dalam pembangunan tetingkap dwi Remote-WSL.",
+            "wsl_custom_home": "Direktori Utama Pengguna WSL (Pilihan)",
+            "wsl_custom_home_desc": "Biarkan kosong untuk mengesan pengedaran WSL yang sedang berjalan secara automatik. Atau masukkan laluan UNC, cth.: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "Pemanasan Pintar",

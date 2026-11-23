@@ -617,7 +617,11 @@
             "auto_switch_gemini": "Пул Gemini",
             "auto_switch_gemini_desc": "Включает Pro / Flash / генерацию изображений",
             "auto_switch_third_party": "Сторонние модели",
-            "auto_switch_third_party_desc": "Включает Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "Включает Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "Синхронизация аккаунта в удаленной среде WSL",
+            "wsl_sync_enabled_desc": "Автоматически синхронизирует токены OAuth с WSL2 через локальные общие пути UNC при смене аккаунта на хосте Windows, предотвращая рассинхронизацию учетных записей при разработке в Remote-WSL.",
+            "wsl_custom_home": "Домашний каталог пользователя WSL (необязательно)",
+            "wsl_custom_home_desc": "Оставьте пустым для автообнаружения запущенных дистрибутивов WSL. Либо укажите путь UNC, например: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "Умный разогрев",

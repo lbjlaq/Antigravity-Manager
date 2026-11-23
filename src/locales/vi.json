@@ -617,7 +617,11 @@
             "auto_switch_gemini": "Nhóm Gemini",
             "auto_switch_gemini_desc": "Bao gồm Pro / Flash / Tạo ảnh",
             "auto_switch_third_party": "Model bên thứ ba",
-            "auto_switch_third_party_desc": "Bao gồm Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "Bao gồm Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "Đồng bộ tài khoản môi trường từ xa WSL",
+            "wsl_sync_enabled_desc": "Tự động đồng bộ mã token OAuth sang WSL2 qua đường dẫn chia sẻ UNC cục bộ khi chuyển tài khoản trên Windows host, ngăn ngừa lệch tài khoản khi phát triển song song với Remote-WSL.",
+            "wsl_custom_home": "Thư mục Home người dùng WSL (Tùy chọn)",
+            "wsl_custom_home_desc": "Để trống để tự động phát hiện các bản phân phối WSL đang chạy. Hoặc nhập đường dẫn UNC, ví dụ: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "Làm nóng Thông minh (Smart Warmup)",

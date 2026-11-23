@@ -622,6 +622,10 @@
             "auto_switch_gemini_desc": "Inclui Pro / Flash / Geração de imagens",
             "auto_switch_third_party": "Modelos de Terceiros",
             "auto_switch_third_party_desc": "Inclui Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "Sincronizar conta do ambiente remoto WSL",
+            "wsl_sync_enabled_desc": "Sincroniza automaticamente os tokens OAuth com o WSL2 por meio de caminhos compartilhados UNC locais ao alternar de conta no host Windows, evitando a dessincronização de contas no desenvolvimento com Remote-WSL.",
+            "wsl_custom_home": "Diretório inicial do usuário WSL (Opcional)",
+            "wsl_custom_home_desc": "Deixe em branco para detectar automaticamente as distribuições WSL em execução. Ou insira um caminho UNC, ex.: \\\\wsl.localhost\\Ubuntu\\home\\username",
             "email": "E-mail",
             "no_accounts": "Nenhuma conta encontrada"
         },
