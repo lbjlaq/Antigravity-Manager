@@ -4,6 +4,8 @@
 
 *   **版本演进**:
     *   **v5.0.5-beta.1 (2026-11-23)**:
+        -   **[上游 1M 物理上下文硬超限归一化与 Claude 自动压缩解死锁] (Fixes #4024, PR #4027, Thanks to @koeria)**:
+            -   **Anthropic prompt_too_long 规范错误转译**: 解决 Claude Code CLI 使用百万上下文模型（如 `opus[1m]`）长工具链导致请求超过 1,048,576 Token 上限时，网关终态 400 返回通用 `api_error` 与 Gemini 原文导致客户端无法识别、既不触发响应式自动压缩也导致后续 `/compact` 死锁的问题。在错误处理层解析真实超限 Token 数与上限阈值，针对 Claude 协议规范化转译为 `invalid_request_error` 与 `"prompt is too long: {input} tokens > {max} maximum"`，促使 Claude Code 自动触发上下文裁剪压缩，同时保持原生 Gemini 协议原生报文不受侵入。(Fixes #4024, PR #4027, Thanks to @koeria)
         -   **[经典版 2.34.0+ 热切号重定向登录兜底降级完整重启] (Fixes #4026, PR #4028, Thanks to @koeria)**:
             -   **经典版客户端切号版本门控与平滑降级**: 针对 Antigravity 2.34.0 起在运行态下强杀 `language_server` 进行热切号时、主进程 `AuthBootstrap` 将主窗口重定向至 `/onboarding?login=true` 导致热切号失效的问题，在经典版（非 IDE）切号流程中增加版本兼容性门控。切号前探测客户端版本，检测到版本 `>= 2.34.0` 时自动跳过热切号，平滑降级走先彻底终止主进程、干净写入凭据再重新启动客户端的完整重启路径；2.34.0 以下版本与 Antigravity IDE 目标热切号行为保持不变，版本探测失败时保守保持热切号可用。(Fixes #4026, PR #4028, Thanks to @koeria)
         -   **[MAX_TOKENS 正常语义截断透传与流式异常中断精准收敛] (Fixes #4019, PR #4023, Thanks to @koeria)**:
