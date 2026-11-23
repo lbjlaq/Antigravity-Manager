@@ -3,6 +3,16 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.5-beta.1 (2026-11-23)**:
+        -   **[Classic Antigravity >= 2.34.0 Hot Switch Redirect Defense & Graceful Restart Fallback] (Fixes #4026, PR #4028, Thanks to @koeria)**:
+            -   **Version-Gated Hot Switch with Smooth Full-Restart Fallback**: Resolved an issue in standalone classic Antigravity 2.34.0+ where hot switching during runtime (terminating `language_server` via SIGKILL) caused the main process `AuthBootstrap` to redirect the window to `/onboarding?login=true&redirect=...` rather than resuming with updated credentials. Introduced a version compatibility gate for classic desktop targets (`!is_ide`) that detects client version and gracefully falls back to the canonical full restart path (clean process shutdown -> authoritative credential flush -> restart) for versions `>= 2.34.0`; keeps hot switch unchanged for prior versions and Antigravity IDE, with safe fallback when version detection fails. (Fixes #4026, PR #4028, Thanks to @koeria)
+        -   **[MAX_TOKENS Stream Semantic Truncation Preservation] (Fixes #4019, PR #4023, Thanks to @koeria)**:
+            -   **Accurate Stream Truncation Semantics**: Preserved valid `finish_reason: "length"` stream frames from being erroneously treated as abnormal stream failures in the pipeline self-healing layer, preventing redundant continuation retries and preserving original token usage. (Fixes #4019, PR #4023, Thanks to @koeria)
+        -   **[Secondary Monitor Window Geometry Drift & Boundary Clipping Fix] (Fixes #3985, PR #4017, Thanks to @koeria)**:
+            -   **Multi-Monitor Coordinate Alignment**: Fixed window and tray popup positioning issues on secondary displays with non-zero origins and mixed DPI scale factors, eliminating coordinate drift and window clipping. (Fixes #3985, PR #4017, Thanks to @koeria)
+        -   **[Per-Model & Series-Level Account Priority Overrides] (Ref #3879, PR #4011, Thanks to @koeria)**:
+            -   **Fine-Grained Routing Priority**: Added support for overriding account routing priorities per model family or individual model (e.g. `claude-*` / `gemini-*`) to meet dedicated pooling requirements. (Ref #3879, PR #4011, Thanks to @koeria)
+
     *   **v5.0.4-beta.20 (2026-11-21)**:
         -   **[Token Cache Hit Rate Overflow Defense & Financial Inversion Auto-Heal] (PR #4015, Thanks to @cubelikeplayDaniel)**:
             -   **Cross-Protocol Prompt Cache Accounting Normalization**: Resolved an issue under the Anthropic Claude protocol where uncached incremental prompt tokens and cached tokens are reported separately (`input_tokens` vs `cache_read_input_tokens`). When computing hit rates using raw incremental tokens as total input, the rate exceeded 100% (e.g. 108.8%). Implemented non-destructive dynamic healing across `TokenStats`, `AppleBentoView`, and `CyberCockpitView` to restore effective full prompt context (`total_input + cached`), strictly clamping hit rate to `[0, 100%]`. (PR #4015, Thanks to @cubelikeplayDaniel)

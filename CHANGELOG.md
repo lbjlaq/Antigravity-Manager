@@ -3,6 +3,16 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.1 (2026-11-23)**:
+        -   **[经典版 2.34.0+ 热切号重定向登录兜底降级完整重启] (Fixes #4026, PR #4028, Thanks to @koeria)**:
+            -   **经典版客户端切号版本门控与平滑降级**: 针对 Antigravity 2.34.0 起在运行态下强杀 `language_server` 进行热切号时、主进程 `AuthBootstrap` 将主窗口重定向至 `/onboarding?login=true` 导致热切号失效的问题，在经典版（非 IDE）切号流程中增加版本兼容性门控。切号前探测客户端版本，检测到版本 `>= 2.34.0` 时自动跳过热切号，平滑降级走先彻底终止主进程、干净写入凭据再重新启动客户端的完整重启路径；2.34.0 以下版本与 Antigravity IDE 目标热切号行为保持不变，版本探测失败时保守保持热切号可用。(Fixes #4026, PR #4028, Thanks to @koeria)
+        -   **[MAX_TOKENS 正常语义截断透传与流式异常中断精准收敛] (Fixes #4019, PR #4023, Thanks to @koeria)**:
+            -   **语义截断免被误判中断自愈**: 修复 OpenAI 协议流式输出在达到模型最大 Token 上限（`finish_reason: "length"`）时被流水线误判为异常中断并触发无效续写自愈的问题，准确区分自然截断与异常崩溃，保全标准用量与终止状态。(Fixes #4019, PR #4023, Thanks to @koeria)
+        -   **[副显示器多屏窗口坐标偏移与越界裁剪修复] (Fixes #3985, PR #4017, Thanks to @koeria)**:
+            -   **跨屏窗口居中与托盘定位几何矫正**: 彻底解决在多显示器非零原点、不同缩放比排布下，轻量模式窗口与托盘弹窗在副屏唤醒时产生坐标漂移、跑出屏幕或被视口边缘硬截断的问题。(Fixes #3985, PR #4017, Thanks to @koeria)
+        -   **[分模型族与模型级账号优先级独立覆盖] (Ref #3879, PR #4011, Thanks to @koeria)**:
+            -   **细粒度路由权重覆盖配置**: 支持在账号设置中针对特定模型族或单个模型（如 `claude-*` / `gemini-*`）覆盖全局账号优先级，满足混合号池下高阶模型专号专用的精细化调度需求。(Ref #3879, PR #4011, Thanks to @koeria)
+
     *   **v5.0.4-beta.20 (2026-11-21)**:
         -   **[Token 缓存命中率防溢出与核算成本倒挂自愈] (PR #4015, Thanks to @cubelikeplayDaniel)**:
             -   **跨协议 Prompt 缓存记账口径归一化**: 修复在 Anthropic Claude 协议下，上游响应将未命中缓存增量与缓存读取分离（`input_tokens` 与 `cache_read_input_tokens`），导致前端将增量输入直接作为总输入计算时，缓存命中率异常溢出至 100% 以上（如 108.8%）的问题。在 `TokenStats`、`AppleBentoView` 与 `CyberCockpitView` 中引入非破坏性自愈机制，自动恢复有效完整 Prompt 上下文（`total_input + cached`），将命中率严格收敛于 `[0, 100%]`。(PR #4015, Thanks to @cubelikeplayDaniel)
