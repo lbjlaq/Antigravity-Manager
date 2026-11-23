@@ -639,7 +639,7 @@ export default function MiniView() {
             >
                 {/* 3 应用客户端 Tab + 全池胶囊 */}
                 <div
-                    className="flex items-center bg-black/[0.04] dark:bg-white/[0.07] p-0.5 rounded-xl gap-0.5"
+                    className="flex min-w-0 items-center bg-black/[0.04] dark:bg-white/[0.07] p-0.5 rounded-xl gap-0.5"
                     data-tauri-drag-region="false"
                     onMouseDown={(e) => e.stopPropagation()}
                 >
@@ -660,14 +660,14 @@ export default function MiniView() {
                                 }}
                                 title={tab.tooltip}
                                 className={clsx(
-                                    "relative flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] whitespace-nowrap shrink-0 transition-all cursor-pointer outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 select-none",
+                                    "relative flex min-w-0 items-center gap-0.5 px-0.5 py-0.5 rounded-lg text-[11px] transition-all cursor-pointer outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 select-none",
                                     isActive
                                         ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 font-bold shadow-xs border border-black/[0.06] dark:border-white/[0.1]"
                                         : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white font-medium hover:bg-black/[0.02] dark:hover:bg-white/[0.03]"
                                 )}
                             >
                                 <Icon className="w-3.5 h-3.5 shrink-0" />
-                                <span className="shrink-0">{tab.label}</span>
+                                <span className="truncate">{tab.label}</span>
                                 {status && (
                                     <span
                                         className={clsx(
