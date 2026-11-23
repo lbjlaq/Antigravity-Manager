@@ -286,6 +286,7 @@ pub async fn run_headless_server(
     crate::modules::hub_version::update_hub_fingerprint(
         config.proxy.hub_version.as_deref(),
         config.proxy.hub_cl.as_deref(),
+        config.proxy.hub_platform.as_deref(),
     );
 
     // Start proxy service
@@ -687,6 +688,7 @@ pub fn run() {
                     crate::modules::hub_version::update_hub_fingerprint(
                         config.proxy.hub_version.as_deref(),
                         config.proxy.hub_cl.as_deref(),
+                        config.proxy.hub_platform.as_deref(),
                     );
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
                     let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();

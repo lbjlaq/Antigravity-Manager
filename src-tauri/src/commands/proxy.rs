@@ -996,6 +996,22 @@ pub struct HubUpdateStatus {
 /// 因为 CL 无法从任何公开端点获取，自动跟随版本号只会造成版本/CL 不一致。
 #[tauri::command]
 pub async fn check_hub_update() -> HubUpdateStatus {
+    // Linux mirrors the Windows workflow but reads its own release feed.
+    if crate::modules::hub_version::current_hub_platform() == "linux" {
+        let current = crate::modules::hub_version::get_current_hub_fingerprint().version;
+        let latest = crate::modules::hub_version::fetch_latest_linux_hub_version(false).await;
+        let update_available = latest.as_deref().is_some_and(|latest_version| {
+            crate::constants::compare_semver(latest_version, &current)
+                == std::cmp::Ordering::Greater
+        });
+        return HubUpdateStatus {
+            current,
+            latest,
+            update_available,
+        };
+    }
+
+    // Preserve the upstream Windows implementation verbatim.
     let current = crate::constants::OFFICIAL_HUB_VERSION.to_string();
     let latest = crate::modules::hub_version::fetch_remote_hub_release()
         .await
@@ -1154,10 +1170,12 @@ pub fn get_effective_first_byte_timeouts() -> FirstByteTimeouts {
 pub async fn detect_remote_hub_fingerprint(
     custom_version: Option<String>,
     custom_cl: Option<String>,
+    hub_platform: Option<String>,
 ) -> Result<crate::modules::hub_version::HubFingerprint, String> {
     let fp = crate::modules::hub_version::detect_and_update_hub_fingerprint_with(
         custom_version.as_deref(),
         custom_cl.as_deref(),
+        hub_platform.as_deref(),
         true,
     )
     .await;

@@ -92,23 +92,32 @@ pub fn get_official_updater_manifest_url() -> &'static str {
     }
 }
 
-/// 出站指纹固定的平台段：统一采用官方 **Windows x64** 指纹。
-///
-/// 官方三种平台的 Hub 指纹并非完全同构：本次（2026-10-29）实抓的是 Windows 客户端
-/// `os_type=windows; arch=amd64`，不同平台的版本号也可能存在发布节奏差异。
-/// 固定为实抓来源可保证版本号 + CL + 平台段三者同源，不自行拼接跨平台组合。
-/// 修改前请同步校准 `OFFICIAL_HUB_VERSION` / `OFFICIAL_HUB_CL`。
-const HUB_FINGERPRINT_OS: &str = "windows";
-const HUB_FINGERPRINT_ARCH: &str = "amd64";
+/// The Linux release feed is selected only when Linux UA is enabled.
+/// The existing Windows update detection and /releases logic remain unchanged.
+const LINUX_HUB_MANIFEST_URL: &str =
+    "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-x64-linux.yml";
 
-/// 构建官方标准的 Antigravity Hub User-Agent 字符串
-///
-/// 形如: `antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)`
-pub fn build_hub_user_agent(version: &str, cl: &str) -> String {
+/// Read the selected OS from the active Hub fingerprint (without a separate config read).
+pub fn current_hub_platform() -> &'static str {
+    if get_current_hub_user_agent().contains("os_type=linux;") {
+        "linux"
+    } else {
+        "windows"
+    }
+}
+
+/// User-selected UA platform. Windows is the default for backward compatibility.
+fn build_hub_user_agent_for_platform(version: &str, cl: &str, linux: bool) -> String {
+    let os_type = if linux { "linux" } else { "windows" };
     format!(
-        "antigravity/hub/{} (aidev_client; os_type={}; arch={}; cl={})",
-        version, HUB_FINGERPRINT_OS, HUB_FINGERPRINT_ARCH, cl
+        "antigravity/hub/{} (aidev_client; os_type={}; arch=amd64; cl={})",
+        version, os_type, cl
     )
+}
+
+/// Preserve the previous Windows default for existing callers.
+pub fn build_hub_user_agent(version: &str, cl: &str) -> String {
+    build_hub_user_agent_for_platform(version, cl, false)
 }
 
 /// 官方最新发布是否比当前**硬编码基线**更新。
@@ -254,6 +263,55 @@ pub fn parse_hub_version_from_manifest(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Get the latest published Linux Hub version. This is informational: the feed
+/// does not provide a trusted version/CL pair for automatically replacing the UA.
+static LINUX_VERSION_CACHE: Lazy<RwLock<Option<(std::time::Instant, String)>>> =
+    Lazy::new(|| RwLock::new(None));
+
+pub async fn fetch_latest_linux_hub_version(force: bool) -> Option<String> {
+    let cached = LINUX_VERSION_CACHE
+        .read()
+        .ok()
+        .and_then(|cache| cache.clone());
+    if !force {
+        if let Some((fetched_at, version)) = cached.as_ref() {
+            if fetched_at.elapsed() < REMOTE_RELEASE_TTL {
+                return Some(version.clone());
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let result = match client.get(LINUX_HUB_MANIFEST_URL).send().await {
+        Ok(response) if response.status().is_success() => response
+            .text()
+            .await
+            .ok()
+            .and_then(|body| parse_hub_version_from_manifest(&body))
+            .filter(|version| is_valid_hub_version(version)),
+        Ok(response) => {
+            debug!(status = %response.status(), "Linux Hub manifest returned an error");
+            None
+        }
+        Err(e) => {
+            debug!(error = %e, "Linux Hub manifest unreachable");
+            None
+        }
+    };
+    if let Some(version) = result {
+        if let Ok(mut cache) = LINUX_VERSION_CACHE.write() {
+            *cache = Some((std::time::Instant::now(), version.clone()));
+        }
+        return Some(version);
+    }
+
+    // stale-if-error, matching the existing remote Hub version behavior.
+    cached.map(|(_, version)| version)
 }
 
 /// 尝试从官方远程源探测最新 Hub 版本号
@@ -410,7 +468,9 @@ pub fn try_detect_local_hub_version() -> Option<String> {
 pub fn resolve_hub_fingerprint_sync(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
+    hub_platform: Option<&str>,
 ) -> HubFingerprint {
+    let linux = hub_platform == Some("linux");
     let clean_ver = custom_version.map(|s| s.trim()).filter(|s| !s.is_empty());
     let clean_cl = custom_cl.map(|s| s.trim()).filter(|s| !s.is_empty());
 
@@ -419,7 +479,7 @@ pub fn resolve_hub_fingerprint_sync(
         return HubFingerprint {
             version: v.to_string(),
             cl: c.to_string(),
-            user_agent: build_hub_user_agent(v, c),
+            user_agent: build_hub_user_agent_for_platform(v, c, linux),
             source: HubFingerprintSource::Custom,
             latest_remote_version: None,
             update_available: false,
@@ -441,7 +501,7 @@ pub fn resolve_hub_fingerprint_sync(
     HubFingerprint {
         version: OFFICIAL_HUB_VERSION.to_string(),
         cl: OFFICIAL_HUB_CL.to_string(),
-        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
+        user_agent: build_hub_user_agent_for_platform(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL, linux),
         source: HubFingerprintSource::Baseline,
         latest_remote_version: None,
         update_available: false,
@@ -453,19 +513,27 @@ pub fn resolve_hub_fingerprint_sync(
 pub async fn resolve_hub_fingerprint_async(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
+    hub_platform: Option<&str>,
 ) -> HubFingerprint {
-    resolve_hub_fingerprint_async_with(custom_version, custom_cl, false).await
+    resolve_hub_fingerprint_async_with(custom_version, custom_cl, hub_platform, false).await
 }
 
 /// 同上，`force_remote` 为 true 时跳过缓存拉取远程发布源信息
 pub async fn resolve_hub_fingerprint_async_with(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
+    hub_platform: Option<&str>,
     force_remote: bool,
 ) -> HubFingerprint {
+    let linux = hub_platform == Some("linux");
     // 异步探测官方最新远程发布版本，用于状态感知与更新提醒
-    let remote_release = fetch_remote_hub_release_with(force_remote).await;
-    let latest_remote_ver = remote_release.map(|r| r.version);
+    let latest_remote_ver = if linux {
+        fetch_latest_linux_hub_version(force_remote).await
+    } else {
+        fetch_remote_hub_release_with(force_remote)
+            .await
+            .map(|release| release.version)
+    };
 
     // 1. 如果用户显式定义了自定义指纹
     let clean_ver = custom_version.map(|s| s.trim()).filter(|s| !s.is_empty());
@@ -477,14 +545,14 @@ pub async fn resolve_hub_fingerprint_async_with(
         return HubFingerprint {
             version: v.to_string(),
             cl: c.to_string(),
-            user_agent: build_hub_user_agent(v, c),
+            user_agent: build_hub_user_agent_for_platform(v, c, linux),
             source: HubFingerprintSource::Custom,
             latest_remote_version: latest_remote_ver,
             update_available: update_avail,
         };
     }
 
-    // 2. 尝试从本地已安装的客户端提取同源指纹 (带 CL)
+    // Keep the existing local version/CL detection unchanged for both selected platforms.
     if let Some((local_ver, local_cl)) = try_detect_local_hub_fingerprint() {
         let update_avail = latest_remote_ver.as_deref().map_or(false, |latest| {
             crate::constants::compare_semver(latest, &local_ver) == std::cmp::Ordering::Greater
@@ -492,7 +560,7 @@ pub async fn resolve_hub_fingerprint_async_with(
         return HubFingerprint {
             version: local_ver.clone(),
             cl: local_cl.clone(),
-            user_agent: build_hub_user_agent(&local_ver, &local_cl),
+            user_agent: build_hub_user_agent_for_platform(&local_ver, &local_cl, linux),
             source: HubFingerprintSource::Local,
             latest_remote_version: latest_remote_ver,
             update_available: update_avail,
@@ -507,7 +575,7 @@ pub async fn resolve_hub_fingerprint_async_with(
     HubFingerprint {
         version: OFFICIAL_HUB_VERSION.to_string(),
         cl: OFFICIAL_HUB_CL.to_string(),
-        user_agent: build_hub_user_agent(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL),
+        user_agent: build_hub_user_agent_for_platform(OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL, linux),
         source: HubFingerprintSource::Baseline,
         latest_remote_version: latest_remote_ver,
         update_available: update_avail,
@@ -532,8 +600,9 @@ pub fn get_current_hub_user_agent() -> String {
 pub fn update_hub_fingerprint(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
+    hub_platform: Option<&str>,
 ) -> HubFingerprint {
-    let resolved = resolve_hub_fingerprint_sync(custom_version, custom_cl);
+    let resolved = resolve_hub_fingerprint_sync(custom_version, custom_cl, hub_platform);
     info!(
         version = %resolved.version,
         cl = %resolved.cl,
@@ -552,18 +621,21 @@ pub fn update_hub_fingerprint(
 pub async fn detect_and_update_hub_fingerprint(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
+    hub_platform: Option<&str>,
 ) -> HubFingerprint {
-    detect_and_update_hub_fingerprint_with(custom_version, custom_cl, false).await
+    detect_and_update_hub_fingerprint_with(custom_version, custom_cl, hub_platform, false).await
 }
 
 /// 同上，`force_remote = true` 时跳过发布缓存强制拉取（UI「强制探测」按钮）
 pub async fn detect_and_update_hub_fingerprint_with(
     custom_version: Option<&str>,
     custom_cl: Option<&str>,
+    hub_platform: Option<&str>,
     force_remote: bool,
 ) -> HubFingerprint {
     let resolved =
-        resolve_hub_fingerprint_async_with(custom_version, custom_cl, force_remote).await;
+        resolve_hub_fingerprint_async_with(custom_version, custom_cl, hub_platform, force_remote)
+            .await;
     info!(
         version = %resolved.version,
         cl = %resolved.cl,
@@ -596,8 +668,36 @@ mod tests {
     }
 
     #[test]
+    fn test_linux_manifest_feed() {
+        assert!(LINUX_HUB_MANIFEST_URL.ends_with("latest-x64-linux.yml"));
+    }
+
+    #[test]
+    fn test_selected_platform_changes_only_user_agent_os_type() {
+        let linux = resolve_hub_fingerprint_sync(Some("2.33.0"), Some("1023160026"), Some("linux"));
+        let windows = resolve_hub_fingerprint_sync(Some("2.33.0"), Some("1023160026"), None);
+        assert_eq!(linux.version, windows.version);
+        assert_eq!(linux.cl, windows.cl);
+        assert_eq!(linux.source, windows.source);
+        assert!(linux.user_agent.contains("os_type=linux; arch=amd64"));
+        assert!(windows.user_agent.contains("os_type=windows; arch=amd64"));
+
+        let linux_baseline = resolve_hub_fingerprint_sync(None, None, Some("linux"));
+        let windows_baseline = resolve_hub_fingerprint_sync(None, None, None);
+        assert_eq!(linux_baseline.version, windows_baseline.version);
+        assert_eq!(linux_baseline.cl, windows_baseline.cl);
+        assert_eq!(linux_baseline.source, windows_baseline.source);
+        assert!(linux_baseline
+            .user_agent
+            .contains("os_type=linux; arch=amd64"));
+        assert!(windows_baseline
+            .user_agent
+            .contains("os_type=windows; arch=amd64"));
+    }
+
+    #[test]
     fn test_custom_override_takes_precedence() {
-        let fp = resolve_hub_fingerprint_sync(Some("3.0.0"), Some("12345678"));
+        let fp = resolve_hub_fingerprint_sync(Some("3.0.0"), Some("12345678"), None);
         assert_eq!(fp.version, "3.0.0");
         assert_eq!(fp.cl, "12345678");
         assert_eq!(fp.source, HubFingerprintSource::Custom);
@@ -644,13 +744,13 @@ files:
     #[test]
     fn test_unpaired_custom_falls_back_to_calibrated_baseline() {
         // 仅传版本不传 CL，必须回退到基线，绝不产生弗兰肯斯坦指纹
-        let fp = resolve_hub_fingerprint_sync(Some("2.23.1"), None);
+        let fp = resolve_hub_fingerprint_sync(Some("2.23.1"), None, None);
         assert_eq!(fp.version, OFFICIAL_HUB_VERSION);
         assert_eq!(fp.cl, OFFICIAL_HUB_CL);
         assert_eq!(fp.source, HubFingerprintSource::Baseline);
 
         // 仅传 CL 不传版本，同理必须回退到基线
-        let fp_cl_only = resolve_hub_fingerprint_sync(None, Some("99999999"));
+        let fp_cl_only = resolve_hub_fingerprint_sync(None, Some("99999999"), None);
         assert_eq!(fp_cl_only.version, OFFICIAL_HUB_VERSION);
         assert_eq!(fp_cl_only.cl, OFFICIAL_HUB_CL);
         assert_eq!(fp_cl_only.source, HubFingerprintSource::Baseline);
@@ -674,7 +774,7 @@ files:
 
     #[test]
     fn test_baseline_fallback() {
-        let fp = resolve_hub_fingerprint_sync(None, None);
+        let fp = resolve_hub_fingerprint_sync(None, None, None);
         assert_eq!(fp.version, OFFICIAL_HUB_VERSION);
         assert_eq!(fp.cl, OFFICIAL_HUB_CL);
         assert_eq!(fp.source, HubFingerprintSource::Baseline);

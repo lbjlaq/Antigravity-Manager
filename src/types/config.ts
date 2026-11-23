@@ -27,6 +27,7 @@ export interface ProxyConfig {
     saved_user_agent?: string;
     hub_version?: string;
     hub_cl?: string;
+    hub_platform?: 'windows' | 'linux';
     thinking_budget?: ThinkingBudgetConfig;
     global_system_prompt?: GlobalSystemPromptConfig;
     prompt_rewrite?: PromptRewriteConfig;

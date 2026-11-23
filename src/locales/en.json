@@ -1452,7 +1452,11 @@
                 "detect_failed": "Detection failed: {{error}}",
                 "banner_newer_available": "💡 Official Hub v{{latest}} is available. Update your local official client and click \"Detect\" to automatically sync the latest CL.",
                 "version_label": "Hub Version",
-                "cl_label": "Piper Build Number (CL)"
+                "cl_label": "Piper Build Number (CL)",
+                "platform_label": "Client User-Agent Platform",
+                "platform_windows": "Windows x64 (Default, Calibrated)",
+                "platform_linux": "Linux x64 (Optional)",
+                "platform_linux_warning": "Linux checks for the latest version from its own update manifest; actual outbound User-Agent version and CL remain managed by existing custom/local detection rules without stitching unverified versions."
             }
         },
         "stream_timeouts": {

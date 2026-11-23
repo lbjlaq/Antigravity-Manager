@@ -1443,7 +1443,11 @@
                 "detect_failed": "探测失败: {{error}}",
                 "banner_newer_available": "💡 检测到官方 Hub 已发布新版本 v{{latest}}。更新本地官方客户端后点击「动态探测」，可自动提取并同步最新 CL。",
                 "version_label": "Hub 版本号 (Version)",
-                "cl_label": "Piper 构建编号 (CL)"
+                "cl_label": "Piper 构建编号 (CL)",
+                "platform_label": "客户端 User-Agent 平台",
+                "platform_windows": "Windows x64（默认，已校准）",
+                "platform_linux": "Linux x64（可选）",
+                "platform_linux_warning": "Linux 从自己的更新清单检查最新版本；实际 User-Agent 的版本与 CL 仍按现有自定义/本地探测规则管理，不会拼接尚未匹配的最新版本。"
             }
         },
         "stream_timeouts": {

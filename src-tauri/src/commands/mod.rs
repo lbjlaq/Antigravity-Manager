@@ -570,6 +570,7 @@ pub async fn save_config(
     crate::modules::hub_version::update_hub_fingerprint(
         config.proxy.hub_version.as_deref(),
         config.proxy.hub_cl.as_deref(),
+        config.proxy.hub_platform.as_deref(),
     );
     crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
     crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());

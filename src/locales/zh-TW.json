@@ -1363,7 +1363,11 @@
                 "detect_success": "已成功探測並同步官方最新 Hub: v{{version}} (CL: {{cl}})",
                 "detect_failed": "探測失敗: {{error}}",
                 "version_label": "Hub 版本號 (Version)",
-                "cl_label": "Piper 構建編號 (CL)"
+                "cl_label": "Piper 構建編號 (CL)",
+                "platform_label": "用戶端 User-Agent 平台",
+                "platform_windows": "Windows x64（預設，已校準）",
+                "platform_linux": "Linux x64（可選）",
+                "platform_linux_warning": "Linux 從自己的更新清單檢查最新版本；實際 User-Agent 的版本與 CL 仍按現有自訂/本地探測規則管理，不會拼接尚未匹配的最新版本。"
             }
         },
         "stream_timeouts": {

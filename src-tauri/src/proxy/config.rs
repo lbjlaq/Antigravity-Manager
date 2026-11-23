@@ -1387,6 +1387,11 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub hub_cl: Option<String>,
 
+    /// Hub User-Agent platform: "windows" (default) or "linux".
+    /// Both platforms use the same existing Hub version/CL selection logic.
+    #[serde(default)]
+    pub hub_platform: Option<String>,
+
     /// 账号调度配置 (粘性会话/限流重试)
     #[serde(default)]
     pub scheduling: crate::proxy::sticky_config::StickySessionConfig,
@@ -1613,6 +1618,7 @@ impl Default for ProxyConfig {
             user_agent_override: None,
             hub_version: None,
             hub_cl: None,
+            hub_platform: None,
             saved_user_agent: None,
             thinking_budget: ThinkingBudgetConfig::default(),
             global_system_prompt: GlobalSystemPromptConfig::default(),

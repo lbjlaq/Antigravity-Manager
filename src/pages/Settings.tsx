@@ -254,6 +254,7 @@ function Settings() {
             const fp = await invoke<HubFingerprint>('detect_remote_hub_fingerprint', {
                 customVersion: formData.proxy?.hub_version || null,
                 customCl: formData.proxy?.hub_cl || null,
+                hubPlatform: formData.proxy?.hub_platform || 'windows',
             });
             setHubFingerprint(fp);
 
@@ -1573,6 +1574,36 @@ function Settings() {
                                         >
                                             {copiedHubUa ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
                                         </button>
+                                    </div>
+
+                                    {/* Upstream Hub UA platform: preserve Windows default, opt in to Linux. */}
+                                    <div className="mb-3">
+                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                            {t('proxy.config.hub.platform_label', { defaultValue: '客户端 User-Agent 平台' })}
+                                        </label>
+                                        <select
+                                            value={formData.proxy?.hub_platform || 'windows'}
+                                            onChange={(e) => {
+                                                setFormData({
+                                                    ...formData,
+                                                    proxy: {
+                                                        ...formData.proxy,
+                                                        hub_platform: e.target.value as 'windows' | 'linux',
+                                                    }
+                                                });
+                                            }}
+                                            className="w-full px-3 py-2 border border-gray-200 dark:border-base-300 rounded-lg bg-gray-50 dark:bg-base-200 text-sm text-gray-900 dark:text-base-content focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <option value="windows">{t('proxy.config.hub.platform_windows', { defaultValue: 'Windows x64（默认，已校准）' })}</option>
+                                            <option value="linux">{t('proxy.config.hub.platform_linux', { defaultValue: 'Linux x64（可选）' })}</option>
+                                        </select>
+                                        {formData.proxy?.hub_platform === 'linux' && (
+                                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5">
+                                                {t('proxy.config.hub.platform_linux_warning', {
+                                                    defaultValue: 'Linux 从自己的更新清单检查最新版本；实际 User-Agent 的版本与 CL 仍按现有自定义/本地探测规则管理，不会拼接尚未匹配的最新版本。'
+                                                })}
+                                            </p>
+                                        )}
                                     </div>
 
                                     {/* Hub Version & CL 自定义输入框 */}
