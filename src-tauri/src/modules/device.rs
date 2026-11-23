@@ -531,4 +531,165 @@ mod tests {
         assert_eq!(read_back.machine_id, "machine-auto");
         assert_eq!(read_back.dev_device_id, "dev-auto");
     }
+
+    #[test]
+    fn test_sync_classic_app_storage_onboarding() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app_storage = tmp.path().join("app_storage.json");
+        std::fs::write(&app_storage, r#"{"existing_key": "val"}"#).unwrap();
+
+        let email = "test_onboarding@example.com";
+        let is_gcp_tos = false;
+        let tos_str = if is_gcp_tos { "true" } else { "false" };
+
+        let mut data: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(&app_storage).unwrap()).unwrap();
+        data.insert(
+            "agy.onboarding.lastLoginUsername".to_string(),
+            serde_json::json!(email),
+        );
+        data.insert(
+            "agy.onboarding.lastLoginIsGcpTos".to_string(),
+            serde_json::json!(tos_str),
+        );
+        data.insert(
+            "jetski.onboarding.lastLoginUsername".to_string(),
+            serde_json::json!(email),
+        );
+        data.insert(
+            "jetski.onboarding.lastLoginIsGcpTos".to_string(),
+            serde_json::json!(tos_str),
+        );
+        data.insert(
+            "ide-install-wizard-shown".to_string(),
+            serde_json::json!("true"),
+        );
+
+        std::fs::write(&app_storage, serde_json::to_string_pretty(&data).unwrap()).unwrap();
+
+        let read_back: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(&app_storage).unwrap()).unwrap();
+        assert_eq!(
+            read_back
+                .get("agy.onboarding.lastLoginUsername")
+                .and_then(|v| v.as_str()),
+            Some(email)
+        );
+        assert_eq!(
+            read_back
+                .get("agy.onboarding.lastLoginIsGcpTos")
+                .and_then(|v| v.as_str()),
+            Some("false")
+        );
+        assert_eq!(
+            read_back.get("existing_key").and_then(|v| v.as_str()),
+            Some("val")
+        );
+    }
+}
+
+/// 获取 Electron 经典版全局持久化配置 (app_storage.json) 的候选路径
+pub fn get_app_storage_candidate_paths(target_ide: Option<&str>) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    // 1) --user-data-dir flag
+    if let Some(user_data_dir) = process::get_user_data_dir_from_process(target_ide) {
+        paths.push(user_data_dir.join("app_storage.json"));
+    }
+
+    // 2) Portable mode (based on executable data/user-data)
+    if let Some(exe_path) = process::get_antigravity_executable_path(target_ide) {
+        if let Some(parent) = exe_path.parent() {
+            paths.push(
+                parent
+                    .join("data")
+                    .join("user-data")
+                    .join("app_storage.json"),
+            );
+        }
+    }
+
+    let folder_names: &[&str] = if target_ide == Some("ide") {
+        &["Antigravity IDE", "antigravity-ide", "AntigravityIDE"]
+    } else {
+        &["Antigravity", "antigravity"]
+    };
+
+    #[cfg(target_os = "macos")]
+    if let Some(home) = dirs::home_dir() {
+        for folder_name in folder_names {
+            paths.push(home.join(format!(
+                "Library/Application Support/{}/app_storage.json",
+                folder_name
+            )));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(app_data) = dirs::data_dir() {
+        for folder_name in folder_names {
+            paths.push(app_data.join(format!("{}/app_storage.json", folder_name)));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(config_dir) = dirs::config_dir() {
+        for folder_name in folder_names {
+            paths.push(config_dir.join(format!("{}/app_storage.json", folder_name)));
+        }
+    }
+
+    paths
+}
+
+/// 同步 Electron 经典版专属全局持久化配置 (app_storage.json) 中的用户协议与条款状态，
+/// 消除切号后弹出“One last thing before getting started... / Terms of Service”二次确认卡片 (Fixes #4026)
+pub fn sync_classic_app_storage_onboarding(
+    target_ide: Option<&str>,
+    email: &str,
+    is_gcp_tos: bool,
+) {
+    let candidate_paths = get_app_storage_candidate_paths(target_ide);
+    let tos_str = if is_gcp_tos { "true" } else { "false" };
+
+    for path in candidate_paths {
+        if !path.exists() {
+            continue;
+        }
+
+        let mut data: serde_json::Map<String, serde_json::Value> =
+            match std::fs::read_to_string(&path) {
+                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                Err(_) => continue,
+            };
+
+        data.insert(
+            "agy.onboarding.lastLoginUsername".to_string(),
+            serde_json::json!(email),
+        );
+        data.insert(
+            "agy.onboarding.lastLoginIsGcpTos".to_string(),
+            serde_json::json!(tos_str),
+        );
+        data.insert(
+            "jetski.onboarding.lastLoginUsername".to_string(),
+            serde_json::json!(email),
+        );
+        data.insert(
+            "jetski.onboarding.lastLoginIsGcpTos".to_string(),
+            serde_json::json!(tos_str),
+        );
+        data.insert(
+            "ide-install-wizard-shown".to_string(),
+            serde_json::json!("true"),
+        );
+
+        if let Ok(new_content) = serde_json::to_string_pretty(&data) {
+            let _ = std::fs::write(&path, new_content);
+            crate::modules::logger::log_info(&format!(
+                "[Desktop] Synchronized onboarding state in {:?} for {}",
+                path, email
+            ));
+        }
+    }
 }

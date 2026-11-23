@@ -138,6 +138,14 @@ fn apply_account_credentials(
             let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
         }
 
+        // 1.2.1 同步 Electron 经典版/IDE 全局持久化配置 (app_storage.json) 中的条款与协议状态，
+        // 彻底消除切号后弹出“One last thing before getting started... / Terms of Service”二次确认卡片 (Fixes #4026)
+        device::sync_classic_app_storage_onboarding(
+            effective_target,
+            &account.email,
+            account.token.is_gcp_tos,
+        );
+
         // 1.3 同步写入系统 Keyring (针对 IDE 2.6.0+ agy 后台语言服务鉴权真理源)
         if let Err(keyring_err) = write_to_system_keyring(account) {
             crate::modules::logger::log_warn(&format!(
@@ -210,6 +218,14 @@ fn apply_account_credentials(
             let _ = device::write_profile(&storage_path, profile);
         }
     }
+
+    // 2.1.1 同步 Electron 经典版专属全局持久化配置 (app_storage.json) 中的条款与协议状态，
+    // 彻底消除切号后弹出“One last thing before getting started... / Terms of Service”二次确认卡片 (Fixes #4026)
+    device::sync_classic_app_storage_onboarding(
+        effective_target,
+        &account.email,
+        account.token.is_gcp_tos,
+    );
 
     // 2.2 双写同步：若经典版存储路径下存在 SQLite state.vscdb，执行数据库 Token 注入
     // 确保原生桌面端与扩展会话状态在所有 Antigravity 变体中保持严格一致 (Fixes #3829)
@@ -416,6 +432,7 @@ impl SystemIntegration for DesktopIntegration {
         let running = process::is_antigravity_running(effective_target);
         let mut hot_switch = false;
         let mut credentials_applied = false;
+        let mut killed_subprocesses = Vec::new();
 
         // 只要目标客户端正在运行，统一优先尝试无感热切号
         if running {
@@ -438,9 +455,11 @@ impl SystemIntegration for DesktopIntegration {
             // 此验证不阻塞 macOS/Windows（它们的凭据路径始终同步可用）。
             ensure_file_credentials_flushed(account);
 
-            match process::kill_language_server_subprocesses(effective_target) {
-                Ok(n) if n > 0 => {
+            match process::kill_language_server_subprocesses_and_get_pids(effective_target) {
+                Ok(pids) if !pids.is_empty() => {
                     hot_switch = true;
+                    let n = pids.len();
+                    killed_subprocesses = pids;
                     crate::modules::logger::log_info(&format!(
                         "[Desktop] Hot switch: terminated {} language_server/agy subprocess(es) for {:?}; \
                          main window kept alive, supervisor will respawn the child with the new credentials.",
@@ -508,7 +527,11 @@ impl SystemIntegration for DesktopIntegration {
         //    热切号路径下主窗口仍然存活：只需等 supervisor 把 language_server 拉起即可，
         //    绝不能再去启动一次主窗口（否则会变成双实例）。
         if hot_switch {
-            if process::wait_for_language_server_respawn(effective_target, 15) {
+            if process::wait_for_language_server_respawn_excluding(
+                effective_target,
+                15,
+                &killed_subprocesses,
+            ) {
                 crate::modules::logger::log_info(&format!(
                     "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
                     account.email
