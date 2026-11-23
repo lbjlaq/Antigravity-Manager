@@ -1079,8 +1079,147 @@ fn write_to_file_credentials(
         Some(h) => h,
         None => return Err("Failed to resolve user home directory".to_string()),
     };
-    write_to_file_credentials_to_dir(&home.join(".gemini"), account, sync_agy_cli)
+    write_to_file_credentials_to_dir(&home.join(".gemini"), account, sync_agy_cli)?;
+    // 当 Antigravity 客户端连接了 WSL 远程环境时，agy 语言服务运行在 WSL 文件系统内，
+    // 从 WSL 侧的 ~/.gemini 读取凭据，仅写 Windows 侧永远无法生效（issue #4032）。
+    sync_credentials_to_wsl(account);
+    Ok(())
 }
+
+/// 将文件级凭据镜像同步到所有正在运行的 WSL 发行版（issue #4032）。
+///
+/// 客户端连接 WSL 远程时，语言服务/agy 运行在 WSL 内部，读取的是 WSL 家目录下的
+/// ~/.gemini 凭据文件。这里把刚刚写好的 Windows 侧文件逐一通过 `wsl.exe` 写入每个
+/// 运行中的发行版，并终止 WSL 侧 language_server，让远程端以新凭据重建会话
+/// （与 Windows 侧热切号/完整重启的语义一致）。整体 best-effort：任何失败仅记录日志。
+#[cfg(target_os = "windows")]
+fn sync_credentials_to_wsl(account: &crate::models::Account) {
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::Stdio;
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let gemini_dir = home.join(".gemini");
+    let candidates = [
+        PathBuf::from("jetski-standalone-oauth-token"),
+        PathBuf::from("oauth_creds.json"),
+        PathBuf::from("google_accounts.json"),
+        PathBuf::from("antigravity-cli").join("antigravity-oauth-token"),
+    ];
+
+    // 以本地磁盘刚写入的内容为准，保证 WSL 侧与 Windows 侧完全一致
+    let mut payload: Vec<(String, String)> = Vec::new();
+    for rel in &candidates {
+        let path = gemini_dir.join(rel);
+        if let Ok(content) = fs::read_to_string(&path) {
+            payload.push((rel.to_string_lossy().replace('\\', "/"), content));
+        }
+    }
+    if payload.is_empty() {
+        return;
+    }
+
+    // wsl.exe 在 Windows 上输出 UTF-16LE，需要按 UTF-16 解码
+    let output = match std::process::Command::new("wsl.exe")
+        .args(["--list", "--quiet", "--running"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+    let utf16: Vec<u16> = output
+        .stdout
+        .chunks(2)
+        .map(|c| u16::from_le_bytes([c[0], c.get(1).copied().unwrap_or(0)]))
+        .collect();
+    let text = String::from_utf16_lossy(&utf16);
+    let distros: Vec<String> = text
+        .lines()
+        .map(|line| line.trim_matches('\u{0}').trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    if distros.is_empty() {
+        return;
+    }
+
+    crate::modules::logger::log_info(&format!(
+        "[WSL] Syncing switched credentials for {} into {} running WSL distribution(s).",
+        account.email,
+        distros.len()
+    ));
+
+    for distro in &distros {
+        for (rel, content) in &payload {
+            let script = format!(
+                "mkdir -p \"$HOME/.gemini\" && umask 077 && cat > \"$HOME/.gemini/{}\" && chmod 600 \"$HOME/.gemini/{}\"",
+                rel, rel
+            );
+            // antigravity-cli/antigravity-oauth-token 需要先建立子目录
+            if let Some(idx) = rel.rfind('/') {
+                let sub = &rel[..idx];
+                let _ = std::process::Command::new("wsl.exe")
+                    .args([
+                        "-d", distro, "--exec", "sh", "-c",
+                        &format!("mkdir -p \"$HOME/.gemini/{}\"", sub),
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+
+            let mut child = match std::process::Command::new("wsl.exe")
+                .args(["-d", distro, "--exec", "sh", "-c", &script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[WSL] Failed to launch wsl.exe for distribution '{}': {}",
+                        distro, e
+                    ));
+                    continue;
+                }
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(content.as_bytes());
+            }
+            match child.wait() {
+                Ok(status) if status.success() => {
+                    crate::modules::logger::log_info(&format!(
+                        "[WSL] Synced ~/.gemini/{} into distribution '{}'.",
+                        rel, distro
+                    ));
+                }
+                _ => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[WSL] Failed to sync ~/.gemini/{} into distribution '{}'.",
+                        rel, distro
+                    ));
+                }
+            }
+        }
+
+        // 终止 WSL 侧 language_server，让远程端 supervisor 以新凭据重新拉起（best-effort）
+        let _ = std::process::Command::new("wsl.exe")
+            .args([
+                "-d", distro, "--exec", "sh", "-c",
+                "pkill -f language_server || true",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// 非 Windows 平台无 WSL 场景，恒为空操作
+#[cfg(not(target_os = "windows"))]
+fn sync_credentials_to_wsl(_account: &crate::models::Account) {}
 
 /// 辅助方法：从指定目录的本地文件凭据读取 Token 作为跨平台回退
 fn read_from_file_credentials_from_dir(
