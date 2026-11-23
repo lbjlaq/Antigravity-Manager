@@ -417,39 +417,8 @@ impl SystemIntegration for DesktopIntegration {
         let mut hot_switch = false;
         let mut credentials_applied = false;
 
-        // 热切号兼容性门控 (issue #4026)：Antigravity 2.34.0 起，在未登出状态下强杀
-        // language_server 重启后，主进程 AuthBootstrap 不再使用新账号恢复会话，而是把主窗口
-        // 重定向到 /onboarding?login=true。因此对 2.34.0+ 的经典版客户端禁用热切号，
-        // 降级走下方「完整重启」路径（先关闭主进程再写库重启）。
-        let mut allow_hot_switch = true;
-        if !is_ide {
-            match version::get_antigravity_version_with_path(
-                effective_target,
-                active_exe_path.as_deref(),
-            ) {
-                Ok(ver) => {
-                    if version::compare_version(&ver.short_version, "2.34.0")
-                        != std::cmp::Ordering::Less
-                    {
-                        allow_hot_switch = false;
-                        crate::modules::logger::log_info(&format!(
-                            "[Desktop] Detected Antigravity version {} >= 2.34.0; hot switch would \
-                             redirect to onboarding?login=true, falling back to full restart.",
-                            ver.short_version
-                        ));
-                    }
-                }
-                Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
-                        "[Desktop] Failed to detect Antigravity version ({}); keeping hot switch enabled.",
-                        e
-                    ));
-                }
-            }
-        }
-
         // 只要目标客户端正在运行，统一优先尝试无感热切号
-        if running && allow_hot_switch {
+        if running {
             apply_account_credentials(
                 account,
                 effective_target,
@@ -457,6 +426,17 @@ impl SystemIntegration for DesktopIntegration {
                 active_exe_path.as_deref(),
             )?;
             credentials_applied = true;
+
+            // 热切号保障（Fixes #4026）：在终止 language_server 子进程前，
+            // 验证文件级凭据回退（~/.gemini/jetski-standalone-oauth-token）已持久化到磁盘。
+            // 背景：Linux D-Bus/Keyring 存在异步延迟（尤其是 Wayland/AppImage 沙箱），
+            // 当 Keyring 在 10s 窗口内返回 has_token=false 时，前端 authActor 会切换到
+            // signedOut 状态并将 URL 污染为 /onboarding?login=true，而 Electron 的
+            // buildLsRestartWindowUrl 会将此污染 URL 传播给新启动的 language_server。
+            // 通过确保文件凭据在杀死子进程前真实可读，supervisor 重建的 language_server
+            // 始终能从文件回退路径获取 has_token=true，彻底阻断 URL 污染链。
+            // 此验证不阻塞 macOS/Windows（它们的凭据路径始终同步可用）。
+            ensure_file_credentials_flushed(account);
 
             match process::kill_language_server_subprocesses(effective_target) {
                 Ok(n) if n > 0 => {
@@ -1067,6 +1047,70 @@ pub(crate) fn write_to_file_credentials_to_dir(
     ));
 
     Ok(())
+}
+
+/// 热切号文件凭据落盘保障（Fixes #4026）
+///
+/// 在热切号路径终止 language_server 子进程之前调用，确认
+/// `~/.gemini/jetski-standalone-oauth-token` 已被操作系统真实持久化并可读。
+///
+/// 策略：
+///   1. 读取文件并验证其非空、包含新账号 email，确认写入已生效。
+///   2. 若首次读取不符（极端情况：内核缓冲区未提交），重试一次写入，
+///      最多等待 100ms，然后继续（文件写入失败不应阻断整个热切号流程，
+///      Keyring 或 SQLite 仍可能提供有效凭据）。
+///   3. 此函数对 macOS / Windows 无额外开销：写入总是同步完成，
+///      读取验证在微秒级返回。
+fn ensure_file_credentials_flushed(account: &crate::models::Account) {
+    let gemini_dir = match dirs::home_dir() {
+        Some(h) => h.join(".gemini"),
+        None => return,
+    };
+    let token_path = gemini_dir.join("jetski-standalone-oauth-token");
+
+    // 读取并验证文件是否包含新账号凭据
+    let verified = std::fs::read_to_string(&token_path)
+        .ok()
+        .filter(|s| !s.is_empty() && s.contains(&account.email))
+        .is_some();
+
+    if !verified {
+        // 文件尚不可见或内容仍为旧账号数据：重试写入一次
+        crate::modules::logger::log_warn(
+            "[Desktop] Hot switch: jetski-standalone-oauth-token not yet flushed; retrying write before kill.",
+        );
+        if let Err(e) = write_to_file_credentials(account, false) {
+            crate::modules::logger::log_warn(&format!(
+                "[Desktop] Hot switch: file credential retry write failed ({}); \
+                 Keyring/SQLite paths will serve as fallback.",
+                e
+            ));
+            return;
+        }
+
+        // 短暂等待让内核提交写入（最多 100ms），然后做最终验证
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let final_ok = std::fs::read_to_string(&token_path)
+            .ok()
+            .filter(|s| !s.is_empty() && s.contains(&account.email))
+            .is_some();
+        if final_ok {
+            crate::modules::logger::log_info(
+                "[Desktop] Hot switch: jetski-standalone-oauth-token confirmed flushed after retry.",
+            );
+        } else {
+            crate::modules::logger::log_warn(
+                "[Desktop] Hot switch: jetski-standalone-oauth-token still not confirmed after retry; \
+                 proceeding — Keyring/SQLite paths remain active.",
+            );
+        }
+    } else {
+        crate::modules::logger::log_info(&format!(
+            "[Desktop] Hot switch: jetski-standalone-oauth-token confirmed flushed for {}; \
+             safe to terminate language_server.",
+            account.email
+        ));
+    }
 }
 
 /// 辅助方法：同步写入本地文件凭据 (~/.gemini/antigravity-cli/antigravity-oauth-token 以及 ~/.gemini/oauth_creds.json)

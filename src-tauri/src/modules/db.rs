@@ -192,6 +192,41 @@ fn inject_new_format(
 
     let mut topic =
         protobuf::remove_unified_topic_entry(&current_topic, "oauthTokenInfoSentinelKey")?;
+    topic = protobuf::remove_unified_topic_entry(&topic, "authStateWithContextSentinelKey")?;
+
+    // 1. 同步注入 authStateWithContextSentinelKey (JSON 状态对象)
+    // 关键修复（Fixes #4026）：Antigravity 前端通过该键读取当前会话状态。若切号时仅更新 protobuf 的
+    // oauthTokenInfoSentinelKey，前端会继续沿用旧账号的 JSON 状态与 Token，在重新校验时跌入
+    // signedOut 状态并重定向至 /onboarding?login=true。
+    // 在此注入最新账号的 signedIn 状态、对应 project 与 Token，实现两端状态原子一致。
+    let expiry_ms = if expiry > 10_000_000_000 {
+        expiry
+    } else {
+        expiry * 1000
+    };
+    let project_str = project_id.unwrap_or("aicode-consumers");
+    let auth_state_json = serde_json::json!({
+        "state": "signedIn",
+        "context": {
+            "project": project_str,
+            "showProjectError": false,
+            "errorMessage": "",
+            "ineligibleMessage": ""
+        },
+        "token": {
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+            "expiry": expiry_ms
+        }
+    });
+    if let Ok(auth_state_bytes) = serde_json::to_vec(&auth_state_json) {
+        topic.extend(protobuf::create_unified_raw_topic_entry(
+            "authStateWithContextSentinelKey",
+            &auth_state_bytes,
+        ));
+    }
+
+    // 2. 注入 oauthTokenInfoSentinelKey (protobuf 结构体)
     topic.extend(protobuf::create_unified_topic_entry(
         "oauthTokenInfoSentinelKey",
         &oauth_info,
@@ -206,6 +241,24 @@ fn inject_new_format(
     .map_err(|e| format!("Failed to write new format: {}", e))?;
 
     inject_user_status(&conn, email)?;
+
+    // 同步更新 cloudcode.userState，保持扩展层用户邮箱与登录态完全对齐
+    let cloudcode_state = serde_json::json!({
+        "state": "signedIn",
+        "context": {
+            "project": project_id.unwrap_or(""),
+            "showProjectError": false,
+            "errorMessage": ""
+        },
+        "user": {
+            "email": email,
+            "name": email
+        }
+    });
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+        ["cloudcode.userState", &cloudcode_state.to_string()],
+    );
 
     if let Some(project_id) = project_id.map(str::trim).filter(|pid| !pid.is_empty()) {
         inject_enterprise_project_preference(&conn, project_id)?;

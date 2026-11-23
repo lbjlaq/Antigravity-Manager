@@ -476,6 +476,17 @@ pub fn create_unified_topic_entry(sentinel_key: &str, payload: &[u8]) -> Vec<u8>
     encode_len_delim_field(1, &entry)
 }
 
+/// 创建未经过 base64 编码的原始 unified-state Topic.data entry（供 authStateWithContextSentinelKey 等原生 JSON 载荷使用）
+pub fn create_unified_raw_topic_entry(sentinel_key: &str, raw_payload: &[u8]) -> Vec<u8> {
+    let row = encode_len_delim_field(1, raw_payload);
+    let entry = [
+        encode_string_field(1, sentinel_key),
+        encode_len_delim_field(2, &row),
+    ]
+    .concat();
+    encode_len_delim_field(1, &entry)
+}
+
 /// 从 Topic.data 中移除指定 map entry，保留同 topic 下其他 sentinel row。
 pub fn remove_unified_topic_entry(data: &[u8], target_key: &str) -> Result<Vec<u8>, String> {
     let mut result = Vec::new();
@@ -529,4 +540,28 @@ fn unified_topic_entry_key(data: &[u8]) -> Option<&str> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unified_raw_topic_entry_roundtrip() {
+        let sentinel_key = "authStateWithContextSentinelKey";
+        let raw_json = br#"{"state":"signedIn","context":{"project":"test-project"}}"#;
+        let entry = create_unified_raw_topic_entry(sentinel_key, raw_json);
+
+        // Verify key extraction
+        let offset = 0;
+        let (tag, new_offset) = read_varint(&entry, offset).unwrap();
+        assert_eq!((tag >> 3), 1);
+        let (len, content_offset) = read_varint(&entry, new_offset).unwrap();
+        let sub = &entry[content_offset..content_offset + len as usize];
+        assert_eq!(unified_topic_entry_key(sub), Some(sentinel_key));
+
+        // Verify remove
+        let removed = remove_unified_topic_entry(&entry, sentinel_key).unwrap();
+        assert!(removed.is_empty());
+    }
 }
