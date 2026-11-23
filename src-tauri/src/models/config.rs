@@ -60,6 +60,12 @@ pub struct AppConfig {
     pub classic_auto_switch: ClassicAutoSwitchConfig, // [NEW] 经典款配额自动热切换配置
     #[serde(default = "default_tray_click_action")]
     pub tray_click_action: String, // [NEW] 托盘左键点击行为: "mini" | "main"
+    /// 同步更新 WSL 远程环境账号登录状态
+    #[serde(default)]
+    pub wsl_sync_enabled: bool,
+    /// 自定义 WSL 用户主目录路径（例如 \\wsl.localhost\Ubuntu\home\myuser）
+    #[serde(default)]
+    pub wsl_custom_home: Option<String>,
 }
 
 fn default_tray_click_action() -> String {
@@ -297,6 +303,8 @@ impl AppConfig {
             auto_switch_classic_depleted: false,
             classic_auto_switch: ClassicAutoSwitchConfig::default(),
             tray_click_action: default_tray_click_action(),
+            wsl_sync_enabled: false,
+            wsl_custom_home: None,
         }
     }
 }

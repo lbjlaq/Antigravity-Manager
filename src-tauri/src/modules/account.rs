@@ -3651,6 +3651,10 @@ pub async fn switch_account(
     account.update_last_used();
     save_account(&account)?;
 
+    // 5. 跨环境凭据同步：Windows 宿主机切号完成后，异步触发 WSL 环境同步（若已启用）
+    #[cfg(target_os = "windows")]
+    crate::modules::wsl_sync::sync_account_to_wsl(&account);
+
     crate::modules::logger::log_info(&format!(
         "Account switch core logic completed: {}",
         account.email

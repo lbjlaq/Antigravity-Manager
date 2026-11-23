@@ -721,7 +721,11 @@
             "auto_switch_gemini": "Gemini 算力池",
             "auto_switch_gemini_desc": "包含 Pro / Flash / 绘图",
             "auto_switch_third_party": "第三方模型池",
-            "auto_switch_third_party_desc": "包含 Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "包含 Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "同步更新 WSL 远程环境账号",
+            "wsl_sync_enabled_desc": "在 Windows 宿主机切换账号时，通过本地 UNC 共享路径自动将 Token 同步至 WSL2 环境，解决 Remote-WSL 双开时远程窗口账号脱节问题。",
+            "wsl_custom_home": "WSL 用户主目录路径（可选）",
+            "wsl_custom_home_desc": "留空则自动探测运行中的 WSL 分发版。如需指定特定用户，请输入 UNC 路径，例如：\\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "7天周配额智能预热",

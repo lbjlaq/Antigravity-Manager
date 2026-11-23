@@ -1,5 +1,5 @@
 import { useState, useEffect, startTransition } from 'react';
-import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, Copy, Check, ShieldAlert } from 'lucide-react';
+import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, Copy, Check, ShieldAlert, Terminal } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -110,6 +110,8 @@ function Settings() {
             backoff_steps: [60, 300, 1800, 7200]
         },
         hidden_menu_items: [],  // 菜单显示设置：默认不隐藏任何菜单项
+        wsl_sync_enabled: false,
+        wsl_custom_home: '',
 
     });
 
@@ -1251,6 +1253,71 @@ function Settings() {
                                         }
                                     }}
                                 />
+                            </div>
+
+                            {/* WSL 远程环境账号同步 */}
+                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-teal-200 transition-all duration-300 shadow-sm">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-900/20 flex items-center justify-center text-teal-600 dark:text-teal-400 group-hover:bg-teal-500 group-hover:text-white transition-all duration-300">
+                                            <Terminal size={20} />
+                                        </div>
+                                        <div>
+                                            <div className="font-bold text-gray-900 dark:text-gray-100">{t('settings.account.wsl_sync_enabled', { defaultValue: '同步更新 WSL 远程环境账号' })}</div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t('settings.account.wsl_sync_enabled_desc', { defaultValue: '在 Windows 宿主机切换账号时，通过本地 UNC 共享路径自动将 Token 同步至 WSL2 环境，解决 Remote-WSL 双开时远程窗口账号脱节问题。' })}</p>
+                                        </div>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.wsl_sync_enabled || false}
+                                            onChange={async (e) => {
+                                                const enabled = e.target.checked;
+                                                const newConfig = { ...formData, wsl_sync_enabled: enabled };
+                                                setFormData(newConfig);
+                                                try {
+                                                    await saveConfig(newConfig);
+                                                } catch (error) {
+                                                    showToast(`${t('common.error')}: ${error}`, 'error');
+                                                }
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-500 shadow-inner"></div>
+                                    </label>
+                                </div>
+
+                                {formData.wsl_sync_enabled && (
+                                    <div className="mt-5 pt-5 border-t border-gray-50 dark:border-base-300 space-y-2 animate-in slide-in-from-top-1 duration-200">
+                                        <label className="block text-xs font-bold text-gray-700 dark:text-gray-300">
+                                            {t('settings.account.wsl_custom_home', { defaultValue: 'WSL 用户主目录路径（可选）' })}
+                                        </label>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                                            {t('settings.account.wsl_custom_home_desc', { defaultValue: '留空则自动探测运行中的 WSL 分发版。如需指定特定用户，请输入 UNC 路径，例如：\\\\wsl.localhost\\Ubuntu\\home\\username' })}
+                                        </p>
+                                        <div className="flex gap-2 mt-1">
+                                            <input
+                                                type="text"
+                                                className="flex-1 px-3 py-2 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none text-xs font-mono text-gray-900 dark:text-gray-100"
+                                                placeholder="\\wsl.localhost\Ubuntu\home\username"
+                                                value={formData.wsl_custom_home || ''}
+                                                onChange={(e) => {
+                                                    setFormData({
+                                                        ...formData,
+                                                        wsl_custom_home: e.target.value
+                                                    });
+                                                }}
+                                                onBlur={async () => {
+                                                    try {
+                                                        await saveConfig(formData);
+                                                    } catch (error) {
+                                                        showToast(`${t('common.error')}: ${error}`, 'error');
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

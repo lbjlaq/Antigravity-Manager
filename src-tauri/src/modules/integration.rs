@@ -874,7 +874,7 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
 }
 
 /// 辅助方法：向指定目录同步写入本地文件凭据
-fn write_to_file_credentials_to_dir(
+pub(crate) fn write_to_file_credentials_to_dir(
     gemini_dir: &std::path::Path,
     account: &crate::models::Account,
     sync_agy_cli: bool,

@@ -356,6 +356,8 @@ export interface AppConfig {
     suggestion_delete_thinking_store?: boolean; // [NEW] 建议删除历史思考块缓存开关
     thinking_cleanup_dismissed?: boolean; // [NEW] 用户是否已确认/忽略该建议
     dismissed_thinking_cleanup_version?: string; // [NEW] 用户已确认或忽略建议的目标版本号
+    wsl_sync_enabled?: boolean; // [NEW] 同步更新 WSL 远程环境账号登录状态
+    wsl_custom_home?: string; // [NEW] 自定义 WSL 用户主目录路径（例如 \\wsl.localhost\Ubuntu\home\username）
 }
 
 // ============================================================================

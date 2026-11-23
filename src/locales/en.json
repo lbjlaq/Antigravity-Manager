@@ -723,7 +723,11 @@
             "auto_switch_gemini": "Gemini Pool",
             "auto_switch_gemini_desc": "Includes Pro / Flash / Image generation",
             "auto_switch_third_party": "Third-Party Models",
-            "auto_switch_third_party_desc": "Includes Claude 3.7 / 3.5 / GPT"
+            "auto_switch_third_party_desc": "Includes Claude 3.7 / 3.5 / GPT",
+            "wsl_sync_enabled": "Sync WSL Remote Environment Account",
+            "wsl_sync_enabled_desc": "Automatically sync OAuth tokens to WSL2 via local UNC shared paths when switching accounts on Windows host, preventing account desync in Remote-WSL dual-window development.",
+            "wsl_custom_home": "WSL User Home Directory (Optional)",
+            "wsl_custom_home_desc": "Leave empty to automatically discover running WSL distributions. Or enter a UNC path, e.g.: \\\\wsl.localhost\\Ubuntu\\home\\username"
         },
         "warmup": {
             "title": "7-Day Weekly Reset Warmup",
