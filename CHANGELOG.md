@@ -4,6 +4,9 @@
 
 *   **版本演进**:
     *   **v5.0.5-beta.1 (2026-11-23)**:
+        -   **[官方 Hub 客户端指纹平台选择与 Linux 更新独立检测] (PR #4025, Thanks to @ThermalEng)**:
+            -   **支持 Windows/Linux 平台身份切换**: 在「设置 → 高级设置 → 官方 Hub 客户端指纹」中增加出站平台选择，允许用户按需在默认已校准的 `Windows x64`（`os_type=windows`）与原生 `Linux x64`（`os_type=linux`）之间切换，同时全面打通 Tauri 桌面端、无头服务器（Headless）与 Web 管理接口。(PR #4025, Thanks to @ThermalEng)
+            -   **Linux 专属更新清单独立感知与防风控指纹保护**: 为 Linux 平台接入独立的官方自动更新清单（`latest-x64-linux.yml`）进行最新版本提示感知；严格遵守版本与 Piper 构建编号（CL）同源配对原则，更新提示仅作展示而不自动跨版本覆盖出站指纹，出站版本与 CL 依然基于本地探测或校准基线安全派生，彻底规避跨版本未配对特征触发上游 WAF 风控。(PR #4025, Thanks to @ThermalEng)
         -   **[上游 1M 物理上下文硬超限归一化与 Claude 自动压缩解死锁] (Fixes #4024, PR #4027, Thanks to @koeria)**:
             -   **Anthropic prompt_too_long 规范错误转译**: 解决 Claude Code CLI 使用百万上下文模型（如 `opus[1m]`）长工具链导致请求超过 1,048,576 Token 上限时，网关终态 400 返回通用 `api_error` 与 Gemini 原文导致客户端无法识别、既不触发响应式自动压缩也导致后续 `/compact` 死锁的问题。在错误处理层解析真实超限 Token 数与上限阈值，针对 Claude 协议规范化转译为 `invalid_request_error` 与 `"prompt is too long: {input} tokens > {max} maximum"`，促使 Claude Code 自动触发上下文裁剪压缩，同时保持原生 Gemini 协议原生报文不受侵入。(Fixes #4024, PR #4027, Thanks to @koeria)
         -   **[经典版 2.34.0+ 热切号重定向登录兜底降级完整重启] (Fixes #4026, PR #4028, Thanks to @koeria)**:
