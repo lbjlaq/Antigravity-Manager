@@ -417,8 +417,39 @@ impl SystemIntegration for DesktopIntegration {
         let mut hot_switch = false;
         let mut credentials_applied = false;
 
+        // 热切号兼容性门控 (issue #4026)：Antigravity 2.34.0 起，在未登出状态下强杀
+        // language_server 重启后，主进程 AuthBootstrap 不再使用新账号恢复会话，而是把主窗口
+        // 重定向到 /onboarding?login=true。因此对 2.34.0+ 的经典版客户端禁用热切号，
+        // 降级走下方「完整重启」路径（先关闭主进程再写库重启）。
+        let mut allow_hot_switch = true;
+        if !is_ide {
+            match version::get_antigravity_version_with_path(
+                effective_target,
+                active_exe_path.as_deref(),
+            ) {
+                Ok(ver) => {
+                    if version::compare_version(&ver.short_version, "2.34.0")
+                        != std::cmp::Ordering::Less
+                    {
+                        allow_hot_switch = false;
+                        crate::modules::logger::log_info(&format!(
+                            "[Desktop] Detected Antigravity version {} >= 2.34.0; hot switch would \
+                             redirect to onboarding?login=true, falling back to full restart.",
+                            ver.short_version
+                        ));
+                    }
+                }
+                Err(e) => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Desktop] Failed to detect Antigravity version ({}); keeping hot switch enabled.",
+                        e
+                    ));
+                }
+            }
+        }
+
         // 只要目标客户端正在运行，统一优先尝试无感热切号
-        if running {
+        if running && allow_hot_switch {
             apply_account_credentials(
                 account,
                 effective_target,
