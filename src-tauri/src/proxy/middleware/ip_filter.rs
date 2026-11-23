@@ -108,7 +108,9 @@ pub async fn ip_filter_middleware(
                         client_ip: ip.clone(),
                         timestamp: chrono::Utc::now().timestamp(),
                         method: Some(request.method().to_string()),
-                        path: Some(request.uri().to_string()),
+                        path: Some(crate::proxy::payload_audit::redact_uri(
+                            &request.uri().to_string(),
+                        )),
                         user_agent: request
                             .headers()
                             .get("user-agent")
