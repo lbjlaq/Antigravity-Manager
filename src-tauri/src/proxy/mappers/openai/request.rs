@@ -51,6 +51,24 @@ fn is_apply_patch_tool_name(name: &str) -> bool {
     name == "apply_patch" || name == "apply_patch_v2"
 }
 
+/// [Fix #4033] Claude 模型上游不支持 responseSchema 驱动的结构化输出：
+/// Antigravity 上游会将 responseSchema 合成为强制 tool_choice 调用，而 Claude 模型
+/// 返回 HTTP 400 `tool_choice: type "tool" and "any" are not supported for this model`。
+/// 因此对 Claude 模型改用提示词层 JSON 契约（模型以纯文本返回符合 schema 的 JSON），
+/// 响应侧已有的结构化输出围栏剥离逻辑 (unwrap_outer_code_fence_if_structured) 保证
+/// 客户端拿到可 JSON.parse 的裸 JSON。
+fn build_claude_json_schema_instruction(name: Option<&str>, schema: &Value) -> String {
+    let schema_text = serde_json::to_string(schema).unwrap_or_else(|_| "{}".to_string());
+    match name {
+        Some(name) => format!(
+            "Structured output requirement: your entire final response must be a single JSON object named \"{name}\" that strictly conforms to the following JSON Schema. Return raw JSON only - no markdown code fences, no commentary before or after.\nJSON Schema:\n{schema_text}"
+        ),
+        None => format!(
+            "Structured output requirement: your entire final response must be a single JSON object that strictly conforms to the following JSON Schema. Return raw JSON only - no markdown code fences, no commentary before or after.\nJSON Schema:\n{schema_text}"
+        ),
+    }
+}
+
 #[allow(dead_code)]
 fn should_preserve_tool_output(tool_name: &str, output: &str) -> bool {
     is_apply_patch_tool_name(tool_name)
@@ -1011,15 +1029,35 @@ pub fn transform_openai_request_with_session(
         })
     });
 
+    // [Fix #4033] Claude 模型不发送 responseSchema，改走提示词契约；同时与 responseSchema
+    // 一样声明 tools / toolConfig 互斥（同 Fix #3710 的上游互斥约束）。
+    let mut claude_schema_contract = false;
+
     if let Some(fmt) = &effective_response_format {
         if fmt.r#type() == "json_object" {
             gen_config["responseMimeType"] = json!("application/json");
         } else if fmt.r#type() == "json_schema" {
-            gen_config["responseMimeType"] = json!("application/json");
-            if let Some(js) = fmt.json_schema() {
-                if let Some(mut schema) = js.schema.clone() {
-                    crate::proxy::common::json_schema::clean_response_schema(&mut schema);
-                    gen_config["responseSchema"] = schema;
+            if is_claude_model {
+                if let Some(js) = fmt.json_schema() {
+                    if let Some(mut schema) = js.schema.clone() {
+                        crate::proxy::common::json_schema::clean_response_schema(&mut schema);
+                        system_instructions.push(build_claude_json_schema_instruction(
+                            js.name.as_deref(),
+                            &schema,
+                        ));
+                        claude_schema_contract = true;
+                        tracing::warn!(
+                            "[Fix #4033] Claude model detected with text.format json_schema: replacing responseSchema with a prompt-level JSON contract (upstream rejects forced tool_choice for Claude)"
+                        );
+                    }
+                }
+            } else {
+                gen_config["responseMimeType"] = json!("application/json");
+                if let Some(js) = fmt.json_schema() {
+                    if let Some(mut schema) = js.schema.clone() {
+                        crate::proxy::common::json_schema::clean_response_schema(&mut schema);
+                        gen_config["responseSchema"] = schema;
+                    }
                 }
             }
         }
@@ -1195,17 +1233,21 @@ pub fn transform_openai_request_with_session(
 
     // Removed auto-inject since we handle it above now if Codex passes it.
 
-    if !function_declarations.is_empty() {
+    // [Fix #4033] 提示词 JSON 契约模式下与 responseSchema 一样禁止 tools / toolConfig，
+    // 避免模型改为调用工具而不返回契约要求的 JSON。
+    if !function_declarations.is_empty() && !claude_schema_contract {
         inner_request["tools"] = json!([{ "functionDeclarations": function_declarations }]);
     }
 
     // [tool_choice] 客户端有就传，没有就不传：
     // 若客户端显式指定了 tool_choice，将其规范化映射为标准的 Gemini toolConfig
     if let Some(tool_choice) = &request.tool_choice {
-        if let Some(gemini_tc) =
-            crate::proxy::mappers::common_utils::map_openai_tool_choice_to_gemini(tool_choice)
-        {
-            inner_request["toolConfig"] = gemini_tc;
+        if !claude_schema_contract {
+            if let Some(gemini_tc) =
+                crate::proxy::mappers::common_utils::map_openai_tool_choice_to_gemini(tool_choice)
+            {
+                inner_request["toolConfig"] = gemini_tc;
+            }
         }
     }
 
@@ -2441,6 +2483,77 @@ mod tests {
         let resp_schema = &gen_config["responseSchema"];
         assert_eq!(resp_schema["type"], "object");
         assert_eq!(resp_schema["properties"]["summary"]["type"], "object");
+    }
+
+    #[test]
+    fn test_issue_4033_claude_json_schema_uses_prompt_contract() {
+        // Claude 模型上游不支持 responseSchema（合成的强制 tool_choice 被 Claude 拒绝，
+        // 返回 400），必须降级为提示词契约且不携带 tools / toolConfig。
+        let raw_json = json!({
+            "model": "claude-opus-5-5",
+            "messages": [
+                {"role": "user", "content": "Return a short title and description for 2 + 2."}
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_example_label",
+                    "description": "Return an example label.",
+                    "parameters": { "type": "object", "properties": {} }
+                }
+            }],
+            "tool_choice": "auto",
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "codex_output_schema",
+                    "strict": true,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "title": { "type": "string" },
+                            "description": { "type": "string" }
+                        },
+                        "required": ["title", "description"],
+                        "additionalProperties": false
+                    }
+                }
+            }
+        });
+
+        let request: OpenAIRequest = serde_json::from_value(raw_json).unwrap();
+        let (res_val, _sid, _msg_count, _) =
+            transform_openai_request(&request, "test-v", "claude-opus-5-5-low", None);
+        let inner_req = &res_val["request"];
+        let gen_config = &inner_req["generationConfig"];
+
+        // 不再发送 responseSchema / responseMimeType
+        assert!(gen_config.get("responseSchema").is_none());
+        assert!(gen_config.get("responseMimeType").is_none());
+
+        // JSON 契约进入 systemInstruction 或被侧载引擎注入首轮 contents
+        let contract_in = |parts: &Value| {
+            parts.as_array().unwrap().iter().any(|p| {
+                p.get("text")
+                    .and_then(Value::as_str)
+                    .map(|t| {
+                        t.contains("codex_output_schema")
+                            && t.contains("\"title\"")
+                            && t.contains("JSON Schema")
+                    })
+                    .unwrap_or(false)
+            })
+        };
+        let contract_found = contract_in(&inner_req["systemInstruction"]["parts"])
+            || contract_in(&inner_req["contents"][0]["parts"]);
+        assert!(
+            contract_found,
+            "prompt-level JSON contract must be injected"
+        );
+
+        // tools / toolConfig 与契约互斥
+        assert!(inner_req.get("tools").is_none());
+        assert!(inner_req.get("toolConfig").is_none());
     }
 
     #[test]
