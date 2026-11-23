@@ -21,6 +21,12 @@ pub trait SystemIntegration: Send + Sync {
     fn show_notification(&self, title: &str, body: &str);
 }
 
+/// issue #4026：classic 2.34.0+ 热切号后 AuthBootstrap 会跳转 /onboarding?login=true，
+/// 仅允许 2.34.0 之前的 classic 版本执行热切号。
+fn classic_hot_switch_allowed(short_version: &str) -> bool {
+    version::compare_version(short_version, "2.34.0") == std::cmp::Ordering::Less
+}
+
 /// Check if `target_ide` refers to the Antigravity ACP IDE Plugin (`antigravity-acp`).
 pub fn is_acp_target(target_ide: Option<&str>) -> bool {
     matches!(target_ide, Some("acp" | "plugin" | "ide-plugin"))
@@ -417,8 +423,39 @@ impl SystemIntegration for DesktopIntegration {
         let mut hot_switch = false;
         let mut credentials_applied = false;
 
-        // 只要目标客户端正在运行，统一优先尝试无感热切号
-        if running {
+        // issue #4026：Antigravity classic 2.34.0+ 在未登出状态下热切号时，
+        // language_server 被 SIGKILL 后由 supervisor 原地拉起，但 AuthBootstrap
+        // 不使用新凭据恢复会话，而是把主窗口重定向到 /onboarding?login=true。
+        // 该行为是客户端内部的状态机决策，外部无法安全干预；
+        // 对 2.34.0+ 的 classic 目标禁用热切号，自动回退到已验证可行的完整重启路径
+        // （先关闭主进程 → 干净写入凭据 → 重新启动客户端）。
+        let mut hot_switch_allowed = true;
+        if !is_ide {
+            match version::get_antigravity_version_with_path(
+                effective_target,
+                active_exe_path.as_deref(),
+            ) {
+                Ok(ver) => {
+                    hot_switch_allowed = classic_hot_switch_allowed(&ver.short_version);
+                    if !hot_switch_allowed {
+                        crate::modules::logger::log_info(&format!(
+                            "[Desktop] Hot switch disabled for classic version {} (issue #4026): \
+                             AuthBootstrap on 2.34.0+ redirects to /onboarding?login=true after \
+                             language_server respawn; falling back to full restart.",
+                            ver.short_version
+                        ));
+                    }
+                }
+                Err(e) => crate::modules::logger::log_warn(&format!(
+                    "[Desktop] Could not detect classic version for hot-switch gating ({}); \
+                     keeping hot switch enabled.",
+                    e
+                )),
+            }
+        }
+
+        // 只要目标客户端正在运行且热切号被允许，统一优先尝试无感热切号
+        if running && hot_switch_allowed {
             apply_account_credentials(
                 account,
                 effective_target,
@@ -1828,6 +1865,16 @@ impl SystemIntegration for SystemManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classic_hot_switch_gating_disallows_2_34_0_and_later() {
+        // issue #4026：classic 2.34.0+ 热切号后 AuthBootstrap 跳转 /onboarding?login=true
+        assert!(classic_hot_switch_allowed("2.33.0"));
+        assert!(classic_hot_switch_allowed("2.0.0"));
+        assert!(!classic_hot_switch_allowed("2.34.0"));
+        assert!(!classic_hot_switch_allowed("2.35.1"));
+        assert!(!classic_hot_switch_allowed("3.0.0"));
+    }
 
     #[test]
     fn agy_credentials_require_an_exact_nonempty_readback() {
