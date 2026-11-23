@@ -4323,55 +4323,106 @@ struct OAuthParams {
     error_description: Option<String>,
 }
 
+/// Renders the OAuth callback failure page. The message may contain untrusted
+/// text (query params, upstream error strings), so it is always HTML-escaped.
+fn oauth_failure_html(message: &str) -> String {
+    format!(
+        r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>{}</p></body></html>"#,
+        crate::utils::html::escape_html(message)
+    )
+}
+
+/// Outcome of validating an OAuth callback against the active flow, before any side effect.
+#[derive(Debug, PartialEq, Eq)]
+enum OAuthCallbackPrecheck {
+    /// Matching state with an authorization code: safe to exchange.
+    Proceed { code: String },
+    /// Matching state, but the provider reported an error: the active flow may be cancelled.
+    ProviderError { description: String },
+    /// Matching state without a usable code or error.
+    MissingCode,
+    /// No active flow registered: nothing to verify against, never touch flow state.
+    RejectNoFlow,
+    /// Missing or different state: not our flow, never touch flow state.
+    RejectStateMismatch,
+}
+
+/// Validates the callback against the active flow's `state` first. Only a callback whose
+/// state matches may cancel the flow (provider error) or reach the code exchange, so an
+/// unauthenticated request cannot cancel or inject into a login in progress.
+fn precheck_oauth_callback(
+    active_flow_state: Option<&str>,
+    params: &OAuthParams,
+) -> OAuthCallbackPrecheck {
+    // A flow without a usable (non-blank) state cannot authenticate any callback: treat it
+    // as no flow, so an empty `state=` can never match it and nothing is cancelled.
+    let Some(expected_state) = active_flow_state.filter(|s| !s.trim().is_empty()) else {
+        return OAuthCallbackPrecheck::RejectNoFlow;
+    };
+    match params.state.as_deref() {
+        Some(supplied) if !supplied.trim().is_empty() && supplied == expected_state => {}
+        _ => return OAuthCallbackPrecheck::RejectStateMismatch,
+    }
+    if let Some(err) = params.error.as_ref() {
+        let description = params
+            .error_description
+            .clone()
+            .unwrap_or_else(|| err.clone());
+        return OAuthCallbackPrecheck::ProviderError { description };
+    }
+    match params.code.as_ref() {
+        Some(c) if !c.trim().is_empty() => OAuthCallbackPrecheck::Proceed { code: c.clone() },
+        _ => OAuthCallbackPrecheck::MissingCode,
+    }
+}
+
 async fn handle_oauth_callback(
     Query(params): Query<OAuthParams>,
-    headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Html<String>, StatusCode> {
-    if let Some(err) = params.error {
-        let desc = params.error_description.unwrap_or_else(|| err.clone());
-        error!("OAuth callback received error from provider: {}", desc);
-        crate::modules::oauth_server::cancel_oauth_flow();
-        return Ok(Html(format!(
-            r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>Provider returned error: {}</p></body></html>"#,
-            desc
+    // A legitimate callback always belongs to a flow registered by the desktop or
+    // the web login entry point (both store `state` in the shared flow registry).
+    // Validate against it before any side effect (cancel / code exchange), which
+    // prevents login CSRF, account injection and unauthenticated flow cancellation.
+    let flow_context = crate::modules::oauth_server::get_active_oauth_flow_context();
+    let code =
+        match precheck_oauth_callback(flow_context.as_ref().map(|(_, s, _)| s.as_str()), &params) {
+            OAuthCallbackPrecheck::Proceed { code } => code,
+            OAuthCallbackPrecheck::ProviderError { description } => {
+                error!(
+                    "OAuth callback received error from provider: {}",
+                    description
+                );
+                crate::modules::oauth_server::cancel_oauth_flow();
+                return Ok(Html(oauth_failure_html(&format!(
+                    "Provider returned error: {}",
+                    description
+                ))));
+            }
+            OAuthCallbackPrecheck::MissingCode => {
+                return Ok(Html(oauth_failure_html(
+                    "Missing authorization code in callback.",
+                )));
+            }
+            OAuthCallbackPrecheck::RejectNoFlow => {
+                error!("OAuth callback received without an active OAuth flow, ignoring");
+                return Ok(Html(oauth_failure_html(
+                    "No active OAuth login flow. Please start the login again from the app.",
+                )));
+            }
+            OAuthCallbackPrecheck::RejectStateMismatch => {
+                error!("OAuth callback state mismatch (CSRF protection)");
+                return Ok(Html(oauth_failure_html(
+                    "Error: OAuth state mismatch (CSRF protection)",
+                )));
+            }
+        };
+    let Some((redirect_uri, _, flow_client_key)) = flow_context else {
+        return Ok(Html(oauth_failure_html(
+            "No active OAuth login flow. Please start the login again from the app.",
         )));
-    }
-
-    let code = match params.code {
-        Some(c) if !c.trim().is_empty() => c,
-        _ => {
-            return Ok(Html(
-                r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>Missing authorization code in callback.</p></body></html>"#
-                    .to_string(),
-            ));
-        }
     };
-
-    let port = state.security.read().await.port;
-    let host = headers.get("host").and_then(|h| h.to_str().ok());
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|h| h.to_str().ok());
-
-    let (redirect_uri, preferred_client_key) = if let Some((
-        flow_redirect_uri,
-        expected_state,
-        flow_client_key,
-    )) =
-        crate::modules::oauth_server::get_active_oauth_flow_context()
-    {
-        if params.state.as_deref() != Some(&expected_state) {
-            error!("OAuth callback state mismatch (CSRF protection)");
-            return Ok(Html(
-                r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>Error: OAuth state mismatch (CSRF protection)</p></body></html>"#
-                    .to_string(),
-            ));
-        }
-        (flow_redirect_uri, Some(flow_client_key))
-    } else {
-        (get_oauth_redirect_uri(port, host, proto, None), None)
-    };
+    let preferred_client_key = Some(flow_client_key);
 
     match crate::modules::oauth::exchange_code_with_client(
         &code,
@@ -4383,10 +4434,10 @@ async fn handle_oauth_callback(
         Ok(token_resp) => {
             if let Err(e) = state.account_service.process_oauth_token(token_resp).await {
                 error!("Failed to save account in OAuth callback: {}", e);
-                return Ok(Html(format!(
-                    r#"<html><body><h1>Authorization Failed</h1><p>Failed to save account: {}</p></body></html>"#,
+                return Ok(Html(oauth_failure_html(&format!(
+                    "Failed to save account: {}",
                     e
-                )));
+                ))));
             }
 
             crate::modules::oauth_server::cancel_oauth_flow();
@@ -4458,10 +4509,7 @@ async fn handle_oauth_callback(
         Err(e) => {
             error!("OAuth exchange failed: {}", e);
             crate::modules::oauth_server::cancel_oauth_flow();
-            Ok(Html(format!(
-                r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
-                e
-            )))
+            Ok(Html(oauth_failure_html(&format!("Error: {}", e))))
         }
     }
 }
@@ -5723,5 +5771,167 @@ mod admin_test_model_tests {
         .expect("should deserialize without targetAccountId");
         assert_eq!(bare.model, "claude-sonnet-4-5");
         assert_eq!(bare.target_account_id, None);
+    }
+}
+
+#[cfg(test)]
+mod oauth_callback_tests {
+    use super::{oauth_failure_html, precheck_oauth_callback, OAuthCallbackPrecheck, OAuthParams};
+
+    fn params(
+        code: Option<&str>,
+        state: Option<&str>,
+        error: Option<&str>,
+        error_description: Option<&str>,
+    ) -> OAuthParams {
+        OAuthParams {
+            code: code.map(str::to_string),
+            state: state.map(str::to_string),
+            scope: None,
+            error: error.map(str::to_string),
+            error_description: error_description.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn precheck_rejects_when_no_active_flow() {
+        // Neither a code nor a provider error may act without a registered flow.
+        for p in [
+            params(Some("c"), Some("s1"), None, None),
+            params(None, Some("s1"), Some("access_denied"), None),
+            params(None, None, Some("access_denied"), None),
+        ] {
+            assert_eq!(
+                precheck_oauth_callback(None, &p),
+                OAuthCallbackPrecheck::RejectNoFlow
+            );
+        }
+    }
+
+    #[test]
+    fn precheck_provider_error_with_wrong_or_missing_state_is_rejected_not_cancelled() {
+        // Only `ProviderError` makes the handler cancel the flow; these must never produce it.
+        for p in [
+            params(None, Some("other"), Some("access_denied"), None),
+            params(None, None, Some("access_denied"), Some("denied")),
+        ] {
+            assert_eq!(
+                precheck_oauth_callback(Some("s1"), &p),
+                OAuthCallbackPrecheck::RejectStateMismatch
+            );
+        }
+    }
+
+    #[test]
+    fn precheck_rejects_code_with_wrong_or_missing_state() {
+        for p in [
+            params(Some("c"), Some("other"), None, None),
+            params(Some("c"), None, None, None),
+        ] {
+            assert_eq!(
+                precheck_oauth_callback(Some("s1"), &p),
+                OAuthCallbackPrecheck::RejectStateMismatch
+            );
+        }
+    }
+
+    #[test]
+    fn precheck_rejects_empty_active_state_with_empty_callback_state() {
+        // An empty active state must not be matched by an empty `state=`.
+        for active in [Some(""), Some("   ")] {
+            for supplied in [Some(""), Some("   "), None] {
+                let p = params(Some("c"), supplied, None, None);
+                assert_eq!(
+                    precheck_oauth_callback(active, &p),
+                    OAuthCallbackPrecheck::RejectNoFlow,
+                    "active={active:?} supplied={supplied:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn precheck_rejects_valid_active_state_with_empty_callback_state() {
+        for supplied in [Some(""), Some("  ")] {
+            let p = params(Some("c"), supplied, None, None);
+            assert_eq!(
+                precheck_oauth_callback(Some("s1"), &p),
+                OAuthCallbackPrecheck::RejectStateMismatch
+            );
+        }
+    }
+
+    #[test]
+    fn precheck_empty_active_state_with_provider_error_is_rejected_not_cancelled() {
+        // Only `ProviderError` cancels the flow; an empty-state flow must never yield it.
+        for supplied in [Some(""), None] {
+            let p = params(None, supplied, Some("access_denied"), Some("denied"));
+            let out = precheck_oauth_callback(Some(""), &p);
+            assert_eq!(out, OAuthCallbackPrecheck::RejectNoFlow);
+            assert!(!matches!(out, OAuthCallbackPrecheck::ProviderError { .. }));
+        }
+    }
+
+    #[test]
+    fn precheck_matching_state_with_provider_error_cancels() {
+        let p = params(None, Some("s1"), Some("access_denied"), Some("User denied"));
+        assert_eq!(
+            precheck_oauth_callback(Some("s1"), &p),
+            OAuthCallbackPrecheck::ProviderError {
+                description: "User denied".to_string()
+            }
+        );
+        let p = params(None, Some("s1"), Some("access_denied"), None);
+        assert_eq!(
+            precheck_oauth_callback(Some("s1"), &p),
+            OAuthCallbackPrecheck::ProviderError {
+                description: "access_denied".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn precheck_matching_state_with_code_proceeds() {
+        let p = params(Some("4/0Acode"), Some("s1"), None, None);
+        assert_eq!(
+            precheck_oauth_callback(Some("s1"), &p),
+            OAuthCallbackPrecheck::Proceed {
+                code: "4/0Acode".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn precheck_matching_state_without_usable_code_is_missing_code() {
+        for p in [
+            params(None, Some("s1"), None, None),
+            params(Some("  "), Some("s1"), None, None),
+        ] {
+            assert_eq!(
+                precheck_oauth_callback(Some("s1"), &p),
+                OAuthCallbackPrecheck::MissingCode
+            );
+        }
+    }
+
+    #[test]
+    fn failure_html_escapes_script_tag() {
+        let html = oauth_failure_html("<script>alert(1)</script>");
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn failure_html_escapes_attribute_breakout() {
+        let html = oauth_failure_html(r#""><img src=x onerror=alert(1)>"#);
+        assert!(!html.contains("<img"));
+        assert!(html.contains("&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"));
+    }
+
+    #[test]
+    fn failure_html_keeps_plain_message() {
+        let html = oauth_failure_html("Missing authorization code in callback.");
+        assert!(html.contains("<p>Missing authorization code in callback.</p>"));
+        assert!(html.contains("Authorization Failed"));
     }
 }
