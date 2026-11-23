@@ -7,7 +7,9 @@ use axum::{
 };
 
 pub fn is_service_status_bypassed(path: &str, is_direct_loopback: bool) -> bool {
-    // 管理接口、OAuth 回调、健康检查和前端静态资源在停服后仍要可达（以便用户通过 Web 界面配置账号）。
+    // 管理接口、OAuth 回调和健康检查在停服后仍要可达（以便用户通过 Web 界面配置账号）。
+    // 前端静态资源由外层 fallback_service 提供，不经过本中间件，因此不得按路径后缀放行，
+    // 否则 `/v1beta/models/x.js` 之类的路由会在停服后绕过状态检查。
     // /internal/ 只放行本机回环，避免停服后公网仍能打到预热端点。
     let internal_from_loopback = path.starts_with("/internal/") && is_direct_loopback;
     path.starts_with("/api/")
@@ -15,7 +17,6 @@ pub fn is_service_status_bypassed(path: &str, is_direct_loopback: bool) -> bool 
         || path == "/auth/callback"
         || path == "/health"
         || path == "/healthz"
-        || crate::proxy::middleware::is_static_asset_path(path)
 }
 
 pub async fn service_status_middleware(
@@ -60,10 +61,24 @@ mod tests {
         assert!(is_service_status_bypassed("/healthz", false));
         assert!(is_service_status_bypassed("/api/accounts", false));
         assert!(is_service_status_bypassed("/auth/callback", false));
-        assert!(is_service_status_bypassed("/assets/index.js", false));
         assert!(!is_service_status_bypassed("/v1/chat/completions", false));
         assert!(!is_service_status_bypassed("/v1/models", false));
         assert!(is_service_status_bypassed("/internal/warmup", true));
         assert!(!is_service_status_bypassed("/internal/warmup", false));
+    }
+
+    #[test]
+    fn test_service_status_does_not_bypass_static_suffixes() {
+        // 静态资源由外层 fallback_service 托管；后缀不得让代理/管理路由绕过停服检查
+        for path in [
+            "/v1beta/models/gemini-x.js",
+            "/v1/chat/completions.css",
+            "/auth/callback.css",
+            "/assets/index.js",
+            "/favicon.ico",
+        ] {
+            assert!(!is_service_status_bypassed(path, false), "{path}");
+            assert!(!is_service_status_bypassed(path, true), "{path}");
+        }
     }
 }
