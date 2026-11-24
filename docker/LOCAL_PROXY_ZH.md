@@ -1,7 +1,9 @@
 # 本机 Antigravity 反代（WSL / Docker）
 
 `docker-compose.lan.yml` 使用官方 `v5.0.3` 镜像，不在本地编译 Rust。
-容器和宿主机均开放 `8045`，宿主机明确监听 **`0.0.0.0:8045`**。
+宿主机端口由 `PORT` 控制，默认 `8045`。本机与 Windows 原生网关共存时改为
+`PORT=18046`，由原生网关独占 `127.0.0.1:8045`，详见
+[`docs/windows-codex-gateway.md`](../docs/windows-codex-gateway.md)。
 
 ## 本机入口与凭据
 
@@ -64,6 +66,31 @@ docker compose --env-file docker/.env -f docker/docker-compose.lan.yml stop
 可用 `--model` 选择账号实际支持的模型，用 `--base-url` 测试其他可达网卡地址。
 流式检查还要求服务正常发出 `[DONE]`，避免把提前断开的流误判为成功。
 
+## Windows 原生网关共存（端口规划）
+
+同一台 Windows 上可能同时存在两套网关：
+
+- 原生 Antigravity Tools：监听 `127.0.0.1:8045`，密钥在
+  `%USERPROFILE%\.antigravity_tools\gui_config.json` 的 `proxy.api_key`。
+- WSL/Docker 网关：经 `wslrelay.exe` 发布到 Windows，密钥在 `docker/.env`。
+
+两者都绑定 8045 时，Windows 允许共享绑定，但新连接落到哪个进程没有严格保证，
+重启后可能交换，表现为 Codex 间歇性 401/403 或 502。因此本机把 Docker 映射
+改为 `18046`：
+
+```bash
+sed -i 's/^PORT=8045$/PORT=18046/' docker/.env
+docker compose --env-file docker/.env -f docker/docker-compose.lan.yml up -d
+docker port antigravity-manager   # 0.0.0.0:18046->8045/tcp
+```
+
+Codex 继续使用 `http://127.0.0.1:8045/v1`（原生网关）。若改指 Docker，
+需同时替换 base URL 与 `API_KEY`，两套密钥不通用。
+
+Codex 读取 Windows 系统代理但忽略 `ProxyOverride` 中的 `127.*`，必须为当前用户
+持久化 `NO_PROXY=127.0.0.1,localhost,::1`；诊断与修复脚本见
+`scripts/windows/Repair-CodexGateway.ps1`。
+
 ## 故障定位
 
 - `503 Proxy service is currently disabled`：在管理页面启动 API 反代。
@@ -73,7 +100,7 @@ docker compose --env-file docker/.env -f docker/docker-compose.lan.yml stop
 - Docker daemon 访问镜像源超时：本机镜像已通过使用当前 shell 代理的 registry 客户端
   拉取并经 `docker load` 载入，可继续使用 `--pull never` 启动。
 
-本次改动只用于本地部署与测试，不向上游仓库推送。
+上述部署说明只描述本机环境，不改变上游默认端口与默认行为。
 
 ## 本次验收记录（2026-11-20）
 
