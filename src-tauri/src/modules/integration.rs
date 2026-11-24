@@ -1162,7 +1162,11 @@ fn sync_credentials_to_wsl(account: &crate::models::Account) {
                 let sub = &rel[..idx];
                 let _ = std::process::Command::new("wsl.exe")
                     .args([
-                        "-d", distro, "--exec", "sh", "-c",
+                        "-d",
+                        distro,
+                        "--exec",
+                        "sh",
+                        "-c",
                         &format!("mkdir -p \"$HOME/.gemini/{}\"", sub),
                     ])
                     .stdout(Stdio::null())
@@ -1208,7 +1212,11 @@ fn sync_credentials_to_wsl(account: &crate::models::Account) {
         // 终止 WSL 侧 language_server，让远程端 supervisor 以新凭据重新拉起（best-effort）
         let _ = std::process::Command::new("wsl.exe")
             .args([
-                "-d", distro, "--exec", "sh", "-c",
+                "-d",
+                distro,
+                "--exec",
+                "sh",
+                "-c",
                 "pkill -f language_server || true",
             ])
             .stdout(Stdio::null())
