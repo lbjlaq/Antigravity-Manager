@@ -823,7 +823,7 @@ impl UpstreamClient {
             // [FIX] 空闲连接收紧至 15s，避免 GFE 在 20~30s 静默掐断空闲 TCP 后客户端复用死连接引发 error reading a body from connection
             .pool_idle_timeout(Duration::from_secs(15))
             // 长思考静默期需要 HTTP/2 PING，TCP 保活不能替代。
-            // hyper2 的活动流判定会漏发保活；保留 15s 连接池空闲回收并允许连接级 PING。
+            // 本链路仅启用活动流保活时未观察到主动 PING，允许 idle 保活后验证有效。
             .http2(|mut h2| {
                 h2.keep_alive_interval(Duration::from_secs(15))
                     .keep_alive_timeout(Duration::from_secs(60))
