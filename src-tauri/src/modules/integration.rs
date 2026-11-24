@@ -646,21 +646,11 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
         let full_keyring_value = format!("go-keyring-base64:{}", encoded_payload);
 
         // 2.1 macOS Keychain Access
-        // 删除旧的
-        let _ = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity",
-            ])
-            .output();
-
-        // 写入新的 (-A 参数允许所有本地应用免密码、无感直接读取凭据)
+        // 写入新的 (-U 更新已存在的条目而不是删除重建，保留 Keychain ACL，避免每次刷新令牌都弹出钥匙串密码授权；-A 参数允许所有本地应用免密码、无感直接读取凭据)
         let output = Command::new("security")
             .args([
                 "add-generic-password",
+                "-U",
                 "-s",
                 "gemini",
                 "-a",
@@ -1586,19 +1576,11 @@ pub fn write_to_acp_credentials(account: &crate::models::Account) -> Result<(), 
     // storing the raw JSON string (via ctypes Security framework).
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity-acp",
-            ])
-            .output();
-
+        // (-U 更新已存在的条目而不是删除重建，保留 Keychain ACL，避免每次同步都触发钥匙串授权弹窗)
         let output = Command::new("security")
             .args([
                 "add-generic-password",
+                "-U",
                 "-s",
                 "gemini",
                 "-a",
