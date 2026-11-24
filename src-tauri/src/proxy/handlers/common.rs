@@ -575,22 +575,18 @@ pub fn check_outdated_user_agent_issue_with_lang(
 /// 仅在 400 状态码且文本匹配时返回 Some，供错误报文归一化为
 /// Anthropic 标准 `prompt is too long: {input} tokens > {max} maximum` 语义。
 fn parse_token_limit_exceeded(status_code: u16, lower_error_text: &str) -> Option<(u64, u64)> {
-    if status_code != 400
-        || !lower_error_text.contains("exceeds the maximum number of tokens")
-    {
+    if status_code != 400 || !lower_error_text.contains("exceeds the maximum number of tokens") {
         return None;
     }
     // 提取 "allowed (1048576)" 中的上限值与 "input token count: 1050377" 中的实际值
-    let max_tokens = lower_error_text
-        .find("allowed (")
-        .and_then(|i| {
-            let rest = &lower_error_text[i + "allowed (".len()..];
-            rest.chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse::<u64>()
-                .ok()
-        })?;
+    let max_tokens = lower_error_text.find("allowed (").and_then(|i| {
+        let rest = &lower_error_text[i + "allowed (".len()..];
+        rest.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u64>()
+            .ok()
+    })?;
     let input_tokens = lower_error_text.rfind("input token count").and_then(|i| {
         let rest = &lower_error_text[i + "input token count".len()..];
         let digits: String = rest
@@ -779,15 +775,15 @@ pub fn build_dual_track_error_with_ua_and_lang(
             "rate_limit_error",
             "rate_limit_exceeded",
         )
-    } else if let Some((input_tokens, max_tokens)) =
-        parse_token_limit_exceeded(status_code, &lower)
+    } else if let Some((input_tokens, max_tokens)) = parse_token_limit_exceeded(status_code, &lower)
     {
         // [Fixes #4024] 上游 1M 模型硬上限 400（如 Gemini "The input token count exceeds
         // the maximum number of tokens allowed (1048576)"）归一化为 Anthropic 标准
         // `prompt is too long` 语义，使 Claude Code 等客户端的 prompt_too_long 恢复机制
         // （自动压缩 / /compact 重试）能够识别并触发。
-        prompt_too_long_override =
-            Some(format!("prompt is too long: {input_tokens} tokens > {max_tokens} maximum"));
+        prompt_too_long_override = Some(format!(
+            "prompt is too long: {input_tokens} tokens > {max_tokens} maximum"
+        ));
         (
             i18n_err
                 .upstream_error_title
@@ -956,10 +952,7 @@ mod prompt_too_long_tests {
         assert_eq!(body["error"]["type"], "invalid_request_error");
         assert_eq!(body["error"]["code"], "prompt_too_long");
         let msg = body["error"]["message"].as_str().unwrap();
-        assert_eq!(
-            msg,
-            "prompt is too long: 1050377 tokens > 1048576 maximum"
-        );
+        assert_eq!(msg, "prompt is too long: 1050377 tokens > 1048576 maximum");
     }
 }
 
