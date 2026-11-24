@@ -822,12 +822,14 @@ impl UpstreamClient {
             .pool_max_idle_per_host(10) // 每主机最多 10 个空闲连接 (防止过多闲置连接被上游服务端静默掐断)
             // [FIX] 空闲连接收紧至 15s，避免 GFE 在 20~30s 静默掐断空闲 TCP 后客户端复用死连接引发 error reading a body from connection
             .pool_idle_timeout(Duration::from_secs(15))
-            // [FIX #3593 / #3571] 彻底恢复 Chrome 123 原生协议行为：
-            // 1. 实测证实 Google GFE 对客户端 HTTP/2 PING 帧静默丢弃、不回复 PING ACK，
-            //    导致 hyper2 在 keep_alive_timeout 到期时本地自杀式掐死连接并抛出 error reading a body from connection；
-            // 2. 移除破坏性的底层 HTTP/2 PING 配置，回归 4.8.8 稳态基线；
-            // 3. 依赖标准 L4 TCP Keep-Alive (30s) 保活，防 NAT / GFE 空闲超时掐断长连接，下游已有 PR #3578 的 3s SSE 注释心跳防客户端超时。
-            .tcp_keepalive(Duration::from_secs(30)) // TCP 稳态保活探测 (从 60s 收紧至 30s)
+            // 长思考静默期需要 HTTP/2 PING，TCP 保活不能替代。
+            // hyper2 的活动流判定会漏发保活；保留 15s 连接池空闲回收并允许连接级 PING。
+            .http2(|mut h2| {
+                h2.keep_alive_interval(Duration::from_secs(15))
+                    .keep_alive_timeout(Duration::from_secs(60))
+                    .keep_alive_while_idle(true);
+            })
+            .tcp_keepalive(Duration::from_secs(30))
             .timeout(Duration::from_secs(7200));
 
         Self::apply_default_user_agent(builder)
