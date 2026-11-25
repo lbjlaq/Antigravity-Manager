@@ -36,12 +36,18 @@ const DEFAULT_MODEL_LABELS: Record<string, string> = {
     'gemini-4-argon-high': 'gemini-4-argon-high',
     'gemini-4-argon-medium': 'gemini-4-argon-medium',
     'gemini-4-argon-low': 'gemini-4-argon-low',
+    'gemini-pro-orchestrator-neon': 'gemini-pro-orchestrator-neon',
+    'gemini-pro-orchestrator': 'gemini-pro-orchestrator',
+    'gemini-pro-orchestrator-argon': 'gemini-pro-orchestrator-argon',
     'gemini-pro-orchestrator-g1-pro': 'gemini-pro-orchestrator-g1-pro',
     'gemini-4-hydrogen': 'gemini-4-hydrogen',
     'gemini-4-hydrogen-xhigh': 'gemini-4-hydrogen-xhigh',
     'gemini-4-hydrogen-high': 'gemini-4-hydrogen-high',
     'gemini-4-hydrogen-medium': 'gemini-4-hydrogen-medium',
     'gemini-4-hydrogen-low': 'gemini-4-hydrogen-low',
+    'gemini-4-hydrogen-tiered-xhigh': 'gemini-4-hydrogen-tiered-xhigh',
+    'gemini-4-hydrogen-tiered-high': 'gemini-4-hydrogen-tiered-high',
+    'gemini-4-hydrogen-sonar': 'gemini-4-hydrogen-sonar',
     'gemini-3.1-pro-high': 'gemini-3.1-pro-high',
     'gemini-3.1-pro': 'gemini-3.1-pro',
     'gemini-3.1-pro-low': 'gemini-3.1-pro-low',
@@ -200,7 +206,10 @@ const GENERIC_G4_ROLE_TOKENS = new Set([
 /** 判断模型是否属于 Gemini 旗舰代际（包含 neon、argon、carbon 命名以及 Orchestrator 旗舰入口） */
 export function isFlagshipModel(modelName: string): boolean {
     const lower = modelName.trim().toLowerCase();
-    return lower.includes('neon') || lower.includes('argon') || lower.includes('carbon') || lower === 'gemini-pro-orchestrator-g1-pro';
+    return lower.includes('neon')
+        || lower.includes('argon')
+        || lower.includes('carbon')
+        || lower.startsWith('gemini-pro-orchestrator');
 }
 
 /** 兼容旧代码调用：判断模型是否属于 Gemini 4 Flagship / Argon */
@@ -212,7 +221,10 @@ export function isArgonModel(modelName: string): boolean {
 export function extractGemini4Codename(modelName: string): string | null {
     const lower = modelName.trim().toLowerCase();
     if (!lower || lower.includes('-disabled') || lower.endsWith('_disabled')) return null;
-    const stripped = lower.replace(/-(?:extra-low|xhigh|high|medium|low|thinking|tiered)$/, '');
+    const stripped = lower.replace(/-(?:tiered-xhigh|tiered-high|tiered-medium|tiered-low|extra-low|xhigh|high|medium|low|thinking|tiered|sonar)$/, '');
+    if (stripped === 'gemini-pro-orchestrator-neon') return 'neon';
+    if (stripped === 'gemini-pro-orchestrator') return 'carbon';
+    if (stripped === 'gemini-pro-orchestrator-argon' || stripped === 'gemini-pro-orchestrator-g1-pro') return 'argon';
     const m = stripped.match(/^gemini-(\d+)(?:\.\d+)?-([a-z0-9]+)/);
     if (m && Number(m[1]) >= 4) {
         const code = m[2];
@@ -220,7 +232,7 @@ export function extractGemini4Codename(modelName: string): string | null {
             return code;
         }
     }
-    if (lower.includes('neon') || lower === 'gemini-pro-orchestrator-g1-pro') return 'neon';
+    if (lower.includes('neon')) return 'neon';
     if (lower.includes('argon')) return 'argon';
     if (lower.includes('carbon')) return 'carbon';
     return null;

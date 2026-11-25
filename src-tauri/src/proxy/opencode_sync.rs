@@ -1166,8 +1166,21 @@ pub struct ModelInput {
 /// families, in which case only the name is written.
 fn series_defaults_for(model_id: &str) -> Option<Value> {
     let id = model_id.to_lowercase();
-    // Gemini 4 / 3.x family: 1M context, 64k output, multimodal in, text out.
+    // Gemini 4 Neon / Carbon / Hydrogen (non-sonar) & Orchestrator Neon/Carbon: 1M context, 256k output.
+    if id.starts_with("gemini-4-neon")
+        || id.starts_with("gemini-4-carbon")
+        || (id.starts_with("gemini-4-hydrogen") && !id.ends_with("-sonar"))
+        || id == "gemini-pro-orchestrator-neon"
+        || id == "gemini-pro-orchestrator"
+    {
+        return Some(serde_json::json!({
+            "limit": { "context": 1_048_576, "output": 262_144 },
+            "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        }));
+    }
+    // Gemini 4 (Argon / Sonar / Orchestrator Argon) / 3.x family: 1M context, 64k output, multimodal in, text out.
     if id.starts_with("gemini-4")
+        || id.starts_with("gemini-pro-orchestrator")
         || id.starts_with("gemini-3")
         || id.starts_with("gemini-3.1")
         || id.starts_with("gemini-3.5")

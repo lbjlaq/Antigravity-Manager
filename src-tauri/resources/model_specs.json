@@ -1,8 +1,43 @@
 {
     "models": {
+        "gemini-4-neon": {
+            "max_output_tokens": 262144,
+            "thinking_budget": 10001,
+            "is_thinking": true
+        },
+        "gemini-4-carbon": {
+            "max_output_tokens": 262144,
+            "thinking_budget": 10001,
+            "is_thinking": true
+        },
+        "gemini-4-hydrogen": {
+            "max_output_tokens": 262144,
+            "thinking_budget": 4000,
+            "is_thinking": true
+        },
+        "gemini-4-hydrogen-sonar": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 0,
+            "is_thinking": true
+        },
         "gemini-4-argon": {
             "max_output_tokens": 65536,
             "thinking_budget": 10001,
+            "is_thinking": true
+        },
+        "gemini-pro-orchestrator-neon": {
+            "max_output_tokens": 262144,
+            "thinking_budget": 0,
+            "is_thinking": true
+        },
+        "gemini-pro-orchestrator": {
+            "max_output_tokens": 262144,
+            "thinking_budget": 0,
+            "is_thinking": true
+        },
+        "gemini-pro-orchestrator-argon": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 0,
             "is_thinking": true
         },
         "gemini-pro-orchestrator-g1-pro": {

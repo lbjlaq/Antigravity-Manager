@@ -143,9 +143,16 @@ test('getModelQuotaDisplay correctly preserves Ultra Argon percentage and zeros 
     assertEqual(displayZero.percentage, 0, 'Unauthorized Argon percentage is 0');
 });
 
-// 5. Orchestrator (Neon) & internal worker isolation tests
-test('gemini-pro-orchestrator-g1-pro maps to Neon group and Gemini 4, while gemini-flash-worker-agy is excluded', () => {
-    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-g1-pro'), 'neon', 'Orchestrator maps to neon codename');
+// 5. Orchestrator (Neon / Carbon / Argon) & internal worker isolation tests
+test('gemini-pro-orchestrator variants map to exact codenames and Gemini 4, while gemini-flash-worker-agy is excluded', () => {
+    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-neon'), 'neon', 'Orchestrator Neon maps to neon codename');
+    assertEqual(extractGemini4Codename('gemini-pro-orchestrator'), 'carbon', 'Orchestrator Carbon maps to carbon codename');
+    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-argon'), 'argon', 'Orchestrator Argon maps to argon codename');
+    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-g1-pro'), 'argon', 'Legacy Orchestrator Argon maps to argon codename');
+    assertEqual(extractGemini4Codename('gemini-4-hydrogen-tiered-xhigh'), 'hydrogen', 'Hydrogen tiered-xhigh strips cleanly');
+    assertEqual(extractGemini4Codename('gemini-4-hydrogen-sonar'), 'hydrogen', 'Hydrogen sonar strips cleanly');
+    assertEqual(inferModelGroup('gemini-pro-orchestrator-neon'), 'Gemini 4', 'Orchestrator Neon belongs to Gemini 4 group');
+    assertEqual(inferModelGroup('gemini-pro-orchestrator'), 'Gemini 4', 'Orchestrator Carbon belongs to Gemini 4 group');
     assertEqual(inferModelGroup('gemini-pro-orchestrator-g1-pro'), 'Gemini 4', 'Orchestrator belongs to Gemini 4 group');
     assertEqual(isSupportedDisplayModel('gemini-pro-orchestrator-g1-pro'), true, 'Orchestrator is supported display model');
     assertEqual(isSupportedDisplayModel('gemini-flash-worker-agy'), false, 'Internal worker is excluded from display');

@@ -272,10 +272,12 @@ function CurrentAccount({
                                     <GroupQuotaCard
                                         summary={argon}
                                         isProtected={isGroupProtected('argon')}
-                                        liveLimit={getLiveLimitForModel(
-                                            displayedAccount,
-                                            'gemini-4-argon'
-                                        )}
+                                        liveLimit={
+                                            getLiveLimitForModel(displayedAccount, 'gemini-4-neon') ||
+                                            getLiveLimitForModel(displayedAccount, 'gemini-4-carbon') ||
+                                            getLiveLimitForModel(displayedAccount, 'gemini-4-argon') ||
+                                            getLiveLimitForModel(displayedAccount, 'gemini-pro-orchestrator')
+                                        }
                                         fullWidth
                                     />
                                 </div>

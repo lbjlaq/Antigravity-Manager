@@ -99,8 +99,11 @@ export const DEFAULT_PRICING: Record<string, ModelPricingRule> = {
     'gemini-flash': { input: 0.75, output: 3.75, cached: 0.075 },
     'gemini-pro': { input: 2.00, output: 12.00, cached: 0.20 },
     'gemini-2.0-flash': { input: 0.10, output: 0.40, cached: 0.025 },
+    'gemini-4-neon': { input: 2.00, output: 12.00, cached: 0.20 },
+    'gemini-4-carbon': { input: 2.00, output: 12.00, cached: 0.20 },
     'gemini-4-argon': { input: 2.00, output: 12.00, cached: 0.20 },
     'gemini-4-hydrogen': { input: 0.75, output: 3.75, cached: 0.075 },
+    'gemini-pro-orchestrator': { input: 2.00, output: 12.00, cached: 0.20 },
     // Anthropic Claude 家族系列
     'claude-sonnet': { input: 3.00, output: 15.00, cached: 0.30 },
     'claude-opus': { input: 5.00, output: 25.00, cached: 0.50 },

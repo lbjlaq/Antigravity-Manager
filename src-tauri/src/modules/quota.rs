@@ -942,18 +942,20 @@ pub async fn fetch_quota_with_cache(
                             "gemini-4-argon-medium",
                             "gemini-4-argon-low",
                             "gemini-pro-orchestrator-g1-pro",
+                            "gemini-pro-orchestrator-argon",
                         ] {
                             let label = match argon_name {
                                 "gemini-4-argon-high" => "Gemini 4 Argon (High)",
                                 "gemini-4-argon-medium" => "Gemini 4 Argon (Medium)",
                                 "gemini-4-argon-low" => "Gemini 4 Argon (Low)",
-                                "gemini-pro-orchestrator-g1-pro" => "Orchestrator (Argon)",
+                                "gemini-pro-orchestrator-g1-pro"
+                                | "gemini-pro-orchestrator-argon" => "Orchestrator (Argon)",
                                 _ => "Gemini 4 Argon",
                             };
-                            let placeholder = if argon_name == "gemini-pro-orchestrator-g1-pro" {
-                                "MODEL_PLACEHOLDER_M668"
-                            } else {
-                                "MODEL_PLACEHOLDER_M421"
+                            let placeholder = match argon_name {
+                                "gemini-pro-orchestrator-g1-pro" => "MODEL_PLACEHOLDER_M668",
+                                "gemini-pro-orchestrator-argon" => "MODEL_PLACEHOLDER_M681",
+                                _ => "MODEL_PLACEHOLDER_M421",
                             };
                             let catalog_max_output =
                                 crate::models::OfficialModelCatalog::get(argon_name)
@@ -1031,20 +1033,23 @@ pub async fn fetch_quota_with_cache(
                             "gemini-4-carbon-medium",
                             "gemini-4-carbon-low",
                             "gemini-4-carbon-xhigh",
+                            "gemini-pro-orchestrator",
                         ] {
                             let label = match carbon_name {
                                 "gemini-4-carbon-high" => "Gemini 4 Carbon (High)",
                                 "gemini-4-carbon-medium" => "Gemini 4 Carbon (Medium)",
                                 "gemini-4-carbon-low" => "Gemini 4 Carbon (Low)",
                                 "gemini-4-carbon-xhigh" => "Gemini 4 Carbon (XHigh)",
+                                "gemini-pro-orchestrator" => "Orchestrator (Carbon)",
                                 _ => "Gemini 4 Carbon",
                             };
                             let placeholder = match carbon_name {
                                 "gemini-4-carbon-xhigh" => "MODEL_PLACEHOLDER_M4_CARBON_XHIGH",
-                                "gemini-4-carbon-high" => "MODEL_PLACEHOLDER_M4_CARBON_HIGH",
-                                "gemini-4-carbon-medium" => "MODEL_PLACEHOLDER_M4_CARBON_MED",
-                                "gemini-4-carbon-low" => "MODEL_PLACEHOLDER_M4_CARBON_LOW",
-                                _ => "MODEL_PLACEHOLDER_M4_CARBON",
+                                "gemini-4-carbon-high" => "MODEL_PLACEHOLDER_M427",
+                                "gemini-4-carbon-medium" => "MODEL_PLACEHOLDER_M437",
+                                "gemini-4-carbon-low" => "MODEL_PLACEHOLDER_M438",
+                                "gemini-pro-orchestrator" => "MODEL_PLACEHOLDER_M667",
+                                _ => "MODEL_PLACEHOLDER_M427",
                             };
                             let catalog_max_output =
                                 crate::models::OfficialModelCatalog::get(carbon_name)

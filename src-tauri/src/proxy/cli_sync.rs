@@ -809,7 +809,8 @@ pub fn get_sync_status(
                         // 验证是否已同步最核心模型
                         let has_core_models =
                             if let Some(models) = doc.get("models").and_then(|i| i.as_table()) {
-                                models.contains_key("claude-sonnet-4-6")
+                                models.contains_key("claude-sonnet-5-5")
+                                    || models.contains_key("claude-sonnet-4-6")
                             } else {
                                 false
                             };
@@ -1762,6 +1763,30 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
     },
     // Gemini 4 系列 (Google 旗舰推理模型，1M 上下文)
     CoreModel {
+        id: "gemini-4-neon",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-neon-xhigh",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-neon-high",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-neon-medium",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-neon-low",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-pro-orchestrator-neon",
+        context_window: 1_048_576,
+    },
+    CoreModel {
         id: "gemini-4-carbon",
         context_window: 1_048_576,
     },
@@ -1782,6 +1807,10 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
         context_window: 1_048_576,
     },
     CoreModel {
+        id: "gemini-pro-orchestrator",
+        context_window: 1_048_576,
+    },
+    CoreModel {
         id: "gemini-4-argon",
         context_window: 1_048_576,
     },
@@ -1799,6 +1828,10 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
     },
     CoreModel {
         id: "gemini-4-argon-low",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-pro-orchestrator-argon",
         context_window: 1_048_576,
     },
     CoreModel {
@@ -1823,6 +1856,18 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
     },
     CoreModel {
         id: "gemini-4-hydrogen-low",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-tiered-xhigh",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-tiered-high",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-sonar",
         context_window: 1_048_576,
     },
     // Gemini 3.8 Flash 系列 (1M 上下文)

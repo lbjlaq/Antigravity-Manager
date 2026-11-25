@@ -86,8 +86,17 @@ impl OfficialModelInfo {
     pub fn is_claude(&self) -> bool {
         self.model_provider.as_deref() == Some("MODEL_PROVIDER_ANTHROPIC")
             || self.api_provider.as_deref() == Some("API_PROVIDER_ANTHROPIC_VERTEX")
-            || self.model == "MODEL_PLACEHOLDER_M35"
-            || self.model == "MODEL_PLACEHOLDER_M26"
+            || matches!(
+                self.model.as_str(),
+                "MODEL_PLACEHOLDER_M35"
+                    | "MODEL_PLACEHOLDER_M26"
+                    | "MODEL_PLACEHOLDER_M400"
+                    | "MODEL_PLACEHOLDER_M401"
+                    | "MODEL_PLACEHOLDER_M402"
+                    | "MODEL_PLACEHOLDER_M403"
+                    | "MODEL_PLACEHOLDER_M404"
+                    | "MODEL_PLACEHOLDER_M405"
+            )
     }
 
     /// 判定是否为非 Gemini 外部模型 (如 Claude 或 GPT 等)
@@ -276,6 +285,8 @@ impl OfficialModelCatalog {
                         && s != "image"
                         && s != "preview"
                         && s != "exp"
+                        && s != "sonar"
+                        && !s.starts_with("tiered-")
                     {
                         if seen.insert(s.to_string()) {
                             found.push(s.to_string());
@@ -634,7 +645,7 @@ impl OfficialModelCatalog {
             supports_video: Some(true),
             recommended: Some(true),
             is_internal: None,
-            tag_title: Some("Fast".to_string()),
+            tag_title: Some("Leaving Soon".to_string()),
             tag_description: Some("Default".to_string()),
             quota_info: None,
             supported_mime_types: None,
@@ -732,17 +743,25 @@ mod tests {
 
         assert_eq!(
             recommended.len(),
-            25,
-            "cold-start recommended baseline must match exact 25 active official entries, got: {:?}",
+            35,
+            "cold-start recommended baseline must match exact 35 active official entries, got: {:?}",
             recommended
         );
 
         for expected in [
+            "gemini-4-neon-high",
+            "gemini-4-neon-xhigh",
+            "gemini-pro-orchestrator-neon",
             "gemini-4-carbon-high",
             "gemini-4-carbon-xhigh",
+            "gemini-pro-orchestrator",
             "gemini-4-hydrogen-high",
             "gemini-4-hydrogen-xhigh",
+            "gemini-4-hydrogen-tiered-high",
+            "gemini-4-hydrogen-tiered-xhigh",
+            "gemini-4-hydrogen-sonar",
             "gemini-4-argon-high",
+            "gemini-pro-orchestrator-argon",
             "gemini-pro-orchestrator-g1-pro",
             "gemini-3.8-flash-high",
             "gemini-3.8-flash-tiered",

@@ -229,6 +229,36 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         group: 'Gemini 4',
         tags: ['flash', 'argon', 'low'],
     },
+    'gemini-pro-orchestrator-neon': {
+        label: 'Orchestrator (Neon)',
+        shortLabel: 'Orch Neon',
+        protectedKey: 'gemini-4-neon',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro',
+        i18nDescKey: 'proxy.model.pro',
+        group: 'Gemini 4',
+        tags: ['pro', 'neon', 'orchestrator'],
+    },
+    'gemini-pro-orchestrator': {
+        label: 'Orchestrator (Carbon)',
+        shortLabel: 'Orch Carbon',
+        protectedKey: 'gemini-4-carbon',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro',
+        i18nDescKey: 'proxy.model.pro',
+        group: 'Gemini 4',
+        tags: ['pro', 'carbon', 'orchestrator'],
+    },
+    'gemini-pro-orchestrator-argon': {
+        label: 'Orchestrator (Argon)',
+        shortLabel: 'Orch Argon',
+        protectedKey: 'gemini-4-argon',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro',
+        i18nDescKey: 'proxy.model.pro',
+        group: 'Gemini 4',
+        tags: ['pro', 'argon', 'orchestrator'],
+    },
     'gemini-pro-orchestrator-g1-pro': {
         label: 'Orchestrator (Argon)',
         shortLabel: 'Orchestrator',
@@ -288,6 +318,36 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         i18nDescKey: 'proxy.model.flash_preview',
         group: 'Gemini 4',
         tags: ['flash', 'hydrogen', 'low'],
+    },
+    'gemini-4-hydrogen-tiered-xhigh': {
+        label: 'Gemini 4 Hydrogen (Tiered XHigh)',
+        shortLabel: 'G4 Hy Tiered XH',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_preview',
+        i18nDescKey: 'proxy.model.flash_preview',
+        group: 'Gemini 4',
+        tags: ['flash', 'hydrogen', 'tiered', 'xhigh'],
+    },
+    'gemini-4-hydrogen-tiered-high': {
+        label: 'Gemini 4 Hydrogen (Tiered High)',
+        shortLabel: 'G4 Hy Tiered H',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_preview',
+        i18nDescKey: 'proxy.model.flash_preview',
+        group: 'Gemini 4',
+        tags: ['flash', 'hydrogen', 'tiered', 'high'],
+    },
+    'gemini-4-hydrogen-sonar': {
+        label: 'Gemini 4 Hydrogen (Sonar)',
+        shortLabel: 'G4 Hy Sonar',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_preview',
+        i18nDescKey: 'proxy.model.flash_preview',
+        group: 'Gemini 4',
+        tags: ['flash', 'hydrogen', 'sonar'],
     },
 
 
@@ -587,8 +647,8 @@ export const CANONICAL_GROUP_ORDER = ['Gemini 3', 'Gemini 2.5', 'Gemini', 'Claud
 export function extractModelVersion(idOrName: string): [number, number] {
     const s = idOrName.toLowerCase();
 
-    // 特殊匹配 OpenAI 与 Gemini 4 Orchestrator (Argon)
-    if (s.includes('gemini-pro-orchestrator-g1-pro')) return [4, 0];
+    // 特殊匹配 OpenAI 与 Gemini 4 Orchestrator 全系 (Neon / Carbon / Argon)
+    if (s.includes('gemini-pro-orchestrator')) return [4, 0];
     if (s.includes('gpt-4o')) return [4, 5];
     if (s.includes('gpt-4')) return [4, 0];
     if (s.includes('gpt-3.5')) return [3, 5];

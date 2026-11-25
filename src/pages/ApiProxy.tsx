@@ -1938,7 +1938,7 @@ print(response.choices[0].message.content)`;
             const g = (f.group || '').toLowerCase();
             const fid = f.familyId.toLowerCase();
             if (selectedSeriesTab === 'Gemini 4') {
-                return g.includes('gemini 4') || fid.startsWith('gemini-4');
+                return g.includes('gemini 4') || fid.startsWith('gemini-4') || fid.startsWith('gemini-pro-orchestrator');
             }
             if (selectedSeriesTab === 'Gemini 3') {
                 return g.includes('gemini 3') || fid.startsWith('gemini-3');
@@ -3039,8 +3039,13 @@ print(response.choices[0].message.content)`;
                                                     onChange={(e) => setUaSandboxModel(e.target.value)}
                                                     className="select select-xs border-gray-300 dark:border-base-300 bg-white dark:bg-base-100 text-xs rounded-lg flex-1 font-mono"
                                                 >
+                                                    <option value="gemini-4-neon-high">gemini-4-neon-high (Gemini 4 Neon)</option>
+                                                    <option value="gemini-4-carbon-high">gemini-4-carbon-high (Gemini 4 Carbon)</option>
+                                                    <option value="gemini-pro-orchestrator-neon">gemini-pro-orchestrator-neon (Orchestrator Neon)</option>
+                                                    <option value="gemini-pro-orchestrator">gemini-pro-orchestrator (Orchestrator Carbon)</option>
                                                     <option value="gemini-4-argon">gemini-4-argon (旗舰高阶推理)</option>
-                                                    <option value="gemini-pro-orchestrator-g1-pro">gemini-pro-orchestrator-g1-pro (Orchestrator Argon)</option>
+                                                    <option value="gemini-pro-orchestrator-argon">gemini-pro-orchestrator-argon (Orchestrator Argon)</option>
+                                                    <option value="gemini-pro-orchestrator-g1-pro">gemini-pro-orchestrator-g1-pro (Orchestrator Argon Legacy)</option>
                                                     <option value="gemini-4-argon-low">gemini-4-argon-low (轻量推理)</option>
                                                     <option value="simulate_no_response">[模拟故障] 无请求回报 (上游网络超时与阶段中断)</option>
                                                     <option value="claude-opus-5-5">claude-opus-5-5</option>

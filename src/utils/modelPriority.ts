@@ -22,6 +22,10 @@ export const MAX_MODEL_PRIORITY_ENTRIES = 256;
 const MODEL_PRIORITY_KEY_REGEX = /^[a-z0-9][a-z0-9._/:@-]{0,127}$/;
 
 const TIER_SUFFIXES = [
+    '-tiered-xhigh',
+    '-tiered-high',
+    '-tiered-medium',
+    '-tiered-low',
     '-extra-low',
     '-xhigh',
     '-high',
@@ -29,6 +33,7 @@ const TIER_SUFFIXES = [
     '-low',
     '-thinking',
     '-tiered',
+    '-sonar',
     '@default',
 ] as const;
 
