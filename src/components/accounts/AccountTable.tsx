@@ -381,8 +381,8 @@ function AccountRowContent({
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
         const hasFlagship = hasAccountFlagshipCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isFlagshipModel);
-        const flagshipCode = supported.map(extractGemini4Codename).find(Boolean) || (hasFlagship ? 'neon' : null);
-        const flagshipLabel = flagshipCode ? flagshipCode.charAt(0).toUpperCase() + flagshipCode.slice(1) : 'Neon';
+        const flagshipCode = supported.map(extractGemini4Codename).find(Boolean) || (hasFlagship ? (tier === 'pro' ? 'carbon' : 'neon') : null);
+        const flagshipLabel = flagshipCode ? flagshipCode.charAt(0).toUpperCase() + flagshipCode.slice(1) : (tier === 'pro' ? 'Carbon' : 'Neon');
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
@@ -697,7 +697,7 @@ function AccountRowContent({
                                     <GroupQuotaCard
                                         summary={argon}
                                         isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, 'argon'))}
-                                        liveLimit={getLiveLimitForModel(account, 'gemini-4-neon') || getLiveLimitForModel(account, 'gemini-4-argon')}
+                                        liveLimit={getLiveLimitForModel(account, 'gemini-4-carbon') || getLiveLimitForModel(account, 'gemini-4-neon') || getLiveLimitForModel(account, 'gemini-4-argon')}
                                         compact
                                         fullWidth
                                     />

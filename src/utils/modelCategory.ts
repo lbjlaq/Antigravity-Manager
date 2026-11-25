@@ -197,10 +197,10 @@ const GENERIC_G4_ROLE_TOKENS = new Set([
     'wtu', 'weekly', '5h', '7d', 'hour', 'quota', 'pool', 'default', 'standard',
 ]);
 
-/** 判断模型是否属于 Gemini 旗舰代际（包含 neon、argon 命名以及 Orchestrator 旗舰入口） */
+/** 判断模型是否属于 Gemini 旗舰代际（包含 neon、argon、carbon 命名以及 Orchestrator 旗舰入口） */
 export function isFlagshipModel(modelName: string): boolean {
     const lower = modelName.trim().toLowerCase();
-    return lower.includes('neon') || lower.includes('argon') || lower === 'gemini-pro-orchestrator-g1-pro';
+    return lower.includes('neon') || lower.includes('argon') || lower.includes('carbon') || lower === 'gemini-pro-orchestrator-g1-pro';
 }
 
 /** 兼容旧代码调用：判断模型是否属于 Gemini 4 Flagship / Argon */
@@ -222,6 +222,7 @@ export function extractGemini4Codename(modelName: string): string | null {
     }
     if (lower.includes('neon') || lower === 'gemini-pro-orchestrator-g1-pro') return 'neon';
     if (lower.includes('argon')) return 'argon';
+    if (lower.includes('carbon')) return 'carbon';
     return null;
 }
 
@@ -239,7 +240,7 @@ export function isDedicatedG4Group(
     ];
     for (const t of texts) {
         if (!t) continue;
-        if (t.includes('neon') || t.includes('argon')) return true;
+        if (t.includes('neon') || t.includes('argon') || t.includes('carbon')) return true;
         if (/(?:^|[\s_-])gemini[\s_-]+([4-9]|\d{2,})(?:\.\d+)?[\s_-]+([a-z][a-z0-9]*)/.test(t)) {
             const m = t.match(/gemini[\s_-]+(?:[4-9]|\d{2,})(?:\.\d+)?[\s_-]+([a-z][a-z0-9]*)/);
             if (m && !GENERIC_G4_ROLE_TOKENS.has(m[1])) return true;

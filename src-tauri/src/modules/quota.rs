@@ -977,6 +977,97 @@ pub async fn fetch_quota_with_cache(
                             });
                         }
                     }
+
+                    // 检查 quota_groups 是否包含 carbon 分组（Pro/Ultra 账号自动授权）
+                    let is_pro =
+                        final_tier == "PRO" || final_tier == "ULTRA" || final_tier == "ENTERPRISE";
+                    let has_carbon_group = groups.iter().any(|g| {
+                        let gname = g.display_name.to_lowercase();
+                        gname.contains("carbon")
+                            || g.buckets.iter().any(|b| {
+                                let bid = b.bucket_id.to_lowercase();
+                                let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                bid.contains("carbon") || bname.contains("carbon")
+                            })
+                    });
+                    if (has_carbon_group || is_pro)
+                        && !quota_data.models.iter().any(|m| {
+                            crate::proxy::common::model_mapping::extract_gemini4_codename(
+                                &m.name.to_lowercase(),
+                            )
+                            .as_deref()
+                                == Some("carbon")
+                        })
+                    {
+                        let carbon_b = groups
+                            .iter()
+                            .find_map(|g| {
+                                let gname = g.display_name.to_lowercase();
+                                if gname.contains("carbon") {
+                                    return g.buckets.first();
+                                }
+                                g.buckets.iter().find(|b| {
+                                    let bid = b.bucket_id.to_lowercase();
+                                    let bname =
+                                        b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                    bid.contains("carbon") || bname.contains("carbon")
+                                })
+                            })
+                            .or_else(|| {
+                                if is_pro {
+                                    find_general_gemini_group(groups, &known_g4_codenames)
+                                        .and_then(|g| g.buckets.first())
+                                } else {
+                                    None
+                                }
+                            });
+                        let pct = carbon_b
+                            .map(|b| (b.remaining_fraction * 100.0).round() as i32)
+                            .unwrap_or(100);
+                        let reset = carbon_b.map(|b| b.reset_time.clone()).unwrap_or_default();
+                        for carbon_name in [
+                            "gemini-4-carbon",
+                            "gemini-4-carbon-high",
+                            "gemini-4-carbon-medium",
+                            "gemini-4-carbon-low",
+                            "gemini-4-carbon-xhigh",
+                        ] {
+                            let label = match carbon_name {
+                                "gemini-4-carbon-high" => "Gemini 4 Carbon (High)",
+                                "gemini-4-carbon-medium" => "Gemini 4 Carbon (Medium)",
+                                "gemini-4-carbon-low" => "Gemini 4 Carbon (Low)",
+                                "gemini-4-carbon-xhigh" => "Gemini 4 Carbon (XHigh)",
+                                _ => "Gemini 4 Carbon",
+                            };
+                            let placeholder = match carbon_name {
+                                "gemini-4-carbon-xhigh" => "MODEL_PLACEHOLDER_M4_CARBON_XHIGH",
+                                "gemini-4-carbon-high" => "MODEL_PLACEHOLDER_M4_CARBON_HIGH",
+                                "gemini-4-carbon-medium" => "MODEL_PLACEHOLDER_M4_CARBON_MED",
+                                "gemini-4-carbon-low" => "MODEL_PLACEHOLDER_M4_CARBON_LOW",
+                                _ => "MODEL_PLACEHOLDER_M4_CARBON",
+                            };
+                            let catalog_max_output =
+                                crate::models::OfficialModelCatalog::get(carbon_name)
+                                    .and_then(|info| info.max_output_tokens)
+                                    .filter(|&v| v > 0)
+                                    .map(|v| v as i32)
+                                    .unwrap_or(262144);
+                            quota_data.add_model(crate::models::quota::ModelQuota {
+                                name: carbon_name.to_string(),
+                                percentage: pct,
+                                reset_time: reset.clone(),
+                                display_name: Some(label.to_string()),
+                                supports_images: Some(true),
+                                supports_thinking: Some(true),
+                                thinking_budget: Some(-1),
+                                recommended: Some(true),
+                                max_tokens: Some(1048576),
+                                max_output_tokens: Some(catalog_max_output),
+                                model: Some(placeholder.to_string()),
+                                supported_mime_types: None,
+                            });
+                        }
+                    }
                 }
 
                 // [3P ISOLATION] 若账号实际可用模型中没有任何 Claude 或 GPT 模型（如不支持 Opus 5.5 且 4.6/GPT 已下线），
