@@ -38,6 +38,17 @@ impl QuotaBucket {
         let start = end.checked_sub(7 * 24 * 60 * 60)?;
         (start <= now && now < end).then_some((start, end))
     }
+
+    /// Returns true when the bucket has a valid RFC3339 `reset_time` that is already in the past.
+    pub fn is_expired(&self, now_ts: i64) -> bool {
+        let trimmed = self.reset_time.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        chrono::DateTime::parse_from_rfc3339(trimmed)
+            .map(|dt| dt.timestamp() <= now_ts)
+            .unwrap_or(false)
+    }
 }
 
 /// 一个模型组 (如 Gemini Models / Claude and GPT models)
@@ -48,6 +59,56 @@ pub struct QuotaGroup {
     pub description: Option<String>,
     #[serde(default)]
     pub buckets: Vec<QuotaBucket>,
+}
+
+impl QuotaGroup {
+    /// Returns true when this group represents the 3P (Claude / GPT) quota pool,
+    /// matching either group display_name or any bucket's bucket_id / display_name.
+    pub fn is_third_party(&self) -> bool {
+        let gname = self.display_name.to_lowercase();
+        if gname.contains("claude") || gname.contains("gpt") || gname.contains("3p") {
+            return true;
+        }
+        self.buckets.iter().any(|b| {
+            let bid = b.bucket_id.to_lowercase();
+            let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+            bid.contains("3p")
+                || bid.contains("claude")
+                || bid.contains("gpt")
+                || bname.contains("3p")
+                || bname.contains("claude")
+                || bname.contains("gpt")
+        })
+    }
+
+    /// Extracts the dedicated Gemini 4+ codename (e.g. "argon", "neon", "carbon")
+    /// if this group is a dedicated codename group rather than the shared Gemini pool.
+    pub fn dedicated_g4_codename(&self, known_codenames: &[String]) -> Option<String> {
+        let gname = self.display_name.to_lowercase();
+        if let Some(code) =
+            crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+                &gname,
+                "",
+                known_codenames,
+            )
+        {
+            return Some(code);
+        }
+        for b in &self.buckets {
+            let bid = b.bucket_id.to_lowercase();
+            let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+            if let Some(code) =
+                crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+                    &bname,
+                    &bid,
+                    known_codenames,
+                )
+            {
+                return Some(code);
+            }
+        }
+        None
+    }
 }
 
 /// 模型配额信息

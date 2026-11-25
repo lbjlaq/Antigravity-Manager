@@ -227,13 +227,13 @@ export function checkFlagshipEligibility(
         return true;
     }
 
-    // 判据 2.1: Pro 套餐被上游赋予了 Carbon 旗舰模型（共享通用 Gemini 配额池）
+    // 判据 2.1: Pro 套餐被上游赋予了 Carbon/Neon 旗舰模型（共享通用 Gemini 配额池）
     if (tier === 'pro') {
-        const hasActiveCarbon = models.some(m => {
+        const hasActiveSharedFlagship = models.some(m => {
             const n = (m?.name || '').toLowerCase();
-            return n.includes('carbon') && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+            return (n.includes('carbon') || n.includes('neon')) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
         });
-        if (hasActiveCarbon) return true;
+        if (hasActiveSharedFlagship) return true;
     }
 
     // 判据 3: 无 groups 数据时的离线/冷启动兜底（仅当服务端未返回任何 groups，且 models 明确包含非禁用旗舰模型）

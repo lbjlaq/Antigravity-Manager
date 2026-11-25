@@ -1,4 +1,4 @@
-use crate::models::quota::ModelQuota;
+use crate::models::quota::{ModelQuota, QuotaData, QuotaGroup};
 use crate::modules;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 #[cfg(not(target_os = "android"))]
@@ -342,6 +342,92 @@ struct KeyModelQuotas {
     gemini_image: Option<i32>,
 }
 
+/// 从单个配额组提取有效剩余百分比 (0-100)：优先考虑周配额熔断与 5H/周配额短板
+fn effective_group_quota_percentage(group: &QuotaGroup, now_ts: i64) -> Option<i32> {
+    let mut min_5h: Option<f64> = None;
+    let mut min_weekly: Option<f64> = None;
+
+    for b in &group.buckets {
+        if b.is_expired(now_ts) {
+            continue;
+        }
+        let win = format!("{} {}", b.window, b.bucket_id).to_lowercase();
+        let frac = b.remaining_fraction.clamp(0.0, 1.0);
+        if win.contains("week") || win.contains("7d") {
+            min_weekly = Some(min_weekly.map_or(frac, |cur| cur.min(frac)));
+        } else if win.contains("5h") || win.contains("hour") {
+            min_5h = Some(min_5h.map_or(frac, |cur| cur.min(frac)));
+        }
+    }
+
+    if let Some(w) = min_weekly {
+        if w <= 0.015 {
+            return Some(0);
+        }
+    }
+
+    match (min_5h, min_weekly) {
+        (Some(h), Some(w)) => Some((h.min(w) * 100.0).round() as i32),
+        (Some(h), None) => Some((h * 100.0).round() as i32),
+        (None, Some(w)) => Some((w * 100.0).round() as i32),
+        (None, None) => None,
+    }
+}
+
+/// 综合双窗口 `quota_groups` 与模型列表提取托盘/状态栏核心配额 (Fixes #4048)
+fn extract_key_quotas_from_data(quota: &QuotaData) -> KeyModelQuotas {
+    let mut key = extract_key_model_quotas(&quota.models);
+    let Some(ref groups) = quota.quota_groups else {
+        return key;
+    };
+    if groups.is_empty() {
+        return key;
+    }
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let has_claude_or_gpt = quota.models.is_empty()
+        || quota.models.iter().any(|m| {
+            let n = m.name.trim().to_lowercase();
+            n.starts_with("claude") || n.starts_with("gpt")
+        });
+    let known_codenames: Vec<String> = quota
+        .models
+        .iter()
+        .filter_map(|m| {
+            let nl = m.name.trim().to_lowercase();
+            if nl.contains("-disabled") || nl.ends_with("_disabled") {
+                None
+            } else {
+                crate::proxy::common::model_mapping::extract_gemini4_codename(&nl)
+            }
+        })
+        .collect();
+
+    let mut group_claude: Option<i32> = None;
+    let mut group_gemini: Option<i32> = None;
+
+    for group in groups {
+        if group.dedicated_g4_codename(&known_codenames).is_some() {
+            continue;
+        }
+        if group.is_third_party() {
+            if has_claude_or_gpt && group_claude.is_none() {
+                group_claude = effective_group_quota_percentage(group, now_ts);
+            }
+        } else if group_gemini.is_none() {
+            group_gemini = effective_group_quota_percentage(group, now_ts);
+        }
+    }
+
+    if let Some(c) = group_claude {
+        key.claude = Some(c);
+    }
+    if let Some(g) = group_gemini {
+        key.gemini_pro = Some(g);
+    }
+    key
+}
+
 /// 智能提取核心模型的剩余配额百分比（首选精准旗舰型号，未匹配时回退通配分类）
 fn extract_key_model_quotas(models: &[ModelQuota]) -> KeyModelQuotas {
     let mut claude: Option<i32> = None;
@@ -349,18 +435,32 @@ fn extract_key_model_quotas(models: &[ModelQuota]) -> KeyModelQuotas {
     let mut gemini_flash: Option<i32> = None;
     let mut gemini_image: Option<i32> = None;
 
-    // 1. 首选匹配当前主力核心型号
+    // 1. 首选匹配当前主力核心型号（含 Claude 5.5 与 Gemini 4 Neon/Carbon/Hydrogen/Orchestrator）
     for m in models {
         let name = m.name.trim().to_lowercase();
+        if name.contains("-disabled") || name.ends_with("_disabled") {
+            continue;
+        }
         if claude.is_none()
-            && (name == "claude-sonnet-4-6"
+            && (name == "claude-opus-5-5-high"
+                || name == "claude-sonnet-5-5-high"
+                || name == "claude-opus-5-5"
+                || name == "claude-sonnet-5-5"
+                || name == "claude-sonnet-4-6"
                 || name == "claude-opus-4-6-thinking"
                 || name == "claude-sonnet-4-5")
         {
             claude = Some(m.percentage);
         }
         if gemini_pro.is_none()
-            && (name == "gemini-pro-agent"
+            && (name == "gemini-4-neon-high"
+                || name == "gemini-4-neon"
+                || name == "gemini-4-carbon-high"
+                || name == "gemini-4-carbon"
+                || name == "gemini-4-hydrogen-high"
+                || name == "gemini-4-hydrogen"
+                || name.starts_with("gemini-pro-orchestrator")
+                || name == "gemini-pro-agent"
                 || name == "gemini-3.1-pro-high"
                 || name == "gemini-3-pro-high"
                 || name == "gemini-3.1-pro")
@@ -386,6 +486,9 @@ fn extract_key_model_quotas(models: &[ModelQuota]) -> KeyModelQuotas {
     // 2. 类别通配回退匹配（应对未来模型版本迭代）
     for m in models {
         let name = m.name.trim().to_lowercase();
+        if name.contains("-disabled") || name.ends_with("_disabled") {
+            continue;
+        }
         let is_gemini = name.starts_with("gemini-");
         let is_image = (is_gemini && name.contains("image"))
             || name.starts_with("image")
@@ -397,7 +500,11 @@ fn extract_key_model_quotas(models: &[ModelQuota]) -> KeyModelQuotas {
             if gemini_flash.is_none() {
                 gemini_flash = Some(m.percentage);
             }
-        } else if is_gemini && name.contains("pro") {
+        } else if is_gemini
+            && (name.contains("pro")
+                || name.starts_with("gemini-4")
+                || crate::proxy::common::model_mapping::extract_gemini4_codename(&name).is_some())
+        {
             if gemini_pro.is_none() {
                 gemini_pro = Some(m.percentage);
             }
@@ -786,9 +893,23 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
             let config = modules::load_app_config().unwrap_or_default();
             let texts = modules::i18n::get_tray_texts(&config.language);
 
-            // Get current account info (prioritizing user-selected account in MiniView/Tab, fallback to active client account)
+            // Get current account info (prioritizing user-selected account in MiniView/Tab,
+            // auto-falling back to active client account if the selected ID is stale/deleted)
             let selected_id = get_tray_selected_account_id();
-            let current = selected_id.or_else(|| modules::get_current_account_id().unwrap_or(None));
+            let loaded_account = match selected_id {
+                Some(ref sid) => match modules::load_account(sid) {
+                    Ok(acc) => Some(Ok(acc)),
+                    Err(_) => {
+                        set_tray_selected_account_id(None);
+                        modules::get_current_account_id()
+                            .unwrap_or(None)
+                            .map(|id| modules::load_account(&id))
+                    }
+                },
+                None => modules::get_current_account_id()
+                    .unwrap_or(None)
+                    .map(|id| modules::load_account(&id)),
+            };
 
             let mut menu_lines = Vec::new();
             let mut user_text = format!("{}: {}", texts.current, texts.no_account);
@@ -799,8 +920,8 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
             #[allow(unused_mut)]
             let mut macos_title: Option<String> = None;
 
-            if let Some(id) = current {
-                if let Ok(account) = modules::load_account(&id) {
+            if let Some(account_result) = loaded_account {
+                if let Ok(account) = account_result {
                     user_text = format!("{}: {}", texts.current, account.email);
 
                     let email_display = if account.email.chars().count() > 28 {
@@ -820,7 +941,8 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
                             );
                             macos_title = Some("🚫".to_string());
                         } else {
-                            let key_quotas = extract_key_model_quotas(&q.models);
+                            let key_quotas = extract_key_quotas_from_data(&q);
+                            let gemini_headline = key_quotas.gemini_pro.or(key_quotas.gemini_flash);
 
                             if let Some(c) = key_quotas.claude {
                                 menu_lines.push(format!("Claude: {}%", c));
@@ -844,8 +966,8 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
                             if let Some(c) = key_quotas.claude {
                                 tooltip_parts.push(format!("Claude: {}%", c));
                             }
-                            if let Some(gp) = key_quotas.gemini_pro {
-                                tooltip_parts.push(format!("Gemini: {}%", gp));
+                            if let Some(g) = gemini_headline {
+                                tooltip_parts.push(format!("Gemini: {}%", g));
                             }
                             if let Some(gi) = key_quotas.gemini_image {
                                 tooltip_parts.push(format!("Image: {}%", gi));
@@ -863,7 +985,7 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
                             );
 
                             // macOS menu bar title (concise for status bar space)
-                            macos_title = match (key_quotas.claude, key_quotas.gemini_pro) {
+                            macos_title = match (key_quotas.claude, gemini_headline) {
                                 (Some(c), Some(g)) => Some(format!("C:{}% G:{}%", c, g)),
                                 (Some(c), None) => Some(format!("C:{}%", c)),
                                 (None, Some(g)) => Some(format!("G:{}%", g)),
@@ -1013,5 +1135,119 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
                 }
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::quota::QuotaBucket;
+
+    fn mk_model(name: &str, pct: i32) -> ModelQuota {
+        ModelQuota {
+            name: name.to_string(),
+            percentage: pct,
+            reset_time: String::new(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            model: None,
+            supported_mime_types: None,
+        }
+    }
+
+    #[test]
+    fn tray_extract_key_quotas_supports_g4_models_and_quota_groups() {
+        let now = chrono::Utc::now().timestamp();
+        let future_reset = chrono::DateTime::from_timestamp(now + 7200, 0)
+            .unwrap()
+            .to_rfc3339();
+
+        // 1. Models without "pro" in name (Gemini 4 Neon/Hydrogen + Claude 5.5)
+        let mut q = QuotaData::new();
+        q.models = vec![
+            mk_model("gemini-4-neon-high", 82),
+            mk_model("claude-opus-5-5-high", 31),
+        ];
+        let key = extract_key_quotas_from_data(&q);
+        assert_eq!(key.claude, Some(31));
+        assert_eq!(key.gemini_pro, Some(82));
+
+        // 2. With quota_groups: 3p-weekly exhausted overrides 5h, general Gemini Models overrides dedicated Argon 0%
+        q.quota_groups = Some(vec![
+            QuotaGroup {
+                display_name: "Gemini 4 Argon".to_string(),
+                description: None,
+                buckets: vec![QuotaBucket {
+                    bucket_id: "gemini-argon-wtu-weekly".to_string(),
+                    window: "weekly".to_string(),
+                    remaining_fraction: 0.0,
+                    reset_time: future_reset.clone(),
+                    observed_at: None,
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                }],
+            },
+            QuotaGroup {
+                display_name: "Gemini Models".to_string(),
+                description: None,
+                buckets: vec![
+                    QuotaBucket {
+                        bucket_id: "gemini-5h".to_string(),
+                        window: "5h".to_string(),
+                        remaining_fraction: 0.90,
+                        reset_time: future_reset.clone(),
+                        observed_at: None,
+                        cycle_tokens: None,
+                        display_name: None,
+                        description: None,
+                    },
+                    QuotaBucket {
+                        bucket_id: "gemini-weekly".to_string(),
+                        window: "weekly".to_string(),
+                        remaining_fraction: 0.74,
+                        reset_time: future_reset.clone(),
+                        observed_at: None,
+                        cycle_tokens: None,
+                        display_name: None,
+                        description: None,
+                    },
+                ],
+            },
+            QuotaGroup {
+                display_name: "Third Party".to_string(),
+                description: None,
+                buckets: vec![
+                    QuotaBucket {
+                        bucket_id: "3p-5h".to_string(),
+                        window: "5h".to_string(),
+                        remaining_fraction: 0.60,
+                        reset_time: future_reset.clone(),
+                        observed_at: None,
+                        cycle_tokens: None,
+                        display_name: None,
+                        description: None,
+                    },
+                    QuotaBucket {
+                        bucket_id: "3p-weekly".to_string(),
+                        window: "weekly".to_string(),
+                        remaining_fraction: 0.0,
+                        reset_time: future_reset,
+                        observed_at: None,
+                        cycle_tokens: None,
+                        display_name: None,
+                        description: None,
+                    },
+                ],
+            },
+        ]);
+        let key_with_groups = extract_key_quotas_from_data(&q);
+        assert_eq!(key_with_groups.gemini_pro, Some(74));
+        assert_eq!(key_with_groups.claude, Some(0));
     }
 }

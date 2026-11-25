@@ -308,6 +308,52 @@ test('Pro tier with dedicated Carbon quota group uses Carbon bucket', () => {
     assertEqual(carbonSummary?.weekly?.percentage, 75, 'Carbon weekly percentage uses dedicated bucket');
 });
 
+// 10. Stale Gemini 4 Argon (0%) must NOT shadow active Gemini 4 Neon / Carbon (Fixes #4048)
+test('Stale Gemini 4 Argon 0% group does not shadow active Neon/Carbon models on shared Gemini pool', () => {
+    const proAccountWithZombieArgon = {
+        quota: {
+            last_updated: Date.now(),
+            subscription_tier: 'PRO',
+            quota_groups: [
+                {
+                    display_name: 'Gemini Models',
+                    buckets: [
+                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 0.92, reset_time: '2026-10-27T08:00:00Z' },
+                        { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.86, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                },
+                {
+                    display_name: 'Gemini 4 Argon',
+                    buckets: [
+                        { bucket_id: 'gemini-argon-wtu-weekly', window: 'weekly', remaining_fraction: 0.0, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                }
+            ],
+            models: [
+                { name: 'gemini-4-neon', percentage: 86, reset_time: '2026-10-31T12:00:00Z' },
+                { name: 'gemini-4-carbon', percentage: 86, reset_time: '2026-10-31T12:00:00Z' },
+            ]
+        } as QuotaData
+    };
+
+    const summaries = getGroupQuotaSummaries(
+        proAccountWithZombieArgon.quota.quota_groups,
+        proAccountWithZombieArgon.quota.models,
+        'pro'
+    );
+    const flagshipSummary = summaries.find(s => s.key === 'argon');
+    assertEqual(Boolean(flagshipSummary), true, 'Flagship summary present');
+    assertEqual(flagshipSummary?.dynamicLabel, 'Gemini 4 Neon / Carbon', 'Dynamic label reflects active models');
+    assertEqual(flagshipSummary?.weekly?.percentage, 86, 'Active Neon/Carbon uses shared Gemini pool, not zombie Argon 0%');
+
+    const neonDisplay = getModelQuotaDisplay(
+        'gemini-4-neon',
+        proAccountWithZombieArgon.quota.models[0],
+        proAccountWithZombieArgon.quota.quota_groups
+    );
+    assertEqual(neonDisplay.percentage, 86, 'gemini-4-neon not zeroed by zombie Argon group');
+});
+
 console.log(`Passed: ${passed}, Failed: ${failed}`);
 if (failed > 0) {
     throw new Error(`Argon capability tests failed: ${failed}`);

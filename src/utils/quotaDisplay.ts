@@ -1,5 +1,40 @@
 import { checkArgonEligibility, type ModelQuota, type QuotaGroup } from '../types/account';
-import { isArgonModel, extractGemini4Codename, isDedicatedG4Group } from './modelCategory';
+import {
+    isArgonModel,
+    extractGemini4Codename,
+    extractDedicatedG4GroupCodename,
+    isDedicatedG4Group,
+    isThirdPartyQuotaGroup,
+} from './modelCategory';
+
+function matchBucketsForModel(modelId: string, groups: QuotaGroup[] = []) {
+    const name = modelId.toLowerCase();
+    const isArgon = isArgonModel(name);
+    const modelCodename = extractGemini4Codename(name);
+    const knownCodenames = modelCodename ? [modelCodename] : [];
+    const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
+
+    if (modelCodename) {
+        // Dedicated G4 codename (e.g. neon/carbon/argon/hydrogen) ONLY binds to a dedicated group
+        // with that exact codename — never cross-binds Neon/Carbon to a zombie Gemini 4 Argon group (Fixes #4048).
+        const exactDedicated = (groups || [])
+            .filter(group => extractDedicatedG4GroupCodename(group, knownCodenames) === modelCodename)
+            .flatMap(group => group?.buckets || []);
+        if (exactDedicated.length > 0 || isArgon) {
+            return exactDedicated;
+        }
+        // Non-flagship G4 model (e.g. gemini-4-hydrogen) without dedicated group shares general Gemini Models.
+        return (groups || [])
+            .filter(group => !isDedicatedG4Group(group, knownCodenames) && !isThirdPartyQuotaGroup(group))
+            .flatMap(group => group?.buckets || []);
+    }
+
+    return (groups || []).filter(group => {
+        if (isDedicatedG4Group(group)) return false;
+        const isThirdParty = isThirdPartyQuotaGroup(group);
+        return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
+    }).flatMap(group => group?.buckets || []);
+}
 
 export type DashboardQuotaView = 'weighted' | '5h' | 'weekly';
 
@@ -30,21 +65,7 @@ export interface ConstrainedQuotaResult {
 export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefined, groups: QuotaGroup[] = []) {
     const name = modelId.toLowerCase();
     const isArgon = isArgonModel(name);
-    const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
-    const buckets = (groups || []).filter(group => {
-        const groupName = (group?.display_name || '').toLowerCase();
-        const hasFlagshipBucket = (group?.buckets || []).some(bucket => {
-            const bid = (bucket?.bucket_id || '').toLowerCase();
-            return bid.includes('argon') || bid.includes('neon') || bid.includes('carbon');
-        });
-        const groupIsArgon = isDedicatedG4Group(group) || /neon|argon|carbon/i.test(groupName) || hasFlagshipBucket;
-        if (isArgon) return groupIsArgon;
-        if (groupIsArgon) return false;
-
-        const isThirdParty = /claude|gpt|3p/.test(groupName)
-            || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
-        return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
-    }).flatMap(group => group?.buckets || []);
+    const buckets = matchBucketsForModel(name, groups);
     const hasGroups = (groups || []).length > 0;
     if (isArgon && hasGroups && buckets.length === 0) {
         if (model && model.percentage > 0) {
@@ -88,18 +109,7 @@ export function getModelConstrainedQuota(
 ): ConstrainedQuotaResult {
     const name = modelId.toLowerCase();
     const isArgon = isArgonModel(name);
-    const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
-
-    const buckets = (groups || []).filter(group => {
-        const groupIsArgon = isDedicatedG4Group(group) || /neon|argon|carbon/i.test(group?.display_name || '');
-        if (isArgon) return groupIsArgon;
-        if (groupIsArgon) return false;
-
-        const groupName = (group?.display_name || '').toLowerCase();
-        const isThirdParty = /claude|gpt|3p/.test(groupName)
-            || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
-        return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
-    }).flatMap(group => group?.buckets || []);
+    const buckets = matchBucketsForModel(name, groups);
 
     const hasGroups = (groups || []).length > 0;
     if (isArgon && hasGroups && buckets.length === 0) {
@@ -341,25 +351,37 @@ export function getGroupQuotaSummaries(
     const isUltraTier = tier === 'ultra';
     const isEnterpriseTier = tier === 'enterprise';
 
+    const activeFlagshipCodenames = new Set<string>(
+        (fallbackModels || [])
+            .filter(m => {
+                const n = (m?.name || '').toLowerCase();
+                return isSupportedDisplayModel(n) && !(m as any)?.disabled && isArgonModel(n);
+            })
+            .map(m => extractGemini4Codename(m.name))
+            .filter((c): c is string => Boolean(c))
+    );
+    const knownFlagshipCodenames = Array.from(activeFlagshipCodenames);
+
     const findGroupBuckets = (target: 'gemini' | 'claude' | 'argon') => {
         const directBuckets = (groups || []).filter(group => {
-            const groupName = (group?.display_name || '').toLowerCase();
-            const isFlagship = isDedicatedG4Group(group) || /neon|argon|carbon/i.test(groupName);
-            if (target === 'argon') return isFlagship;
+            const groupCodename = extractDedicatedG4GroupCodename(group, knownFlagshipCodenames);
+            const isFlagship = groupCodename !== null;
+            if (target === 'argon') {
+                if (!isFlagship) return false;
+                // Only bind to dedicated groups matching active flagship codenames when active models are known,
+                // preventing stale retired Gemini 4 Argon (0%) from shadowing active Neon/Carbon models (Fixes #4048).
+                return activeFlagshipCodenames.size === 0 || activeFlagshipCodenames.has(groupCodename);
+            }
             if (isFlagship) return false;
 
-            const isThirdParty = /claude|gpt|3p/.test(groupName)
-                || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
+            const isThirdParty = isThirdPartyQuotaGroup(group);
             return target === 'claude' ? isThirdParty : !isThirdParty;
         }).flatMap(group => group?.buckets || []);
 
-        // Ultra 以及拥有 Carbon 的 Pro 账号在官方架构下若未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
+        // Ultra 以及拥有 Neon/Carbon 的 Pro 账号在官方架构下若未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
         if (target === 'argon' && directBuckets.length === 0 && (isUltraTier || tier === 'pro')) {
             return (groups || []).filter(group => {
-                const groupName = (group?.display_name || '').toLowerCase();
-                const isThirdParty = /claude|gpt|3p/.test(groupName)
-                    || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
-                return !isThirdParty;
+                return !isDedicatedG4Group(group, knownFlagshipCodenames) && !isThirdPartyQuotaGroup(group);
             }).flatMap(group => group?.buckets || []);
         }
 
