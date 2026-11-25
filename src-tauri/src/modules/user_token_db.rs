@@ -23,6 +23,7 @@ pub struct UserToken {
     pub max_ips: i32,                 // 0 = unlimited
     pub curfew_start: Option<String>, // "HH:MM" 宵禁开始时间
     pub curfew_end: Option<String>,   // "HH:MM" 宵禁结束时间
+    pub allowed_account_ids: Option<Vec<String>>,
     pub created_at: i64,
     pub updated_at: i64,
     pub last_used_at: Option<i64>,
@@ -72,7 +73,11 @@ pub fn connect_db() -> Result<Connection, String> {
 /// 初始化数据库
 pub fn init_db() -> Result<(), String> {
     let conn = connect_db()?;
+    init_db_with_conn(&conn)
+}
 
+/// 在指定连接上初始化数据库（便于测试迁移逻辑）
+fn init_db_with_conn(conn: &Connection) -> Result<(), String> {
     // 创建 user_tokens 表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS user_tokens (
@@ -90,7 +95,8 @@ pub fn init_db() -> Result<(), String> {
             total_requests INTEGER NOT NULL DEFAULT 0,
             total_tokens_used INTEGER NOT NULL DEFAULT 0,
             curfew_start TEXT,
-            curfew_end TEXT
+            curfew_end TEXT,
+            allowed_account_ids TEXT
         )",
         [],
     )
@@ -117,6 +123,10 @@ pub fn init_db() -> Result<(), String> {
     );
     let _ = conn.execute("ALTER TABLE user_tokens ADD COLUMN curfew_start TEXT", []);
     let _ = conn.execute("ALTER TABLE user_tokens ADD COLUMN curfew_end TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE user_tokens ADD COLUMN allowed_account_ids TEXT",
+        [],
+    );
 
     // 创建 token_ip_bindings 表
     conn.execute(
@@ -183,6 +193,49 @@ pub fn init_db() -> Result<(), String> {
     Ok(())
 }
 
+/// 规范化允许的账号 ID 列表：去除首尾空白、过滤空项、保序去重；空列表归约为 None（不限制）
+pub fn normalize_allowed_account_ids(ids: Option<Vec<String>>) -> Option<Vec<String>> {
+    let ids = ids?;
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized = Vec::new();
+    for id in ids {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+/// 从数据库 TEXT 字段解析允许的账号 ID 列表（fail-closed：畸形 JSON 视为空限制而非无限制）
+pub fn parse_allowed_account_ids(raw: Option<String>) -> Option<Vec<String>> {
+    let raw = raw?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    match serde_json::from_str::<Vec<String>>(&raw) {
+        Ok(ids) => Some(ids),
+        Err(e) => {
+            tracing::error!(
+                "Failed to parse allowed_account_ids JSON from DB (fail-closed to empty list): {}",
+                e
+            );
+            Some(Vec::new())
+        }
+    }
+}
+
+fn serialize_allowed_account_ids(ids: &Option<Vec<String>>) -> Result<Option<String>, String> {
+    ids.as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| format!("Failed to serialize allowed_account_ids: {}", e))
+}
+
 /// 创建新令牌
 pub fn create_token(
     username: String,
@@ -192,11 +245,39 @@ pub fn create_token(
     curfew_start: Option<String>,
     curfew_end: Option<String>,
     custom_expires_at: Option<i64>, // 自定义过期时间戳 (秒)
+    allowed_account_ids: Option<Vec<String>>,
 ) -> Result<UserToken, String> {
     let conn = connect_db()?;
+    create_token_with_conn(
+        &conn,
+        username,
+        expires_type,
+        description,
+        max_ips,
+        curfew_start,
+        curfew_end,
+        custom_expires_at,
+        allowed_account_ids,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_token_with_conn(
+    conn: &Connection,
+    username: String,
+    expires_type: String,
+    description: Option<String>,
+    max_ips: i32,
+    curfew_start: Option<String>,
+    curfew_end: Option<String>,
+    custom_expires_at: Option<i64>,
+    allowed_account_ids: Option<Vec<String>>,
+) -> Result<UserToken, String> {
     let id = Uuid::new_v4().to_string();
     let token = format!("sk-{}", Uuid::new_v4().to_string().replace("-", ""));
     let now = Utc::now().timestamp();
+    let normalized_allowed_accounts = normalize_allowed_account_ids(allowed_account_ids);
+    let serialized_allowed_accounts = serialize_allowed_account_ids(&normalized_allowed_accounts)?;
 
     let expires_at = match expires_type.as_str() {
         "day" => Some(
@@ -232,6 +313,7 @@ pub fn create_token(
         max_ips,
         curfew_start: curfew_start.clone(),
         curfew_end: curfew_end.clone(),
+        allowed_account_ids: normalized_allowed_accounts,
         created_at: now,
         updated_at: now,
         last_used_at: None,
@@ -242,9 +324,9 @@ pub fn create_token(
     conn.execute(
         "INSERT INTO user_tokens (
             id, token, username, description, enabled, expires_type, expires_at, max_ips,
-            curfew_start, curfew_end,
+            curfew_start, curfew_end, allowed_account_ids,
             created_at, updated_at, total_requests, total_tokens_used
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             user_token.id,
             user_token.token,
@@ -256,6 +338,7 @@ pub fn create_token(
             user_token.max_ips,
             user_token.curfew_start,
             user_token.curfew_end,
+            serialized_allowed_accounts,
             user_token.created_at,
             user_token.updated_at,
             user_token.total_requests,
@@ -270,6 +353,10 @@ pub fn create_token(
 /// 列出所有令牌
 pub fn list_tokens() -> Result<Vec<UserToken>, String> {
     let conn = connect_db()?;
+    list_tokens_with_conn(&conn)
+}
+
+fn list_tokens_with_conn(conn: &Connection) -> Result<Vec<UserToken>, String> {
     let mut stmt = conn
         .prepare("SELECT * FROM user_tokens ORDER BY created_at DESC")
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -287,6 +374,9 @@ pub fn list_tokens() -> Result<Vec<UserToken>, String> {
                 max_ips: row.get("max_ips").unwrap_or(0),
                 curfew_start: row.get("curfew_start").unwrap_or(None),
                 curfew_end: row.get("curfew_end").unwrap_or(None),
+                allowed_account_ids: parse_allowed_account_ids(
+                    row.get("allowed_account_ids").unwrap_or(None),
+                ),
                 created_at: row.get("created_at")?,
                 updated_at: row.get("updated_at")?,
                 last_used_at: row.get("last_used_at").unwrap_or(None),
@@ -307,6 +397,10 @@ pub fn list_tokens() -> Result<Vec<UserToken>, String> {
 /// 获取单个令牌信息
 pub fn get_token_by_id(id: &str) -> Result<Option<UserToken>, String> {
     let conn = connect_db()?;
+    get_token_by_id_with_conn(&conn, id)
+}
+
+fn get_token_by_id_with_conn(conn: &Connection, id: &str) -> Result<Option<UserToken>, String> {
     let mut stmt = conn
         .prepare("SELECT * FROM user_tokens WHERE id = ?1")
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -324,6 +418,9 @@ pub fn get_token_by_id(id: &str) -> Result<Option<UserToken>, String> {
                 max_ips: row.get("max_ips")?,
                 curfew_start: row.get("curfew_start").unwrap_or(None),
                 curfew_end: row.get("curfew_end").unwrap_or(None),
+                allowed_account_ids: parse_allowed_account_ids(
+                    row.get("allowed_account_ids").unwrap_or(None),
+                ),
                 created_at: row.get("created_at")?,
                 updated_at: row.get("updated_at")?,
                 last_used_at: row.get("last_used_at")?,
@@ -340,6 +437,13 @@ pub fn get_token_by_id(id: &str) -> Result<Option<UserToken>, String> {
 /// 根据 Token 值获取令牌信息
 pub fn get_token_by_value(token: &str) -> Result<Option<UserToken>, String> {
     let conn = connect_db()?;
+    get_token_by_value_with_conn(&conn, token)
+}
+
+fn get_token_by_value_with_conn(
+    conn: &Connection,
+    token: &str,
+) -> Result<Option<UserToken>, String> {
     let mut stmt = conn
         .prepare("SELECT * FROM user_tokens WHERE token = ?1")
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -357,6 +461,9 @@ pub fn get_token_by_value(token: &str) -> Result<Option<UserToken>, String> {
                 max_ips: row.get("max_ips")?,
                 curfew_start: row.get("curfew_start").unwrap_or(None),
                 curfew_end: row.get("curfew_end").unwrap_or(None),
+                allowed_account_ids: parse_allowed_account_ids(
+                    row.get("allowed_account_ids").unwrap_or(None),
+                ),
                 created_at: row.get("created_at")?,
                 updated_at: row.get("updated_at")?,
                 last_used_at: row.get("last_used_at")?,
@@ -379,8 +486,34 @@ pub fn update_token(
     max_ips: Option<i32>,
     curfew_start: Option<Option<String>>,
     curfew_end: Option<Option<String>>,
+    allowed_account_ids: Option<Option<Vec<String>>>,
 ) -> Result<(), String> {
     let conn = connect_db()?;
+    update_token_with_conn(
+        &conn,
+        id,
+        username,
+        description,
+        enabled,
+        max_ips,
+        curfew_start,
+        curfew_end,
+        allowed_account_ids,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_token_with_conn(
+    conn: &Connection,
+    id: &str,
+    username: Option<String>,
+    description: Option<String>,
+    enabled: Option<bool>,
+    max_ips: Option<i32>,
+    curfew_start: Option<Option<String>>,
+    curfew_end: Option<Option<String>>,
+    allowed_account_ids: Option<Option<Vec<String>>>,
+) -> Result<(), String> {
     let now = Utc::now().timestamp();
 
     let mut query = "UPDATE user_tokens SET updated_at = ?1".to_string();
@@ -420,6 +553,14 @@ pub fn update_token(
     if let Some(end) = curfew_end {
         query.push_str(&format!(", curfew_end = ?{}", param_idx));
         params_vec.push(Box::new(end));
+        param_idx += 1;
+    }
+
+    if let Some(maybe_allowed) = allowed_account_ids {
+        let normalized = normalize_allowed_account_ids(maybe_allowed);
+        let serialized = serialize_allowed_account_ids(&normalized)?;
+        query.push_str(&format!(", allowed_account_ids = ?{}", param_idx));
+        params_vec.push(Box::new(serialized));
         param_idx += 1;
     }
 
@@ -1012,6 +1153,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(token_res.is_ok());
 
@@ -1036,6 +1178,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(token_res.is_ok());
         let token = token_res.unwrap();
@@ -1057,6 +1200,7 @@ mod tests {
             "month".to_string(),
             Some("Stats token".to_string()),
             0,
+            None,
             None,
             None,
             None,
@@ -1086,5 +1230,215 @@ mod tests {
         assert_eq!(stats.models[0].model, "gemini-2.5-flash");
         assert_eq!(stats.recent_ips.len(), 1);
         assert_eq!(stats.recent_ips[0].ip_address, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_allowed_account_ids_create_update_and_clear() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db_with_conn(&conn).unwrap();
+
+        // 1. Create unlimited token
+        let unlimited = create_token_with_conn(
+            &conn,
+            "unlimited_user".to_string(),
+            "never".to_string(),
+            None,
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(unlimited.allowed_account_ids, None);
+
+        // 2. Create restricted token (with whitespace, empties, and duplicates)
+        let restricted = create_token_with_conn(
+            &conn,
+            "restricted_user".to_string(),
+            "never".to_string(),
+            None,
+            0,
+            None,
+            None,
+            None,
+            Some(vec![
+                " acc-1 ".to_string(),
+                "".to_string(),
+                "acc-2".to_string(),
+                "acc-1".to_string(),
+                "   ".to_string(),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            restricted.allowed_account_ids,
+            Some(vec!["acc-1".to_string(), "acc-2".to_string()])
+        );
+
+        let fetched = get_token_by_value_with_conn(&conn, &restricted.token)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fetched.allowed_account_ids,
+            Some(vec!["acc-1".to_string(), "acc-2".to_string()])
+        );
+
+        // 3. Update with None (omit) -> no change
+        update_token_with_conn(
+            &conn,
+            &restricted.id,
+            None,
+            Some("updated desc".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let after_omit = get_token_by_id_with_conn(&conn, &restricted.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after_omit.allowed_account_ids,
+            Some(vec!["acc-1".to_string(), "acc-2".to_string()])
+        );
+
+        // 4. Update with Some(Some(vec!["acc-3"])) -> replace
+        update_token_with_conn(
+            &conn,
+            &restricted.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Some(vec![" acc-3 ".to_string()])),
+        )
+        .unwrap();
+        let after_replace = get_token_by_id_with_conn(&conn, &restricted.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after_replace.allowed_account_ids,
+            Some(vec!["acc-3".to_string()])
+        );
+
+        // 5. Update with Some(None) -> clear restriction
+        update_token_with_conn(
+            &conn,
+            &restricted.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(None),
+        )
+        .unwrap();
+        let after_clear_null = get_token_by_id_with_conn(&conn, &restricted.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_clear_null.allowed_account_ids, None);
+
+        // 6. Set again, then clear via Some(Some(vec![]))
+        update_token_with_conn(
+            &conn,
+            &restricted.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Some(vec!["acc-4".to_string()])),
+        )
+        .unwrap();
+        update_token_with_conn(
+            &conn,
+            &restricted.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Some(vec![])),
+        )
+        .unwrap();
+        let after_clear_empty = get_token_by_id_with_conn(&conn, &restricted.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_clear_empty.allowed_account_ids, None);
+    }
+
+    #[test]
+    fn test_legacy_db_migration_adds_allowed_account_ids_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE user_tokens (
+                id TEXT PRIMARY KEY,
+                token TEXT UNIQUE NOT NULL,
+                username TEXT NOT NULL,
+                description TEXT,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                expires_type TEXT NOT NULL,
+                expires_at INTEGER,
+                max_ips INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                total_requests INTEGER NOT NULL DEFAULT 0,
+                total_tokens_used INTEGER NOT NULL DEFAULT 0,
+                curfew_start TEXT,
+                curfew_end TEXT
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_tokens (id, token, username, expires_type, created_at, updated_at)
+             VALUES ('legacy-1', 'sk-legacy1', 'legacy_user', 'never', 100, 100)",
+            [],
+        )
+        .unwrap();
+
+        init_db_with_conn(&conn).unwrap();
+
+        let fetched = get_token_by_id_with_conn(&conn, "legacy-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.allowed_account_ids, None);
+
+        let all = list_tokens_with_conn(&conn).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].allowed_account_ids, None);
+    }
+
+    #[test]
+    fn test_parse_allowed_account_ids_fail_closed() {
+        assert_eq!(parse_allowed_account_ids(None), None);
+        assert_eq!(parse_allowed_account_ids(Some("".to_string())), None);
+        assert_eq!(parse_allowed_account_ids(Some("   ".to_string())), None);
+        assert_eq!(
+            parse_allowed_account_ids(Some("[]".to_string())),
+            Some(vec![])
+        );
+        assert_eq!(
+            parse_allowed_account_ids(Some(r#"["acc-1","acc-2"]"#.to_string())),
+            Some(vec!["acc-1".to_string(), "acc-2".to_string()])
+        );
+        // Malformed JSON must fail-closed to Some(vec![]) rather than None
+        assert_eq!(
+            parse_allowed_account_ids(Some("{not-valid-json".to_string())),
+            Some(vec![])
+        );
+        assert_eq!(
+            parse_allowed_account_ids(Some("12345".to_string())),
+            Some(vec![])
+        );
     }
 }

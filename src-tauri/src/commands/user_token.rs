@@ -12,6 +12,20 @@ pub struct CreateTokenRequest {
     pub curfew_start: Option<String>,
     pub curfew_end: Option<String>,
     pub custom_expires_at: Option<i64>, // 自定义过期时间戳 (秒)
+    #[serde(default)]
+    pub allowed_account_ids: Option<Vec<String>>,
+}
+
+fn deserialize_double_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<Vec<String>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<Vec<String>>::deserialize(deserializer)?;
+    Ok(Some(
+        crate::modules::user_token_db::normalize_allowed_account_ids(opt),
+    ))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,6 +36,8 @@ pub struct UpdateTokenRequest {
     pub max_ips: Option<i32>,
     pub curfew_start: Option<Option<String>>,
     pub curfew_end: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub allowed_account_ids: Option<Option<Vec<String>>>,
 }
 
 // 命令实现
@@ -43,6 +59,7 @@ pub async fn create_user_token(request: CreateTokenRequest) -> Result<UserToken,
         request.curfew_start,
         request.curfew_end,
         request.custom_expires_at,
+        request.allowed_account_ids,
     )
 }
 
@@ -57,6 +74,7 @@ pub async fn update_user_token(id: String, request: UpdateTokenRequest) -> Resul
         request.max_ips,
         request.curfew_start,
         request.curfew_end,
+        request.allowed_account_ids,
     )
 }
 
@@ -126,4 +144,35 @@ pub async fn get_user_tokens_ranking(
 ) -> Result<Vec<UserTokenRankItem>, String> {
     let range = time_range.unwrap_or_else(|| "all".to_string());
     user_token_db::get_user_tokens_ranking(&range)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_update_token_request_allowed_account_ids_deserialization() {
+        // 1. Omitted JSON key => None (no change)
+        let req_omitted: UpdateTokenRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(req_omitted.allowed_account_ids, None);
+
+        // 2. JSON null => Some(None) (clear restriction)
+        let req_null: UpdateTokenRequest =
+            serde_json::from_str(r#"{"allowed_account_ids": null}"#).unwrap();
+        assert_eq!(req_null.allowed_account_ids, Some(None));
+
+        // 3. JSON [] => Some(None) (clear restriction)
+        let req_empty: UpdateTokenRequest =
+            serde_json::from_str(r#"{"allowed_account_ids": []}"#).unwrap();
+        assert_eq!(req_empty.allowed_account_ids, Some(None));
+
+        // 4. JSON ["acc-1"] => Some(Some(vec!["acc-1"]))
+        let req_values: UpdateTokenRequest =
+            serde_json::from_str(r#"{"allowed_account_ids": ["acc-1", " acc-2 ", "acc-1", ""]}"#)
+                .unwrap();
+        assert_eq!(
+            req_values.allowed_account_ids,
+            Some(Some(vec!["acc-1".to_string(), "acc-2".to_string()]))
+        );
+    }
 }
