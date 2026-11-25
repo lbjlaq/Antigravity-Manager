@@ -18,6 +18,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'reorder_accounts': { url: '/api/accounts/reorder', method: 'POST' },
   'toggle_proxy_status': { url: '/api/accounts/:accountId/toggle-proxy', method: 'POST' },
   'clear_account_forbidden': { url: '/api/accounts/:accountId/clear-forbidden', method: 'POST' },
+  'remove_account_forbidden_model': { url: '/api/accounts/:accountId/remove-forbidden-model', method: 'POST' },
   'warm_up_accounts': { url: '/api/accounts/warmup', method: 'POST' },
   'warm_up_all_accounts': { url: '/api/accounts/warmup', method: 'POST' },
   'warm_up_account': { url: '/api/accounts/:accountId/warmup', method: 'POST' },
@@ -58,6 +59,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
 
   // Logs & Monitoring
   'get_proxy_logs_filtered': { url: '/api/logs', method: 'GET' },
+  'get_proxy_logs_paginated': { url: '/api/logs', method: 'GET' },
   'get_proxy_logs_count_filtered': { url: '/api/logs/count', method: 'GET' },
   'get_proxy_db_disk_size': { url: '/api/logs/disk-size', method: 'GET' },
   'clear_proxy_logs': { url: '/api/logs/clear', method: 'POST' },
@@ -105,15 +107,24 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'execute_openclaw_clear': { url: '/api/proxy/openclaw/clear', method: 'POST' },
   'get_openclaw_config_content': { url: '/api/proxy/openclaw/config', method: 'POST' },
 
+  // Droid (Factory CLI) configuration sync
+  'get_droid_sync_status': { url: '/api/proxy/droid/status', method: 'POST' },
+  'execute_droid_sync': { url: '/api/proxy/droid/sync', method: 'POST' },
+  'execute_droid_restore': { url: '/api/proxy/droid/restore', method: 'POST' },
+  'get_droid_config_content': { url: '/api/proxy/droid/config', method: 'POST' },
+
   // Stats
+  'get_token_stats_minute': { url: '/api/stats/token/minute', method: 'GET' },
   'get_token_stats_hourly': { url: '/api/stats/token/hourly', method: 'GET' },
   'get_token_stats_daily': { url: '/api/stats/token/daily', method: 'GET' },
   'get_token_stats_weekly': { url: '/api/stats/token/weekly', method: 'GET' },
   'get_token_stats_by_account': { url: '/api/stats/token/by-account', method: 'GET' },
   'get_token_stats_summary': { url: '/api/stats/token/summary', method: 'GET' },
   'get_token_stats_by_model': { url: '/api/stats/token/by-model', method: 'GET' },
+  'get_token_stats_model_trend_minute': { url: '/api/stats/token/model-trend/minute', method: 'GET' },
   'get_token_stats_model_trend_hourly': { url: '/api/stats/token/model-trend/hourly', method: 'GET' },
   'get_token_stats_model_trend_daily': { url: '/api/stats/token/model-trend/daily', method: 'GET' },
+  'get_token_stats_account_trend_minute': { url: '/api/stats/token/account-trend/minute', method: 'GET' },
   'get_token_stats_account_trend_hourly': { url: '/api/stats/token/account-trend/hourly', method: 'GET' },
   'get_token_stats_account_trend_daily': { url: '/api/stats/token/account-trend/daily', method: 'GET' },
   'clear_token_stats': { url: '/api/stats/token/clear', method: 'POST' },
