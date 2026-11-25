@@ -368,13 +368,39 @@ impl Drop for InFlightGuard {
     }
 }
 
+const MAX_SESSION_ACCOUNTS: usize = 10_000;
+const SESSION_ACCOUNT_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+#[derive(Debug, Clone)]
+struct SessionAccountBinding {
+    account_id: String,
+    last_used: std::time::Instant,
+}
+
+impl SessionAccountBinding {
+    fn new(account_id: String) -> Self {
+        Self {
+            account_id,
+            last_used: std::time::Instant::now(),
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        self.account_id.as_str()
+    }
+
+    fn is_expired(&self) -> bool {
+        self.last_used.elapsed() >= SESSION_ACCOUNT_TTL
+    }
+}
+
 pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>, // account_id -> ProxyToken
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
     data_dir: PathBuf,
     rate_limit_tracker: Arc<RateLimitTracker>, // 新增: 限流跟踪器
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
-    session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
+    session_accounts: Arc<DashMap<String, SessionAccountBinding>>, // 新增：会话与账号映射 (SessionID -> AccountID, TTL + cap)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
 
@@ -513,13 +539,15 @@ impl TokenManager {
         }
     }
 
-    /// 启动限流记录自动清理后台任务（每15秒检查并清除过期记录）
+    /// 启动限流记录自动清理后台任务（每15秒检查并清除过期记录，每60秒巡检会话表与 Linux glibc 堆回收）
     pub async fn start_rate_limit_cleanup(&self) {
         let tracker = self.rate_limit_tracker.clone();
+        let session_accounts = self.session_accounts.clone();
         let cancel = self.cancel_token.child_token();
 
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            let mut tick_count: u64 = 0;
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
@@ -527,12 +555,23 @@ impl TokenManager {
                         break;
                     }
                     _ = interval.tick() => {
+                        tick_count = tick_count.wrapping_add(1);
                         let cleaned = tracker.cleanup_expired();
                         if cleaned > 0 {
                             tracing::info!(
                                 "Auto-cleanup: Removed {} expired rate limit record(s)",
                                 cleaned
                             );
+                        }
+                        if tick_count % 4 == 0 {
+                            let swept = Self::sweep_session_accounts(&session_accounts);
+                            if swept > 0 {
+                                tracing::debug!(
+                                    "Auto-cleanup: Swept {} expired/overflow sticky session binding(s)",
+                                    swept
+                                );
+                            }
+                            crate::modules::memory_stats::maybe_periodic_trim();
                         }
                     }
                 }
@@ -1374,7 +1413,8 @@ impl TokenManager {
         self.in_flight_requests.remove(account_id);
         self.clear_unsupported_models_for_account(account_id);
         self.qos_guardian.release_from_jail(account_id);
-        self.session_accounts.retain(|_, v| v != account_id);
+        self.session_accounts
+            .retain(|_, v| v.as_str() != account_id);
         if let Ok(mut preferred) = self.preferred_account_id.try_write() {
             if preferred.as_deref() == Some(account_id) {
                 *preferred = None;
@@ -4922,8 +4962,8 @@ impl TokenManager {
             {
                 let sid = session_id.unwrap();
 
-                // 1. 检查会话是否已绑定账号
-                if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
+                // 1. 检查会话是否已绑定账号（若已过期则自动淘汰，命中则刷新 last_used）
+                if let Some(bound_id) = self.get_session_account_touch(sid) {
                     // 【修复】先通过 account_id 找到对应的账号，获取其 email
                     // 2. 转换 email -> account_id 检查绑定的账号是否限流
                     if let Some(bound_token) =
@@ -5262,12 +5302,7 @@ impl TokenManager {
             if let Some(ref selected) = target_token {
                 if let Some(sid) = session_id {
                     if scheduling.mode != SchedulingMode::PerformanceFirst && !rotate {
-                        let bound = {
-                            self.session_accounts
-                                .entry(sid.to_string())
-                                .or_insert_with(|| selected.account_id.clone())
-                                .clone()
-                        };
+                        let bound = self.bind_session_account_if_absent(sid, &selected.account_id);
                         if bound != selected.account_id {
                             if let Some(winner) =
                                 tokens_snapshot.iter().find(|t| t.account_id == bound)
@@ -5920,7 +5955,8 @@ impl TokenManager {
             .map(|c| c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst)
             .unwrap_or(false);
         if !is_cache_first {
-            self.session_accounts.retain(|_, v| *v != resolved_id);
+            self.session_accounts
+                .retain(|_, v| v.as_str() != resolved_id);
         }
         tracing::warn!(
             account_id = %resolved_id,
@@ -7510,6 +7546,65 @@ impl TokenManager {
         }
     }
 
+    fn sweep_session_accounts(session_accounts: &DashMap<String, SessionAccountBinding>) -> usize {
+        let before = session_accounts.len();
+        session_accounts.retain(|_, v| !v.is_expired());
+        if session_accounts.len() > MAX_SESSION_ACCOUNTS {
+            let target = MAX_SESSION_ACCOUNTS * 4 / 5;
+            let remove_count = session_accounts.len().saturating_sub(target);
+            let mut by_age: Vec<(String, std::time::Instant)> = session_accounts
+                .iter()
+                .map(|e| (e.key().clone(), e.value().last_used))
+                .collect();
+            by_age.sort_unstable_by_key(|(_, ts)| *ts);
+            for (k, _) in by_age.into_iter().take(remove_count) {
+                session_accounts.remove(&k);
+            }
+        }
+        before.saturating_sub(session_accounts.len())
+    }
+
+    fn get_session_account_touch(&self, session_id: &str) -> Option<String> {
+        let mut expired = false;
+        let hit = if let Some(mut entry) = self.session_accounts.get_mut(session_id) {
+            if entry.is_expired() {
+                expired = true;
+                None
+            } else {
+                entry.last_used = std::time::Instant::now();
+                Some(entry.account_id.clone())
+            }
+        } else {
+            None
+        };
+        if expired {
+            self.session_accounts.remove(session_id);
+        }
+        hit
+    }
+
+    fn bind_session_account_if_absent(&self, session_id: &str, account_id: &str) -> String {
+        let bound = {
+            let mut entry = self
+                .session_accounts
+                .entry(session_id.to_string())
+                .or_insert_with(|| SessionAccountBinding::new(account_id.to_string()));
+            if entry.is_expired() {
+                entry.account_id = account_id.to_string();
+            }
+            entry.last_used = std::time::Instant::now();
+            entry.account_id.clone()
+        };
+        if self.session_accounts.len() > MAX_SESSION_ACCOUNTS {
+            Self::sweep_session_accounts(&self.session_accounts);
+        }
+        bound
+    }
+
+    pub fn session_accounts_len(&self) -> usize {
+        self.session_accounts.len()
+    }
+
     /// 上游成功后写下真正用过的账号。轮换成功的新账号也从这里进入粘性表。
     ///
     /// 若会话当前仍绑定在另一账号上（未经过 `abandon_session` 或失效解绑），
@@ -7518,9 +7613,7 @@ impl TokenManager {
         if session_id.is_empty() || account_id.is_empty() {
             return;
         }
-        self.session_accounts
-            .entry(session_id.to_string())
-            .or_insert_with(|| account_id.to_string());
+        let _ = self.bind_session_account_if_absent(session_id, account_id);
     }
 
     /// 解绑当前会话。不清全局 last_used，避免一个租户的失败打散别人的 60 秒窗口。
@@ -8746,7 +8839,8 @@ impl TokenManager {
         .await?;
 
         // Clear sticky session if blocked
-        self.session_accounts.retain(|_, v| *v != account_id);
+        self.session_accounts
+            .retain(|_, v| v.as_str() != account_id);
 
         tracing::info!(
             "🚫 Account {} validation blocked until {} (reason: {})",
@@ -8801,7 +8895,8 @@ impl TokenManager {
         )?;
 
         // Clear sticky session if forbidden
-        self.session_accounts.retain(|_, v| *v != account_id);
+        self.session_accounts
+            .retain(|_, v| v.as_str() != account_id);
 
         match outcome {
             crate::modules::account::ForbiddenApplyResult::AccountLocked => {
@@ -9451,9 +9546,10 @@ mod tests {
             .is_rate_limited(account_id, Some(temporary_model)));
 
         // Prime extra caches to ensure remove_account() is really called.
-        manager
-            .session_accounts
-            .insert("sid1".to_string(), account_id.to_string());
+        manager.session_accounts.insert(
+            "sid1".to_string(),
+            SessionAccountBinding::new(account_id.to_string()),
+        );
         {
             let mut preferred = manager.preferred_account_id.write().await;
             *preferred = Some(account_id.to_string());
@@ -9954,7 +10050,10 @@ mod tests {
             .unwrap();
         assert_eq!(account_id, "acc1");
         assert_eq!(
-            manager.session_accounts.get("sid1").map(|v| v.clone()),
+            manager
+                .session_accounts
+                .get("sid1")
+                .map(|v| v.account_id.clone()),
             Some("acc1".to_string())
         );
 
@@ -9971,7 +10070,10 @@ mod tests {
         assert_eq!(email, "b@test.com");
         assert!(manager.tokens.get("acc1").is_none());
         assert_ne!(
-            manager.session_accounts.get("sid1").map(|v| v.clone()),
+            manager
+                .session_accounts
+                .get("sid1")
+                .map(|v| v.account_id.clone()),
             Some("acc1".to_string())
         );
 
@@ -11978,7 +12080,7 @@ mod tests {
             manager
                 .session_accounts
                 .get(session_id)
-                .map(|v| v.clone())
+                .map(|v| v.account_id.clone())
                 .as_deref(),
             Some(acc1_id),
             "CacheFirst 模式下进入 QoS 小黑屋时绝不能解除会话绑定"
@@ -12177,7 +12279,7 @@ mod tests {
             manager
                 .session_accounts
                 .get(session_id)
-                .map(|v| v.clone())
+                .map(|v| v.account_id.clone())
                 .as_deref()
                 != Some(acc1_id),
             "原账号绑定应已被解除"
@@ -15045,9 +15147,10 @@ mod tests {
             let mut last_used = manager.last_used_account.lock().await;
             *last_used = Some(("acc-toggle".to_string(), std::time::Instant::now()));
         }
-        manager
-            .session_accounts
-            .insert("sess-1".to_string(), "acc-toggle".to_string());
+        manager.session_accounts.insert(
+            "sess-1".to_string(),
+            SessionAccountBinding::new("acc-toggle".to_string()),
+        );
         manager.mark_model_unsupported("acc-toggle", "gemini-4-hydrogen-high", Some(900));
         manager
             .invalid_grant_failures
@@ -15406,9 +15509,10 @@ mod tests {
 
         // Clear preferred, test sticky session rebinding when bound account is removed from allowlist
         *manager.preferred_account_id.write().await = None;
-        manager
-            .session_accounts
-            .insert("sid-4058".to_string(), "acc-a".to_string());
+        manager.session_accounts.insert(
+            "sid-4058".to_string(),
+            SessionAccountBinding::new("acc-a".to_string()),
+        );
         let (_, _, _, picked, _) = manager
             .get_token_scoped(
                 "gemini",
@@ -15422,7 +15526,10 @@ mod tests {
             .expect("should unbind acc-a and rebind to acc-b");
         assert_eq!(picked, "acc-b");
         assert_eq!(
-            manager.session_accounts.get("sid-4058").map(|v| v.clone()),
+            manager
+                .session_accounts
+                .get("sid-4058")
+                .map(|v| v.account_id.clone()),
             Some("acc-b".to_string())
         );
 
@@ -15485,6 +15592,53 @@ mod tests {
         );
         assert!(manager.has_any_capable_account_in_pool_scoped(model, Some(&allow_b)));
         assert!(!manager.has_any_capable_account_in_pool_scoped(model, Some(&allow_none)));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[test]
+    fn test_issue_4054_session_accounts_ttl_and_hard_cap() {
+        let tmp_root =
+            std::env::temp_dir().join(format!("ag_session_cap_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&tmp_root);
+        let manager = TokenManager::new(tmp_root.clone());
+
+        // Insert expired entry and verify sweep removes it
+        manager.session_accounts.insert(
+            "expired_sess".to_string(),
+            SessionAccountBinding {
+                account_id: "acc-old".to_string(),
+                last_used: std::time::Instant::now()
+                    - SESSION_ACCOUNT_TTL
+                    - Duration::from_secs(10),
+            },
+        );
+        manager.bind_session_account_if_absent("fresh_sess", "acc-fresh");
+        assert_eq!(
+            TokenManager::sweep_session_accounts(&manager.session_accounts),
+            1
+        );
+        assert_eq!(manager.get_session_account_touch("expired_sess"), None);
+        assert_eq!(
+            manager.get_session_account_touch("fresh_sess").as_deref(),
+            Some("acc-fresh")
+        );
+
+        // Exceed hard cap and verify sweep trims back under MAX_SESSION_ACCOUNTS
+        for i in 0..(MAX_SESSION_ACCOUNTS + 250) {
+            manager.session_accounts.insert(
+                format!("sess_{i}"),
+                SessionAccountBinding::new(format!("acc_{}", i % 4)),
+            );
+        }
+        let evicted = TokenManager::sweep_session_accounts(&manager.session_accounts);
+        assert!(evicted > 0, "expected hard-cap sweep to evict entries");
+        assert!(
+            manager.session_accounts_len() <= MAX_SESSION_ACCOUNTS,
+            "session_accounts exceeded hard cap: {} > {}",
+            manager.session_accounts_len(),
+            MAX_SESSION_ACCOUNTS
+        );
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }

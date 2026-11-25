@@ -159,35 +159,24 @@ where
                                                 && !is_last_thought
                                                 && last.get("text").is_some()
                                             {
-                                                // Merge regular text
-                                                if let Some(last_text) =
-                                                    last.get_mut("text").and_then(|v| v.as_str())
+                                                // Merge regular text in-place (O(N) instead of O(N^2) format!)
+                                                if let Some(Value::String(existing_text)) = last
+                                                    .as_object_mut()
+                                                    .and_then(|obj| obj.get_mut("text"))
                                                 {
-                                                    let new_text = format!("{}{}", last_text, text);
-                                                    if let Some(obj) = last.as_object_mut() {
-                                                        obj.insert(
-                                                            "text".to_string(),
-                                                            Value::String(new_text),
-                                                        );
-                                                    } else {
-                                                        *last = json!({ "text": new_text });
-                                                    }
+                                                    existing_text.push_str(text);
                                                     continue;
                                                 }
                                             } else if is_part_thought
                                                 && is_last_thought
                                                 && last.get("text").is_some()
                                             {
-                                                // Merge thinking text [FIX #3697]
-                                                if let Some(last_text) =
-                                                    last.get_mut("text").and_then(|v| v.as_str())
-                                                {
-                                                    let new_text = format!("{}{}", last_text, text);
-                                                    if let Some(obj) = last.as_object_mut() {
-                                                        obj.insert(
-                                                            "text".to_string(),
-                                                            Value::String(new_text),
-                                                        );
+                                                // Merge thinking text in-place [FIX #3697, #4054]
+                                                if let Some(obj) = last.as_object_mut() {
+                                                    if let Some(Value::String(existing_text)) =
+                                                        obj.get_mut("text")
+                                                    {
+                                                        existing_text.push_str(text);
                                                         if let Some(sig) =
                                                             part.get("thoughtSignature")
                                                         {
@@ -196,29 +185,8 @@ where
                                                                 sig.clone(),
                                                             );
                                                         }
-                                                    } else {
-                                                        let mut obj = serde_json::Map::new();
-                                                        obj.insert(
-                                                            "thought".to_string(),
-                                                            Value::Bool(true),
-                                                        );
-                                                        obj.insert(
-                                                            "text".to_string(),
-                                                            Value::String(new_text),
-                                                        );
-                                                        if let Some(sig) =
-                                                            part.get("thoughtSignature").or_else(
-                                                                || last.get("thoughtSignature"),
-                                                            )
-                                                        {
-                                                            obj.insert(
-                                                                "thoughtSignature".to_string(),
-                                                                sig.clone(),
-                                                            );
-                                                        }
-                                                        *last = Value::Object(obj);
+                                                        continue;
                                                     }
-                                                    continue;
                                                 }
                                             }
                                         }
@@ -337,6 +305,38 @@ mod tests {
         assert_eq!(parts[0]["text"], "Hello world!");
         assert_eq!(resp["candidates"][0]["finishReason"], "STOP");
         assert_eq!(resp["usageMetadata"]["totalTokenCount"], 10);
+    }
+
+    #[tokio::test]
+    async fn test_collect_thought_and_text_in_place_merge_preserves_signature() {
+        let sse_data = vec![
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Step 1. \"}]}}]}\n\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Step 2.\",\"thoughtSignature\":\"sig_12345678901234567890123456789012\"}]}}]}\n\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Final \"}]}}]}\n\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"answer!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ];
+
+        let byte_stream = stream::iter(
+            sse_data
+                .into_iter()
+                .map(|s| Ok::<Bytes, io::Error>(Bytes::from(s))),
+        );
+
+        let resp = collect_stream_to_json(byte_stream, "test_session_4054_merge")
+            .await
+            .expect("should merge thought and text in place");
+        let parts = resp["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["text"], "Step 1. Step 2.");
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            "sig_12345678901234567890123456789012"
+        );
+        assert_eq!(parts[1]["text"], "Final answer!");
     }
 
     #[tokio::test]

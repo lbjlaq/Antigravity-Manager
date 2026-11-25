@@ -14,6 +14,8 @@ const MIN_SIGNATURE_LENGTH: usize = 32;
 // Different cache limits for different layers
 const FAMILY_CACHE_LIMIT: usize = 200; // Layer 2: Model family mappings
 const SESSION_CACHE_LIMIT: usize = 1000; // Layer 3: Session-based signatures (largest)
+const MAX_SESSION_SIGNATURE_TURNS: usize = 64; // Cap per-session message_count history (Issue #4054)
+const MAX_SESSION_REASONING_TURNS: usize = 256; // Cap per-session reasoning Vec growth (Issue #4054)
 const TOOL_DELETE_QUEUE_CAP: usize = 1024;
 const SESSION_FLOOR_TTL: Duration = Duration::from_secs(3600);
 const TOOL_TOUCH_INTERVAL: Duration = Duration::from_secs(24 * 3600);
@@ -31,6 +33,10 @@ pub struct SignatureCacheStats {
     pub touches_enqueued: u64,
     pub resolve_ns: u64,
     pub l1_entries: usize,
+    pub thinking_family_entries: usize,
+    pub session_signature_entries: usize,
+    pub session_reasoning_entries: usize,
+    pub tool_touch_entries: usize,
     pub pending_deletes: usize,
     pub session_floors: usize,
 }
@@ -92,6 +98,19 @@ pub fn signature_cache_stats() -> SignatureCacheStats {
         .and_then(|slot| slot.lock().ok())
         .map(|map| map.len())
         .unwrap_or(0);
+    let cache = SignatureCache::global();
+    let thinking_family_entries = cache.thinking_families.lock().map(|m| m.len()).unwrap_or(0);
+    let session_signature_entries = cache
+        .session_signatures
+        .lock()
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let session_reasoning_entries = cache
+        .session_reasonings
+        .lock()
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let tool_touch_entries = TOOL_TOUCH_THROTTLE.get().map(|m| m.len()).unwrap_or(0);
     SignatureCacheStats {
         resolve_calls: SIGNATURE_CACHE_METRICS
             .resolve_calls
@@ -111,7 +130,11 @@ pub fn signature_cache_stats() -> SignatureCacheStats {
             .touches_enqueued
             .load(Ordering::Relaxed),
         resolve_ns: SIGNATURE_CACHE_METRICS.resolve_ns.load(Ordering::Relaxed),
-        l1_entries: SignatureCache::global().tool_signatures.len(),
+        l1_entries: cache.tool_signatures.len(),
+        thinking_family_entries,
+        session_signature_entries,
+        session_reasoning_entries,
+        tool_touch_entries,
         pending_deletes,
         session_floors,
     }
@@ -209,8 +232,19 @@ fn touch_is_due(scoped_key: &str) -> bool {
 fn mark_touch(scoped_key: &str) {
     let map = TOOL_TOUCH_THROTTLE.get_or_init(DashMap::new);
     map.insert(scoped_key.to_string(), Instant::now());
-    if map.len() > crate::proxy::cache_profile().l1_limit * 2 {
+    let cap = crate::proxy::cache_profile().l1_limit.max(1) * 2;
+    if map.len() > cap {
         map.retain(|_, at| at.elapsed() < TOOL_TOUCH_INTERVAL);
+        if map.len() > cap {
+            let target = cap * 4 / 5;
+            let remove_count = map.len().saturating_sub(target);
+            let mut by_age: Vec<(String, Instant)> =
+                map.iter().map(|e| (e.key().clone(), *e.value())).collect();
+            by_age.sort_unstable_by_key(|(_, at)| *at);
+            for (k, _) in by_age.into_iter().take(remove_count) {
+                map.remove(&k);
+            }
+        }
     }
 }
 
@@ -548,6 +582,71 @@ impl SignatureCache {
         })
     }
 
+    /// Enforce TTL + hard capacity cap on L1 `tool_signatures` across all write/hydrate paths (Issue #4054).
+    fn evict_tool_signatures_if_needed(&self) {
+        let l1_limit = crate::proxy::cache_profile().l1_limit.max(1);
+        if self.tool_signatures.len() <= l1_limit {
+            return;
+        }
+        let before = self.tool_signatures.len();
+        self.tool_signatures.retain(|_, v| !v.is_expired());
+        if self.tool_signatures.len() > l1_limit {
+            let target = l1_limit * 4 / 5;
+            let remove_count = self.tool_signatures.len().saturating_sub(target);
+            let mut by_age: Vec<(String, SystemTime)> = self
+                .tool_signatures
+                .iter()
+                .map(|e| (e.key().clone(), e.value().timestamp))
+                .collect();
+            by_age.sort_unstable_by_key(|(_, ts)| *ts);
+            for (k, _) in by_age.into_iter().take(remove_count) {
+                self.tool_signatures.remove(&k);
+            }
+        }
+        let after = self.tool_signatures.len();
+        if before != after {
+            tracing::debug!(
+                "[SignatureCache] Tool cache cleanup: {} -> {} entries",
+                before,
+                after
+            );
+        }
+    }
+
+    fn evict_cache_map_if_needed<V>(
+        cache: &mut HashMap<String, CacheEntry<V>>,
+        limit: usize,
+        label: &str,
+    ) {
+        if cache.len() <= limit {
+            return;
+        }
+        let before = cache.len();
+        cache.retain(|_, v| !v.is_expired());
+        if cache.len() > limit {
+            let target = (limit * 4 / 5).max(1);
+            let remove_count = cache.len().saturating_sub(target);
+            let mut by_age: Vec<(String, SystemTime)> = cache
+                .iter()
+                .map(|(k, v)| (k.clone(), v.timestamp))
+                .collect();
+            by_age.sort_unstable_by_key(|(_, ts)| *ts);
+            for (k, _) in by_age.into_iter().take(remove_count) {
+                cache.remove(&k);
+            }
+        }
+        let after = cache.len();
+        if before != after {
+            tracing::debug!(
+                "[SignatureCache] {} cleanup: {} -> {} entries (limit: {})",
+                label,
+                before,
+                after,
+                limit
+            );
+        }
+    }
+
     /// Store a tool call signature
     fn scoped_tool_key(store_key: &str, tool_id: &str) -> Option<String> {
         let store_key = store_key.trim();
@@ -699,33 +798,7 @@ impl SignatureCache {
                 );
             }
 
-            // Clean up expired entries (and evict oldest if still above limit)
-            let l1_limit = crate::proxy::cache_profile().l1_limit.max(1);
-            if self.tool_signatures.len() > l1_limit {
-                let before = self.tool_signatures.len();
-                self.tool_signatures.retain(|_, v| !v.is_expired());
-                if self.tool_signatures.len() > l1_limit {
-                    let target = l1_limit * 4 / 5;
-                    let remove_count = self.tool_signatures.len().saturating_sub(target);
-                    let mut by_age: Vec<(String, SystemTime)> = self
-                        .tool_signatures
-                        .iter()
-                        .map(|e| (e.key().clone(), e.value().timestamp))
-                        .collect();
-                    by_age.sort_unstable_by_key(|(_, ts)| *ts);
-                    for (k, _) in by_age.into_iter().take(remove_count) {
-                        self.tool_signatures.remove(&k);
-                    }
-                }
-                let after = self.tool_signatures.len();
-                if before != after {
-                    tracing::debug!(
-                        "[SignatureCache] Tool cache cleanup: {} -> {} entries",
-                        before,
-                        after
-                    );
-                }
-            }
+            self.evict_tool_signatures_if_needed();
             seq
         };
 
@@ -869,6 +942,7 @@ impl SignatureCache {
                         candidate.clone(),
                         CacheEntry::new(ToolSigCacheValue::Present(sig.clone())),
                     );
+                    self.evict_tool_signatures_if_needed();
                     tracing::info!(
                         "[SignatureCache] Restored tool signature from SQLite for id: {}",
                         candidate
@@ -890,6 +964,7 @@ impl SignatureCache {
                                 key_epoch: cur_key_epoch,
                             }),
                         );
+                        self.evict_tool_signatures_if_needed();
                     }
                 }
                 Err(_) => {}
@@ -1035,6 +1110,7 @@ impl SignatureCache {
                 }
             }
         }
+        self.evict_tool_signatures_if_needed();
         SIGNATURE_CACHE_METRICS.resolve_ns.fetch_add(
             batch_started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             Ordering::Relaxed,
@@ -1061,18 +1137,7 @@ impl SignatureCache {
                 cache.insert(norm, CacheEntry::new(family));
             }
 
-            if cache.len() > FAMILY_CACHE_LIMIT {
-                let before = cache.len();
-                cache.retain(|_, v| !v.is_expired());
-                let after = cache.len();
-                if before != after {
-                    tracing::debug!(
-                        "[SignatureCache] Family cache cleanup: {} -> {} entries",
-                        before,
-                        after
-                    );
-                }
-            }
+            Self::evict_cache_map_if_needed(&mut cache, FAMILY_CACHE_LIMIT, "Family cache");
         }
     }
 
@@ -1171,22 +1236,19 @@ impl SignatureCache {
                         message_count,
                     },
                 );
-            }
-
-            // Cleanup when limit is reached (Session cache has largest limit)
-            if cache.len() > SESSION_CACHE_LIMIT {
-                let before = cache.len();
-                cache.retain(|_, v| !v.is_expired());
-                let after = cache.len();
-                if before != after {
-                    tracing::info!(
-                        "[SignatureCache] Session cache cleanup: {} -> {} entries (limit: {})",
-                        before,
-                        after,
-                        SESSION_CACHE_LIMIT
-                    );
+                // Cap per-session turn history by dropping oldest message_count entries (Issue #4054)
+                if entry.data.len() > MAX_SESSION_SIGNATURE_TURNS {
+                    let remove_count = entry.data.len() - MAX_SESSION_SIGNATURE_TURNS;
+                    let mut counts: Vec<usize> = entry.data.keys().copied().collect();
+                    counts.sort_unstable();
+                    for old_mc in counts.into_iter().take(remove_count) {
+                        entry.data.remove(&old_mc);
+                    }
                 }
             }
+
+            // Cleanup when limit is reached (TTL + hard cap eviction)
+            Self::evict_cache_map_if_needed(&mut cache, SESSION_CACHE_LIMIT, "Session cache");
         }
     }
 
@@ -1254,7 +1316,7 @@ impl SignatureCache {
 
     /// Store reasoning text for a specific assistant turn in a session
     pub fn cache_session_reasoning(&self, session_id: &str, reasoning: String, turn_index: usize) {
-        if reasoning.trim().is_empty() {
+        if reasoning.trim().is_empty() || turn_index >= MAX_SESSION_REASONING_TURNS {
             return;
         }
 
@@ -1283,19 +1345,12 @@ impl SignatureCache {
                 entry.data[turn_index] = reasoning;
             }
 
-            // Session cache cleanup if limit exceeded
-            if cache.len() > SESSION_CACHE_LIMIT {
-                let before = cache.len();
-                cache.retain(|_, v| !v.is_expired());
-                let after = cache.len();
-                if before != after {
-                    tracing::debug!(
-                        "[SignatureCache] Session reasoning cache cleanup: {} -> {} entries",
-                        before,
-                        after
-                    );
-                }
-            }
+            // Session cache cleanup if limit exceeded (TTL + hard cap eviction)
+            Self::evict_cache_map_if_needed(
+                &mut cache,
+                SESSION_CACHE_LIMIT,
+                "Session reasoning cache",
+            );
         }
     }
 
@@ -1869,6 +1924,63 @@ mod tests {
         assert_eq!(
             post_clear_cache.get_tool_signature("sess-async-keep", "call_0"),
             None
+        );
+    }
+
+    #[test]
+    fn test_issue_4054_hard_caps_enforced_within_ttl() {
+        let cache = SignatureCache::with_persist_mode(PersistMode::MemoryOnly);
+        let sig_prefix = "a".repeat(MIN_SIGNATURE_LENGTH);
+
+        // 1. thinking_families hard cap
+        for i in 0..(FAMILY_CACHE_LIMIT + 50) {
+            cache.cache_thinking_family(format!("{sig_prefix}_fam_{i}"), "gemini".to_string());
+        }
+        let fam_len = cache.thinking_families.lock().unwrap().len();
+        assert!(
+            fam_len <= FAMILY_CACHE_LIMIT,
+            "thinking_families exceeded hard cap: {fam_len} > {FAMILY_CACHE_LIMIT}"
+        );
+
+        // 2. session_signatures outer cap + inner per-session turn cap
+        for mc in 1..=(MAX_SESSION_SIGNATURE_TURNS + 20) {
+            cache.cache_session_signature("sess_turns", format!("{sig_prefix}_t_{mc}"), mc);
+        }
+        {
+            let guard = cache.session_signatures.lock().unwrap();
+            let entry = guard.get("sess_turns").expect("sess_turns present");
+            assert!(
+                entry.data.len() <= MAX_SESSION_SIGNATURE_TURNS,
+                "inner session turns exceeded cap: {}",
+                entry.data.len()
+            );
+            // Latest turn must be preserved
+            assert!(entry.data.contains_key(&(MAX_SESSION_SIGNATURE_TURNS + 20)));
+        }
+
+        for i in 0..(SESSION_CACHE_LIMIT + 100) {
+            cache.cache_session_signature(
+                &format!("sess_cap_{i}"),
+                format!("{sig_prefix}_s_{i}"),
+                1,
+            );
+        }
+        let sess_len = cache.session_signatures.lock().unwrap().len();
+        assert!(
+            sess_len <= SESSION_CACHE_LIMIT,
+            "session_signatures exceeded hard cap: {sess_len} > {SESSION_CACHE_LIMIT}"
+        );
+
+        // 3. session_reasonings hard cap + out-of-range turn_index guard
+        cache.cache_session_reasoning("sess_huge_turn", "ignored".to_string(), 10_000);
+        assert_eq!(cache.get_session_reasoning("sess_huge_turn", 10_000), None);
+        for i in 0..(SESSION_CACHE_LIMIT + 100) {
+            cache.cache_session_reasoning(&format!("sess_reason_{i}"), format!("reasoning_{i}"), 0);
+        }
+        let reason_len = cache.session_reasonings.lock().unwrap().len();
+        assert!(
+            reason_len <= SESSION_CACHE_LIMIT,
+            "session_reasonings exceeded hard cap: {reason_len} > {SESSION_CACHE_LIMIT}"
         );
     }
 }

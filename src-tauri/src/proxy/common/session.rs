@@ -19,20 +19,47 @@ pub fn derive_session_id(account_id: &str) -> String {
 // until the upstream session expires. Bumping the sessionId generation forces the
 // upstream to start a fresh session, transparently recovering the conversation.
 
-/// Monotonic generation counter per (account_id, conversation fingerprint).
+const SESSION_BUMP_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+const SESSION_BUMP_MAX_ENTRIES: usize = 4096;
+
+/// Monotonic generation counter per (account_id, conversation fingerprint) with TTL & cap (Issue #4054).
 static SESSION_BUMPS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, u64>>,
+    std::sync::Mutex<std::collections::HashMap<String, (u64, std::time::Instant)>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 fn bump_key(account_id: &str, fingerprint: &str) -> String {
     format!("{}::{}", account_id, fingerprint)
 }
 
+fn evict_session_bumps_if_needed(
+    map: &mut std::collections::HashMap<String, (u64, std::time::Instant)>,
+) {
+    if map.len() <= SESSION_BUMP_MAX_ENTRIES {
+        return;
+    }
+    map.retain(|_, (_, ts)| ts.elapsed() < SESSION_BUMP_TTL);
+    if map.len() > SESSION_BUMP_MAX_ENTRIES {
+        let target = SESSION_BUMP_MAX_ENTRIES * 4 / 5;
+        let remove_count = map.len().saturating_sub(target);
+        let mut by_age: Vec<(String, std::time::Instant)> =
+            map.iter().map(|(k, (_, ts))| (k.clone(), *ts)).collect();
+        by_age.sort_unstable_by_key(|(_, ts)| *ts);
+        for (k, _) in by_age.into_iter().take(remove_count) {
+            map.remove(&k);
+        }
+    }
+}
+
+pub fn session_bumps_len() -> usize {
+    SESSION_BUMPS.lock().map(|m| m.len()).unwrap_or(0)
+}
+
 /// Current sessionId generation for (account, conversation). Starts at 0.
 pub fn current_bump(account_id: &str, fingerprint: &str) -> u64 {
     if let Ok(map) = SESSION_BUMPS.lock() {
         map.get(&bump_key(account_id, fingerprint))
-            .copied()
+            .filter(|(_, ts)| ts.elapsed() < SESSION_BUMP_TTL)
+            .map(|(gen, _)| *gen)
             .unwrap_or(0)
     } else {
         0
@@ -42,15 +69,24 @@ pub fn current_bump(account_id: &str, fingerprint: &str) -> u64 {
 /// Advance the sessionId generation for (account, conversation) and return the new value.
 pub fn bump_session(account_id: &str, fingerprint: &str) -> u64 {
     if let Ok(mut map) = SESSION_BUMPS.lock() {
-        let counter = map.entry(bump_key(account_id, fingerprint)).or_insert(0);
-        *counter += 1;
+        let now = std::time::Instant::now();
+        let entry = map
+            .entry(bump_key(account_id, fingerprint))
+            .or_insert((0, now));
+        if entry.1.elapsed() >= SESSION_BUMP_TTL {
+            entry.0 = 0;
+        }
+        entry.0 += 1;
+        entry.1 = now;
+        let counter = entry.0;
+        evict_session_bumps_if_needed(&mut map);
         tracing::warn!(
             "[Session] Bumped sessionId generation to {} for account {} fingerprint {}",
             counter,
             &account_id[..account_id.len().min(8)],
             &fingerprint[..fingerprint.len().min(16)]
         );
-        *counter
+        counter
     } else {
         0
     }
@@ -101,6 +137,21 @@ mod tests {
 
         assert_eq!(bump_session("acc1", "fp1"), 2);
         assert_eq!(current_bump("acc1", "fp1"), 2);
+    }
+
+    #[test]
+    fn test_issue_4054_session_bumps_bounded_capacity() {
+        let mut map = std::collections::HashMap::new();
+        let now = std::time::Instant::now();
+        for i in 0..(SESSION_BUMP_MAX_ENTRIES + 500) {
+            map.insert(format!("acc::fp_{i}"), (1, now));
+        }
+        evict_session_bumps_if_needed(&mut map);
+        assert!(
+            map.len() <= SESSION_BUMP_MAX_ENTRIES,
+            "session bumps exceeded cap: {}",
+            map.len()
+        );
     }
 
     #[test]

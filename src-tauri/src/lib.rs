@@ -535,6 +535,9 @@ fn greet(name: &str) -> String {
 #[cfg(not(target_os = "android"))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Tune Linux glibc allocator before spawning Tokio worker threads (Issue #4054)
+    modules::memory_stats::configure_process_allocator();
+
     // Record main thread ID on Linux for display disconnection guard
     #[cfg(target_os = "linux")]
     linux_display_guard::record_main_thread_id();

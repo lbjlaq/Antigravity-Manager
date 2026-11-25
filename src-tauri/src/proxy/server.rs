@@ -1070,6 +1070,8 @@ impl AxumServer {
                 get(admin_get_antigravity_cache_paths),
             )
             .route("/system/logs/clear-cache", post(admin_clear_log_cache))
+            .route("/system/memory", get(admin_get_system_memory))
+            .route("/system/memory/trim", post(admin_trim_system_memory))
             // Security / IP Monitoring
             .route("/security/logs", get(admin_get_ip_access_logs))
             .route("/security/logs/clear", post(admin_clear_ip_access_logs))
@@ -2519,8 +2521,53 @@ async fn admin_get_signature_cache_stats() -> impl IntoResponse {
             "profile": crate::proxy::cache_profile(),
             "stats": crate::proxy::signature_cache::signature_cache_stats(),
             "thinking": crate::proxy::thinking_store::thinking_store_stats(),
+            "process": crate::modules::memory_stats::collect_process_memory_stats(),
         })),
     )
+}
+
+async fn admin_get_system_memory(State(state): State<AppState>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "process": crate::modules::memory_stats::collect_process_memory_stats(),
+            "allocator": crate::modules::memory_stats::collect_allocator_stats(),
+            "caches": {
+                "profile": crate::proxy::cache_profile(),
+                "signature_cache": crate::proxy::signature_cache::signature_cache_stats(),
+                "thinking_store": crate::proxy::thinking_store::thinking_store_stats(),
+                "session_accounts": state.token_manager.session_accounts_len(),
+                "websocket_tool_calls": crate::proxy::handlers::openai::websocket_tool_call_cache_len(),
+                "session_bumps": crate::proxy::common::session::session_bumps_len(),
+            },
+        })),
+    )
+}
+
+async fn admin_trim_system_memory() -> impl IntoResponse {
+    let res = tokio::task::spawn_blocking(|| {
+        let before = crate::modules::memory_stats::collect_process_memory_stats();
+        let released = crate::modules::memory_stats::trim_process_heap();
+        let after = crate::modules::memory_stats::collect_process_memory_stats();
+        let allocator = crate::modules::memory_stats::collect_allocator_stats();
+        (before, after, released, allocator)
+    })
+    .await;
+    match res {
+        Ok((before, after, released, allocator)) => (
+            StatusCode::OK,
+            Json(json!({
+                "released": released,
+                "before": before,
+                "after": after,
+                "allocator": allocator,
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
 }
 
 async fn admin_clear_signature_cache() -> impl IntoResponse {

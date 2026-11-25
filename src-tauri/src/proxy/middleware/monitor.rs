@@ -14,6 +14,8 @@ use std::time::Instant;
 
 const MAX_REQUEST_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB
 const MAX_RESPONSE_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB for image responses
+/// Bound in-memory SSE log capture to prevent unbounded per-stream heap growth (Issue #4054).
+const MAX_STREAM_CAPTURE_BYTES: usize = 4 * 1024 * 1024; // 4MB
 const MAX_LOGGED_FIELD_CHARS: usize = 500;
 
 async fn next_chunk_while_receiver_open<S, T>(
@@ -1224,6 +1226,8 @@ pub async fn monitor_middleware(
         tokio::spawn(async move {
             let stream_start = std::time::Instant::now();
             let mut all_stream_data = Vec::new();
+            let mut total_stream_bytes: usize = 0;
+            let mut stream_capture_truncated = false;
             let mut last_few_bytes = Vec::new();
             let mut first_chunk_elapsed_ms: Option<f64> = None;
 
@@ -1233,7 +1237,16 @@ pub async fn monitor_middleware(
                         first_chunk_elapsed_ms =
                             Some(start_instant.elapsed().as_secs_f64() * 1000.0);
                     }
-                    all_stream_data.extend_from_slice(&chunk);
+                    total_stream_bytes = total_stream_bytes.saturating_add(chunk.len());
+                    if !stream_capture_truncated {
+                        if all_stream_data.len().saturating_add(chunk.len())
+                            <= MAX_STREAM_CAPTURE_BYTES
+                        {
+                            all_stream_data.extend_from_slice(&chunk);
+                        } else {
+                            stream_capture_truncated = true;
+                        }
+                    }
 
                     if chunk.len() > 8192 {
                         last_few_bytes = chunk.slice(chunk.len() - 8192..).to_vec();
@@ -1875,12 +1888,16 @@ pub async fn monitor_middleware(
             } else {
                 log.response_body = Some(format!(
                     "[Binary Stream Data: {} bytes]",
-                    all_stream_data.len()
+                    total_stream_bytes
                 ));
             }
+            // Release captured SSE buffer immediately before downstream async logging (Issue #4054)
+            drop(all_stream_data);
 
-            // Fallback token extraction from tail if not already extracted
-            if log.input_tokens.is_none() && log.output_tokens.is_none() {
+            // Fallback token extraction from tail if not already extracted (also covers truncated streams)
+            if (log.input_tokens.is_none() && log.output_tokens.is_none())
+                || (stream_capture_truncated && log.output_tokens.is_none())
+            {
                 if let Ok(full_tail) = std::str::from_utf8(&last_few_bytes) {
                     for line in full_tail.lines().rev() {
                         if line.starts_with("data: ")

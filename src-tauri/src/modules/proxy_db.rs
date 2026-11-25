@@ -18,7 +18,16 @@ struct ToolSignatureWriteDb {
     last_prune_ms: i64,
 }
 
+struct ProxyLogWriteDb {
+    path: PathBuf,
+    conn: Connection,
+    writes_since_shrink: usize,
+}
+
+const PROXY_LOG_SHRINK_WRITE_INTERVAL: usize = 256;
+
 static LOG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static PROXY_LOG_WRITE_DB: OnceLock<Mutex<Option<ProxyLogWriteDb>>> = OnceLock::new();
 struct ToolSigReadPool {
     path: PathBuf,
     conns: Vec<Arc<Mutex<Connection>>>,
@@ -136,11 +145,33 @@ fn apply_fast_pragmas(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn apply_log_pragmas(conn: &Connection) -> Result<(), String> {
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "busy_timeout", 5000)
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| e.to_string())?;
+    // Keep proxy_logs.db page cache modest (8 MB) to avoid glibc C-heap bloat (Issue #4054).
+    let _ = conn.pragma_update(None, "cache_size", -8000);
+    let _ = conn.pragma_update(None, "temp_store", "MEMORY");
+    let _ = conn.pragma_update(None, "mmap_size", 67108864);
+    Ok(())
+}
+
 fn connect_db() -> Result<Connection, String> {
     let db_path = get_proxy_db_path()?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-    apply_fast_pragmas(&conn)?;
+    apply_log_pragmas(&conn)?;
     Ok(conn)
+}
+
+fn reset_proxy_log_write_db() {
+    if let Some(slot) = PROXY_LOG_WRITE_DB.get() {
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+    }
 }
 
 pub fn is_synthetic_tool_id(id: &str) -> bool {
@@ -2187,8 +2218,38 @@ pub fn save_log(log: ProxyRequestLog) -> Result<(), String> {
     let policy = crate::modules::config::load_app_config()?
         .proxy
         .log_retention;
-    let conn = connect_db()?;
-    save_log_with_connection(&conn, log, &policy)
+    let db_path = get_proxy_db_path()?;
+    let slot = PROXY_LOG_WRITE_DB.get_or_init(|| Mutex::new(None));
+    let mut pooled = slot.lock().map_err(|e| e.to_string())?;
+    let need_open = match pooled.as_ref() {
+        Some(existing) => existing.path != db_path,
+        None => true,
+    };
+    if need_open {
+        let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+        apply_log_pragmas(&conn)?;
+        *pooled = Some(ProxyLogWriteDb {
+            path: db_path,
+            conn,
+            writes_since_shrink: 0,
+        });
+    }
+
+    let writer = pooled
+        .as_mut()
+        .ok_or_else(|| "proxy log write connection unavailable".to_string())?;
+    let res = save_log_with_connection(&writer.conn, log, &policy);
+    if res.is_ok() {
+        writer.writes_since_shrink += 1;
+        if writer.writes_since_shrink >= PROXY_LOG_SHRINK_WRITE_INTERVAL {
+            writer.writes_since_shrink = 0;
+            let _ = writer.conn.execute_batch("PRAGMA shrink_memory;");
+        }
+    } else {
+        // Drop potentially broken/stale handle so next write opens cleanly.
+        *pooled = None;
+    }
+    res
 }
 
 fn save_log_with_connection(
@@ -3302,6 +3363,8 @@ pub fn cleanup_old_logs(days: i64) -> Result<usize, String> {
 
     // Only execute VACUUM when substantial rows were deleted to avoid saturating disk I/O on startup
     if deleted >= 500 {
+        let _guard = LOG_WRITE_LOCK.lock().ok();
+        reset_proxy_log_write_db();
         if let Err(e) = conn.execute("VACUUM", []) {
             tracing::warn!("VACUUM failed after log cleanup: {}", e);
         }
@@ -3326,6 +3389,8 @@ pub fn limit_max_logs(max_count: usize) -> Result<usize, String> {
 
     // Only execute VACUUM when substantial rows were deleted
     if deleted >= 500 {
+        let _guard = LOG_WRITE_LOCK.lock().ok();
+        reset_proxy_log_write_db();
         if let Err(e) = conn.execute("VACUUM", []) {
             tracing::warn!("VACUUM failed after limit_max_logs: {}", e);
         }
@@ -3336,6 +3401,7 @@ pub fn limit_max_logs(max_count: usize) -> Result<usize, String> {
 
 pub fn clear_logs() -> Result<(), String> {
     let _guard = LOG_WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    reset_proxy_log_write_db();
     let conn = connect_db()?;
     conn.execute("DELETE FROM request_logs", [])
         .map_err(|e| e.to_string())?;
