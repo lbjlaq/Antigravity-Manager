@@ -146,6 +146,8 @@ pub fn create_auto_heal_continuation_body(
 pub struct AutoHealFlags {
     /// 已因 tool_choice/thinking 冲突剥离过 thinkingConfig
     pub retried_tool_choice_conflict: bool,
+    /// 已因 400 不支持的 forced tool_choice 降级过 responseSchema
+    pub retried_with_response_schema_demoted: bool,
     /// 已因 503/过载降级过思考预算
     pub retried_with_budget_degraded: bool,
     /// 已因 503 容量枯竭 (MODEL_CAPACITY_EXHAUSTED) 原地升档为 High
@@ -154,6 +156,50 @@ pub struct AutoHealFlags {
     pub retried_with_image_omitted: bool,
     /// 已因 400 "Thinking level is unsupported" 把扩展思考档钳制为 HIGH
     pub retried_with_thinking_level_clamped: bool,
+}
+
+fn demote_response_schema_in_payload(body: &mut Value) -> bool {
+    let req = if body.get("request").is_some() {
+        body.get_mut("request").unwrap()
+    } else {
+        body
+    };
+    let Some(schema) = req
+        .get_mut("generationConfig")
+        .and_then(Value::as_object_mut)
+        .and_then(|gc| {
+            let schema = gc.remove("responseSchema")?;
+            gc.remove("responseMimeType");
+            Some(schema)
+        })
+    else {
+        return false;
+    };
+
+    let schema_text = format!(
+        "\n\n[OUTPUT INSTRUCTION: You MUST respond ONLY with a valid, raw JSON object conforming strictly to the following JSON Schema. Do NOT include markdown code blocks (```json), commentary, or any text other than the raw JSON object.]\n{}",
+        serde_json::to_string_pretty(&schema).unwrap_or_else(|_| schema.to_string())
+    );
+
+    if let Some(contents_arr) = req.get_mut("contents").and_then(Value::as_array_mut) {
+        let mut injected = false;
+        for content in contents_arr.iter_mut().rev() {
+            if content.get("role").and_then(|r| r.as_str()) == Some("user") {
+                if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                    parts.push(json!({ "text": schema_text }));
+                    injected = true;
+                    break;
+                }
+            }
+        }
+        if !injected {
+            contents_arr.push(json!({
+                "role": "user",
+                "parts": [{ "text": schema_text }]
+            }));
+        }
+    }
+    true
 }
 
 /// 一次自愈的执行结果
@@ -170,6 +216,7 @@ pub struct AutoHealOutcome {
 /// 四个适配器过去各写一份同样的判断与改写：
 /// 1. 503/529 过载 → 降级思考预算（保住 prefix cache）；
 /// 2. 400 tool_choice/thinking 冲突 → 剥离 thinkingConfig；
+/// 2.5 400 不支持的 forced tool_choice → 将 responseSchema 降级至末轮 user 消息并保留 thinkingConfig；
 /// 3. 400 账号不支持扩展思考档（`THINKING_LEVEL_XHIGH`）→ 钳制为 HIGH；
 /// 4. 400 图像解码失败 → 剔除损坏图片并降级为文本占位。
 ///
@@ -234,7 +281,7 @@ pub fn try_auto_heal(
         });
     }
 
-    // 2. 强制工具调用与思考冲突/不支持的 tool_choice：剥离 thinkingConfig 与 responseSchema 后重试 (Fixes #3721, #4033)
+    // 2. 强制工具调用与思考冲突：仅剥离 thinkingConfig 后重试 (Fixes #3721)
     if crate::proxy::pipeline::UpstreamClassification::is_thinking_tool_choice_conflict(
         status_code,
         error_text,
@@ -252,45 +299,36 @@ pub fn try_auto_heal(
                 .and_then(Value::as_object_mut)
             {
                 gc.remove("thinkingConfig");
-                if let Some(schema) = gc.remove("responseSchema") {
-                    gc.remove("responseMimeType");
-                    let schema_text = format!(
-                        "\n\n[OUTPUT INSTRUCTION: You MUST respond ONLY with a valid, raw JSON object conforming strictly to the following JSON Schema. Do NOT include markdown code blocks (```json), commentary, or any text other than the raw JSON object.]\n{}",
-                        serde_json::to_string_pretty(&schema).unwrap_or_else(|_| schema.to_string())
-                    );
-                    if let Some(contents_arr) =
-                        req.get_mut("contents").and_then(Value::as_array_mut)
-                    {
-                        let mut injected = false;
-                        for content in contents_arr.iter_mut().rev() {
-                            if content.get("role").and_then(|r| r.as_str()) == Some("user") {
-                                if let Some(parts) =
-                                    content.get_mut("parts").and_then(|p| p.as_array_mut())
-                                {
-                                    parts.push(json!({ "text": schema_text }));
-                                    injected = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if !injected {
-                            contents_arr.push(json!({
-                                "role": "user",
-                                "parts": [{ "text": schema_text }]
-                            }));
-                        }
-                    }
-                }
             }
         }
         *degraded = Some(body.clone());
         tracing::warn!(
-            "[AutoHeal] upstream 400 tool_choice conflict: stripped thinkingConfig/responseSchema and retrying on same account (Fixes #4033)"
+            "[AutoHeal] upstream 400 tool_choice/thinking conflict: stripped thinkingConfig and retrying on same account"
         );
         return Some(AutoHealOutcome {
             kind: "strip_thinking_on_tool_choice_conflict",
             delay_ms: 50,
         });
+    }
+
+    // 2.5 不支持的 forced tool_choice（如上游将 responseSchema 转为 forced tool）：降级 responseSchema 至末轮 user 消息并保留 thinkingConfig (Ref #4033, PR #4042)
+    if crate::proxy::pipeline::UpstreamClassification::is_unsupported_forced_tool_choice(
+        status_code,
+        error_text,
+    ) && !flags.retried_with_response_schema_demoted
+    {
+        if demote_response_schema_in_payload(body) {
+            flags.retried_with_response_schema_demoted = true;
+            *degraded = Some(body.clone());
+            tracing::warn!(
+                "[AutoHeal] upstream 400 unsupported forced tool_choice: demoted responseSchema to user turn (preserving thinkingConfig) and retrying on same account (Ref #4033)"
+            );
+            return Some(AutoHealOutcome {
+                kind: "demote_response_schema_on_forced_tool_choice",
+                delay_ms: 50,
+            });
+        }
+        return None;
     }
 
     // 3. 账号不支持扩展思考档（400 "Thinking level is unsupported: THINKING_LEVEL_XHIGH"）：
@@ -1168,5 +1206,151 @@ mod tests {
             lite_body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "LOW"
         );
+    }
+
+    #[test]
+    fn test_auto_heal_demotes_response_schema_on_forced_tool_choice_400() {
+        let err_text = r#"{"error":{"code":400,"message":"tool_choice: type \"tool\" and \"any\" are not supported for this model.","status":"INVALID_ARGUMENT"}}"#;
+        let classification =
+            crate::proxy::pipeline::UpstreamClassification::classify(400, err_text, None);
+
+        // 1. Root payload with thinkingConfig + responseSchema + systemInstruction
+        let mut root_body = json!({
+            "systemInstruction": {
+                "parts": [{ "text": "You are a helpful assistant." }]
+            },
+            "contents": [
+                { "role": "user", "parts": [{ "text": "First question" }] },
+                { "role": "model", "parts": [{ "text": "First answer" }] },
+                { "role": "user", "parts": [{ "text": "Return JSON matching schema" }] }
+            ],
+            "generationConfig": {
+                "thinkingConfig": { "includeThoughts": true, "thinkingBudget": 1024 },
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "object",
+                    "properties": { "ok": { "type": "boolean" } },
+                    "required": ["ok"]
+                }
+            }
+        });
+        let mut degraded = None;
+        let mut flags = AutoHealFlags::default();
+
+        let out = try_auto_heal(
+            &classification,
+            400,
+            err_text,
+            &mut root_body,
+            &mut degraded,
+            &mut flags,
+        );
+        assert_eq!(
+            out.map(|o| o.kind),
+            Some("demote_response_schema_on_forced_tool_choice")
+        );
+        assert!(flags.retried_with_response_schema_demoted);
+        assert!(!flags.retried_tool_choice_conflict);
+        assert!(degraded.is_some());
+
+        // thinkingConfig & systemInstruction must remain untouched; responseSchema/responseMimeType removed
+        assert!(root_body["generationConfig"]
+            .get("thinkingConfig")
+            .is_some());
+        assert!(root_body["generationConfig"]
+            .get("responseSchema")
+            .is_none());
+        assert!(root_body["generationConfig"]
+            .get("responseMimeType")
+            .is_none());
+        assert_eq!(
+            root_body["systemInstruction"]["parts"][0]["text"],
+            "You are a helpful assistant."
+        );
+        // Schema prompt must be appended to the LAST user turn, not the first
+        assert_eq!(
+            root_body["contents"][0]["parts"].as_array().unwrap().len(),
+            1
+        );
+        let last_user_parts = root_body["contents"][2]["parts"].as_array().unwrap();
+        assert_eq!(last_user_parts.len(), 2);
+        let injected_text = last_user_parts[1]["text"].as_str().unwrap();
+        assert!(injected_text.contains("[OUTPUT INSTRUCTION:"));
+        assert!(injected_text.contains("\"ok\""));
+
+        // Second attempt must be blocked by retried_with_response_schema_demoted
+        let mut degraded_retry = None;
+        assert!(try_auto_heal(
+            &classification,
+            400,
+            err_text,
+            &mut root_body,
+            &mut degraded_retry,
+            &mut flags,
+        )
+        .is_none());
+        assert!(degraded_retry.is_none());
+
+        // 2. Wrapped {"request": {...}} payload
+        let mut wrapped_body = json!({
+            "project": "p1",
+            "request": {
+                "contents": [
+                    { "role": "model", "parts": [{ "text": "Only model turn" }] }
+                ],
+                "generationConfig": {
+                    "thinkingConfig": { "thinkingLevel": "HIGH" },
+                    "responseMimeType": "application/json",
+                    "responseSchema": { "type": "object" }
+                }
+            }
+        });
+        let mut wrapped_degraded = None;
+        let mut wrapped_flags = AutoHealFlags::default();
+        let wrapped_out = try_auto_heal(
+            &classification,
+            400,
+            err_text,
+            &mut wrapped_body,
+            &mut wrapped_degraded,
+            &mut wrapped_flags,
+        );
+        assert_eq!(
+            wrapped_out.map(|o| o.kind),
+            Some("demote_response_schema_on_forced_tool_choice")
+        );
+        assert!(wrapped_body["request"]["generationConfig"]
+            .get("thinkingConfig")
+            .is_some());
+        assert!(wrapped_body["request"]["generationConfig"]
+            .get("responseSchema")
+            .is_none());
+        let wrapped_contents = wrapped_body["request"]["contents"].as_array().unwrap();
+        assert_eq!(wrapped_contents.len(), 2);
+        assert_eq!(wrapped_contents[1]["role"], "user");
+
+        // 3. No responseSchema present -> skip futile retry
+        let mut no_schema_body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+            "generationConfig": {
+                "thinkingConfig": { "thinkingBudget": 1024 }
+            }
+        });
+        let mut no_schema_degraded = None;
+        let mut no_schema_flags = AutoHealFlags::default();
+        let no_schema_out = try_auto_heal(
+            &classification,
+            400,
+            err_text,
+            &mut no_schema_body,
+            &mut no_schema_degraded,
+            &mut no_schema_flags,
+        );
+        assert!(no_schema_out.is_none());
+        assert!(!no_schema_flags.retried_with_response_schema_demoted);
+        assert!(no_schema_degraded.is_none());
+        assert!(no_schema_body["generationConfig"]
+            .get("thinkingConfig")
+            .is_some());
     }
 }

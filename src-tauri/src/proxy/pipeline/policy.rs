@@ -292,7 +292,7 @@ impl UpstreamClassification {
             || ((status >= 500 || status == 408) && body.to_lowercase().contains("overloaded"))
     }
 
-    /// 是否为强制工具调用与思考冲突错误 (400 "Thinking may not be enabled when tool_choice forces tool use", Fixes #3721, #4033)
+    /// 是否为强制工具调用与思考冲突错误 (400 "Thinking may not be enabled when tool_choice forces tool use", Fixes #3721)
     pub fn is_thinking_tool_choice_conflict(status: u16, body: &str) -> bool {
         if status != 400 {
             return false;
@@ -302,9 +302,15 @@ impl UpstreamClassification {
             || (lower.contains("thinking")
                 && lower.contains("tool_choice")
                 && lower.contains("forces tool use"))
-            || (lower.contains("tool_choice")
-                && (lower.contains("are not supported for this model")
-                    || lower.contains("is not supported for this model")))
+    }
+
+    /// 是否为上游拒绝 forced tool_choice 错误 (400 "tool_choice: type ... not supported for this model", Ref #4033, PR #4042)
+    pub fn is_unsupported_forced_tool_choice(status: u16, body: &str) -> bool {
+        if status != 400 {
+            return false;
+        }
+        let lower = body.to_lowercase();
+        lower.contains("tool_choice") && lower.contains("not supported for this model")
     }
 
     /// 是否为账号不支持所请求的思考档位
@@ -423,9 +429,8 @@ mod tests {
         assert!(UpstreamClassification::is_thinking_tool_choice_conflict(
             400, err_body
         ));
-        // Fixes #4033: Claude Opus 5.5 forced tool_choice rejection error
         let err_body_opus = r#"{"error":{"code":400,"message":"tool_choice: type \"tool\" and \"any\" are not supported for this model.","status":"INVALID_ARGUMENT"}}"#;
-        assert!(UpstreamClassification::is_thinking_tool_choice_conflict(
+        assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(
             400,
             err_body_opus
         ));
@@ -433,6 +438,26 @@ mod tests {
             200, err_body
         ));
         assert!(!UpstreamClassification::is_thinking_tool_choice_conflict(
+            400,
+            "Normal 400 bad request"
+        ));
+    }
+
+    #[test]
+    fn test_is_unsupported_forced_tool_choice_classifier() {
+        let err_plural = r#"{"error":{"code":400,"message":"tool_choice: type \"tool\" and \"any\" are not supported for this model.","status":"INVALID_ARGUMENT"}}"#;
+        let err_singular = r#"{"error":{"code":400,"message":"tool_choice: type \"any\" is not supported for this model.","status":"INVALID_ARGUMENT"}}"#;
+        assert!(UpstreamClassification::is_unsupported_forced_tool_choice(
+            400, err_plural
+        ));
+        assert!(UpstreamClassification::is_unsupported_forced_tool_choice(
+            400,
+            err_singular
+        ));
+        assert!(!UpstreamClassification::is_unsupported_forced_tool_choice(
+            500, err_plural
+        ));
+        assert!(!UpstreamClassification::is_unsupported_forced_tool_choice(
             400,
             "Normal 400 bad request"
         ));
