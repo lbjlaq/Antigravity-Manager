@@ -99,6 +99,106 @@ pub struct OpenAIChatStreamHandler {
     pub saw_max_tokens_finish: bool,
     pub is_structured_output: bool,
     pub fence_prefix_stripped: bool,
+    pub fence_tail_buffer: String,
+}
+
+impl OpenAIChatStreamHandler {
+    fn clean_structured_output_delta(&mut self, content: String, is_final: bool) -> String {
+        if !self.is_structured_output {
+            return content;
+        }
+
+        let mut working = if self.fence_tail_buffer.is_empty() {
+            content
+        } else {
+            let mut s = std::mem::take(&mut self.fence_tail_buffer);
+            s.push_str(&content);
+            s
+        };
+
+        // 1. 开头围栏自适应剥离（支持跨 chunk 组合前缀）
+        if !self.fence_prefix_stripped {
+            let trimmed = working.trim_start();
+            if trimmed.is_empty() {
+                if !is_final {
+                    self.fence_tail_buffer = working;
+                    return String::new();
+                } else {
+                    self.fence_prefix_stripped = true;
+                    return String::new();
+                }
+            }
+
+            if let Some(rest) = trimmed
+                .strip_prefix("```json")
+                .or_else(|| trimmed.strip_prefix("```JSON"))
+                .or_else(|| trimmed.strip_prefix("```"))
+            {
+                if let Some(nl_idx) = rest.find('\n') {
+                    working = rest[nl_idx + 1..].to_string();
+                    self.fence_prefix_stripped = true;
+                } else if is_final {
+                    self.fence_prefix_stripped = true;
+                    return String::new();
+                } else {
+                    self.fence_tail_buffer = working;
+                    return String::new();
+                }
+            } else if trimmed.starts_with('`') && !is_final {
+                self.fence_tail_buffer = working;
+                return String::new();
+            } else {
+                self.fence_prefix_stripped = true;
+            }
+        }
+
+        // 2. 尾随围栏剥离与滑动缓冲
+        if is_final {
+            let trimmed = working.trim_end();
+            if let Some(rest) = trimmed.strip_suffix("```") {
+                working = rest.trim_end().to_string();
+            }
+            working
+        } else if let Some(fence_pos) = find_trailing_fence_start(&working) {
+            let to_emit = working[..fence_pos].to_string();
+            self.fence_tail_buffer = working[fence_pos..].to_string();
+            to_emit
+        } else {
+            working
+        }
+    }
+}
+
+fn find_trailing_fence_start(text: &str) -> Option<usize> {
+    let trimmed = text.trim_end_matches(|c: char| c == ' ' || c == '\t' || c == '\r' || c == '\n');
+    if !trimmed.ends_with('`') {
+        return None;
+    }
+    let backticks_start = trimmed
+        .rfind(|c: char| c != '`')
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    let backticks_count = trimmed.len() - backticks_start;
+    if backticks_count == 0 {
+        return None;
+    }
+    let candidate_start = if backticks_start > 0 {
+        let before = &text[..backticks_start];
+        if let Some(nl_pos) = before.rfind('\n') {
+            if before[nl_pos..].chars().all(|c| c.is_whitespace()) {
+                nl_pos
+            } else {
+                backticks_start
+            }
+        } else if before.chars().all(|c| c.is_whitespace()) {
+            0
+        } else {
+            backticks_start
+        }
+    } else {
+        0
+    };
+    Some(candidate_start)
 }
 
 impl ProtocolStreamHandler for OpenAIChatStreamHandler {
@@ -348,31 +448,13 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
                     if !content_out.is_empty() || finish_reason.is_some() {
                         self.is_thinking_active = false;
 
-                        // [Issue #3951] 结构化 JSON 模式输出保底剥离：
+                        // [Issue #3951 / Issue #4019 BUG-03] 结构化 JSON 模式输出保底剥离：
                         // 当客户端请求了 json_object 或 json_schema 时，若上游输出包裹了 Markdown 代码围栏（如 ```json ... ```），
-                        // 在首块剥离开场白围栏，在终结块剥离尾随代码围栏，确保客户端获取的是 100% 纯净可反序列化的合法 JSON。
-                        if self.is_structured_output && !content_out.is_empty() {
-                            if !self.fence_prefix_stripped {
-                                let trimmed = content_out.trim_start();
-                                if let Some(rest) = trimmed
-                                    .strip_prefix("```json")
-                                    .or_else(|| trimmed.strip_prefix("```JSON"))
-                                    .or_else(|| trimmed.strip_prefix("```"))
-                                {
-                                    if let Some(nl_idx) = rest.find('\n') {
-                                        content_out = rest[nl_idx + 1..].to_string();
-                                    } else {
-                                        content_out.clear();
-                                    }
-                                }
-                                self.fence_prefix_stripped = true;
-                            }
-                            if finish_reason.is_some() {
-                                let trimmed = content_out.trim_end();
-                                if let Some(rest) = trimmed.strip_suffix("```") {
-                                    content_out = rest.trim_end().to_string();
-                                }
-                            }
+                        // 采用开场首字自适应与尾部滑动缓冲（Sliding Tail Window），
+                        // 彻底解决倒数第二帧反引号先行逃逸与跨 chunk 围栏残留问题，确保下游获取纯净合法的 JSON。
+                        if self.is_structured_output {
+                            let is_final = finish_reason.is_some();
+                            content_out = self.clean_structured_output_delta(content_out, is_final);
                         }
 
                         if !content_out.is_empty() {
@@ -449,6 +531,29 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
     fn emit_finalize(&mut self) -> Vec<Bytes> {
         let mut chunks = Vec::new();
 
+        // [Issue #4019 BUG-03] 若存在结构化输出暂存尾随内容（如反引号前的非围栏正文），在终态前清理围栏并下发
+        if self.is_structured_output && !self.fence_tail_buffer.is_empty() {
+            let leftover = self.clean_structured_output_delta(String::new(), true);
+            if !leftover.is_empty() {
+                self.has_content = true;
+                let chunk = json!({
+                    "id": &self.stream_id,
+                    "object": "chat.completion.chunk",
+                    "created": self.created_ts,
+                    "model": &self.model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": { "content": leftover },
+                        "finish_reason": serde_json::Value::Null
+                    }]
+                });
+                chunks.push(Bytes::from(format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&chunk).unwrap_or_default()
+                )));
+            }
+        }
+
         // [收尾保底防御 Fixes #3716]
         // 若流已产生正文或工具调用，但上游在未显式下发 finishReason 的情况下关闭了连接 (EOF) 或仅下发了 usageMetadata：
         // 严格遵循 OpenAI 流式契约，在发射 [DONE] 之前补发带有终态 finish_reason ("stop" 或 "tool_calls") 的收尾块。
@@ -507,6 +612,29 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
 
     fn emit_abnormal_finalize(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
         let mut chunks = Vec::new();
+
+        // [Issue #4019 BUG-03] 结构化输出异常终态下发剩余有效内容
+        if self.is_structured_output && !self.fence_tail_buffer.is_empty() {
+            let leftover = self.clean_structured_output_delta(String::new(), true);
+            if !leftover.is_empty() {
+                self.has_content = true;
+                let chunk = json!({
+                    "id": &self.stream_id,
+                    "object": "chat.completion.chunk",
+                    "created": self.created_ts,
+                    "model": &self.model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": { "content": leftover },
+                        "finish_reason": serde_json::Value::Null
+                    }]
+                });
+                chunks.push(Bytes::from(format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&chunk).unwrap_or_default()
+                )));
+            }
+        }
 
         // 终态与未产生内容防护：若已经发射 [DONE]，或从未产生任何正文/工具调用，绝不可伪造收尾
         if self.has_emitted_done || (!self.has_content && self.emitted_tool_calls.is_empty()) {
@@ -635,6 +763,7 @@ where
         saw_max_tokens_finish: false,
         is_structured_output,
         fence_prefix_stripped: false,
+        fence_tail_buffer: String::new(),
     };
 
     let config =
@@ -3274,5 +3403,89 @@ mod tests {
             accumulated_content
         );
         assert_eq!(parsed.unwrap(), json!({ "status": "ok", "count": 1 }));
+    }
+
+    #[tokio::test]
+    async fn test_issue_4019_bug03_trailing_fence_split_across_chunks() {
+        // 复现 Issue #4019 BUG-03:
+        // Chunk 1: 开场围栏与部分正文
+        // Chunk 2: 剩余正文与尾部围栏 ``` （但无 finishReason！）
+        // Chunk 3: 仅包含 finishReason: "STOP" 的终态空帧
+        let chunk1_json = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "text": "```json\n{\"color\": \"red\", " }]
+                }
+            }]
+        });
+        let chunk2_json = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "text": "\"count\": 3}\n```" }]
+                }
+            }]
+        });
+        let chunk3_json = json!({
+            "candidates": [{
+                "finishReason": "STOP"
+            }]
+        });
+
+        let items: Vec<Result<Bytes, String>> = vec![
+            Ok(Bytes::from(format!("data: {}\n\n", chunk1_json))),
+            Ok(Bytes::from(format!("data: {}\n\n", chunk2_json))),
+            Ok(Bytes::from(format!("data: {}\n\n", chunk3_json))),
+        ];
+
+        let gemini_stream = Box::pin(stream::iter(items));
+
+        let mut openai_stream = create_openai_sse_stream_with_anchor(
+            gemini_stream,
+            "gemini-3.1-flash-image".to_string(),
+            "session-bug03".to_string(),
+            0,
+            None,
+            false,
+            None,
+            true, // is_structured_output = true
+        );
+
+        let mut accumulated_content = String::new();
+        while let Some(result) = openai_stream.next().await {
+            if let Ok(bytes) = result {
+                let s = String::from_utf8_lossy(&bytes).to_string();
+                for line in s.lines() {
+                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                        let json_str = line.trim_start_matches("data: ").trim();
+                        if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                            if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                                for choice in choices {
+                                    if let Some(delta_content) = choice
+                                        .get("delta")
+                                        .and_then(|d| d.get("content"))
+                                        .and_then(|c| c.as_str())
+                                    {
+                                        accumulated_content.push_str(delta_content);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            !accumulated_content.contains("```"),
+            "Trailing fence must be stripped: {}",
+            accumulated_content
+        );
+        let parsed: Result<Value, _> = serde_json::from_str(&accumulated_content);
+        assert!(
+            parsed.is_ok(),
+            "Must be valid JSON: {}",
+            accumulated_content
+        );
+        assert_eq!(parsed.unwrap(), json!({ "color": "red", "count": 3 }));
     }
 }

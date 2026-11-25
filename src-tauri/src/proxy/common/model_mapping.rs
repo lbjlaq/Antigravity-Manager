@@ -25,7 +25,7 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
     m.insert("gpt-oss-120b", "gpt-oss-120b-medium");
     // 网关内部摘要虚拟任务路由至官方轻量模型
-    m.insert("internal-background-task", "gemini-3.1-flash-lite");
+    m.insert("internal-background-task", "gemini-3.5-flash-lite");
 
     m
 });
@@ -218,7 +218,6 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
     // 特许放行的官方轻量级与图像专用模型，以及新一代 Gemini 4 Argon / Orchestrator 旗舰模型
     if m.contains("argon")
         || m == "gemini-pro-orchestrator-g1-pro"
-        || m == "gemini-3.1-flash-lite"
         || m == "gemini-3.5-flash-lite"
         || m == "gemini-3.1-flash-image"
         || m == "gemini-3-pro-image"
@@ -1305,7 +1304,7 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("internal-background-task"),
-            "gemini-3.1-flash-lite"
+            "gemini-3.5-flash-lite"
         );
         assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
     }
@@ -1363,13 +1362,13 @@ mod tests {
         );
 
         // 1. 内置模型匹配
-        let found = find_dynamic_model(&custom_mapping, None, false, "gemini-3.1-flash-lite").await;
-        assert_eq!(found, Some("gemini-3.1-flash-lite".to_string()));
+        let found = find_dynamic_model(&custom_mapping, None, false, "gemini-3.5-flash-lite").await;
+        assert_eq!(found, Some("gemini-3.5-flash-lite".to_string()));
 
         // 2. 带 models/ 前缀匹配
         let found_prefix =
-            find_dynamic_model(&custom_mapping, None, false, "models/gemini-3.1-flash-lite").await;
-        assert_eq!(found_prefix, Some("gemini-3.1-flash-lite".to_string()));
+            find_dynamic_model(&custom_mapping, None, false, "models/gemini-3.5-flash-lite").await;
+        assert_eq!(found_prefix, Some("gemini-3.5-flash-lite".to_string()));
 
         // 3. 自定义模型匹配
         let found_custom = find_dynamic_model(&custom_mapping, None, false, "custom-gpt4").await;
@@ -1377,8 +1376,8 @@ mod tests {
 
         // 4. 大小写宽容匹配
         let found_case =
-            find_dynamic_model(&custom_mapping, None, false, "GEMINI-3.1-FLASH-LITE").await;
-        assert_eq!(found_case, Some("gemini-3.1-flash-lite".to_string()));
+            find_dynamic_model(&custom_mapping, None, false, "GEMINI-3.5-FLASH-LITE").await;
+        assert_eq!(found_case, Some("gemini-3.5-flash-lite".to_string()));
 
         // 5. 不存在的模型
         let not_found =
@@ -1406,7 +1405,7 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("internal-background-task"),
-            "gemini-3.1-flash-lite"
+            "gemini-3.5-flash-lite"
         );
         let empty = HashMap::new();
         assert_eq!(
@@ -1663,7 +1662,7 @@ mod tests {
         assert!(is_model_compliant_with_baseline("gemini-3.8-flash-high"));
         assert!(is_model_compliant_with_baseline("gemini-3.8-flash"));
         assert!(is_model_compliant_with_baseline("gemini-3.10-flash-high"));
-        assert!(is_model_compliant_with_baseline("gemini-3.1-flash-lite"));
+        assert!(!is_model_compliant_with_baseline("gemini-3.1-flash-lite"));
         assert!(is_model_compliant_with_baseline("gemini-3.5-flash-lite"));
         assert!(!is_model_compliant_with_baseline("gemini-3.7-flash-medium"));
         assert!(!is_model_compliant_with_baseline("gemini-3.6-flash-low"));
