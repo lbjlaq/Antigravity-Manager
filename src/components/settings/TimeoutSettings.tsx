@@ -29,7 +29,7 @@ const DEFAULT_STREAM: Required<StreamTimeoutConfig> = {
     streaming_sliding_secs: 120,
 };
 
-type DefaultUpload = Omit<Required<UploadTimeoutConfig>, "header_wait_secs">;
+type DefaultUpload = Omit<Required<UploadTimeoutConfig>, "header_wait_secs" | "http2_keepalive_enabled">;
 
 const DEFAULT_UPLOAD: DefaultUpload = {
     connect_secs: 10,
@@ -127,6 +127,8 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         return isNaN(val) ? DEFAULT_STREAM[field] : val;
     };
 
+    const http2KeepaliveEnabled = uploadConfig?.http2_keepalive_enabled ?? true;
+
     const mergedUpload = (overrides: Partial<UploadTimeoutConfig> = {}): UploadTimeoutConfig => ({
         connect_secs: parseUpload("connect_secs"),
         min_upload_mbps: parseUpload("min_upload_mbps"),
@@ -134,6 +136,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         stall_secs: parseUpload("stall_secs"),
         large_body_threshold_mb: parseUpload("large_body_threshold_mb"),
         large_body_endpoint_attempts: parseUpload("large_body_endpoint_attempts"),
+        http2_keepalive_enabled: http2KeepaliveEnabled,
         // 已废弃字段不展示，但保存时必须原样回传，避免 UI round-trip 把它重置为 0。
         header_wait_secs: uploadConfig?.header_wait_secs ?? 0,
         ...overrides,
@@ -208,6 +211,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         uploadConfig?.stall_secs,
         uploadConfig?.large_body_threshold_mb,
         uploadConfig?.large_body_endpoint_attempts,
+        uploadConfig?.http2_keepalive_enabled,
         streamConfig?.initial_ttft_secs,
         streamConfig?.transition_secs,
         streamConfig?.streaming_sliding_secs,
@@ -294,7 +298,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
             transition_secs: String(DEFAULT_STREAM.transition_secs),
             streaming_sliding_secs: String(DEFAULT_STREAM.streaming_sliding_secs),
         });
-        onUploadChange({ ...DEFAULT_UPLOAD });
+        onUploadChange({ ...DEFAULT_UPLOAD, http2_keepalive_enabled: true });
         onStreamChange({ ...DEFAULT_STREAM });
         showToast(t("proxy.upload_timeouts.toast_reset", { defaultValue: "已恢复超时默认值" }), "info");
     };
@@ -392,6 +396,48 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                         )}
                         <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-normal">
                             {t("proxy.timeouts.connect_restart")}
+                        </p>
+                    </>,
+                )}
+                {fieldCard(
+                    <RadioTower size={14} className="text-emerald-500" />,
+                    t("proxy.timeouts.http2_keepalive_label", { defaultValue: "HTTP/2 保活 (PING)" }),
+                    t("proxy.timeouts.http2_keepalive_desc", {
+                        defaultValue: "每 15 秒发送保活探测且不主动强断活跃流，防止长思考静默期被代理掐断。",
+                    }),
+                    <>
+                        <div className="flex items-center justify-between gap-2">
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={http2KeepaliveEnabled}
+                                onClick={() =>
+                                    onUploadChange(
+                                        mergedUpload({ http2_keepalive_enabled: !http2KeepaliveEnabled }),
+                                    )
+                                }
+                                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer border ${
+                                    http2KeepaliveEnabled
+                                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
+                                        : "bg-gray-200/70 dark:bg-base-300/60 text-gray-600 dark:text-gray-400 border-gray-300/70 dark:border-base-300 hover:bg-gray-200 dark:hover:bg-base-300"
+                                }`}
+                            >
+                                <span
+                                    className={`w-2 h-2 rounded-full ${
+                                        http2KeepaliveEnabled
+                                            ? "bg-emerald-500"
+                                            : "bg-gray-400 dark:bg-gray-500"
+                                    }`}
+                                />
+                                {http2KeepaliveEnabled
+                                    ? t("proxy.timeouts.http2_keepalive_on", { defaultValue: "已开启 (自适应无自杀)" })
+                                    : t("proxy.timeouts.http2_keepalive_off", { defaultValue: "已关闭" })}
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-normal">
+                            {t("proxy.timeouts.http2_keepalive_hint", {
+                                defaultValue: "保存后立即热更新；环境变量 ABV_HTTP2_KEEPALIVE=0 可强制关闭。",
+                            })}
                         </p>
                     </>,
                 )}
@@ -598,6 +644,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                         <span>stall_secs: {effectiveTimeouts.upload.stall_secs}</span>
                         <span>large_body_threshold_mb: {effectiveTimeouts.upload.large_body_threshold_mb}</span>
                         <span>large_body_endpoint_attempts: {effectiveTimeouts.upload.large_body_endpoint_attempts}</span>
+                        <span>http2_keepalive: {String(effectiveTimeouts.upload.http2_keepalive_enabled ?? true)}</span>
                         <span>global_budget_secs: {effectiveTimeouts.global_budget_secs}</span>
                         <span>replay_guard_threshold_mb: {effectiveTimeouts.replay_guard_threshold_mb}</span>
                     </div>

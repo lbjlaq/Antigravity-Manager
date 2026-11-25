@@ -808,27 +808,40 @@ impl UpstreamClient {
         }
     }
 
-    /// Base client builder configured with common connection pool, timeouts, and TCP keep-alive
+    /// Base client builder configured with common connection pool, timeouts, and adaptive HTTP/2 keep-alive
     fn base_client_builder() -> rquest::ClientBuilder {
-        // [Fixes #3763] 连接期看门狗可配置：仅约束 TCP/TLS 建连阶段，超时即切换下一端点；
-        // 上传/响应头阶段由请求级分阶段预算接管。客户端在构建时快照该值，修改后需重启服务。
+        // [Fixes #3763 / #4044] 连接期看门狗与 HTTP/2 保活开关在客户端构建时读取快照，
+        // 修改后随 UpstreamClient 热重建或重启服务生效。
+        const UPSTREAM_HTTP2_KEEPALIVE_INTERVAL_SECS: u64 = 15;
+        // 与请求总超时 7200s 对齐：在 hyper2 1.5.5 状态机中，收到 PING ACK 会立即清零计时并按 15s 继续保活，
+        // 而静默丢弃 PING 的线路会保持单个未决 PING 且不会在 75s 处自杀强断活跃长流（由 15s pool_idle_timeout 回收空闲连接）。
+        const UPSTREAM_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 7200;
+
         let timeout_cfg = crate::proxy::get_upload_timeout_config();
         let connect_secs = timeout_cfg.connect_secs.clamp(3, 120);
-        let builder = Client::builder()
+        let mut builder = Client::builder()
             .emulation(rquest_util::Emulation::Chrome123)
             // Connection settings (优化连接复用，减少建立开销)
             // [FIX #3763] 建连仅涉及 TCP/TLS 握手，默认 10s，兼顾跨国网络抖动与快速识别死端点
             .connect_timeout(Duration::from_secs(connect_secs))
             .pool_max_idle_per_host(10) // 每主机最多 10 个空闲连接 (防止过多闲置连接被上游服务端静默掐断)
             // [FIX] 空闲连接收紧至 15s，避免 GFE 在 20~30s 静默掐断空闲 TCP 后客户端复用死连接引发 error reading a body from connection
-            .pool_idle_timeout(Duration::from_secs(15))
-            // 长思考静默期需要 HTTP/2 PING，TCP 保活不能替代。
-            // 本链路仅启用活动流保活时未观察到主动 PING，允许 idle 保活后验证有效。
-            .http2(|mut h2| {
-                h2.keep_alive_interval(Duration::from_secs(15))
-                    .keep_alive_timeout(Duration::from_secs(60))
+            .pool_idle_timeout(Duration::from_secs(15));
+
+        if timeout_cfg.http2_keepalive_enabled {
+            // [FIX #4044] 自适应无自杀 HTTP/2 保活：
+            // 1. 长思考静默期仅依赖 TCP 保活无法刷新代理侧应用层空闲计时器，需定期发送 HTTP/2 PING；
+            // 2. 在 hyper2 1.5.5 下需启用 keep_alive_while_idle(true) 才能稳定触发 PING，同时依赖上方的 15s 空闲回收避免池内闲置连接长期发送探测；
+            // 3. 将 keep_alive_timeout 对齐请求总超时 (7200s) 而非 60s，避免在静默丢弃 PING ACK 的线路上于 75s 主动掐死活跃流；
+            // 4. 可通过 upload_timeouts.http2_keepalive_enabled 或环境变量 ABV_HTTP2_KEEPALIVE=0 关闭作为逃生开关。
+            builder = builder.http2(|mut h2| {
+                h2.keep_alive_interval(Duration::from_secs(UPSTREAM_HTTP2_KEEPALIVE_INTERVAL_SECS))
+                    .keep_alive_timeout(Duration::from_secs(UPSTREAM_HTTP2_KEEPALIVE_TIMEOUT_SECS))
                     .keep_alive_while_idle(true);
-            })
+            });
+        }
+
+        let builder = builder
             .tcp_keepalive(Duration::from_secs(30))
             .timeout(Duration::from_secs(7200));
 
@@ -3080,6 +3093,7 @@ mod tests {
     fn test_connect_timeout_config() {
         let cfg = crate::proxy::config::UploadTimeoutConfig::default();
         assert_eq!(cfg.connect_secs, 10);
+        assert!(cfg.http2_keepalive_enabled);
 
         let normalized = crate::proxy::config::UploadTimeoutConfig {
             connect_secs: 0,
@@ -3087,6 +3101,31 @@ mod tests {
         }
         .normalized();
         assert_eq!(normalized.connect_secs, 3);
+    }
+
+    #[test]
+    fn test_base_client_builder_respects_http2_keepalive_toggle() {
+        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev_abv = std::env::var_os("ABV_HTTP2_KEEPALIVE");
+        let prev_antigravity = std::env::var_os("ANTIGRAVITY_HTTP2_KEEPALIVE");
+
+        std::env::remove_var("ANTIGRAVITY_HTTP2_KEEPALIVE");
+        std::env::set_var("ABV_HTTP2_KEEPALIVE", "1");
+        assert!(UpstreamClient::build_client_internal(None).is_ok());
+
+        std::env::set_var("ABV_HTTP2_KEEPALIVE", "0");
+        assert!(UpstreamClient::build_client_internal(None).is_ok());
+
+        match prev_abv {
+            Some(v) => std::env::set_var("ABV_HTTP2_KEEPALIVE", v),
+            None => std::env::remove_var("ABV_HTTP2_KEEPALIVE"),
+        }
+        match prev_antigravity {
+            Some(v) => std::env::set_var("ANTIGRAVITY_HTTP2_KEEPALIVE", v),
+            None => std::env::remove_var("ANTIGRAVITY_HTTP2_KEEPALIVE"),
+        }
     }
 
     #[test]

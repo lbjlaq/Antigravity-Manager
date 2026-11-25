@@ -1377,7 +1377,12 @@
             "first_byte_effective": "المطبق حاليًا: نص/كود {{text}} ث　صورة {{image}} ث　فيديو {{video}} ث　مساعد {{aux}} ث",
             "section_stream": "③ أول رمز والإخراج المستمر",
             "stream_desc": "تم دمج انتظار الترويسات وأول رمز في زمن تأخير واحد لأول بايت: يُسمح بتبديل نقطة النهاية قبل HTTP 200، وبعدها يتم الإنهاء الآمن فقط.",
-            "auto_summary": "مثال: أقصى انتظار = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} ثانية;"
+            "auto_summary": "مثال: أقصى انتظار = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} ثانية;",
+            "http2_keepalive_label": "إبقاء اتصال HTTP/2 نشطاً (PING)",
+            "http2_keepalive_desc": "يرسل فحوصات PING كل 15 ثانية دون إنهاء التدفقات النشطة عند غياب ACK، لمنع انقطاع الوكيل أثناء التفكير الطويل.",
+            "http2_keepalive_hint": "يُحدّث فوراً عند الحفظ؛ اضبط ABV_HTTP2_KEEPALIVE=0 للتعطيل القسري.",
+            "http2_keepalive_on": "مُفعّل (آمن)",
+            "http2_keepalive_off": "معطّل"
         },
         "cloudflared": {
             "title": "الوصول العام (Cloudflared)",

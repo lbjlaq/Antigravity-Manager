@@ -2087,6 +2087,10 @@ async fn admin_save_config(
         *only_raw = new_config.proxy.only_raw_quota_models;
     }
 
+    // 提前同步上传/传输配置（含 connect_secs 与 http2_keepalive_enabled），
+    // 确保下方 rebuild_default_client / clear_client_cache 立即读取最新快照
+    crate::proxy::update_upload_timeout_config(new_config.proxy.upload_timeouts.clone());
+
     // 更新上游代理
     {
         let mut proxy = state.upstream_proxy.write().await;
@@ -2157,7 +2161,6 @@ async fn admin_save_config(
     crate::proxy::update_image_thinking_mode(new_config.proxy.image_thinking_mode.clone());
     crate::proxy::update_multimodal_config(new_config.proxy.multimodal.clone());
     crate::proxy::update_stream_timeout_config(new_config.proxy.stream_timeouts.clone());
-    crate::proxy::update_upload_timeout_config(new_config.proxy.upload_timeouts.clone());
     crate::proxy::config::update_global_audit_config(
         new_config.proxy.experimental.payload_storage_mode.clone(),
         new_config.proxy.experimental.log_retention_days,

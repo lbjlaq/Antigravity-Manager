@@ -1104,11 +1104,24 @@ pub fn get_effective_timeout_config() -> EffectiveTimeoutConfig {
             "gateway_request_budget_secs",
         ),
     ];
-    let env_overridden = env_keys
+    let mut env_overridden: Vec<String> = env_keys
         .iter()
         .filter(|(key, _)| std::env::var(*key).is_ok())
         .map(|(_, field)| (*field).to_string())
         .collect();
+    if ["ABV_HTTP2_KEEPALIVE", "ANTIGRAVITY_HTTP2_KEEPALIVE"]
+        .iter()
+        .any(|key| {
+            std::env::var(key).ok().is_some_and(|raw| {
+                matches!(
+                    raw.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on" | "0" | "false" | "no" | "off"
+                )
+            })
+        })
+    {
+        env_overridden.push("http2_keepalive_enabled".to_string());
+    }
 
     let samples = [
         ("512KB", 512 * 1024usize),

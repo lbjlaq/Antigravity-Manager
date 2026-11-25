@@ -291,6 +291,9 @@ pub fn get_upload_timeout_config() -> UploadTimeoutConfig {
         "ANTIGRAVITY_TIMEOUT_LARGE_BODY_ENDPOINT_ATTEMPTS",
         base.large_body_endpoint_attempts as u64,
     ) as usize;
+    let http2_keepalive_enabled = parse_env_bool("ABV_HTTP2_KEEPALIVE")
+        .or_else(|| parse_env_bool("ANTIGRAVITY_HTTP2_KEEPALIVE"))
+        .unwrap_or(base.http2_keepalive_enabled);
 
     UploadTimeoutConfig {
         connect_secs,
@@ -300,6 +303,7 @@ pub fn get_upload_timeout_config() -> UploadTimeoutConfig {
         header_wait_secs,
         large_body_threshold_mb,
         large_body_endpoint_attempts,
+        http2_keepalive_enabled,
     }
     .normalized()
 }
@@ -311,6 +315,15 @@ fn env_u64(key: &str, fallback: u64) -> u64 {
         .unwrap_or(fallback)
 }
 
+fn parse_env_bool(key: &str) -> Option<bool> {
+    let raw = std::env::var(key).ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 /// 更新全局上传阶段超时配置
 pub fn update_upload_timeout_config(config: UploadTimeoutConfig) {
     let config = config.normalized();
@@ -319,28 +332,30 @@ pub fn update_upload_timeout_config(config: UploadTimeoutConfig) {
             if *cfg != config {
                 *cfg = config.clone();
                 tracing::info!(
-                    "[Upstream-Timeouts] Global config updated: connect={}s, min_mbps={:.2}, extra_ratio={:.2}, stall={}s, header_wait={}s, large_body={}MB/{}",
+                    "[Upstream-Timeouts] Global config updated: connect={}s, min_mbps={:.2}, extra_ratio={:.2}, stall={}s, header_wait={}s, large_body={}MB/{}, http2_keepalive={}",
                     config.connect_secs,
                     config.min_upload_mbps,
                     config.extra_wait_ratio,
                     config.stall_secs,
                     config.header_wait_secs,
                     config.large_body_threshold_mb,
-                    config.large_body_endpoint_attempts
+                    config.large_body_endpoint_attempts,
+                    config.http2_keepalive_enabled
                 );
             }
         }
     } else {
         let _ = GLOBAL_UPLOAD_TIMEOUT_CONFIG.set(RwLock::new(config.clone()));
         tracing::info!(
-            "[Upstream-Timeouts] Global config initialized: connect={}s, min_mbps={:.2}, extra_ratio={:.2}, stall={}s, header_wait={}s, large_body={}MB/{}",
+            "[Upstream-Timeouts] Global config initialized: connect={}s, min_mbps={:.2}, extra_ratio={:.2}, stall={}s, header_wait={}s, large_body={}MB/{}, http2_keepalive={}",
             config.connect_secs,
             config.min_upload_mbps,
             config.extra_wait_ratio,
             config.stall_secs,
             config.header_wait_secs,
             config.large_body_threshold_mb,
-            config.large_body_endpoint_attempts
+            config.large_body_endpoint_attempts,
+            config.http2_keepalive_enabled
         );
     }
 }
@@ -1104,6 +1119,10 @@ pub struct UploadTimeoutConfig {
     /// 大文件最多尝试次数（默认 1；默认只发一次，避免反复重传占满上行）
     #[serde(default = "default_large_body_endpoint_attempts")]
     pub large_body_endpoint_attempts: usize,
+
+    /// 是否启用上游 HTTP/2 自适应无自杀 PING 保活（默认 true；环境变量 ABV_HTTP2_KEEPALIVE=0 可强制关闭）
+    #[serde(default = "default_http2_keepalive_enabled")]
+    pub http2_keepalive_enabled: bool,
 }
 
 fn default_connect_secs() -> u64 {
@@ -1134,6 +1153,10 @@ fn default_large_body_endpoint_attempts() -> usize {
     1
 }
 
+fn default_http2_keepalive_enabled() -> bool {
+    true
+}
+
 impl Default for UploadTimeoutConfig {
     fn default() -> Self {
         Self {
@@ -1144,6 +1167,7 @@ impl Default for UploadTimeoutConfig {
             header_wait_secs: default_header_wait_secs(),
             large_body_threshold_mb: default_large_body_threshold_mb(),
             large_body_endpoint_attempts: default_large_body_endpoint_attempts(),
+            http2_keepalive_enabled: default_http2_keepalive_enabled(),
         }
     }
 }
@@ -1772,6 +1796,7 @@ mod tests {
             header_wait_secs: 999,
             large_body_threshold_mb: 0,
             large_body_endpoint_attempts: 0,
+            http2_keepalive_enabled: false,
         };
         let normalized = cfg.clone().normalized();
         assert_eq!(normalized.connect_secs, 3);
@@ -1781,6 +1806,7 @@ mod tests {
         assert_eq!(normalized.header_wait_secs, 600);
         assert_eq!(normalized.large_body_threshold_mb, 1);
         assert_eq!(normalized.large_body_endpoint_attempts, 1);
+        assert!(!normalized.http2_keepalive_enabled);
 
         // 配置必须完整 round-trip；缺失字段回退默认值，不得静默丢字段。
         let json = serde_json::to_string(&cfg).unwrap();
@@ -1788,5 +1814,46 @@ mod tests {
         assert_eq!(back, cfg);
         let partial: UploadTimeoutConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(partial, UploadTimeoutConfig::default());
+        assert!(partial.http2_keepalive_enabled);
+    }
+
+    #[test]
+    fn upload_timeout_config_http2_keepalive_env_override() {
+        let _guard = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_global = GLOBAL_UPLOAD_TIMEOUT_CONFIG
+            .get()
+            .and_then(|lock| lock.read().ok())
+            .map(|cfg| cfg.clone());
+        let prev_abv = std::env::var_os("ABV_HTTP2_KEEPALIVE");
+        let prev_antigravity = std::env::var_os("ANTIGRAVITY_HTTP2_KEEPALIVE");
+
+        std::env::remove_var("ABV_HTTP2_KEEPALIVE");
+        std::env::remove_var("ANTIGRAVITY_HTTP2_KEEPALIVE");
+
+        update_upload_timeout_config(UploadTimeoutConfig {
+            http2_keepalive_enabled: true,
+            ..UploadTimeoutConfig::default()
+        });
+        assert!(get_upload_timeout_config().http2_keepalive_enabled);
+
+        std::env::set_var("ANTIGRAVITY_HTTP2_KEEPALIVE", "0");
+        assert!(!get_upload_timeout_config().http2_keepalive_enabled);
+
+        // ABV_HTTP2_KEEPALIVE 优先级高于 ANTIGRAVITY_HTTP2_KEEPALIVE
+        std::env::set_var("ABV_HTTP2_KEEPALIVE", "true");
+        assert!(get_upload_timeout_config().http2_keepalive_enabled);
+
+        std::env::set_var("ABV_HTTP2_KEEPALIVE", "off");
+        assert!(!get_upload_timeout_config().http2_keepalive_enabled);
+
+        match prev_abv {
+            Some(v) => std::env::set_var("ABV_HTTP2_KEEPALIVE", v),
+            None => std::env::remove_var("ABV_HTTP2_KEEPALIVE"),
+        }
+        match prev_antigravity {
+            Some(v) => std::env::set_var("ANTIGRAVITY_HTTP2_KEEPALIVE", v),
+            None => std::env::remove_var("ANTIGRAVITY_HTTP2_KEEPALIVE"),
+        }
+        update_upload_timeout_config(prev_global.unwrap_or_default());
     }
 }

@@ -1509,7 +1509,12 @@
             "stream_desc": "首响应头与首个输出 token 已合并为统一首字延迟：未收到 200 前可切换端点；收到 200 后只安全收尾，不再切换。",
             "auto_summary": "例：最大等待时间= 47MB ÷ {{mbps}}Mbps ×{{factor}} ≈ {{big}} 秒；",
             "effective_upload_title": "当前生效值（含环境变量与归一化）",
-            "effective_upload_env_overridden": "环境变量覆盖：{{fields}}"
+            "effective_upload_env_overridden": "环境变量覆盖：{{fields}}",
+            "http2_keepalive_label": "HTTP/2 保活 (PING)",
+            "http2_keepalive_desc": "每 15 秒发送保活探测且不主动强断活跃流，防止长思考静默期被代理掐断。",
+            "http2_keepalive_hint": "保存后立即热更新；环境变量 ABV_HTTP2_KEEPALIVE=0 可强制关闭。",
+            "http2_keepalive_on": "已开启 (自适应无自杀)",
+            "http2_keepalive_off": "已关闭"
         },
         "cloudflared": {
             "title": "公网访问 (Cloudflared)",

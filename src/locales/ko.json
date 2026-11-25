@@ -1377,7 +1377,12 @@
             "first_byte_effective": "현재 적용: 일반 {{text}}s　이미지 {{image}}s　동영상 {{video}}s　보조 {{aux}}s",
             "section_stream": "③ 첫 글자와 연속 출력",
             "stream_desc": "응답 헤더 대기와 첫 토큰이 하나의 첫 바이트 지연으로 통합되었습니다. HTTP 200 이전에는 엔드포인트 전환이 가능하고, 이후에는 안전하게 마무리만 합니다.",
-            "auto_summary": "예: 최대 대기 = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}}초;"
+            "auto_summary": "예: 최대 대기 = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}}초;",
+            "http2_keepalive_label": "HTTP/2 연결 유지 (PING)",
+            "http2_keepalive_desc": "15초마다 PING을 전송하며 ACK가 없어도 활성 스트림을 강제 종료하지 않아 긴 추론 중 프록시 끊김을 방지합니다.",
+            "http2_keepalive_hint": "저장 시 즉시 핫 리로드됩니다. ABV_HTTP2_KEEPALIVE=0 환경 변수로 강제 비활성화할 수 있습니다.",
+            "http2_keepalive_on": "사용 중 (비강제)",
+            "http2_keepalive_off": "비활성화"
         },
         "cloudflared": {
             "title": "공개 액세스 (Cloudflared)",
