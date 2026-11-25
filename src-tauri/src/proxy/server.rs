@@ -2403,18 +2403,40 @@ async fn admin_get_preferred_account(State(state): State<AppState>) -> impl Into
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SetPreferredAccountRequest {
+    #[serde(alias = "account_id")]
     account_id: Option<String>,
+}
+
+fn normalize_preferred_account_id(account_id: Option<String>) -> Option<String> {
+    account_id.filter(|s| !s.trim().is_empty())
 }
 
 async fn admin_set_preferred_account(
     State(state): State<AppState>,
     Json(payload): Json<SetPreferredAccountRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let cleaned_id = normalize_preferred_account_id(payload.account_id);
+
     state
         .token_manager
-        .set_preferred_account(payload.account_id)
+        .set_preferred_account(cleaned_id.clone())
         .await;
-    StatusCode::OK
+
+    let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    app_config.proxy.preferred_account_id = cleaned_id;
+    crate::modules::config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn admin_set_proxy_monitor_enabled(
@@ -4864,7 +4886,7 @@ async fn admin_clear_ip_whitelist() -> Result<impl IntoResponse, (StatusCode, Js
         )
     })?;
     for entry in entries {
-        security_db::remove_from_whitelist(&entry.ip_pattern).map_err(|e| {
+        security_db::remove_from_whitelist(&entry.id).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e }),
@@ -5919,5 +5941,24 @@ mod oauth_callback_tests {
         let html = oauth_failure_html("Missing authorization code in callback.");
         assert!(html.contains("<p>Missing authorization code in callback.</p>"));
         assert!(html.contains("Authorization Failed"));
+    }
+}
+
+#[cfg(test)]
+mod admin_parity_tests {
+    use super::{normalize_preferred_account_id, SetPreferredAccountRequest};
+
+    #[test]
+    fn preferred_account_request_normalizes_empty_and_accepts_both_cases() {
+        let camel: SetPreferredAccountRequest =
+            serde_json::from_value(serde_json::json!({ "accountId": "  " })).unwrap();
+        assert_eq!(normalize_preferred_account_id(camel.account_id), None);
+
+        let snake: SetPreferredAccountRequest =
+            serde_json::from_value(serde_json::json!({ "account_id": "acc-9" })).unwrap();
+        assert_eq!(
+            normalize_preferred_account_id(snake.account_id).as_deref(),
+            Some("acc-9")
+        );
     }
 }
