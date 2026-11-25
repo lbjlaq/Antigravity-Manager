@@ -16,6 +16,7 @@ pub mod integration;
 pub mod lightweight;
 pub mod log_bridge;
 pub mod logger;
+pub mod memory_stats;
 pub mod migration;
 pub mod oauth;
 pub mod oauth_server;

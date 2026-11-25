@@ -7533,12 +7533,27 @@ use tokio::sync::RwLock as TokioRwLock;
 
 use std::collections::HashMap;
 
-static WEBSOCKET_TOOL_CALL_CACHE: OnceLock<TokioRwLock<HashMap<String, Value>>> = OnceLock::new();
+const WEBSOCKET_TOOL_CALL_CACHE_MAX_ENTRIES: usize = 2048;
+const WEBSOCKET_TOOL_CALL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+
+static WEBSOCKET_TOOL_CALL_CACHE: OnceLock<
+    TokioRwLock<HashMap<String, (Value, std::time::Instant)>>,
+> = OnceLock::new();
+
+pub fn websocket_tool_call_cache_len() -> usize {
+    WEBSOCKET_TOOL_CALL_CACHE
+        .get()
+        .and_then(|cache| cache.try_read().ok().map(|g| g.len()))
+        .unwrap_or(0)
+}
 
 pub fn get_cached_tool_call(call_id: &str) -> Option<Value> {
     if let Some(cache) = WEBSOCKET_TOOL_CALL_CACHE.get() {
         if let Ok(guard) = cache.try_read() {
-            return guard.get(call_id).cloned();
+            return guard
+                .get(call_id)
+                .filter(|(_, ts)| ts.elapsed() < WEBSOCKET_TOOL_CALL_CACHE_TTL)
+                .map(|(v, _)| v.clone());
         }
     }
 
@@ -7553,7 +7568,20 @@ pub fn insert_cached_tool_call(call_id: String, item: Value) {
     let cache = WEBSOCKET_TOOL_CALL_CACHE.get_or_init(|| TokioRwLock::new(HashMap::new()));
 
     if let Ok(mut guard) = cache.try_write() {
-        guard.insert(call_id, item);
+        guard.insert(call_id, (item, std::time::Instant::now()));
+        if guard.len() > WEBSOCKET_TOOL_CALL_CACHE_MAX_ENTRIES {
+            guard.retain(|_, (_, ts)| ts.elapsed() < WEBSOCKET_TOOL_CALL_CACHE_TTL);
+            if guard.len() > WEBSOCKET_TOOL_CALL_CACHE_MAX_ENTRIES {
+                let target = WEBSOCKET_TOOL_CALL_CACHE_MAX_ENTRIES * 4 / 5;
+                let remove_count = guard.len().saturating_sub(target);
+                let mut by_age: Vec<(String, std::time::Instant)> =
+                    guard.iter().map(|(k, (_, ts))| (k.clone(), *ts)).collect();
+                by_age.sort_unstable_by_key(|(_, ts)| *ts);
+                for (k, _) in by_age.into_iter().take(remove_count) {
+                    guard.remove(&k);
+                }
+            }
+        }
     }
 }
 

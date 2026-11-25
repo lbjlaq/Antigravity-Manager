@@ -123,6 +123,8 @@ COPY --from=frontend-builder /app/dist /app/dist
 ENV ABV_DIST_PATH=/app/dist
 ENV RUST_LOG=info
 ENV PORT=8045
+# Bound glibc malloc arenas to prevent multi-thread heap fragmentation (Issue #4054)
+ENV MALLOC_ARENA_MAX=2
 
 # Expose the proxy/admin port
 EXPOSE 8045

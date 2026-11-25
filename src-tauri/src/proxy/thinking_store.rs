@@ -374,8 +374,10 @@ impl ThinkingStore {
             .entry(store_key.to_string())
             .or_insert_with(SessionEntry::new);
         if entry.turns.is_empty() && !persisted.is_empty() {
-            for p in persisted {
-                let rec = ThinkingRecord {
+            let max_turns = max_turns_per_session().max(1);
+            let mut restored: Vec<ThinkingRecord> = persisted
+                .into_iter()
+                .map(|p| ThinkingRecord {
                     fingerprint: p.fingerprint,
                     thought: p.thought,
                     signature: p.signature,
@@ -383,12 +385,20 @@ impl ThinkingStore {
                     tool_names: p.tool_names,
                     visible: p.visible,
                     context_anchor: p.context_anchor,
-                };
-                if !rec.is_capturable() {
-                    continue;
-                }
+                })
+                .filter(ThinkingRecord::is_capturable)
+                .collect();
+            if restored.len() > max_turns {
+                let excess = restored.len() - max_turns;
+                restored.drain(0..excess);
+            }
+            for rec in restored {
                 entry.bytes += record_bytes(&rec);
                 entry.turns.push(Arc::new(rec));
+            }
+            while entry.bytes > MAX_BYTES_PER_SESSION && entry.turns.len() > 1 {
+                let removed = entry.turns.remove(0);
+                entry.bytes = entry.bytes.saturating_sub(record_bytes(&removed));
             }
             tracing::info!(
                 "[ThinkingStore] Restored {} turns from SQLite L2 for session {}",
@@ -401,6 +411,7 @@ impl ThinkingStore {
         entry.last_persist_touch = Instant::now();
         let turns = entry.turns.clone();
         drop(entry);
+        self.maybe_evict(store_key);
         if loaded_len > 0 {
             let _ = crate::modules::proxy_db::touch_thinking_session(store_key);
         }
