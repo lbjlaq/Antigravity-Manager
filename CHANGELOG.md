@@ -30,6 +30,9 @@
             -   **封堵静态资源后缀鉴权绕过**: 移除鉴权与服务状态中间件中按 `.js`/`.css`/`.png` 等路径后缀放行静态资源的规则，消除针对代理与管理接口的路径后缀绕过风险。(PR #4039, Thanks to @zainulhasan)
             -   **OAuth 回调页 XSS 防护与 Flow State 校验**: 通过 `escape_html` 统一转义 `/auth/callback` 错误页中的动态文本，并在执行取消流或换码前强制校验有效且匹配的 `state` 参数。(PR #4039, Thanks to @zainulhasan)
             -   **请求日志 URL 凭据参数闭环脱敏**: 新增 `payload_audit::redact_uri`，对请求日志与 IP 访问日志中的查询参数（如 `?key=`、`token` 等）实施 fail-closed 统一脱敏，仅放行明确统计字段与思考会话标识头。(PR #4039, Thanks to @zainulhasan)
+        -   **[账号切换菜单 Portal 化与表头/容器防遮挡智能定位] (PR #4056, Thanks to @hugo1120)**:
+            -   **脱离 sticky 单元格与滚动容器层叠裁切**: 将 `AccountSwitchMenu` 切换菜单通过 `createPortal(..., document.body)` 与 `position: fixed`（`zIndex: 90`）渲染至顶层，彻底修复账号列表视图（`AccountTable`）和卡片视图（`AccountCard`）中弹出菜单被表头「操作」列、相邻行或滚动容器遮挡裁切的问题。(PR #4056, Thanks to @hugo1120)
+            -   **表头/容器感知定位与滚动联动**: 新增定位工具 `accountSwitchMenuPosition.ts` 与单元测试，按祖先裁剪容器与可见 `<thead>` 底部空间自动决策上下翻转与水平边界夹紧（兼容 RTL），并在滚出可见区或切换/禁用状态变更时自动收起。(PR #4056, Thanks to @hugo1120)
 
     *   **v5.0.5-beta.1 (2026-11-23)**:
         -   **[Claude 结构化输出降级为 Prompt 约束与 tool_choice 400 冲突自愈] (Fixes #4033, Thanks to @ALight777)**:

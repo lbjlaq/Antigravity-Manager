@@ -28,6 +28,9 @@
             -   **Close Static-Asset Path Suffix Auth Bypass**: Removed suffix-based static-asset exemptions from `auth` and `service_status` middlewares so API routes ending in `.js`/`.css`/`.png` can no longer bypass checks. (PR #4039, Thanks to @zainulhasan)
             -   **Harden OAuth Callback HTML Escaping & Flow State Validation**: Escaped callback error pages via `utils::html::escape_html` to prevent reflected XSS and enforced `precheck_oauth_callback` active flow state validation before acting. (PR #4039, Thanks to @zainulhasan)
             -   **Fail-Closed Credential Redaction in Stored Request URLs**: Added `payload_audit::redact_uri` across request logs and IP access logs to mask credential query params (e.g. `?key=`) with an explicit allowlist. (PR #4039, Thanks to @zainulhasan)
+        -   **[Portal `AccountSwitchMenu` to Fix Sticky Header & Container Occlusion] (PR #4056, Thanks to @hugo1120)**:
+            -   **Escape Sticky Cell & Overflow Stacking Contexts**: Rendered `AccountSwitchMenu` via `createPortal(..., document.body)` with `position: fixed` (`zIndex: 90`), resolving menu occlusion and clipping behind sticky table headers (`z-20`), adjacent rows, and `motion.div`/overflow containers across both `AccountTable` and `AccountCard`. (PR #4056, Thanks to @hugo1120)
+            -   **Header/Clip-Aware Smart Positioning & Unit Tests**: Extracted pure positioning helpers (`accountSwitchMenuPosition.ts`) with 7 unit tests to compute flip placement against clipping ancestors and visible `<thead>` bounds with viewport fallback, RTL clamping, live scroll/resize sync, and auto-close when scrolled out of view. (PR #4056, Thanks to @hugo1120)
 
     *   **v5.0.5-beta.1 (2026-11-23)**:
         -   **[Claude Structured Output Downgrade to Prompt Constraint & tool_choice 400 Auto-Heal] (Fixes #4033, Thanks to @ALight777)**:
