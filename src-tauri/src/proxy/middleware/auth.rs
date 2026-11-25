@@ -107,6 +107,22 @@ pub async fn admin_auth_middleware(
     auth_middleware_internal(state, request, next, true).await
 }
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.is_empty() || bb.is_empty() {
+        return false;
+    }
+    let max_len = ab.len().max(bb.len());
+    let mut diff = ab.len() ^ bb.len();
+    for i in 0..max_len {
+        let lhs = ab.get(i).copied().unwrap_or(0);
+        let rhs = bb.get(i).copied().unwrap_or(0);
+        diff |= usize::from(std::hint::black_box(lhs ^ rhs));
+    }
+    std::hint::black_box(diff) == 0
+}
+
 /// 内部认证逻辑
 async fn auth_middleware_internal(
     State(security): State<Arc<RwLock<ProxySecurityConfig>>>,
@@ -209,12 +225,15 @@ async fn auth_middleware_internal(
     let authorized = if force_strict {
         // 管理接口：优先使用独立的 admin_password，如果没有则回退使用 api_key
         match &security.admin_password {
-            Some(pwd) if !pwd.is_empty() => api_key.as_deref().map(|k| k == pwd).unwrap_or(false),
+            Some(pwd) if !pwd.is_empty() => api_key
+                .as_deref()
+                .map(|k| constant_time_eq(k, pwd))
+                .unwrap_or(false),
             _ => {
                 // 回退使用 api_key
                 api_key
                     .as_deref()
-                    .map(|k| k == security.api_key)
+                    .map(|k| constant_time_eq(k, &security.api_key))
                     .unwrap_or(false)
             }
         }
@@ -222,7 +241,7 @@ async fn auth_middleware_internal(
         // AI 代理接口：仅允许使用 api_key
         api_key
             .as_deref()
-            .map(|k| k == security.api_key)
+            .map(|k| constant_time_eq(k, &security.api_key))
             .unwrap_or(false)
     };
 
@@ -661,5 +680,18 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req_none).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_constant_time_eq_cases() {
+        assert!(constant_time_eq("sk-secret-123", "sk-secret-123"));
+        assert!(!constant_time_eq("sk-secret-123", "sk-secret-124"));
+        assert!(!constant_time_eq("sk-secret-12", "sk-secret-123"));
+        assert!(!constant_time_eq("sk-secret-1234", "sk-secret-123"));
+        assert!(!constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "sk-secret-123"));
+        assert!(!constant_time_eq("sk-secret-123", ""));
+        assert!(constant_time_eq("密钥-αβγ", "密钥-αβγ"));
+        assert!(!constant_time_eq("密钥-αβγ", "密钥-αβδ"));
     }
 }
