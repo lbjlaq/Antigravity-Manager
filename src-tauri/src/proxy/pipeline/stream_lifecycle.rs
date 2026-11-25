@@ -135,14 +135,13 @@ impl StreamLifecycleConfig {
             15,
             crate::proxy::upstream::client::MAX_FIRST_BYTE_CEILING_SECS,
         );
-        let mut transition_secs = timeouts.transition_secs;
-        let mut streaming_sliding_secs = timeouts.streaming_sliding_secs;
+        let transition_secs = timeouts.transition_secs;
+        let streaming_sliding_secs = timeouts.streaming_sliding_secs;
 
+        // 仅首字等待与上游首字节预算同源封顶；TTFT 之后的 transition / sliding
+        // 超时不再被排队/轮换/长思考消耗的 admission 预算压缩，避免流中短暂停顿被提前熔断。
         if let Some(remaining) = crate::proxy::pipeline::budget::remaining_secs() {
-            let rem = remaining.max(3);
-            initial_ttft_secs = initial_ttft_secs.min(rem);
-            transition_secs = transition_secs.min(rem);
-            streaming_sliding_secs = streaming_sliding_secs.min(rem);
+            initial_ttft_secs = initial_ttft_secs.min(remaining.max(3));
         }
         Self {
             heartbeat_secs: 3,
