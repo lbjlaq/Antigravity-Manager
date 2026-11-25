@@ -3,6 +3,34 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.2 (2026-11-25)**:
+        -   **[Gemini 4 官方模型目录全面同步、Pro 档位 Carbon 接入与思考协议线格式对齐] (PR #4050, PR #4052, Thanks to @cubelikeplayDaniel)**:
+            -   **官方模型目录与前后端全栈同步**: 同步官方最新目录新增 `gemini-4-neon-{low,medium,high,xhigh}`、`gemini-pro-orchestrator-neon`、`gemini-pro-orchestrator`（Carbon）、`gemini-pro-orchestrator-argon`、`gemini-4-hydrogen-tiered-{high,xhigh}` 与 `gemini-4-hydrogen-sonar`，替换真实 Carbon 占位映射（`MODEL_PLACEHOLDER_M438/M437/M427`），对齐 256K 输出上限（`262144`）及生命周期标签（`New` / `Leaving Soon` / `Notice`），并完整打通 `model_specs.json`、`variant_mapping.rs`、`official_model.rs`（含 Claude 5.5 识别）、`cli_sync`/`openclaw_sync`/`opencode_sync` 与前端模型展示及计费映射。(PR #4052, Thanks to @cubelikeplayDaniel)
+            -   **Google AI Pro 档位 Carbon 旗舰模型支持**: 为 Pro 与 Ultra 账号接入 `gemini-4-carbon` 配额同步与兜底共享逻辑，同步更新旗舰能力校验与分组展示（严格隔离 Free 账号）。(PR #4050, Thanks to @cubelikeplayDaniel)
+            -   **Gemini 4 思考线格式精确对齐与纯等级通道纯净性**: 在 `inbound.rs` 中将扩展高思考档位 `xhigh` 对齐官方整数 wire 格式 `100`、将 `minimal` 及 Flash/Lite 关闭思考态对齐为 `thinkingLevel: "MINIMAL"`（Pro 等级模型关闭发送 `"LOW"`），纯 `thinkingLevel` 模型关闭思考时不混入 `thinkingBudget: 0`；同时兼容 `BUG-04` 数值等级识别，确保 `100` 正确保留高思考内容余量。(Ref #4019)
+        -   **[Google 2 组融合配额深度修复、退役 Argon 防复活、托盘状态栏同步与预热防 404] (Fixes #4048, PR #4053, Thanks to @cubelikeplayDaniel)**:
+            -   **修复 Proto3 零值省略导致耗尽周桶丢失及僵尸组复活**: 新增 `parse_quota_summary_bucket` 挽回 `remainingFraction` 为 `0.0` 时被 Proto3 JSON 省略的已耗尽配额桶（如 `3p-weekly`、`gemini-weekly`），并在 `Account::update_quota` 中清理已过期桶与已退役的 `Gemini 4 Argon` 僵尸分组，严禁其污染 `gemini-4-neon`、`gemini-4-carbon` 等在用模型。(Fixes #4048, PR #4053, Thanks to @cubelikeplayDaniel)
+            -   **3P 组精准匹配与托盘/状态栏百分比修复**: 统一前后端 `3p`/`claude`/`gpt` 与 G4 专属代号隔离逻辑；重写托盘状态栏双窗口配额提取 `extract_key_quotas_from_data`，优先按 `quota_groups`（含周配额耗尽判定）并扩展 Gemini 4 / Claude 5.5 模型匹配，修复 macOS 状态栏显示 `C:xx%` 而丢失 `G:` 的问题，同时在刷新配额和切号后实时刷新托盘并清理失效选中 ID。(Fixes #4048, PR #4053, Thanks to @cubelikeplayDaniel)
+            -   **周配额预热模型解析防 404**: 修正 `scheduler.rs` 的 `pick_model_for_group`，校验 `monitored_models` 必须存在于账号真实激活号池中并过滤已下线/禁用条目，杜绝将 `"claude"` / `"gemini"` 逻辑分组占位名或退役模型 ID 发往上游触发 404。(Refs #4048)
+        -   **[官方 Hub 客户端指纹基准升级至 2.34.0 及 Web/Docker 手动更新体验增强] (Refs #4049)**:
+            -   **内置官方 Hub 指纹基准升级**: 将默认校准指纹基准升级至 `2.34.0`（`CL 1026637980`），同步更新后端常量、前端 API 代理页默认值与中英文示例。(Refs #4049)
+            -   **Web/Docker 手动填写与环境变量覆盖支持**: 针对容器与无头服务器无本地客户端的场景，优化「设置 → 官方 Hub 客户端指纹」的版本更新检测提示与手动填写交互（覆盖 12 种语言），并新增环境变量覆盖支持以保证 GUI 与 Headless/CLI 配置面一致。(Refs #4049)
+        -   **[OpenAI 流式 JSON Fence 剥离、thinkingLevel 内容余量防截断与退役模型门禁 404] (Fixes #4019, PR #4035, Thanks to @cubelikeplayDaniel)**:
+            -   **流式滑动尾缓冲剥离 Markdown 代码块围栏**: 在 `OpenAIChatStreamHandler` 中实现流式滑动尾缓冲（`clean_structured_output_delta`），零额外延迟跨 chunk 清除结构化输出外层 Markdown 围栏。(Fixes #4019, PR #4035, Thanks to @cubelikeplayDaniel)
+            -   **thinkingLevel 模型内容安全余量保护与退役模型 404 硬拦截**: 当客户端为 `thinkingLevel` 模型传入较小 `max_tokens` 或结构化 JSON 输出时自动扩充 `maxOutputTokens` 防止思维链挤占正文导致 JSON 截断；在模型硬门禁 `is_retired_model_id` 直接对已退役的 `gemini-3.1-flash-lite` 返回 HTTP 404，消除 SDK 无效指数重试，并将后台内部任务模型对齐至活跃的 `gemini-3.5-flash-lite`。(Fixes #4019, PR #4035, Thanks to @cubelikeplayDaniel)
+        -   **[Claude `responseSchema` 强制工具冲突自愈隔离优化] (Ref #4033, PR #4042, Thanks to @koeria)**:
+            -   **精准隔离非结构化输出场景的 `tool_choice` 自愈**: 优化 `policy.rs` 与 `auto_heal.rs` 中的报错分类与降级策略，仅对真正携带 `responseSchema` 的请求执行 Schema 降级自愈，避免普通强制工具调用误触发无意义的降级重试。(Ref #4033, PR #4042, Thanks to @koeria)
+        -   **[macOS Keychain 重复密码弹窗彻底根治] (Fixes #4043, PR #4051, Thanks to @cubelikeplayDaniel)**:
+            -   **单飞序列化读取 + TTL 缓存 + 拒绝冷却**: 新增按条目粒度的单飞 `KeychainReadCoordinator`（30 秒有效/未命中缓存 + 5 分钟拒绝/取消授权冷却），被动探测 `detect_active_clients_status` 优先读取免密本地凭据文件并跳过不必要的 Keychain 探针；同时保持主动写入时的 `delete + add -A` ACL 自愈与缓存失效清理。(Fixes #4043, PR #4051, Thanks to @cubelikeplayDaniel)
+            -   **前端并发 IPC 请求合并**: 在 `useAccountStore` 中合并并发 `getActiveClientsStatus()` 调用，消除挂载、聚焦与刷新时的并发 IPC 突发风暴。(Fixes #4043, PR #4051, Thanks to @cubelikeplayDaniel)
+        -   **[长思考流非致命 HTTP/2 保活机制与全平台可配置开关] (Fixes #4044, PR #4045, Thanks to @chuanmu1314)**:
+            -   **恢复长思考流自适应 HTTP/2 保活并消除 ~60 秒断连**: 恢复出站连接的 HTTP/2 Keep-Alive 探测以防止中间链路在模型长思考静默期回收 TCP 连接，同时将 ACK 超时设为非致命的 `7200s` 以杜绝网络抖动误杀正常长流。(Fixes #4044, PR #4045, Thanks to @chuanmu1314)
+            -   **全平台保活配置面打通**: 在 GUI 超时设置、配置文件与管理端 API 中开放 HTTP/2 保活开关，兼容桌面端、Web 与无头部署。(Fixes #4044, PR #4045, Thanks to @chuanmu1314)
+        -   **[网关安全纵深加固：鉴权绕过封堵、OAuth 回调防护与日志凭据脱敏] (PR #4039, Thanks to @zainulhasan)**:
+            -   **封堵静态资源后缀鉴权绕过**: 移除鉴权与服务状态中间件中按 `.js`/`.css`/`.png` 等路径后缀放行静态资源的规则，消除针对代理与管理接口的路径后缀绕过风险。(PR #4039, Thanks to @zainulhasan)
+            -   **OAuth 回调页 XSS 防护与 Flow State 校验**: 通过 `escape_html` 统一转义 `/auth/callback` 错误页中的动态文本，并在执行取消流或换码前强制校验有效且匹配的 `state` 参数。(PR #4039, Thanks to @zainulhasan)
+            -   **请求日志 URL 凭据参数闭环脱敏**: 新增 `payload_audit::redact_uri`，对请求日志与 IP 访问日志中的查询参数（如 `?key=`、`token` 等）实施 fail-closed 统一脱敏，仅放行明确统计字段与思考会话标识头。(PR #4039, Thanks to @zainulhasan)
+
     *   **v5.0.5-beta.1 (2026-11-23)**:
         -   **[Claude 结构化输出降级为 Prompt 约束与 tool_choice 400 冲突自愈] (Fixes #4033, Thanks to @ALight777)**:
             -   **Claude 目标模型 responseSchema 自动转译为 Prompt 指令**: 解决 Codex CLI 通过 OpenAI 协议 `/v1/responses` 调用 Claude Opus 5.5（开启思考能力）并携带 `text.format` JSON Schema 生成标题与摘要时，上游服务强制合成 `tool_choice: { type: "tool", name: "response_schema" }` 导致 Anthropic 报错 400（`tool_choice: type "tool" and "any" are not supported for this model`）的问题。入站流水线感知到 Claude 目标模型与结构化输出时，自动剥离出站 `responseSchema` 与 `responseMimeType` 并抑制冲突工具，将 JSON Schema 作为严格输出指令注入系统/用户提示词；配合出站层原生的 Markdown 代码块自动剥离，实现 100% 稳定交付合规的纯净 JSON，同时对 Gemini 等原生支持模型完整保留原生 Schema 调用。(Fixes #4033, Thanks to @ALight777)
