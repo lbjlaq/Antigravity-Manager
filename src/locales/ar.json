@@ -2322,7 +2322,20 @@
         "calls_unit": "استدعاءات",
         "records_unit": "سجلات",
         "no_trend_data": "لا توجد بيانات اتجاه في هذه الفترة",
-        "no_model_data": "لا توجد بيانات للنماذج"
+        "no_model_data": "لا توجد بيانات للنماذج",
+        "account_scope": "نطاق الحسابات",
+        "all_accounts": "جميع الحسابات",
+        "all_accounts_unlimited": "جميع الحسابات (غير محدود)",
+        "specific_accounts": "حسابات محددة",
+        "bound_accounts_count": "{{count}} حسابات",
+        "hint_account_scope": "اتركه على جميع الحسابات للسماح بالتوجيه عبر أي حساب متاح.",
+        "search_accounts_placeholder": "البحث بالبريد الإلكتروني أو الاسم أو التصنيف...",
+        "no_accounts_found": "لم يتم العثور على حسابات مطابقة",
+        "account_missing": "مفقود / محذوف",
+        "account_disabled": "معطّل",
+        "account_proxy_disabled": "البروكسي معطّل",
+        "missing_accounts_warning": "بعض الحسابات المرتبطة لم تعد موجودة. يمكنك إزالتها أدناه.",
+        "all_accounts_hint": "يمكن لهذا الرمز الوصول إلى جميع الحسابات المتاحة في المجموعة."
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",

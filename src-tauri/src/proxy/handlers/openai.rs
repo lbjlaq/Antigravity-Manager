@@ -2201,19 +2201,31 @@ pub async fn handle_chat_completions(
         return intercept_chat_to_image(
             state,
             headers,
-            user_identity.map(|identity| identity.token_id.clone()),
+            user_identity
+                .as_ref()
+                .map(|identity| identity.token_id.clone()),
+            user_identity
+                .as_ref()
+                .and_then(|id| id.allowed_accounts())
+                .cloned(),
             body,
             &model_name,
         )
         .await;
     }
 
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
+
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(body.get("model").and_then(|v| v.as_str()).unwrap_or("")),
         "openai",
         upstream_recorder.as_ref().map(|recorder| &recorder.0),
+        allowed_accounts.as_ref(),
     )
     .await
     {
@@ -2538,12 +2550,13 @@ pub async fn handle_chat_completions(
         } else if config.request_type == "image_gen" {
             drop(image_permit.take());
             match token_manager
-                .get_image_token(
+                .get_image_token_scoped(
                     force_rotate,
                     Some(&affinity_key),
                     &mapped_model,
                     &image_scheduler,
                     request_timeout,
+                    allowed_accounts.as_ref(),
                 )
                 .await
             {
@@ -2559,12 +2572,13 @@ pub async fn handle_chat_completions(
             }
         } else {
             let mut token_result = token_manager
-                .get_token_filtered(
+                .get_token_scoped(
                     &config.request_type,
                     force_rotate,
                     Some(&affinity_key),
                     &mapped_model,
                     &attempted_accounts,
+                    allowed_accounts.as_ref(),
                 )
                 .await;
 
@@ -2576,12 +2590,13 @@ pub async fn handle_chat_completions(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token_filtered(
+                        .get_token_scoped(
                             &config.request_type,
                             true,
                             Some(&affinity_key),
                             &mapped_model,
                             &attempted_accounts,
+                            allowed_accounts.as_ref(),
                         )
                         .await;
                 }
@@ -3791,12 +3806,17 @@ pub async fn handle_completions(
     let is_codex_style = body.get("input").is_some() || body.get("instructions").is_some();
     let store_response = responses_store_enabled(&body);
 
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
+
     // [MODEL GATE] /v1/completions 与 /responses 系列同样必须在选号前完成模型校验：
     // 不存在 → 404 model not exist；全池无配额 → 502 no quota accounts。
     // 两者均为网关自答：直接返回，不罚号、不解绑粘性、不进入上游重试。
     // 未携带 model 的请求不在此处拦截（交由协议自身校验）。
     if let Some(requested_model) = body.get("model").and_then(|v| v.as_str()) {
-        if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
             &state,
             Some(requested_model),
             if is_responses_api {
@@ -3805,6 +3825,7 @@ pub async fn handle_completions(
                 "openai_completions"
             },
             upstream_recorder.as_ref().map(|recorder| &recorder.0),
+            allowed_accounts.as_ref(),
         )
         .await
         {
@@ -4675,12 +4696,13 @@ pub async fn handle_completions(
             credentials
         } else {
             let mut token_result = token_manager
-                .get_token_filtered(
+                .get_token_scoped(
                     &config.request_type,
                     force_rotate,
                     session_id,
                     &mapped_model,
                     &attempted_accounts,
+                    allowed_accounts.as_ref(),
                 )
                 .await;
 
@@ -4692,12 +4714,13 @@ pub async fn handle_completions(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token_filtered(
+                        .get_token_scoped(
                             &config.request_type,
                             true,
                             session_id,
                             &mapped_model,
                             &attempted_accounts,
+                            allowed_accounts.as_ref(),
                         )
                         .await;
                 }
@@ -6040,17 +6063,21 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 pub async fn handle_retrieve_model(
     State(state): State<AppState>,
     axum::extract::Path(model): axum::extract::Path<String>,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
 ) -> impl IntoResponse {
     use crate::proxy::common::model_mapping::{
         find_dynamic_model, get_all_dynamic_models_metadata,
     };
 
     // [MODEL GATE] GET /v1/models/:model 探测端点同样接入门禁（含已下线模型族 404）
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(model.as_str()),
         "openai",
         None,
+        user_identity.as_ref().and_then(|id| id.allowed_accounts()),
     )
     .await
     {
@@ -6153,6 +6180,7 @@ async fn intercept_chat_to_image(
     state: AppState,
     headers: HeaderMap,
     tenant_id: Option<String>,
+    allowed_accounts: Option<std::collections::HashSet<String>>,
     body: Value,
     model_name: &str,
 ) -> Result<Response, (StatusCode, String)> {
@@ -6195,7 +6223,9 @@ async fn intercept_chat_to_image(
         "response_format": "url"
     });
 
-    match handle_images_generations_internal(state, headers, tenant_id, img_req).await {
+    match handle_images_generations_internal(state, headers, tenant_id, allowed_accounts, img_req)
+        .await
+    {
         Ok((email, img_res)) => {
             // Extract URL
             let mut img_markdown = String::new();
@@ -6295,7 +6325,13 @@ pub async fn handle_images_generations(
     match handle_images_generations_internal(
         state,
         headers,
-        user_identity.map(|identity| identity.token_id.clone()),
+        user_identity
+            .as_ref()
+            .map(|identity| identity.token_id.clone()),
+        user_identity
+            .as_ref()
+            .and_then(|id| id.allowed_accounts())
+            .cloned(),
         body,
     )
     .await
@@ -6319,6 +6355,7 @@ pub async fn handle_images_generations_internal(
     state: AppState,
     headers: HeaderMap,
     tenant_id: Option<String>,
+    allowed_accounts: Option<std::collections::HashSet<String>>,
     body: Value,
 ) -> Result<(String, Value), (StatusCode, String, Option<String>)> {
     // 1. 解析请求参数
@@ -6343,13 +6380,15 @@ pub async fn handle_images_generations_internal(
 
     // [MODEL GATE] 生图入口做存在性校验（不做整池配额检查，避免与文本配额桶误杀）：
     // 不存在 / 已下线 → 404 model not exist，属于网关自答，不进入选号与账号惩罚。
-    if let Some((status, reason)) = crate::proxy::common::model_gate::gate_inbound_model_exists(
-        Some(model),
-        &state.custom_mapping,
-        &state.token_manager,
-    )
-    .await
-    .rejection()
+    if let Some((status, reason)) =
+        crate::proxy::common::model_gate::gate_inbound_model_exists_scoped(
+            Some(model),
+            &state.custom_mapping,
+            &state.token_manager,
+            allowed_accounts.as_ref(),
+        )
+        .await
+        .rejection()
     {
         return Err((status, reason.to_string(), None));
     }
@@ -6439,6 +6478,7 @@ pub async fn handle_images_generations_internal(
         let attempted_account = attempted_account.clone();
         let image_scheduler = image_scheduler.clone();
         let affinity_key = affinity_key.clone();
+        let allowed_accounts = allowed_accounts.clone();
 
         tasks.spawn(async move {
             let mut image_permit = None;
@@ -6468,12 +6508,13 @@ pub async fn handle_images_generations_internal(
                     } else {
                         drop(image_permit.take());
                         match token_manager
-                            .get_image_token(
+                            .get_image_token_scoped(
                                 force_rotate,
                                 Some(&affinity_key),
                                 &model_to_use,
                                 &image_scheduler,
                                 request_timeout,
+                                allowed_accounts.as_ref(),
                             )
                             .await
                         {
@@ -6985,14 +7026,21 @@ pub async fn handle_images_edits(
         return Err((StatusCode::BAD_REQUEST, "Missing prompt".to_string()));
     }
 
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
+
     // [MODEL GATE] 生图编辑同样在选号前做存在性校验（网关自答，不罚号）
-    if let Some((status, reason)) = crate::proxy::common::model_gate::gate_inbound_model_exists(
-        Some(model.as_str()),
-        &state.custom_mapping,
-        &state.token_manager,
-    )
-    .await
-    .rejection()
+    if let Some((status, reason)) =
+        crate::proxy::common::model_gate::gate_inbound_model_exists_scoped(
+            Some(model.as_str()),
+            &state.custom_mapping,
+            &state.token_manager,
+            allowed_accounts.as_ref(),
+        )
+        .await
+        .rejection()
     {
         return Err((status, reason.to_string()));
     }
@@ -7066,6 +7114,7 @@ pub async fn handle_images_edits(
         let model_to_use = clean_model_name.clone();
         let image_scheduler = image_scheduler.clone();
         let affinity_key = affinity_key.clone();
+        let allowed_accounts = allowed_accounts.clone();
 
         tasks.spawn(async move {
             let mut image_permit = None;
@@ -7096,12 +7145,13 @@ pub async fn handle_images_edits(
                     } else {
                         drop(image_permit.take());
                         match token_manager
-                            .get_image_token(
+                            .get_image_token_scoped(
                                 force_rotate,
                                 Some(&affinity_key),
                                 image_account_selection_target(&model_to_use),
                                 &image_scheduler,
                                 request_timeout,
+                                allowed_accounts.as_ref(),
                             )
                             .await
                         {
@@ -7521,11 +7571,21 @@ pub async fn handle_responses_websocket(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     State(state): State<AppState>,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_websocket_session(socket, headers, state))
+    ws.on_upgrade(move |socket| handle_websocket_session(socket, headers, state, user_identity))
 }
 
-async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, state: AppState) {
+async fn handle_websocket_session(
+    mut socket: WebSocket,
+    headers: HeaderMap,
+    state: AppState,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
+) {
     tracing::info!("Codex responses websocket: client connected");
     let mut session_state = WebsocketSessionState {
         last_request: None,
@@ -7632,7 +7692,7 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
             State(state.clone()),
             headers.clone(),
             None,
-            None,
+            user_identity.clone(),
             Json(openai_body),
         )
         .await;

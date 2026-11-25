@@ -168,11 +168,7 @@ async fn auth_middleware_internal(
                 if let Ok(Some(user_token)) =
                     crate::modules::user_token_db::get_token_by_value(token)
                 {
-                    let identity = UserTokenIdentity {
-                        token_id: user_token.id,
-                        token: user_token.token,
-                        username: user_token.username,
-                    };
+                    let identity = UserTokenIdentity::from_user_token(user_token);
                     // 注入 identity 到请求
                     let (mut parts, body) = request.into_parts();
                     parts.extensions.insert(identity);
@@ -247,11 +243,7 @@ async fn auth_middleware_internal(
                 if let Ok(Some(user_token)) =
                     crate::modules::user_token_db::get_token_by_value(token)
                 {
-                    let identity = UserTokenIdentity {
-                        token_id: user_token.id,
-                        token: user_token.token,
-                        username: user_token.username,
-                    };
+                    let identity = UserTokenIdentity::from_user_token(user_token);
 
                     // [FIX] 将身份信息注入到请求 extensions 中，而不是响应
                     // 这样 monitor_middleware 在处理请求时就能获取到 identity
@@ -306,6 +298,24 @@ pub struct UserTokenIdentity {
     #[allow(dead_code)] // 保留原始 token 便于审计/调试
     pub token: String,
     pub username: String,
+    pub allowed_account_ids: Option<std::collections::HashSet<String>>,
+}
+
+impl UserTokenIdentity {
+    pub fn from_user_token(user_token: crate::modules::user_token_db::UserToken) -> Self {
+        Self {
+            token_id: user_token.id,
+            token: user_token.token,
+            username: user_token.username,
+            allowed_account_ids: user_token
+                .allowed_account_ids
+                .map(|ids| ids.into_iter().collect()),
+        }
+    }
+
+    pub fn allowed_accounts(&self) -> Option<&std::collections::HashSet<String>> {
+        self.allowed_account_ids.as_ref()
+    }
 }
 
 #[cfg(test)]

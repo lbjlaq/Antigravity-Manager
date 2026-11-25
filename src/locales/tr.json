@@ -2365,7 +2365,20 @@
         "calls_unit": "çağrı",
         "records_unit": "kayıt",
         "no_trend_data": "Bu dönemde eğilim verisi yok",
-        "no_model_data": "Model verisi bulunamadı"
+        "no_model_data": "Model verisi bulunamadı",
+        "account_scope": "Hesap Kapsamı",
+        "all_accounts": "Tüm Hesaplar",
+        "all_accounts_unlimited": "Tüm Hesaplar (Sınırsız)",
+        "specific_accounts": "Belirli Hesaplar",
+        "bound_accounts_count": "{{count}} Hesap",
+        "hint_account_scope": "Kullanılabilir herhangi bir hesap üzerinden yönlendirmeye izin vermek için Tüm Hesaplar olarak bırakın.",
+        "search_accounts_placeholder": "E-posta, ad veya etikete göre ara...",
+        "no_accounts_found": "Eşleşen hesap bulunamadı",
+        "account_missing": "Eksik / Silinmiş",
+        "account_disabled": "Devre Dışı",
+        "account_proxy_disabled": "Proxy Devre Dışı",
+        "missing_accounts_warning": "Bağlı bazı hesaplar artık mevcut değil. Aşağıdan kaldırabilirsiniz.",
+        "all_accounts_hint": "Bu token havuzdaki tüm kullanılabilir hesaplara erişebilir."
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",

@@ -13,6 +13,9 @@ use crate::proxy::{audio::AudioProcessor, server::AppState};
 /// 处理音频转录请求 (OpenAI Whisper API 兼容)
 pub async fn handle_audio_transcription(
     State(state): State<AppState>,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let mut audio_data: Option<Vec<u8>> = None;
@@ -96,9 +99,20 @@ pub async fn handle_audio_transcription(
     });
 
     // 6. 获取 Token 和上游客户端
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
     let token_manager = state.token_manager;
     let (access_token, project_id, email, account_id, _wait_ms) = token_manager
-        .get_token("text", false, None, &model)
+        .get_token_scoped(
+            "text",
+            false,
+            None,
+            &model,
+            &std::collections::HashSet::new(),
+            allowed_accounts.as_ref(),
+        )
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
 

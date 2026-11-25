@@ -2381,7 +2381,20 @@
         "calls_unit": "lượt gọi",
         "records_unit": "bản ghi",
         "no_trend_data": "Không có dữ liệu xu hướng trong khoảng thời gian này",
-        "no_model_data": "Không có dữ liệu mô hình"
+        "no_model_data": "Không có dữ liệu mô hình",
+        "account_scope": "Phạm vi tài khoản",
+        "all_accounts": "Tất cả tài khoản",
+        "all_accounts_unlimited": "Tất cả tài khoản (Không giới hạn)",
+        "specific_accounts": "Tài khoản cụ thể",
+        "bound_accounts_count": "{{count}} tài khoản",
+        "hint_account_scope": "Để ở chế độ Tất cả tài khoản để cho phép định tuyến qua bất kỳ tài khoản khả dụng nào.",
+        "search_accounts_placeholder": "Tìm theo email, tên hoặc nhãn...",
+        "no_accounts_found": "Không tìm thấy tài khoản phù hợp",
+        "account_missing": "Thiếu / Đã xóa",
+        "account_disabled": "Đã tắt",
+        "account_proxy_disabled": "Đã tắt Proxy",
+        "missing_accounts_warning": "Một số tài khoản đã liên kết không còn tồn tại. Bạn có thể gỡ bỏ bên dưới.",
+        "all_accounts_hint": "Token này có thể truy cập tất cả các tài khoản khả dụng trong pool."
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",

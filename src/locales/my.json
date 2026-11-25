@@ -2215,7 +2215,20 @@
         "calls_unit": "panggilan",
         "records_unit": "rekod",
         "no_trend_data": "Tiada data trend dalam tempoh ini",
-        "no_model_data": "Tiada data model tersedia"
+        "no_model_data": "Tiada data model tersedia",
+        "account_scope": "အကောင့်အတိုင်းအတာ",
+        "all_accounts": "အကောင့်အားလုံး",
+        "all_accounts_unlimited": "အကောင့်အားလုံး (အကန့်အသတ်မရှိ)",
+        "specific_accounts": "သီးသန့်အကောင့်များ",
+        "bound_accounts_count": "အကောင့် {{count}} ခု",
+        "hint_account_scope": "ရရှိနိုင်သော မည်သည့်အကောင့်မှမဆို လမ်းကြောင်းပို့နိုင်ရန် အကောင့်အားလုံးအဖြစ် ထားပါ။",
+        "search_accounts_placeholder": "အီးမေးလ်၊ အမည် သို့မဟုတ် တံဆိပ်ဖြင့် ရှာဖွေပါ...",
+        "no_accounts_found": "ကိုက်ညီသော အကောင့်မတွေ့ပါ",
+        "account_missing": "ပျောက်ဆုံး / ဖျက်ပြီး",
+        "account_disabled": "ပိတ်ထားသည်",
+        "account_proxy_disabled": "Proxy ပိတ်ထားသည်",
+        "missing_accounts_warning": "ချိတ်ဆက်ထားသော အကောင့်အချို့ မရှိတော့ပါ။ အောက်တွင် ဖယ်ရှားနိုင်ပါသည်။",
+        "all_accounts_hint": "ဤ Token သည် pool အတွင်းရှိ ရရှိနိုင်သော အကောင့်အားလုံးကို အသုံးပြုနိုင်သည်။"
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",

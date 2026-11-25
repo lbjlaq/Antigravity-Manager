@@ -136,10 +136,22 @@ pub async fn enforce_model_gate(
     protocol: &str,
     upstream_recorder: Option<&crate::proxy::monitor::UpstreamRequestBodyHolder>,
 ) -> Result<String, Response> {
-    let decision = crate::proxy::common::model_gate::gate_inbound_model(
+    enforce_model_gate_scoped(state, requested_model, protocol, upstream_recorder, None).await
+}
+
+/// 带可选账号作用域的入站模型闸门（协议无关）。
+pub async fn enforce_model_gate_scoped(
+    state: &AppState,
+    requested_model: Option<&str>,
+    protocol: &str,
+    upstream_recorder: Option<&crate::proxy::monitor::UpstreamRequestBodyHolder>,
+    allowed_accounts: Option<&std::collections::HashSet<String>>,
+) -> Result<String, Response> {
+    let decision = crate::proxy::common::model_gate::gate_inbound_model_scoped(
         requested_model,
         &state.custom_mapping,
         &state.token_manager,
+        allowed_accounts,
     )
     .await;
 

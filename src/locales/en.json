@@ -2606,7 +2606,20 @@
         "calls_unit": "calls",
         "records_unit": "records",
         "no_trend_data": "No trend data in this period",
-        "no_model_data": "No model data available"
+        "no_model_data": "No model data available",
+        "account_scope": "Account Scope",
+        "all_accounts": "All Accounts",
+        "all_accounts_unlimited": "All Accounts (Unlimited)",
+        "specific_accounts": "Specific Accounts",
+        "bound_accounts_count": "{{count}} Accounts",
+        "hint_account_scope": "Leave as All Accounts to allow routing through any available account.",
+        "search_accounts_placeholder": "Search by email, name, or label...",
+        "no_accounts_found": "No matching accounts found",
+        "account_missing": "Missing / Deleted",
+        "account_disabled": "Disabled",
+        "account_proxy_disabled": "Proxy Disabled",
+        "missing_accounts_warning": "Some bound accounts no longer exist. You can remove them below.",
+        "all_accounts_hint": "This token can access all available accounts in the pool."
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",

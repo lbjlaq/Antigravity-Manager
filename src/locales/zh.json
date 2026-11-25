@@ -2572,7 +2572,20 @@
         "calls_unit": "次调用",
         "records_unit": "个记录",
         "no_trend_data": "该时段内暂无走势数据",
-        "no_model_data": "暂无模型数据"
+        "no_model_data": "暂无模型数据",
+        "account_scope": "账号范围",
+        "all_accounts": "全部账号",
+        "all_accounts_unlimited": "全部账号（不限）",
+        "specific_accounts": "指定账号",
+        "bound_accounts_count": "限定 {{count}} 个账号",
+        "hint_account_scope": "保持为全部账号则允许使用任意可用账号。",
+        "search_accounts_placeholder": "搜索邮箱、名称或标签...",
+        "no_accounts_found": "未找到匹配的账号",
+        "account_missing": "已失效 / 已删除",
+        "account_disabled": "已禁用",
+        "account_proxy_disabled": "已停用代理",
+        "missing_accounts_warning": "部分绑定的账号已不存在，可在下方移除。",
+        "all_accounts_hint": "此 Token 可访问账号池中的所有可用账号。"
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN 中转站",

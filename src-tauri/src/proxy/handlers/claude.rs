@@ -911,12 +911,18 @@ pub async fn handle_messages(
             }
         };
 
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
+
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(request.model.as_str()),
         "claude",
         upstream_recorder.as_ref().map(|recorder| &recorder.0),
+        allowed_accounts.as_ref(),
     )
     .await
     {
@@ -1757,12 +1763,13 @@ pub async fn handle_messages(
             Ok(creds)
         } else if config.request_type == "image_gen" {
             match token_manager
-                .get_image_token(
+                .get_image_token_scoped(
                     force_rotate,
                     session_id,
                     &config.final_model,
                     &image_scheduler,
                     state.request_timeout,
+                    allowed_accounts.as_ref(),
                 )
                 .await
             {
@@ -1774,12 +1781,13 @@ pub async fn handle_messages(
             }
         } else {
             let mut res = token_manager
-                .get_token_filtered(
+                .get_token_scoped(
                     &config.request_type,
                     force_rotate,
                     session_id,
                     &config.final_model,
                     &attempted_accounts,
+                    allowed_accounts.as_ref(),
                 )
                 .await;
 
@@ -1791,12 +1799,13 @@ pub async fn handle_messages(
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     res = token_manager
-                        .get_token_filtered(
+                        .get_token_scoped(
                             &config.request_type,
                             true,
                             session_id,
                             &config.final_model,
                             &attempted_accounts,
+                            allowed_accounts.as_ref(),
                         )
                         .await;
                 }
@@ -3101,17 +3110,21 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 pub async fn handle_retrieve_model(
     State(state): State<AppState>,
     axum::extract::Path(model): axum::extract::Path<String>,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
 ) -> impl IntoResponse {
     use crate::proxy::common::model_mapping::{
         find_dynamic_model, get_all_dynamic_models_metadata,
     };
 
     // [MODEL GATE] GET /v1/models/claude/:model 探测端点同样接入门禁（含已下线模型族 404）
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(model.as_str()),
         "claude",
         None,
+        user_identity.as_ref().and_then(|id| id.allowed_accounts()),
     )
     .await
     {
