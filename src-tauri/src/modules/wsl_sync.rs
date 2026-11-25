@@ -240,6 +240,7 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
 
     // 2. 自动枚举当前处于运行中的 WSL 分发版
     for distro in get_running_wsl_distros() {
+        let mut distro_found = false;
         for prefix in [
             format!(r"\\wsl.localhost\{}\home", distro),
             format!(r"\\wsl$\{}\home", distro),
@@ -252,9 +253,14 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
                         let file_name = entry.file_name().to_string_lossy().to_string();
                         if !file_name.starts_with('.') && file_name != "lost+found" {
                             candidates.push(user_dir);
+                            distro_found = true;
                         }
                     }
                 }
+            }
+            // 同一个分发版只需通过一种 UNC 前缀写入一次，避免对同一 state.vscdb 重复注入并覆盖备份
+            if distro_found {
+                break;
             }
         }
     }
@@ -262,6 +268,139 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
     candidates.sort();
     candidates.dedup();
     candidates
+}
+
+/// 构造 WSL 内重启 Antigravity 语言服务子进程的 `wsl.exe` 参数。
+///
+/// 不依赖 `killall`（最小化 WSL 发行版常未预装 `psmisc`），改用 `procps` 标准 `pkill -TERM -f`，
+/// 仅精确匹配 Antigravity 安装/服务端路径下的 `language_server*` 与 `agy`，避免误杀宿主内其他 LSP。
+pub fn build_wsl_language_server_reload_args(distro: &str) -> Vec<String> {
+    vec![
+        "-d".to_string(),
+        distro.to_string(),
+        "--".to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        "pkill -TERM -f '([a]ntigravity|\\.[a]ntigravity-server|\\.[v]scode-server).*(language_server|agy)' 2>/dev/null || true".to_string(),
+    ]
+}
+
+/// 将账号凭据同步至 WSL 环境的核心执行体
+fn sync_account_to_wsl_inner(account: &crate::models::Account, custom_home: Option<&str>) {
+    let target_homes = resolve_wsl_home_dirs(custom_home);
+    if target_homes.is_empty() {
+        crate::modules::logger::log_info(
+            "[WSL Sync] WSL account sync is enabled, but no running WSL user home was found.",
+        );
+        return;
+    }
+
+    for wsl_home in target_homes {
+        crate::modules::logger::log_info(&format!(
+            "[WSL Sync] Syncing account credentials to WSL home: {}",
+            wsl_home.display()
+        ));
+
+        // 1. 同步写入 WSL 下的 .gemini 凭据
+        let wsl_gemini_dir = wsl_home.join(".gemini");
+        if let Err(e) = crate::modules::integration::write_to_file_credentials_to_dir(
+            &wsl_gemini_dir,
+            account,
+            false,
+        ) {
+            crate::modules::logger::log_warn(&format!(
+                "[WSL Sync] Failed to write file credentials to {}: {}",
+                wsl_gemini_dir.display(),
+                e
+            ));
+        } else {
+            crate::modules::logger::log_info(&format!(
+                "[WSL Sync] Successfully synced .gemini credentials to {}",
+                wsl_gemini_dir.display()
+            ));
+        }
+
+        // 2. 检查并注入 WSL 远程 VS Code / Antigravity Server 的 state.vscdb
+        let candidate_dbs = [
+            wsl_home.join(".vscode-server/data/User/globalStorage/state.vscdb"),
+            wsl_home.join(".antigravity-server/data/User/globalStorage/state.vscdb"),
+            wsl_home.join(".config/Antigravity/User/globalStorage/state.vscdb"),
+            wsl_home.join(".config/Antigravity IDE/User/globalStorage/state.vscdb"),
+        ];
+
+        for db_path in &candidate_dbs {
+            if db_path.exists() {
+                let backup = db_path.with_extension("vscdb.backup");
+                let _ = std::fs::copy(db_path, backup);
+
+                if let Err(e) = crate::modules::db::inject_token(
+                    db_path,
+                    &account.token.access_token,
+                    &account.token.refresh_token,
+                    account.token.expiry_timestamp,
+                    &account.email,
+                    account.token.is_gcp_tos,
+                    account.token.project_id.as_deref(),
+                    account.token.id_token.as_deref(),
+                    account.token.oauth_client_key.as_deref(),
+                    Some("ide"),
+                ) {
+                    crate::modules::logger::log_warn(&format!(
+                        "[WSL Sync] Failed to inject token into WSL database {}: {}",
+                        db_path.display(),
+                        e
+                    ));
+                } else {
+                    crate::modules::logger::log_info(&format!(
+                        "[WSL Sync] Successfully injected token into WSL database: {}",
+                        db_path.display()
+                    ));
+                }
+            }
+        }
+
+        // 3. 尝试向 WSL 运行态中的 language_server 发送重载信号（结束旧进程以便自动拉起新凭据）
+        #[cfg(target_os = "windows")]
+        if let Some(distro) = extract_wsl_distro(&wsl_home.to_string_lossy()) {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            let args = build_wsl_language_server_reload_args(&distro);
+            let mut cmd = std::process::Command::new("wsl.exe");
+            cmd.args(&args);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            let _ = run_command_with_timeout(&mut cmd, Duration::from_millis(1500));
+        }
+    }
+}
+
+/// 将账号凭据有界阻塞同步至 WSL 环境（用于桌面端重启重连 WSL 前确保新凭据已落盘）
+pub fn sync_account_to_wsl_blocking(
+    account: &crate::models::Account,
+    timeout: std::time::Duration,
+) {
+    let Ok(config) = crate::modules::config::load_app_config() else {
+        return;
+    };
+
+    if !config.wsl_sync_enabled {
+        return;
+    }
+
+    let account_clone = account.clone();
+    let custom_home = config.wsl_custom_home.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        sync_account_to_wsl_inner(&account_clone, custom_home.as_deref());
+        let _ = tx.send(());
+    });
+
+    if rx.recv_timeout(timeout).is_err() {
+        crate::modules::logger::log_warn(&format!(
+            "[WSL Sync] Timed out waiting {:?} for WSL credential sync before IDE relaunch; continuing host switch.",
+            timeout
+        ));
+    }
 }
 
 /// 将账号凭据异步同步至 WSL 环境（尽力而为，非阻塞）
@@ -279,89 +418,7 @@ pub fn sync_account_to_wsl(account: &crate::models::Account) {
 
     // 在独立后台线程中执行跨环境文件写入，彻底与宿主机主切号流程隔离
     std::thread::spawn(move || {
-        let target_homes = resolve_wsl_home_dirs(custom_home.as_deref());
-        if target_homes.is_empty() {
-            crate::modules::logger::log_info(
-                "[WSL Sync] WSL account sync is enabled, but no running WSL user home was found.",
-            );
-            return;
-        }
-
-        for wsl_home in target_homes {
-            crate::modules::logger::log_info(&format!(
-                "[WSL Sync] Syncing account credentials to WSL home: {}",
-                wsl_home.display()
-            ));
-
-            // 1. 同步写入 WSL 下的 .gemini 凭据
-            let wsl_gemini_dir = wsl_home.join(".gemini");
-            if let Err(e) = crate::modules::integration::write_to_file_credentials_to_dir(
-                &wsl_gemini_dir,
-                &account_clone,
-                false,
-            ) {
-                crate::modules::logger::log_warn(&format!(
-                    "[WSL Sync] Failed to write file credentials to {}: {}",
-                    wsl_gemini_dir.display(),
-                    e
-                ));
-            } else {
-                crate::modules::logger::log_info(&format!(
-                    "[WSL Sync] Successfully synced .gemini credentials to {}",
-                    wsl_gemini_dir.display()
-                ));
-            }
-
-            // 2. 检查并注入 WSL 远程 VS Code / Antigravity Server 的 state.vscdb
-            let candidate_dbs = [
-                wsl_home.join(".vscode-server/data/User/globalStorage/state.vscdb"),
-                wsl_home.join(".antigravity-server/data/User/globalStorage/state.vscdb"),
-                wsl_home.join(".config/Antigravity/User/globalStorage/state.vscdb"),
-                wsl_home.join(".config/Antigravity IDE/User/globalStorage/state.vscdb"),
-            ];
-
-            for db_path in &candidate_dbs {
-                if db_path.exists() {
-                    let backup = db_path.with_extension("vscdb.backup");
-                    let _ = std::fs::copy(db_path, backup);
-
-                    if let Err(e) = crate::modules::db::inject_token(
-                        db_path,
-                        &account_clone.token.access_token,
-                        &account_clone.token.refresh_token,
-                        account_clone.token.expiry_timestamp,
-                        &account_clone.email,
-                        account_clone.token.is_gcp_tos,
-                        account_clone.token.project_id.as_deref(),
-                        account_clone.token.id_token.as_deref(),
-                        account_clone.token.oauth_client_key.as_deref(),
-                        Some("ide"),
-                    ) {
-                        crate::modules::logger::log_warn(&format!(
-                            "[WSL Sync] Failed to inject token into WSL database {}: {}",
-                            db_path.display(),
-                            e
-                        ));
-                    } else {
-                        crate::modules::logger::log_info(&format!(
-                            "[WSL Sync] Successfully injected token into WSL database: {}",
-                            db_path.display()
-                        ));
-                    }
-                }
-            }
-
-            // 3. 尝试向 WSL 运行态中的 language_server 发送重载信号（结束旧进程以便自动拉起新凭据）
-            #[cfg(target_os = "windows")]
-            if let Some(distro) = extract_wsl_distro(&wsl_home.to_string_lossy()) {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                let mut cmd = std::process::Command::new("wsl.exe");
-                cmd.args(["-d", &distro, "--", "killall", "-9", "language_server"]);
-                cmd.creation_flags(CREATE_NO_WINDOW);
-                let _ = run_command_with_timeout(&mut cmd, Duration::from_millis(1500));
-            }
-        }
+        sync_account_to_wsl_inner(&account_clone, custom_home.as_deref());
     });
 }
 
@@ -422,5 +479,19 @@ mod tests {
             .collect();
         let names = extract_distro_names_from_output(&utf16_bytes);
         assert_eq!(names, vec!["Ubuntu-22.04", "openSUSE"]);
+    }
+
+    #[test]
+    fn test_build_wsl_language_server_reload_args() {
+        let args = build_wsl_language_server_reload_args("Ubuntu-24.04");
+        assert_eq!(&args[..4], &["-d", "Ubuntu-24.04", "--", "sh"]);
+        assert_eq!(args[4], "-c");
+        assert!(args[5].contains("pkill -TERM -f"));
+        assert!(args[5].contains("[a]ntigravity"));
+        assert!(args[5].contains("language_server"));
+        assert!(args[5].contains("agy"));
+        assert!(!args[5].contains("killall"));
+        // Avoid matching the parent `sh -c ...` cmdline itself under procps `pkill -f`.
+        assert!(!args[5].contains("(antigravity"));
     }
 }

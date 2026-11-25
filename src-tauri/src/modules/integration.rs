@@ -720,6 +720,11 @@ impl SystemIntegration for DesktopIntegration {
                 15,
                 &killed_subprocesses,
             ) {
+                #[cfg(target_os = "windows")]
+                crate::modules::wsl_sync::sync_account_to_wsl_blocking(
+                    account,
+                    std::time::Duration::from_secs(5),
+                );
                 crate::modules::logger::log_info(&format!(
                     "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
                     account.email
@@ -741,6 +746,14 @@ impl SystemIntegration for DesktopIntegration {
                 active_exe_path.as_deref(),
             );
         }
+
+        // 在 Windows 宿主机重新拉起 IDE 之前先有界同步 WSL 凭据（Ref #4032），
+        // 避免 Remote-WSL 窗口启动瞬间抢先连接并使用旧凭据。
+        #[cfg(target_os = "windows")]
+        crate::modules::wsl_sync::sync_account_to_wsl_blocking(
+            account,
+            std::time::Duration::from_secs(5),
+        );
 
         if let Err(e) = process::start_antigravity_with_fallback_path(
             effective_target,
