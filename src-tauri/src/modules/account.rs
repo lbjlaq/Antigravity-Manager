@@ -3651,14 +3651,14 @@ pub async fn switch_account(
     account.update_last_used();
     save_account(&account)?;
 
-    // 5. 跨环境凭据同步：Desktop 路径已在重启 IDE 前有界同步；此处仅兜底非 Desktop (Headless/CLI) 路径
+    // 5. 跨环境凭据同步：Desktop IDE/经典版路径已在重启前有界同步；此处兜底 Headless/CLI 及 agy/ACP 路径
+    let wsl_synced_by_integration = integration.handles_wsl_sync(target_ide);
     #[cfg(target_os = "windows")]
-    if !matches!(
-        integration,
-        crate::modules::integration::SystemManager::Desktop(_)
-    ) {
+    if !wsl_synced_by_integration {
         crate::modules::wsl_sync::sync_account_to_wsl(&account);
     }
+    #[cfg(not(target_os = "windows"))]
+    let _ = wsl_synced_by_integration;
 
     crate::modules::logger::log_info(&format!(
         "Account switch core logic completed: {}",
