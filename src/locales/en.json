@@ -943,6 +943,7 @@
             "brew_error_brew_timeout": "Homebrew upgrade timed out (3min). Try running manually: brew upgrade --cask antigravity-tools",
             "brew_error_brew_already_latest": "Already up to date, no upgrade needed",
             "brew_error_brew_not_supported": "Homebrew update is not supported on this platform",
+            "brew_error_brew_beta_not_supported": "Homebrew Cask only supports stable releases. Switch to in-app online update for Beta builds.",
             "brew_beta_notice": "Homebrew only supports stable releases. A beta release was detected, switched to native auto-updater.",
             "brew_switch_to_native": "Switch to In-App Online Update",
             "brew_switch_to_brew": "Switch to Homebrew Update",
