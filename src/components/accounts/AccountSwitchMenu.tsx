@@ -1,8 +1,15 @@
-import React, { useEffect, useRef, useState, useLayoutEffect } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowRightLeft, Blocks, Repeat2, Terminal } from 'lucide-react';
 import type { ActiveClientsStatus } from '../../types/account';
 import { cn } from '../../utils/cn';
+import {
+    computeAccountSwitchMenuPosition,
+    isTriggerVisibleInClipBounds,
+    resolveTriggerClipBounds,
+    type AccountSwitchMenuPosition,
+} from './accountSwitchMenuPosition';
 
 export interface AccountSwitchMenuProps {
     accountId: string;
@@ -93,30 +100,70 @@ export default function AccountSwitchMenu({
 }: AccountSwitchMenuProps) {
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
-    const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
+    const [menuPosition, setMenuPosition] = useState<AccountSwitchMenuPosition | null>(null);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
-    // 动态判断上下展开方向（防遮挡）
-    useLayoutEffect(() => {
-        if (!isOpen || !triggerRef.current) return;
-        const rect = triggerRef.current.getBoundingClientRect();
-        // 向上展开大约需要 50px 空间，若距顶部不足 65px 则向下展开
-        if (rect.top < 65) {
-            setPlacement('bottom');
-        } else {
-            setPlacement('top');
-        }
-    }, [isOpen]);
+    const updatePosition = useCallback(() => {
+        const triggerEl = triggerRef.current;
+        const menuEl = menuRef.current;
+        if (!triggerEl || !menuEl) return;
 
-    // 点击外部或按下 Escape 键时自动收起
+        const triggerRect = triggerEl.getBoundingClientRect();
+        const viewport = { width: window.innerWidth, height: window.innerHeight };
+        const clipBounds = resolveTriggerClipBounds(triggerEl, triggerRect, viewport);
+
+        if (!isTriggerVisibleInClipBounds(triggerRect, clipBounds)) {
+            setIsOpen(false);
+            return;
+        }
+
+        const menuRect = menuEl.getBoundingClientRect();
+        const menuSize = {
+            width: menuRect.width || menuEl.offsetWidth || 220,
+            height: menuRect.height || menuEl.offsetHeight || 56,
+        };
+        const isRtl = window.getComputedStyle(triggerEl).direction === 'rtl';
+
+        setMenuPosition(
+            computeAccountSwitchMenuPosition({
+                triggerRect,
+                menuSize,
+                viewport,
+                clipBounds,
+                isRtl,
+            })
+        );
+    }, []);
+
+    // 通过 Portal 渲染到 body 后，在首次绘制前同步测量并计算视口绝对位置
+    useLayoutEffect(() => {
+        if (!isOpen) {
+            setMenuPosition(null);
+            return;
+        }
+        updatePosition();
+    }, [isOpen, updatePosition]);
+
+    // 禁用或切换进行中时自动收起菜单
+    useEffect(() => {
+        if ((disabled || isSwitching) && isOpen) {
+            setIsOpen(false);
+        }
+    }, [disabled, isSwitching, isOpen]);
+
+    // 点击外部、按下 Escape、滚动或窗口缩放时更新/收起菜单
     useEffect(() => {
         if (!isOpen) return;
 
         const handleClickOutside = (e: MouseEvent) => {
-            if (!containerRef.current?.contains(e.target as Node)) {
+            const target = e.target as Node | null;
+            if (!target) return;
+            const insideContainer = containerRef.current?.contains(target);
+            const insideMenu = menuRef.current?.contains(target);
+            if (!insideContainer && !insideMenu) {
                 setIsOpen(false);
             }
         };
@@ -129,16 +176,90 @@ export default function AccountSwitchMenu({
 
         document.addEventListener('mousedown', handleClickOutside);
         document.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
         return () => {
             document.removeEventListener('mousedown', handleClickOutside);
             document.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('scroll', updatePosition, true);
+            window.removeEventListener('resize', updatePosition);
         };
-    }, [isOpen]);
+    }, [isOpen, updatePosition]);
 
     const handleSelectTarget = (target: 'classic' | 'ide' | 'acp' | 'agy') => {
         setIsOpen(false);
         onSwitch(target);
     };
+
+    const menuNode = isOpen ? (
+        <div
+            ref={menuRef}
+            onClick={(e) => e.stopPropagation()}
+            role="menu"
+            aria-label={t('accounts.switch_target_label', '选择切换客户端')}
+            style={
+                menuPosition
+                    ? {
+                        position: 'fixed',
+                        top: `${menuPosition.top}px`,
+                        left: `${menuPosition.left}px`,
+                        zIndex: 90,
+                    }
+                    : {
+                        position: 'fixed',
+                        top: -9999,
+                        left: -9999,
+                        visibility: 'hidden',
+                        zIndex: 90,
+                    }
+            }
+            className={cn(
+                "flex items-center gap-1 p-1 bg-white dark:bg-base-100 rounded-xl shadow-2xl border border-gray-200 dark:border-base-300 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 whitespace-nowrap",
+                menuPosition?.placement === 'bottom' ? "origin-top-right" : "origin-bottom-right"
+            )}
+        >
+            {CLIENT_TARGETS.map((target) => {
+                const Icon = target.icon;
+                const isCurrentActive =
+                    (target.id === 'classic' && activeClients?.classic_account_id === accountId) ||
+                    (target.id === 'ide' && activeClients?.ide_account_id === accountId) ||
+                    (target.id === 'acp' && activeClients?.acp_account_id === accountId) ||
+                    (target.id === 'agy' && activeClients?.agy_account_id === accountId);
+
+                const targetLabel = t(target.labelKey, target.defaultLabel);
+                const targetDesc = t(target.descKey, target.defaultDesc);
+
+                return (
+                    <button
+                        key={target.id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => handleSelectTarget(target.id)}
+                        title={`${targetLabel}: ${targetDesc}`}
+                        className={cn(
+                            "relative flex flex-col items-center justify-center p-1.5 rounded-lg border text-center transition-all duration-150 active:scale-95 group",
+                            target.bgClass,
+                            target.colorClass,
+                            isCurrentActive && target.activeBorderClass
+                        )}
+                    >
+                        <Icon className="w-3.5 h-3.5 flex-shrink-0 transition-transform group-hover:scale-110" />
+                        <span className="text-[9px] font-bold mt-0.5 leading-none max-w-[48px] truncate">
+                            {targetLabel}
+                        </span>
+
+                        {/* 活跃指示小绿点 */}
+                        {isCurrentActive && (
+                            <span
+                                className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 border border-white dark:border-base-100 shadow-xs"
+                                title={t('accounts.current_active_client', '当前正在使用该账号')}
+                            />
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+    ) : null;
 
     return (
         <div ref={containerRef} className={cn("relative inline-block w-full", className)}>
@@ -163,66 +284,15 @@ export default function AccountSwitchMenu({
                 }}
                 disabled={disabled || isSwitching}
                 title={disabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_menu_tooltip', '选择切换目标客户端 (Antigravity / IDE / JEB / AGY CLI)'))}
+                aria-haspopup="menu"
                 aria-expanded={isOpen}
             >
                 <Repeat2 className={cn(size === 'sm' ? "w-3 h-3" : "w-3.5 h-3.5", "flex-shrink-0", isSwitching && "animate-spin")} />
                 <span className="truncate">{t('accounts.action_switch', '切换')}</span>
             </button>
 
-            {/* 向上展开的四个小图标菜单 */}
-            {isOpen && (
-                <div
-                    ref={menuRef}
-                    onClick={(e) => e.stopPropagation()}
-                    role="menu"
-                    aria-label={t('accounts.switch_target_label', '选择切换客户端')}
-                    className={cn(
-                        "absolute right-0 z-50 flex items-center gap-1 p-1 bg-white dark:bg-base-100 rounded-xl shadow-2xl border border-gray-200 dark:border-base-300 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 whitespace-nowrap",
-                        placement === 'top' ? "bottom-full mb-1.5" : "top-full mt-1.5"
-                    )}
-                >
-                    {CLIENT_TARGETS.map((target) => {
-                        const Icon = target.icon;
-                        const isCurrentActive =
-                            (target.id === 'classic' && activeClients?.classic_account_id === accountId) ||
-                            (target.id === 'ide' && activeClients?.ide_account_id === accountId) ||
-                            (target.id === 'acp' && activeClients?.acp_account_id === accountId) ||
-                            (target.id === 'agy' && activeClients?.agy_account_id === accountId);
-
-                        const targetLabel = t(target.labelKey, target.defaultLabel);
-                        const targetDesc = t(target.descKey, target.defaultDesc);
-
-                        return (
-                            <button
-                                key={target.id}
-                                type="button"
-                                role="menuitem"
-                                onClick={() => handleSelectTarget(target.id)}
-                                title={`${targetLabel}: ${targetDesc}`}
-                                className={cn(
-                                    "relative flex flex-col items-center justify-center p-1.5 rounded-lg border text-center transition-all duration-150 active:scale-95 group",
-                                    target.bgClass,
-                                    target.colorClass,
-                                    isCurrentActive && target.activeBorderClass
-                                )}
-                            >
-                                <Icon className="w-3.5 h-3.5 flex-shrink-0 transition-transform group-hover:scale-110" />
-                                <span className="text-[9px] font-bold mt-0.5 leading-none max-w-[48px] truncate">
-                                    {targetLabel}
-                                </span>
-
-                                {/* 活跃指示小绿点 */}
-                                {isCurrentActive && (
-                                    <span
-                                        className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 border border-white dark:border-base-100 shadow-xs"
-                                        title={t('accounts.current_active_client', '当前正在使用该账号')}
-                                    />
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
+            {/* 通过 Portal 挂载到 body，避免被表格 sticky 表头/邻行层叠上下文与滚动容器遮挡裁切 */}
+            {menuNode && (typeof document !== 'undefined' ? createPortal(menuNode, document.body) : menuNode)}
         </div>
     );
 }
