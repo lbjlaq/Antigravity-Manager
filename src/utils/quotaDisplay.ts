@@ -33,8 +33,11 @@ export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefi
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
     const buckets = (groups || []).filter(group => {
         const groupName = (group?.display_name || '').toLowerCase();
-        const hasArgonBucket = (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('argon'));
-        const groupIsArgon = groupName.includes('argon') || hasArgonBucket;
+        const hasFlagshipBucket = (group?.buckets || []).some(bucket => {
+            const bid = (bucket?.bucket_id || '').toLowerCase();
+            return bid.includes('argon') || bid.includes('neon') || bid.includes('carbon');
+        });
+        const groupIsArgon = isDedicatedG4Group(group) || /neon|argon|carbon/i.test(groupName) || hasFlagshipBucket;
         if (isArgon) return groupIsArgon;
         if (groupIsArgon) return false;
 
@@ -88,7 +91,7 @@ export function getModelConstrainedQuota(
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
 
     const buckets = (groups || []).filter(group => {
-        const groupIsArgon = isDedicatedG4Group(group) || /neon|argon/i.test(group?.display_name || '');
+        const groupIsArgon = isDedicatedG4Group(group) || /neon|argon|carbon/i.test(group?.display_name || '');
         if (isArgon) return groupIsArgon;
         if (groupIsArgon) return false;
 
@@ -252,8 +255,8 @@ function summarizeSupportedModels(models: ModelQuota[], key: 'gemini' | 'claude'
     if (active.length === 0) {
         if (key === 'argon') {
             return {
-                dynamicLabel: 'Gemini 4 Neon',
-                supportedModels: ['gemini-4-neon', 'gemini-4-neon-high', 'gemini-4-neon-medium', 'gemini-4-neon-low', 'gemini-pro-orchestrator-g1-pro'],
+                dynamicLabel: 'Gemini 4 Carbon',
+                supportedModels: ['gemini-4-carbon', 'gemini-4-carbon-high', 'gemini-4-carbon-medium', 'gemini-4-carbon-low', 'gemini-4-carbon-xhigh'],
             };
         }
         return { supportedModels: [] };
@@ -270,7 +273,7 @@ function summarizeSupportedModels(models: ModelQuota[], key: 'gemini' | 'claude'
         const codenameList = Array.from(codenames);
         const dynamicLabel = codenameList.length > 0
             ? `Gemini 4 ${codenameList.join(' / ')}`
-            : 'Gemini 4 Neon';
+            : 'Gemini 4 Carbon';
 
         return {
             dynamicLabel,
@@ -341,7 +344,7 @@ export function getGroupQuotaSummaries(
     const findGroupBuckets = (target: 'gemini' | 'claude' | 'argon') => {
         const directBuckets = (groups || []).filter(group => {
             const groupName = (group?.display_name || '').toLowerCase();
-            const isFlagship = isDedicatedG4Group(group) || /neon|argon/i.test(groupName);
+            const isFlagship = isDedicatedG4Group(group) || /neon|argon|carbon/i.test(groupName);
             if (target === 'argon') return isFlagship;
             if (isFlagship) return false;
 
@@ -350,8 +353,8 @@ export function getGroupQuotaSummaries(
             return target === 'claude' ? isThirdParty : !isThirdParty;
         }).flatMap(group => group?.buckets || []);
 
-        // Ultra 账号在官方架构下未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
-        if (target === 'argon' && directBuckets.length === 0 && isUltraTier) {
+        // Ultra 以及拥有 Carbon 的 Pro 账号在官方架构下若未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
+        if (target === 'argon' && directBuckets.length === 0 && (isUltraTier || tier === 'pro')) {
             return (groups || []).filter(group => {
                 const groupName = (group?.display_name || '').toLowerCase();
                 const isThirdParty = /claude|gpt|3p/.test(groupName)
@@ -460,7 +463,7 @@ export function getGroupQuotaSummaries(
             ? 'accounts.quota_group_argon'
             : (key === 'claude' ? 'accounts.quota_group_claude' : 'accounts.quota_group_gemini');
         const defaultLabel = key === 'argon'
-            ? 'Gemini 4 Neon'
+            ? 'Gemini 4 Carbon'
             : (key === 'claude' ? 'Claude & GPT Models' : 'Gemini Models');
 
         const matchedForSummary = fallbackModels.filter(m => {

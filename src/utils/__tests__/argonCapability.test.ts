@@ -236,6 +236,78 @@ test('getGroupQuotaSummaries generates dynamic Gemini 4 Neon label for Neon mode
     assertEqual(neonSummary?.weekly?.percentage, 88, 'Weekly percentage matches Neon group');
 });
 
+// 8. Pro Tier Tests: With Carbon models sharing general Gemini pool
+test('Pro tier with Carbon models sharing Gemini pool has Carbon capability and Gemini 4 Carbon label', () => {
+    const proCarbonAccount = {
+        quota: {
+            last_updated: Date.now(),
+            subscription_tier: 'PRO',
+            quota_groups: [
+                {
+                    display_name: 'Gemini Models',
+                    buckets: [
+                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 1.0, reset_time: '2026-10-27T08:00:00Z' },
+                        { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.91, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                },
+                {
+                    display_name: 'Claude and GPT models',
+                    buckets: [
+                        { bucket_id: 'claude-weekly', window: 'weekly', remaining_fraction: 1.0, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                }
+            ],
+            models: [
+                { name: 'gemini-4-carbon', percentage: 91, reset_time: '2026-10-31T12:00:00Z' },
+                { name: 'gemini-4-carbon-high', percentage: 91, reset_time: '2026-10-31T12:00:00Z' },
+            ]
+        } as QuotaData
+    };
+
+    assertEqual(hasAccountArgonCapability(proCarbonAccount), true, 'Pro with Carbon hasAccountArgonCapability');
+    assertEqual(checkArgonEligibility(proCarbonAccount.quota.quota_groups, proCarbonAccount.quota.models, 'pro'), true, 'Pro with Carbon checkArgonEligibility');
+    const summaries = getGroupQuotaSummaries(proCarbonAccount.quota.quota_groups, proCarbonAccount.quota.models, 'pro');
+    const carbonSummary = summaries.find(s => s.key === 'argon');
+    assertEqual(Boolean(carbonSummary), true, 'Flagship summary present for Pro with Carbon');
+    assertEqual(carbonSummary?.dynamicLabel, 'Gemini 4 Carbon', 'Dynamic label correctly set to Gemini 4 Carbon');
+    assertEqual(carbonSummary?.weekly?.percentage, 91, 'Carbon weekly percentage inherits from Gemini pool');
+});
+
+// 9. Pro Tier Tests: With dedicated Carbon quota group
+test('Pro tier with dedicated Carbon quota group uses Carbon bucket', () => {
+    const proDedicatedCarbonAccount = {
+        quota: {
+            last_updated: Date.now(),
+            subscription_tier: 'PRO',
+            quota_groups: [
+                {
+                    display_name: 'Gemini Models',
+                    buckets: [
+                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 1.0, reset_time: '2026-10-27T08:00:00Z' },
+                        { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.95, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                },
+                {
+                    display_name: 'Gemini 4 Carbon',
+                    buckets: [
+                        { bucket_id: 'gemini-carbon-wtu-weekly', window: 'weekly', remaining_fraction: 0.75, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                }
+            ],
+            models: [
+                { name: 'gemini-4-carbon', percentage: 75, reset_time: '2026-10-31T12:00:00Z' },
+            ]
+        } as QuotaData
+    };
+
+    assertEqual(hasAccountArgonCapability(proDedicatedCarbonAccount), true, 'Pro with dedicated Carbon has capability');
+    const summaries = getGroupQuotaSummaries(proDedicatedCarbonAccount.quota.quota_groups, proDedicatedCarbonAccount.quota.models, 'pro');
+    const carbonSummary = summaries.find(s => s.key === 'argon');
+    assertEqual(Boolean(carbonSummary), true, 'Flagship summary present');
+    assertEqual(carbonSummary?.dynamicLabel, 'Gemini 4 Carbon', 'Dynamic label is Gemini 4 Carbon');
+    assertEqual(carbonSummary?.weekly?.percentage, 75, 'Carbon weekly percentage uses dedicated bucket');
+});
+
 console.log(`Passed: ${passed}, Failed: ${failed}`);
 if (failed > 0) {
     throw new Error(`Argon capability tests failed: ${failed}`);

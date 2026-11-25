@@ -118,7 +118,7 @@ const LIVE_CACHE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct LiveCatalogCacheFile {
+pub(crate) struct LiveCatalogCacheFile {
     #[serde(default)]
     schema_version: u32,
     #[serde(default)]
@@ -732,12 +732,14 @@ mod tests {
 
         assert_eq!(
             recommended.len(),
-            21,
-            "cold-start recommended baseline must match exact 21 active official entries, got: {:?}",
+            25,
+            "cold-start recommended baseline must match exact 25 active official entries, got: {:?}",
             recommended
         );
 
         for expected in [
+            "gemini-4-carbon-high",
+            "gemini-4-carbon-xhigh",
             "gemini-4-hydrogen-high",
             "gemini-4-hydrogen-xhigh",
             "gemini-4-argon-high",
@@ -778,7 +780,6 @@ mod tests {
             "claude-sonnet-4-6",
             "claude-opus-4-6-thinking",
             "gemini-3.1-pro-high",
-            "gemini-4-carbon-high",
         ] {
             assert!(
                 !recommended.iter().any(|id| id == retired),

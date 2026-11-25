@@ -1714,10 +1714,12 @@ impl TokenManager {
 
     /// load_single_account 与实时 429 刷新共用的 Gemini 4+ 分组额度对齐入口：
     /// 1. 对历史 `argon` 维持 #3745 专属组/Ultra 准入门禁与默认档位注入；
-    /// 2. 对其余动态代号（如 hydrogen/carbon 或未来任何代号），仅当 quota_groups 恰好拆分了对应专属桶时
+    /// 2. 对 `carbon`，上游已全量向 Pro/Ultra 账号开放，支持专属组与通用大池兜底及默认档位注入；
+    /// 3. 对其余动态代号（如 hydrogen 或未来任何代号），仅当 quota_groups 恰好拆分了对应专属桶时
     ///    同步账号已解锁变体的配额，绝不凭空注入或覆盖上游 `model_limits`。
     fn reconcile_g4_group_quotas(
         is_ultra: bool,
+        is_pro: bool,
         bucket_inputs: &[QuotaBucketInput],
         model_quotas: &mut HashMap<String, i32>,
         available_models: &mut HashSet<String>,
@@ -1729,6 +1731,13 @@ impl TokenManager {
             "gemini-4-argon-medium",
             "gemini-4-argon-low",
             "gemini-pro-orchestrator-g1-pro",
+        ];
+        const CARBON_DEFAULT_MODELS: [&str; 5] = [
+            "gemini-4-carbon",
+            "gemini-4-carbon-high",
+            "gemini-4-carbon-medium",
+            "gemini-4-carbon-low",
+            "gemini-4-carbon-xhigh",
         ];
 
         let primary_fraction_for = |family: &str| -> Option<f64> {
@@ -1778,10 +1787,35 @@ impl TokenManager {
             }
         }
 
-        // 2. 其他 Gemini 4+ 动态代号：若上游为此代号拆出了专属桶，则仅对其已授权变体同步额度
+        // 2. Carbon 上游已向 Pro/Ultra 全量开放，支持专属桶与通用大池兜底注入
+        let carbon_frac = primary_fraction_for("carbon").or_else(|| {
+            if is_pro {
+                Some(primary_fraction_for("gemini").unwrap_or(1.0))
+            } else {
+                None
+            }
+        });
+
+        if let Some(frac) = carbon_frac {
+            let pct = (frac * 100.0).round() as i32;
+            for m in CARBON_DEFAULT_MODELS {
+                model_quotas.insert(m.to_string(), pct);
+                available_models.insert(m.to_string());
+                model_limits.entry(m.to_string()).or_insert(262144);
+            }
+        } else {
+            for m in CARBON_DEFAULT_MODELS {
+                model_quotas.remove(m);
+                available_models.remove(m);
+                model_limits.remove(m);
+            }
+        }
+
+        // 3. 其他 Gemini 4+ 动态代号：若上游为此代号拆出了专属桶，则仅对其已授权变体同步额度
         let mut dedicated_codes: Vec<String> = Vec::new();
         for b in bucket_inputs {
             if b.family != "argon"
+                && b.family != "carbon"
                 && b.family != "3p"
                 && b.family != "gemini"
                 && !dedicated_codes.iter().any(|c| c == &b.family)
@@ -2501,12 +2535,15 @@ impl TokenManager {
         });
 
         if let Some(ref inputs) = parsed_bucket_inputs {
-            let is_ultra = subscription_tier
-                .as_deref()
-                .map(|s| s.to_uppercase() == "ULTRA")
-                .unwrap_or(false);
+            let tier_upper = subscription_tier.as_deref().map(|s| s.to_uppercase());
+            let is_ultra = tier_upper.as_deref() == Some("ULTRA");
+            let is_pro = matches!(
+                tier_upper.as_deref(),
+                Some("PRO") | Some("ULTRA") | Some("ENTERPRISE")
+            );
             Self::reconcile_g4_group_quotas(
                 is_ultra,
+                is_pro,
                 inputs,
                 &mut model_quotas,
                 &mut available_models,
@@ -2525,6 +2562,20 @@ impl TokenManager {
             ] {
                 available_models.insert(m.to_string());
                 model_limits.entry(m.to_string()).or_insert(65536);
+            }
+        }
+
+        // 若 model_quotas 中已有 gemini-4-carbon，确保同步到 available_models 与 limits
+        if model_quotas.contains_key("gemini-4-carbon") {
+            for m in [
+                "gemini-4-carbon",
+                "gemini-4-carbon-high",
+                "gemini-4-carbon-medium",
+                "gemini-4-carbon-low",
+                "gemini-4-carbon-xhigh",
+            ] {
+                available_models.insert(m.to_string());
+                model_limits.entry(m.to_string()).or_insert(262144);
             }
         }
 
@@ -2924,15 +2975,19 @@ impl TokenManager {
             .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
             .and_then(|g| g.as_array())
         {
-            let is_ultra = account
+            let tier_upper = account
                 .get("quota")
                 .and_then(|q| {
                     q.get("subscription_tier")
                         .or_else(|| q.get("subscriptionTier"))
                 })
                 .and_then(|t| t.as_str())
-                .map(|s| s.to_uppercase() == "ULTRA")
-                .unwrap_or(false);
+                .map(|s| s.to_uppercase());
+            let is_ultra = tier_upper.as_deref() == Some("ULTRA");
+            let is_pro = matches!(
+                tier_upper.as_deref(),
+                Some("PRO") | Some("ULTRA") | Some("ENTERPRISE")
+            );
 
             let has_argon = groups.iter().any(|g| {
                 let name = g
@@ -2973,6 +3028,47 @@ impl TokenManager {
                 result.remove("gemini-4-argon-medium");
                 result.remove("gemini-4-argon-low");
                 result.remove("gemini-pro-orchestrator-g1-pro");
+            }
+
+            let has_carbon = groups.iter().any(|g| {
+                let name = g
+                    .get("display_name")
+                    .or_else(|| g.get("displayName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let buckets = g.get("buckets").and_then(|b| b.as_array());
+                name.contains("carbon")
+                    || buckets.map_or(false, |bs| {
+                        bs.iter().any(|b| {
+                            let b_id = b
+                                .get("bucket_id")
+                                .or_else(|| b.get("bucketId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            let b_name = b
+                                .get("display_name")
+                                .or_else(|| b.get("displayName"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            b_id.contains("carbon") || b_name.contains("carbon")
+                        })
+                    })
+            });
+            if has_carbon || is_pro {
+                result.insert("gemini-4-carbon".to_string());
+                result.insert("gemini-4-carbon-high".to_string());
+                result.insert("gemini-4-carbon-medium".to_string());
+                result.insert("gemini-4-carbon-low".to_string());
+                result.insert("gemini-4-carbon-xhigh".to_string());
+            } else {
+                result.remove("gemini-4-carbon");
+                result.remove("gemini-4-carbon-high");
+                result.remove("gemini-4-carbon-medium");
+                result.remove("gemini-4-carbon-low");
+                result.remove("gemini-4-carbon-xhigh");
             }
         }
         Some(result)
@@ -6441,12 +6537,13 @@ impl TokenManager {
                     }
 
                     // 实时刷新时复用统一 Gemini 4+ 分组同步与三套配额窗口快照写入入口，
-                    // 确保 Argon 门禁、未来新代号专属桶（若上游拆分）以及重置时间戳与冷启动加载完全一致。
-                    let is_ultra = token
-                        .subscription_tier
-                        .as_deref()
-                        .map(|s| s.to_uppercase() == "ULTRA")
-                        .unwrap_or(false);
+                    // 确保 Argon/Carbon 门禁、未来新代号专属桶（若上游拆分）以及重置时间戳与冷启动加载完全一致。
+                    let tier_upper = token.subscription_tier.as_deref().map(|s| s.to_uppercase());
+                    let is_ultra = tier_upper.as_deref() == Some("ULTRA");
+                    let is_pro = matches!(
+                        tier_upper.as_deref(),
+                        Some("PRO") | Some("ULTRA") | Some("ENTERPRISE")
+                    );
                     let known_codenames = Self::collect_known_g4_codenames(
                         token.available_models.iter().map(String::as_str),
                     );
@@ -6459,6 +6556,7 @@ impl TokenManager {
                             let token_ref = &mut *token;
                             Self::reconcile_g4_group_quotas(
                                 is_ultra,
+                                is_pro,
                                 &inputs,
                                 &mut token_ref.model_quotas,
                                 &mut token_ref.available_models,
@@ -14318,11 +14416,80 @@ mod tests {
             .tokens
             .get("acc_ultra_only_3x")
             .expect("ultra account should load");
-        // Ultra keeps Argon fallback compatibility...
+        // Ultra keeps Argon and Carbon fallback compatibility...
         assert!(token.available_models.contains("gemini-4-argon"));
-        // ...without fabricating ungranted hydrogen/carbon models not in quota.models.
+        assert!(token.available_models.contains("gemini-4-carbon"));
+        // ...without fabricating ungranted hydrogen models not in quota.models.
         assert!(!token.available_models.contains("gemini-4-hydrogen"));
-        assert!(!token.available_models.contains("gemini-4-carbon"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_load_accounts_free_tier_does_not_fabricate_argon_or_carbon() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-free-no-fab-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let future_reset = chrono::DateTime::from_timestamp(now + 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+
+        let free_json = serde_json::json!({
+            "id": "acc_free_only_3x",
+            "email": "free@test.com",
+            "token": {
+                "access_token": "atk_f",
+                "refresh_token": "rtk_f",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "subscription_tier": "FREE",
+                "models": [
+                    {
+                        "name": "gemini-3.8-flash-high",
+                        "percentage": 90,
+                        "reset_time": future_reset,
+                        "max_output_tokens": 65536
+                    }
+                ],
+                "quota_groups": [
+                    {
+                        "display_name": "Gemini",
+                        "buckets": [
+                            {
+                                "bucket_id": "gemini-5h",
+                                "window": "5h",
+                                "remaining_fraction": 0.90,
+                                "reset_time": future_reset
+                            }
+                        ]
+                    }
+                ]
+            },
+            "created_at": now,
+            "last_used": now
+        });
+
+        std::fs::write(
+            accounts_dir.join("acc_free_only_3x.json"),
+            serde_json::to_string_pretty(&free_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+        let free_token = manager
+            .tokens
+            .get("acc_free_only_3x")
+            .expect("free account should load");
+        assert!(!free_token.available_models.contains("gemini-4-argon"));
+        assert!(!free_token.available_models.contains("gemini-4-carbon"));
+        assert!(!free_token.available_models.contains("gemini-4-hydrogen"));
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }

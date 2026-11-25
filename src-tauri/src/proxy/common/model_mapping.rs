@@ -2053,6 +2053,8 @@ mod tests {
     fn test_get_supported_models_excludes_retired_and_exposes_active_recommended() {
         let supported = get_supported_models();
         for expected in [
+            "gemini-4-carbon-high",
+            "gemini-4-carbon-xhigh",
             "gemini-4-hydrogen-high",
             "gemini-4-hydrogen-xhigh",
             "gemini-4-argon-high",
@@ -2080,7 +2082,6 @@ mod tests {
             "tab_jump_flash_lite_preview",
             "claude-sonnet-4-6",
             "gemini-3.1-pro-high",
-            "gemini-4-carbon-high",
         ] {
             assert!(
                 !supported.iter().any(|id| id == retired),
