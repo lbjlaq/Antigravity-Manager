@@ -2461,7 +2461,20 @@
         "calls_unit": "次調用",
         "records_unit": "個記錄",
         "no_trend_data": "該時段內暫無走勢數據",
-        "no_model_data": "暫無模型數據"
+        "no_model_data": "暫無模型數據",
+        "account_scope": "帳號範圍",
+        "all_accounts": "全部帳號",
+        "all_accounts_unlimited": "全部帳號（不限）",
+        "specific_accounts": "指定帳號",
+        "bound_accounts_count": "限定 {{count}} 個帳號",
+        "hint_account_scope": "保持為全部帳號則允許使用任意可用帳號。",
+        "search_accounts_placeholder": "搜尋電子郵件、名稱或標籤...",
+        "no_accounts_found": "找不到符合的帳號",
+        "account_missing": "已失效 / 已刪除",
+        "account_disabled": "已停用",
+        "account_proxy_disabled": "已停用代理",
+        "missing_accounts_warning": "部分綁定的帳號已不存在，可在下方移除。",
+        "all_accounts_hint": "此 Token 可存取帳號池中的所有可用帳號。"
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN 中轉站",

@@ -2415,7 +2415,20 @@
         "calls_unit": "вызовов",
         "records_unit": "записей",
         "no_trend_data": "Нет данных о динамике за этот период",
-        "no_model_data": "Нет данных по моделям"
+        "no_model_data": "Нет данных по моделям",
+        "account_scope": "Доступ к аккаунтам",
+        "all_accounts": "Все аккаунты",
+        "all_accounts_unlimited": "Все аккаунты (без ограничений)",
+        "specific_accounts": "Выбранные аккаунты",
+        "bound_accounts_count": "{{count}} акк.",
+        "hint_account_scope": "Оставьте «Все аккаунты», чтобы разрешить маршрутизацию через любой доступный аккаунт.",
+        "search_accounts_placeholder": "Поиск по email, имени или метке...",
+        "no_accounts_found": "Подходящие аккаунты не найдены",
+        "account_missing": "Отсутствует / Удалён",
+        "account_disabled": "Отключён",
+        "account_proxy_disabled": "Прокси отключён",
+        "missing_accounts_warning": "Некоторые привязанные аккаунты больше не существуют. Вы можете удалить их ниже.",
+        "all_accounts_hint": "Этот токен может использовать все доступные аккаунты в пуле."
     },
     "apiKeyFun": {
         "title": "Хаб APIKEY.FUN",

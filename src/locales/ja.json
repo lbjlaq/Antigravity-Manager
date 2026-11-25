@@ -2347,7 +2347,20 @@
         "calls_unit": "回呼び出し",
         "records_unit": "件の記録",
         "no_trend_data": "この期間の推移データはありません",
-        "no_model_data": "モデルデータがありません"
+        "no_model_data": "モデルデータがありません",
+        "account_scope": "アカウント範囲",
+        "all_accounts": "すべてのアカウント",
+        "all_accounts_unlimited": "すべてのアカウント（無制限）",
+        "specific_accounts": "指定アカウント",
+        "bound_accounts_count": "{{count}} 件のアカウント",
+        "hint_account_scope": "「すべてのアカウント」のままにすると、利用可能な任意のアカウントを使用できます。",
+        "search_accounts_placeholder": "メール、名前、またはラベルで検索...",
+        "no_accounts_found": "一致するアカウントが見つかりません",
+        "account_missing": "不明 / 削除済み",
+        "account_disabled": "無効",
+        "account_proxy_disabled": "プロキシ無効",
+        "missing_accounts_warning": "紐付けられた一部のアカウントは存在しません。下から削除できます。",
+        "all_accounts_hint": "このトークンはプール内のすべての利用可能なアカウントにアクセスできます。"
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN ハブ",

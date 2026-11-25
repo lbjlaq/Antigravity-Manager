@@ -2347,7 +2347,20 @@
         "calls_unit": "회 호출",
         "records_unit": "개 기록",
         "no_trend_data": "해당 기간의 추세 데이터가 없습니다",
-        "no_model_data": "모델 데이터가 없습니다"
+        "no_model_data": "모델 데이터가 없습니다",
+        "account_scope": "계정 범위",
+        "all_accounts": "전체 계정",
+        "all_accounts_unlimited": "전체 계정 (제한 없음)",
+        "specific_accounts": "특정 계정",
+        "bound_accounts_count": "{{count}}개 계정",
+        "hint_account_scope": "전체 계정으로 두면 사용 가능한 모든 계정으로 라우팅할 수 있습니다.",
+        "search_accounts_placeholder": "이메일, 이름 또는 라벨로 검색...",
+        "no_accounts_found": "일치하는 계정이 없습니다",
+        "account_missing": "누락 / 삭제됨",
+        "account_disabled": "비활성화됨",
+        "account_proxy_disabled": "프록시 비활성화",
+        "missing_accounts_warning": "연결된 일부 계정이 더 이상 존재하지 않습니다. 아래에서 제거할 수 있습니다.",
+        "all_accounts_hint": "이 토큰은 풀의 사용 가능한 모든 계정에 액세스할 수 있습니다."
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN 허브",

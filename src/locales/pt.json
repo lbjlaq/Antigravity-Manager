@@ -2383,7 +2383,20 @@
         "calls_unit": "chamadas",
         "records_unit": "registros",
         "no_trend_data": "Sem dados de tendência neste período",
-        "no_model_data": "Sem dados de modelos disponíveis"
+        "no_model_data": "Sem dados de modelos disponíveis",
+        "account_scope": "Escopo de contas",
+        "all_accounts": "Todas as contas",
+        "all_accounts_unlimited": "Todas as contas (Ilimitado)",
+        "specific_accounts": "Contas específicas",
+        "bound_accounts_count": "{{count}} contas",
+        "hint_account_scope": "Deixe em Todas as contas para permitir o roteamento por qualquer conta disponível.",
+        "search_accounts_placeholder": "Pesquisar por e-mail, nome ou rótulo...",
+        "no_accounts_found": "Nenhuma conta correspondente encontrada",
+        "account_missing": "Ausente / Excluída",
+        "account_disabled": "Desativada",
+        "account_proxy_disabled": "Proxy desativado",
+        "missing_accounts_warning": "Algumas contas vinculadas não existem mais. Você pode removê-las abaixo.",
+        "all_accounts_hint": "Este token pode acessar todas as contas disponíveis no pool."
     },
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",

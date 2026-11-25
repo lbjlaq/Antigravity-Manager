@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Trash2, RefreshCw, Copy, Activity, User, Settings, Shield, Clock, Users, BarChart2 } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Activity, User, Settings, Shield, Clock, Users, BarChart2, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { request as invoke } from '../utils/request';
 import { showToast } from '../components/common/ToastContainer';
 import { copyToClipboard } from '../utils/clipboard';
 import { UserTokenStatsModal } from '../components/user_tokens/UserTokenStatsModal';
+import { AccountScopeSelector } from '../components/user_tokens/AccountScopeSelector';
+import { useAccountStore } from '../stores/useAccountStore';
 
 interface UserToken {
     id: string;
@@ -18,6 +20,7 @@ interface UserToken {
     max_ips: number;
     curfew_start?: string;
     curfew_end?: string;
+    allowed_account_ids?: string[] | null;
     created_at: number;
     updated_at: number;
     last_used_at?: number;
@@ -36,6 +39,8 @@ interface UserTokenStats {
 
 const UserToken: React.FC = () => {
     const { t } = useTranslation();
+    const { accounts, fetchAccounts } = useAccountStore();
+    const accountMap = useMemo(() => new Map(accounts.map(acc => [acc.id, acc])), [accounts]);
     const [tokens, setTokens] = useState<UserToken[]>([]);
     const [stats, setStats] = useState<UserTokenStats | null>(null);
     const [loading, setLoading] = useState(false);
@@ -54,6 +59,7 @@ const UserToken: React.FC = () => {
     const [editMaxIps, setEditMaxIps] = useState(0);
     const [editCurfewStart, setEditCurfewStart] = useState('');
     const [editCurfewEnd, setEditCurfewEnd] = useState('');
+    const [editAllowedAccountIds, setEditAllowedAccountIds] = useState<string[]>([]);
     const [updating, setUpdating] = useState(false);
 
     // Create Form State
@@ -64,13 +70,15 @@ const UserToken: React.FC = () => {
     const [newCurfewStart, setNewCurfewStart] = useState('');
     const [newCurfewEnd, setNewCurfewEnd] = useState('');
     const [newCustomExpires, setNewCustomExpires] = useState(''); // datetime-local value
+    const [newAllowedAccountIds, setNewAllowedAccountIds] = useState<string[]>([]);
 
     const loadData = async () => {
         setLoading(true);
         try {
             const [tokensData, statsData] = await Promise.all([
                 invoke<UserToken[]>('list_user_tokens'),
-                invoke<UserTokenStats>('get_user_token_summary')
+                invoke<UserTokenStats>('get_user_token_summary'),
+                fetchAccounts(true)
             ]);
             setTokens(tokensData);
             setStats(statsData);
@@ -113,7 +121,8 @@ const UserToken: React.FC = () => {
                     max_ips: newMaxIps,
                     curfew_start: newCurfewStart || null,
                     curfew_end: newCurfewEnd || null,
-                    custom_expires_at: customExpiresAt || null
+                    custom_expires_at: customExpiresAt || null,
+                    allowed_account_ids: newAllowedAccountIds.length > 0 ? newAllowedAccountIds : null
                 }
             });
             showToast(t('common.create_success') || 'Created successfully', 'success');
@@ -125,6 +134,7 @@ const UserToken: React.FC = () => {
             setNewCurfewStart('');
             setNewCurfewEnd('');
             setNewCustomExpires('');
+            setNewAllowedAccountIds([]);
             loadData();
         } catch (e) {
             console.error('Failed to create token', e);
@@ -151,6 +161,7 @@ const UserToken: React.FC = () => {
         setEditMaxIps(token.max_ips ?? 0);  // 使用 ?? 确保 null/undefined 变为 0
         setEditCurfewStart(token.curfew_start ?? '');
         setEditCurfewEnd(token.curfew_end ?? '');
+        setEditAllowedAccountIds(token.allowed_account_ids ? [...token.allowed_account_ids] : []);
         setShowEditModal(true);
     };
 
@@ -171,7 +182,8 @@ const UserToken: React.FC = () => {
                     max_ips: editMaxIps,
                     // 使用双层包装: undefined = 不更新, null = 清空, string = 设置值
                     curfew_start: editCurfewStart === '' ? null : editCurfewStart,
-                    curfew_end: editCurfewEnd === '' ? null : editCurfewEnd
+                    curfew_end: editCurfewEnd === '' ? null : editCurfewEnd,
+                    allowed_account_ids: editAllowedAccountIds.length > 0 ? editAllowedAccountIds : null
                 }
             });
             showToast(t('common.update_success') || 'Updated successfully', 'success');
@@ -328,6 +340,7 @@ const UserToken: React.FC = () => {
                             <th className="bg-transparent text-gray-500 font-medium py-4">{t('user_token.expires', { defaultValue: 'Expires' })}</th>
                             <th className="bg-transparent text-gray-500 font-medium py-4">{t('user_token.usage', { defaultValue: 'Usage' })}</th>
                             <th className="bg-transparent text-gray-500 font-medium py-4">{t('user_token.ip_limit', { defaultValue: 'IP Limit' })}</th>
+                            <th className="bg-transparent text-gray-500 font-medium py-4">{t('user_token.account_scope', { defaultValue: 'Account Scope' })}</th>
                             <th className="bg-transparent text-gray-500 font-medium py-4">{t('user_token.created', { defaultValue: 'Created' })}</th>
                             <th className="bg-transparent text-gray-500 font-medium py-4 text-right">{t('common.actions', { defaultValue: 'Actions' })}</th>
                         </tr>
@@ -417,6 +430,51 @@ const UserToken: React.FC = () => {
                                             </div>
                                         )}
                                     </td>
+                                    <td>
+                                        {(() => {
+                                            const boundIds = token.allowed_account_ids;
+                                            if (!boundIds || boundIds.length === 0) {
+                                                return (
+                                                    <span className="px-2 py-0.5 bg-gray-100 dark:bg-base-200 text-gray-500 text-[10px] rounded-full whitespace-nowrap">
+                                                        {t('user_token.all_accounts', { defaultValue: 'All Accounts' })}
+                                                    </span>
+                                                );
+                                            }
+                                            let hasWarning = false;
+                                            const details = boundIds.map(id => {
+                                                const acc = accountMap.get(id);
+                                                if (!acc) {
+                                                    hasWarning = true;
+                                                    return `${id} (${t('user_token.account_missing', { defaultValue: 'Missing / Deleted' })})`;
+                                                }
+                                                if (acc.disabled) {
+                                                    hasWarning = true;
+                                                    return `${acc.email} (${t('user_token.account_disabled', { defaultValue: 'Disabled' })})`;
+                                                }
+                                                if (acc.proxy_disabled) {
+                                                    hasWarning = true;
+                                                    return `${acc.email} (${t('user_token.account_proxy_disabled', { defaultValue: 'Proxy Disabled' })})`;
+                                                }
+                                                return acc.email;
+                                            });
+                                            return (
+                                                <span
+                                                    title={details.join('\n')}
+                                                    className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap ${
+                                                        hasWarning
+                                                            ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800/40'
+                                                            : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-900/30'
+                                                    }`}
+                                                >
+                                                    {hasWarning && <AlertTriangle size={10} />}
+                                                    {t('user_token.bound_accounts_count', {
+                                                        count: boundIds.length,
+                                                        defaultValue: '{{count}} Accounts',
+                                                    })}
+                                                </span>
+                                            );
+                                        })()}
+                                    </td>
                                     <td className="text-[10px] text-gray-400 italic">
                                         {formatTime(token.created_at)}
                                     </td>
@@ -463,7 +521,7 @@ const UserToken: React.FC = () => {
                         </AnimatePresence>
                         {tokens.length === 0 && !loading && (
                             <tr>
-                                <td colSpan={7} className="py-20">
+                                <td colSpan={8} className="py-20">
                                     <div className="flex flex-col items-center justify-center text-gray-400 gap-3">
                                         <div className="p-4 bg-gray-50 dark:bg-base-200 rounded-full">
                                             <Users size={40} className="opacity-20" />
@@ -594,6 +652,12 @@ const UserToken: React.FC = () => {
                             </label>
                         </div>
 
+                        <AccountScopeSelector
+                            accounts={accounts}
+                            selectedIds={newAllowedAccountIds}
+                            onChange={setNewAllowedAccountIds}
+                        />
+
                         <div className="modal-action">
                             <button className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-base-200 rounded-lg text-sm transition-colors" onClick={() => setShowCreateModal(false)}>
                                 {t('common.cancel', { defaultValue: 'Cancel' })}
@@ -683,6 +747,12 @@ const UserToken: React.FC = () => {
                                 <span className="label-text-alt text-gray-500">{t('user_token.hint_curfew', { defaultValue: 'Leave empty to disable. Based on Beijing time (UTC+8).' })}</span>
                             </label>
                         </div>
+
+                        <AccountScopeSelector
+                            accounts={accounts}
+                            selectedIds={editAllowedAccountIds}
+                            onChange={setEditAllowedAccountIds}
+                        />
 
                         <div className="modal-action">
                             <button className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-base-200 rounded-lg text-sm transition-colors" onClick={() => setShowEditModal(false)}>
