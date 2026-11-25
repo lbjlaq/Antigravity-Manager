@@ -135,14 +135,14 @@ impl StreamLifecycleConfig {
             15,
             crate::proxy::upstream::client::MAX_FIRST_BYTE_CEILING_SECS,
         );
-        let mut transition_secs = timeouts.transition_secs;
-        let mut streaming_sliding_secs = timeouts.streaming_sliding_secs;
+        let transition_secs = timeouts.transition_secs;
+        let streaming_sliding_secs = timeouts.streaming_sliding_secs;
 
+        // 仅将建流前的首字等待阶段夹到全局入站预算；一旦响应头已返回并进入推流，
+        // 状态切换与稳态滑动超时必须保留用户/默认配置，避免大 prefill 后被压缩成 3s 空闲即断流。
         if let Some(remaining) = crate::proxy::pipeline::budget::remaining_secs() {
             let rem = remaining.max(3);
             initial_ttft_secs = initial_ttft_secs.min(rem);
-            transition_secs = transition_secs.min(rem);
-            streaming_sliding_secs = streaming_sliding_secs.min(rem);
         }
         Self {
             heartbeat_secs: 3,
@@ -1076,5 +1076,27 @@ mod tests {
             error_propagated,
             "Must propagate Err on premature stream EOF to trigger client native retry"
         );
+    }
+
+    #[tokio::test]
+    async fn test_stream_lifecycle_config_preserves_post_ttft_timeouts_when_admission_budget_low() {
+        let configured = crate::proxy::get_stream_timeout_config();
+        let near_deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        let ctx = crate::proxy::pipeline::budget::RequestContext::new(near_deadline);
+
+        crate::proxy::pipeline::budget::scope(ctx, async move {
+            let cfg = StreamLifecycleConfig::new("test", "low_budget", "trace_low".to_string());
+            assert!(
+                cfg.initial_ttft_secs <= 4,
+                "initial_ttft_secs should be clamped to remaining admission budget (got {})",
+                cfg.initial_ttft_secs
+            );
+            assert_eq!(cfg.transition_secs, configured.transition_secs);
+            assert_eq!(
+                cfg.streaming_sliding_secs,
+                configured.streaming_sliding_secs
+            );
+        })
+        .await;
     }
 }
