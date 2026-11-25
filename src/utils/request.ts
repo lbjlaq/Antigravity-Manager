@@ -205,6 +205,52 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_account_proxy_binding': { url: '/api/proxy/pool/binding/:accountId', method: 'GET' },
 };
 
+export type WebHttpMethod = 'GET' | 'POST' | 'DELETE' | 'PATCH';
+
+export function buildWebRequestPayload(
+  urlTemplate: string,
+  method: WebHttpMethod,
+  args?: Record<string, any>,
+): { url: string; body?: string } {
+  let url = urlTemplate;
+  const usedPathKeys = new Set<string>();
+  const bodyArgs = args ? { ...args } : undefined;
+
+  // 通用路径参数处理：替换 :key 为 args[key]，并记录已用于路径替换的参数名
+  if (args) {
+    Object.keys(args).forEach((key) => {
+      const placeholder = `:${key}`;
+      if (url.includes(placeholder)) {
+        url = url.replace(placeholder, encodeURIComponent(String(args[key])));
+        usedPathKeys.add(key);
+        if (bodyArgs) {
+          delete bodyArgs[key];
+        }
+      }
+    });
+  }
+
+  let serializedBody: string | undefined;
+  if ((method === 'GET' || method === 'DELETE') && args) {
+    const params = new URLSearchParams();
+    Object.entries(args).forEach(([key, value]) => {
+      // 只跳过实际替换进路径占位符的参数，避免查询值恰好是路径子串时被误删
+      if (usedPathKeys.has(key)) return;
+      if (value !== undefined && value !== null) {
+        params.append(key, String(value));
+      }
+    });
+    const qs = params.toString();
+    if (qs) url += `?${qs}`;
+  } else if ((method === 'POST' || method === 'PATCH') && bodyArgs) {
+    // [FIX] 如果有 request 包装，提取其内容作为 body
+    const body = bodyArgs.request !== undefined ? bodyArgs.request : bodyArgs;
+    serializedBody = JSON.stringify(body);
+  }
+
+  return { url, body: serializedBody };
+}
+
 export async function request<T>(cmd: string, args?: any): Promise<T> {
   // 1. Tauri 环境：直接使用 invoke ...
   if (isTauri) {
@@ -224,24 +270,7 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
     throw new Error(`Command [${cmd}] not supported in Web mode.`);
   }
 
-  let url = mapping.url;
-
-  // [FIX] 创建 args 副本，用于移除已使用的路径参数
-  let bodyArgs = args ? { ...args } : undefined;
-
-  // 通用路径参数处理：替换 :key 为 args[key]
-  if (args) {
-    Object.keys(args).forEach(key => {
-      const placeholder = `:${key}`;
-      if (url.includes(placeholder)) {
-        url = url.replace(placeholder, encodeURIComponent(String(args[key])));
-        // [FIX] 从 body 参数中移除已用于路径的参数
-        if (bodyArgs) {
-          delete bodyArgs[key];
-        }
-      }
-    });
-  }
+  const { url, body } = buildWebRequestPayload(mapping.url, mapping.method, args);
 
   const apiKey = typeof window !== 'undefined'
     ? (sessionStorage.getItem('abv_admin_api_key') || localStorage.getItem('abv_admin_api_key'))
@@ -256,24 +285,8 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
         'x-api-key': apiKey
       } : {}),
     },
+    ...(body !== undefined ? { body } : {}),
   };
-
-  if ((mapping.method === 'GET' || mapping.method === 'DELETE') && args) {
-    const params = new URLSearchParams();
-    Object.entries(args).forEach(([key, value]) => {
-      // [FIX] 跳过已用于路径替换的参数
-      if (url.includes(encodeURIComponent(String(value)))) return;
-      if (value !== undefined && value !== null) {
-        params.append(key, String(value));
-      }
-    });
-    const qs = params.toString();
-    if (qs) url += `?${qs}`;
-  } else if ((mapping.method === 'POST' || mapping.method === 'PATCH') && bodyArgs) {
-    // [FIX] 如果有 request 包装，提取其内容作为 body
-    const body = bodyArgs.request !== undefined ? bodyArgs.request : bodyArgs;
-    options.body = JSON.stringify(body);
-  }
 
   try {
     const response = await fetch(url, options);
