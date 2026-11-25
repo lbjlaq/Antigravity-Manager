@@ -52,19 +52,21 @@ pub fn extract_thinking_level_str(val: &Value) -> Option<String> {
 }
 
 /// 将官方目录/请求中的 `thinkingLevel` 原值转换为上游出站 JSON 值：
+/// - `min / minimal` -> `"MINIMAL"`
 /// - `1 / low` -> `"LOW"`
 /// - `2 / medium` -> `"MEDIUM"`
 /// - `3 / high` -> `"HIGH"`
-/// - `xhigh / x-high` -> `"XHIGH"`（不合并进 HIGH，保留独立档位语义）
+/// - `xhigh / x-high` -> `100`（对齐官方实抓 THINKING_LEVEL_XHIGH 整数值）
 /// - `4`（历史未同步占位值）-> `"HIGH"` 兼容兜底
 /// - `> 4` 的扩展整数（如官方实抓 `100`）-> 原样保留整数 JSON 值
 fn parse_official_thinking_level_value(raw: &str) -> Option<Value> {
     let trimmed = raw.trim();
     match trimmed.to_ascii_lowercase().replace('_', "-").as_str() {
+        "min" | "minimal" => Some(json!("MINIMAL")),
         "1" | "low" => Some(json!("LOW")),
         "2" | "medium" => Some(json!("MEDIUM")),
         "3" | "4" | "high" => Some(json!("HIGH")),
-        "xhigh" | "x-high" => Some(json!("XHIGH")),
+        "xhigh" | "x-high" => Some(json!(100)),
         _ => trimmed
             .parse::<i64>()
             .ok()
@@ -1716,16 +1718,40 @@ impl InboundThinkingPipeline {
             return None;
         }
 
+        // 统一从官方模型结构体中读取权威默认值
+        let official_info = crate::models::OfficialModelCatalog::get(target_model);
+
         if client_switch.is_disabled() {
+            if let Some(ref info) = official_info {
+                if info.supports_thinking == Some(false) {
+                    if let Some(obj) = generation_config.as_object_mut() {
+                        obj.remove("thinkingConfig");
+                        obj.remove("thinking_config");
+                    }
+                    return None;
+                }
+                // 纯 thinkingLevel 模型（如 Gemini 4 / 3.8 Flash / 3.5 Flash Lite）关闭思考时不混入 thinkingBudget: 0
+                if info.thinking_level.is_some() && info.thinking_budget.is_none() {
+                    let lower_target = target_model.to_lowercase();
+                    let disabled_level =
+                        if lower_target.contains("flash") || lower_target.contains("lite") {
+                            "MINIMAL"
+                        } else {
+                            "LOW"
+                        };
+                    generation_config["thinkingConfig"] = json!({
+                        "includeThoughts": false,
+                        "thinkingLevel": disabled_level
+                    });
+                    return Some(0);
+                }
+            }
             generation_config["thinkingConfig"] = json!({
                 "includeThoughts": false,
                 "thinkingBudget": 0
             });
             return Some(0);
         }
-
-        // 统一从官方模型结构体中读取权威默认值
-        let official_info = crate::models::OfficialModelCatalog::get(target_model);
 
         // 如果官方模型结构体明确不支持思考（如纯图片生成模型），则不注入 thinkingConfig
         if let Some(ref info) = official_info {
@@ -1762,15 +1788,15 @@ impl InboundThinkingPipeline {
             let lower = target_model.to_lowercase();
             let official_level_value = official_level.and_then(parse_official_thinking_level_value);
 
-            if lower.ends_with("-low")
-                || lower.ends_with("-extra-low")
-                || lower.ends_with("-minimal")
-                || lower.ends_with("-lite")
+            if lower.ends_with("-minimal") {
+                return json!("MINIMAL");
+            }
+            if lower.ends_with("-low") || lower.ends_with("-extra-low") || lower.ends_with("-lite")
             {
                 return json!("LOW");
             }
             if lower.ends_with("-xhigh") {
-                return official_level_value.unwrap_or_else(|| json!("XHIGH"));
+                return official_level_value.unwrap_or_else(|| json!(100));
             }
             if lower.ends_with("-high") || lower.ends_with("-max") || lower.ends_with("-extreme") {
                 return json!("HIGH");
@@ -1786,9 +1812,12 @@ impl InboundThinkingPipeline {
             // 若客户端请求 xhigh / 100：
             // - 若官方模型支持扩展数字档（如 100）→ 发 100
             // - 若官方模型仅在标准 1/2/3 三档内（如 3.8-flash-tiered）→ 钳制到 "HIGH"
-            // - 否则原样保留 "XHIGH"，不强行并入 "HIGH"
+            // - 否则按官方 wire 格式发送 100，不发非标准字符串
             if let Some(raw) = raw_effort {
                 let norm = raw.trim().to_ascii_lowercase().replace('_', "-");
+                if norm == "minimal" || norm == "min" {
+                    return json!("MINIMAL");
+                }
                 let wants_extended =
                     norm == "xhigh" || norm == "x-high" || norm.parse::<i64>().is_ok_and(|n| n > 4);
                 if wants_extended {
@@ -1801,7 +1830,7 @@ impl InboundThinkingPipeline {
                     {
                         return json!("HIGH");
                     }
-                    return json!("XHIGH");
+                    return json!(100);
                 }
                 if let Some(eff) = crate::proxy::model_specs::normalize_client_thinking_level(raw) {
                     return json!(eff);
@@ -1818,12 +1847,14 @@ impl InboundThinkingPipeline {
                 .as_deref()
                 .and_then(crate::proxy::model_specs::normalize_client_thinking_level)
             {
-                if eff == "XHIGH"
-                    && official_level
+                if eff == "XHIGH" {
+                    if official_level
                         .and_then(|l| l.trim().parse::<i64>().ok())
                         .is_some_and(|n| (1..=3).contains(&n))
-                {
-                    return json!("HIGH");
+                    {
+                        return json!("HIGH");
+                    }
+                    return json!(100);
                 }
                 return json!(eff);
             }
@@ -2021,11 +2052,13 @@ impl InboundThinkingPipeline {
                 .unwrap_or(true);
 
             if include_thoughts {
-                let level_str = level_val.as_str().unwrap_or("MEDIUM");
+                let level_owned = extract_thinking_level_str(level_val);
+                let level_str = level_owned.as_deref().unwrap_or("MEDIUM");
                 let thinking_reserve: i64 = match level_str {
                     "XHIGH" | "100" => 2048,
                     "HIGH" | "3" => 1024,
                     "LOW" | "1" => 128,
+                    "MINIMAL" => 64,
                     _ => 512,
                 };
 
@@ -6345,10 +6378,7 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(
-            future_cfg["thinkingConfig"]["thinkingLevel"],
-            json!("XHIGH")
-        );
+        assert_eq!(future_cfg["thinkingConfig"]["thinkingLevel"], json!(100));
     }
 
     #[test]
@@ -6621,5 +6651,185 @@ mod tests {
             None,
         );
         assert_eq!(cfg_large["maxOutputTokens"], 8192);
+    }
+
+    #[test]
+    fn test_gemini4_har_thinking_level_256k_and_disabled_channel() {
+        // 1. gemini-4-neon-xhigh & gemini-pro-orchestrator-neon: integer 100 thinkingLevel, no thinkingBudget, 262144 maxOutputTokens
+        let mut neon_xhigh_body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
+            "generationConfig": {}
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-neon-xhigh",
+            neon_xhigh_body.get_mut("generationConfig").unwrap(),
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut neon_xhigh_body,
+            "gemini-4-neon-xhigh",
+            Some("agent/test/1/t/1"),
+        );
+        assert_eq!(
+            neon_xhigh_body["generationConfig"]["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": 100 })
+        );
+        assert_eq!(
+            neon_xhigh_body["generationConfig"]["maxOutputTokens"],
+            262144
+        );
+        assert_eq!(
+            neon_xhigh_body["labels"]["model_enum"],
+            "MODEL_PLACEHOLDER_M535"
+        );
+
+        let mut orch_neon_body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "plan" }] }],
+            "generationConfig": {}
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-pro-orchestrator-neon",
+            orch_neon_body.get_mut("generationConfig").unwrap(),
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut orch_neon_body,
+            "gemini-pro-orchestrator-neon",
+            Some("agent/test/1/t/1"),
+        );
+        assert_eq!(
+            orch_neon_body["generationConfig"]["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": 100 })
+        );
+        assert_eq!(
+            orch_neon_body["generationConfig"]["maxOutputTokens"],
+            262144
+        );
+        assert_eq!(
+            orch_neon_body["labels"]["model_enum"],
+            "MODEL_PLACEHOLDER_M537"
+        );
+
+        // 2. gemini-4-neon-high & gemini-4-hydrogen-medium: string HIGH / MEDIUM, 262144 maxOutputTokens
+        let mut neon_high_body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+            "generationConfig": {}
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-neon-high",
+            neon_high_body.get_mut("generationConfig").unwrap(),
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut neon_high_body,
+            "gemini-4-neon-high",
+            Some("agent/test/1/t/2"),
+        );
+        assert_eq!(
+            neon_high_body["generationConfig"]["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": "HIGH" })
+        );
+        assert_eq!(
+            neon_high_body["generationConfig"]["maxOutputTokens"],
+            262144
+        );
+
+        let mut hy_med_body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+            "generationConfig": {}
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-hydrogen-medium",
+            hy_med_body.get_mut("generationConfig").unwrap(),
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut hy_med_body,
+            "gemini-4-hydrogen-medium",
+            Some("agent/test/1/t/3"),
+        );
+        assert_eq!(
+            hy_med_body["generationConfig"]["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": "MEDIUM" })
+        );
+        assert_eq!(hy_med_body["generationConfig"]["maxOutputTokens"], 262144);
+
+        // 3. ClientThinkingSwitch::Disabled preserves channel purity:
+        //    - thinkingLevel-only models emit includeThoughts:false + thinkingLevel (never thinkingBudget: 0)
+        //    - budget-channel models (Claude 4.6) still emit thinkingBudget: 0
+        let mut disabled_neon_gc = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-neon-high",
+            &mut disabled_neon_gc,
+            ClientThinkingSwitch::Disabled,
+            Some("none"),
+            None,
+            None,
+        );
+        assert_eq!(
+            disabled_neon_gc["thinkingConfig"],
+            json!({ "includeThoughts": false, "thinkingLevel": "LOW" })
+        );
+        assert!(disabled_neon_gc["thinkingConfig"]
+            .get("thinkingBudget")
+            .is_none());
+
+        let mut disabled_flash_lite_gc = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.5-flash-lite",
+            &mut disabled_flash_lite_gc,
+            ClientThinkingSwitch::Disabled,
+            Some("none"),
+            None,
+            None,
+        );
+        assert_eq!(
+            disabled_flash_lite_gc["thinkingConfig"],
+            json!({ "includeThoughts": false, "thinkingLevel": "MINIMAL" })
+        );
+        assert!(disabled_flash_lite_gc["thinkingConfig"]
+            .get("thinkingBudget")
+            .is_none());
+
+        let mut disabled_claude_gc = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "claude-opus-4-6-thinking",
+            &mut disabled_claude_gc,
+            ClientThinkingSwitch::Disabled,
+            None,
+            Some(0),
+            None,
+        );
+        assert_eq!(
+            disabled_claude_gc["thinkingConfig"],
+            json!({ "includeThoughts": false, "thinkingBudget": 0 })
+        );
+
+        // 4. Explicit client effort "minimal" on bare/adaptive level model maps to "MINIMAL"
+        let mut minimal_gc = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-tiered",
+            &mut minimal_gc,
+            ClientThinkingSwitch::Enabled,
+            Some("minimal"),
+            None,
+            None,
+        );
+        assert_eq!(
+            minimal_gc["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": "MINIMAL" })
+        );
     }
 }
