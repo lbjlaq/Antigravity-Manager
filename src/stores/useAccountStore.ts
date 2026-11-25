@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { Account, ActiveClientsStatus, ModelPriorities } from '../types/account';
 import * as accountService from '../services/accountService';
+import {
+    sanitizeAccountForCache,
+    sanitizeAccountsForCache,
+} from '../utils/accountCacheSanitize';
 
 interface AccountState {
     accounts: Account[];
@@ -51,7 +55,7 @@ const getInitialAccounts = (): Account[] => {
         if (saved) {
             const parsed = JSON.parse(saved);
             if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed;
+                return sanitizeAccountsForCache(parsed);
             }
         }
     } catch (_) {}
@@ -64,7 +68,7 @@ const getInitialCurrentAccount = (): Account | null => {
         if (saved) {
             const parsed = JSON.parse(saved);
             if (parsed && typeof parsed === 'object') {
-                return parsed;
+                return sanitizeAccountForCache(parsed);
             }
         }
     } catch (_) {}
@@ -117,7 +121,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
                 getActiveClientsStatusDeduped().catch(() => ({} as ActiveClientsStatus))
             ]);
             try {
-                localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
+                localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(sanitizeAccountsForCache(accounts)));
                 localStorage.setItem(ACTIVE_CLIENTS_CACHE_KEY, JSON.stringify(activeClients));
             } catch (_) {}
             set({ accounts, activeClients, ...(silent ? {} : { loading: false }) });
@@ -138,7 +142,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             ]);
             try {
                 if (account) {
-                    localStorage.setItem(CURRENT_ACCOUNT_CACHE_KEY, JSON.stringify(account));
+                    localStorage.setItem(CURRENT_ACCOUNT_CACHE_KEY, JSON.stringify(sanitizeAccountForCache(account)));
                 } else {
                     localStorage.removeItem(CURRENT_ACCOUNT_CACHE_KEY);
                 }
