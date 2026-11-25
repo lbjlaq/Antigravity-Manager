@@ -13,12 +13,29 @@ pub async fn ip_filter_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    ip_filter_with_security(&state.security, request, next).await
+}
+
+fn is_ip_filter_bypassed(method: &axum::http::Method, path: &str) -> bool {
+    method == axum::http::Method::OPTIONS || matches!(path, "/health" | "/healthz" | "/api/health")
+}
+
+async fn ip_filter_with_security(
+    security: &tokio::sync::RwLock<crate::proxy::ProxySecurityConfig>,
+    request: Request,
+    next: Next,
+) -> Response {
+    // 放行 CORS 预检与显式健康探针，避免拦截管理端预检与容器探活
+    if is_ip_filter_bypassed(request.method(), request.uri().path()) {
+        return next.run(request).await;
+    }
+
     // 提取客户端 IP
     let client_ip = extract_client_ip(&request);
 
     if let Some(ip) = &client_ip {
         // 读取安全配置
-        let security_config = state.security.read().await;
+        let security_config = security.read().await;
 
         // 1. 检查白名单 (如果启用白名单模式,只允许白名单 IP)
         if security_config.security_monitor.whitelist.enabled {
@@ -217,43 +234,69 @@ fn ip_is_loopback(ip: std::net::IpAddr) -> bool {
     }
 }
 
-/// 从请求中提取客户端 IP（支持 X-Forwarded-For, X-Real-IP, ConnectInfo，并自动规范化 IPv4/IPv6）
-pub fn extract_client_ip(request: &Request) -> Option<String> {
-    // 1. 优先从 X-Forwarded-For 提取 (取第一个 IP)
-    let raw = request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim())
-        .or_else(|| {
-            // 2. 备选从 X-Real-IP 提取
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.trim())
-        });
+fn normalize_ip_addr(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                v4.to_string()
+            } else {
+                v6.to_string()
+            }
+        }
+        std::net::IpAddr::V4(v4) => v4.to_string(),
+    }
+}
 
-    if let Some(ip_str) = raw {
-        if !ip_str.is_empty() {
-            return Some(normalize_ip_str(ip_str));
+fn trust_forwarded_headers_env() -> bool {
+    std::env::var("ABV_TRUST_FORWARDED_HEADERS")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// 从请求中提取客户端 IP（仅在来自本机回环或显式配置信任反代时采信转发头，并自动规范化 IPv4/IPv6）
+pub fn extract_client_ip(request: &Request) -> Option<String> {
+    let peer_ip = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip());
+
+    // 只有经由本机反代/隧道 (127.0.0.1 / ::1) 转发，或显式开启 ABV_TRUST_FORWARDED_HEADERS，
+    // 才采信 X-Forwarded-For / X-Real-IP；直连 LAN/公网请求严禁凭转发头伪造源 IP。
+    // 单元测试中若未挂载 ConnectInfo，保留既有行为以兼容无 Socket 的 Router::oneshot 测试。
+    let trust_forwarded =
+        peer_ip.map(ip_is_loopback).unwrap_or(true) || trust_forwarded_headers_env();
+
+    if trust_forwarded {
+        let raw = request
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(',').next().unwrap_or(s).trim())
+            .or_else(|| {
+                request
+                    .headers()
+                    .get("x-real-ip")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.trim())
+            });
+
+        if let Some(ip_str) = raw {
+            if !ip_str.is_empty() {
+                let normalized = normalize_ip_str(ip_str);
+                if normalized.parse::<std::net::IpAddr>().is_ok() {
+                    return Some(normalized);
+                }
+            }
         }
     }
 
-    // 3. 最后尝试从 ConnectInfo 获取 (TCP 连接 IP)
-    request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|info| match info.0.ip() {
-            std::net::IpAddr::V6(v6) => {
-                if let Some(v4) = v6.to_ipv4_mapped() {
-                    v4.to_string()
-                } else {
-                    v6.to_string()
-                }
-            }
-            std::net::IpAddr::V4(v4) => v4.to_string(),
-        })
+    // 回退使用真实 TCP 连接对端 IP
+    peer_ip.map(normalize_ip_addr)
 }
 
 /// 创建被封禁的响应
@@ -323,5 +366,87 @@ mod tests {
 
         let missing = Request::builder().body(axum::body::Body::empty()).unwrap();
         assert!(!is_direct_loopback(&missing));
+    }
+
+    #[test]
+    fn non_loopback_peer_cannot_spoof_forwarded_ip() {
+        let lan_peer: std::net::IpAddr = "192.168.1.50".parse().unwrap();
+        let req = request_from(lan_peer, Some("127.0.0.1, 10.0.0.1"));
+        assert_eq!(extract_client_ip(&req).as_deref(), Some("192.168.1.50"));
+
+        let mut x_real_req = Request::builder()
+            .header("x-real-ip", "10.0.0.8")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        x_real_req
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::new(
+                lan_peer, 44321,
+            )));
+        assert_eq!(
+            extract_client_ip(&x_real_req).as_deref(),
+            Some("192.168.1.50")
+        );
+    }
+
+    #[test]
+    fn loopback_peer_accepts_valid_forwarded_ip_and_falls_back_on_malformed() {
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let req = request_from(loopback, Some("203.0.113.9, 127.0.0.1"));
+        assert_eq!(extract_client_ip(&req).as_deref(), Some("203.0.113.9"));
+
+        let malformed = request_from(loopback, Some("not-an-ip"));
+        assert_eq!(extract_client_ip(&malformed).as_deref(), Some("127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn ip_filter_blocks_blacklisted_admin_route_and_spoofed_xff() {
+        use axum::{routing::get, Router};
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        let _ = security_db::init_db();
+        let test_ip = "198.51.100.241";
+        if let Ok(entries) = security_db::get_blacklist() {
+            for e in entries.into_iter().filter(|e| e.ip_pattern == test_ip) {
+                let _ = security_db::remove_from_blacklist(&e.id);
+            }
+        }
+        let added = security_db::add_to_blacklist(test_ip, Some("unit test"), None, "test")
+            .expect("blacklist insert");
+
+        let mut sec = crate::proxy::ProxySecurityConfig::from_proxy_config(
+            &crate::proxy::ProxyConfig::default(),
+        );
+        sec.security_monitor.blacklist.enabled = true;
+        let security = Arc::new(RwLock::new(sec));
+
+        let admin_routes = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route("/accounts", get(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                let sec = Arc::clone(&security);
+                async move { ip_filter_with_security(&sec, req, next).await }
+            }));
+        let app = Router::new().nest("/api", admin_routes);
+
+        let blocked_req = request_from(test_ip.parse().unwrap(), Some("127.0.0.1"));
+        let (mut parts, body) = blocked_req.into_parts();
+        parts.uri = "/api/accounts".parse().unwrap();
+        let resp = app
+            .clone()
+            .oneshot(Request::from_parts(parts, body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        let health_req = request_from(test_ip.parse().unwrap(), None);
+        let (mut parts, body) = health_req.into_parts();
+        parts.uri = "/api/health".parse().unwrap();
+        let resp = app.oneshot(Request::from_parts(parts, body)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let _ = security_db::remove_from_blacklist(&added.id);
     }
 }
