@@ -1,9 +1,197 @@
 use crate::models::Account;
 use crate::modules::{db, device, process, version};
+use std::collections::HashMap;
 use std::fs;
 // Command 仅用于 macos/Linux 分支（security / secret-tool / kill），Windows 裁剪不导入以免 unused
 #[cfg(not(windows))]
 use std::process::Command;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+/// macOS Keychain passive read cache & denial-cooldown coordinator.
+///
+/// Kept cross-platform so its state-machine and failure-classification logic are unit-tested
+/// across Ubuntu/Windows/macOS CI while macOS uses it to serialize `security find-generic-password`
+/// calls, avoid concurrent Keychain password dialog storms, and back off when the user cancels
+/// or denies a prompt. Active writes still use `delete-generic-password` + `add-generic-password -A`
+/// and call `invalidate()` so ACL self-healing and post-switch verification stay authoritative.
+#[allow(dead_code)]
+const MACOS_KEYCHAIN_CACHE_TTL: Duration = Duration::from_secs(30);
+#[allow(dead_code)]
+const MACOS_KEYCHAIN_DENIED_COOLDOWN: Duration = Duration::from_secs(300);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum KeychainLookupOutcome {
+    Found(String),
+    NotFound,
+    Denied(String),
+}
+
+#[allow(dead_code)]
+struct KeychainCacheSlot {
+    outcome: Option<(KeychainLookupOutcome, Instant)>,
+}
+
+#[allow(dead_code)]
+type KeychainSlotMap = HashMap<(String, String), Arc<Mutex<KeychainCacheSlot>>>;
+
+#[allow(dead_code)]
+pub(crate) struct KeychainReadCoordinator {
+    slots: Mutex<KeychainSlotMap>,
+    success_ttl: Duration,
+    denied_cooldown: Duration,
+}
+
+#[allow(dead_code)]
+impl KeychainReadCoordinator {
+    fn new(success_ttl: Duration, denied_cooldown: Duration) -> Self {
+        Self {
+            slots: Mutex::new(HashMap::new()),
+            success_ttl,
+            denied_cooldown,
+        }
+    }
+
+    fn slot_for(&self, service: &str, account: &str) -> Arc<Mutex<KeychainCacheSlot>> {
+        let mut map = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry((service.to_string(), account.to_string()))
+            .or_insert_with(|| Arc::new(Mutex::new(KeychainCacheSlot { outcome: None })))
+            .clone()
+    }
+
+    /// Execute a single-flight Keychain lookup for `(service, account)`.
+    /// Concurrent readers for the same item serialize on the per-item mutex; when `bypass_cache`
+    /// is false, recent `Found`/`NotFound` results (30s) and `Denied` results (5m cooldown) are
+    /// served without re-invoking `/usr/bin/security`.
+    pub(crate) fn read_with<F>(
+        &self,
+        service: &str,
+        account: &str,
+        bypass_cache: bool,
+        fetch: F,
+    ) -> KeychainLookupOutcome
+    where
+        F: FnOnce() -> KeychainLookupOutcome,
+    {
+        let slot = self.slot_for(service, account);
+        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+
+        if !bypass_cache {
+            if let Some((ref cached, at)) = guard.outcome {
+                let ttl = match cached {
+                    KeychainLookupOutcome::Denied(_) => self.denied_cooldown,
+                    KeychainLookupOutcome::Found(_) | KeychainLookupOutcome::NotFound => {
+                        self.success_ttl
+                    }
+                };
+                if at.elapsed() < ttl {
+                    return cached.clone();
+                }
+            }
+        }
+
+        let outcome = fetch();
+        guard.outcome = Some((outcome.clone(), Instant::now()));
+        outcome
+    }
+
+    pub(crate) fn invalidate(&self, service: &str, account: &str) {
+        let slot = self.slot_for(service, account);
+        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+        guard.outcome = None;
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn classify_macos_security_failure(
+    exit_code: Option<i32>,
+    stderr: &str,
+) -> KeychainLookupOutcome {
+    let trimmed = stderr.trim();
+    let lower = trimmed.to_lowercase();
+
+    // errSecItemNotFound (44) means the entry genuinely does not exist (no user prompt shown).
+    if exit_code == Some(44) || lower.contains("could not be found") {
+        return KeychainLookupOutcome::NotFound;
+    }
+
+    // errSecInteractionNotAllowed (36), errSecAuthFailed (51), errSecUserCanceled (128),
+    // or explicit macOS Keychain denial/cancellation diagnostics -> back off via cooldown.
+    if matches!(exit_code, Some(36 | 51 | 128))
+        || lower.contains("user interaction is not allowed")
+        || lower.contains("user canceled")
+        || lower.contains("user cancelled")
+        || lower.contains("canceled")
+        || lower.contains("cancelled")
+        || lower.contains("denied")
+        || lower.contains("authentication failed")
+        || lower.contains("authfailed")
+        || lower.contains("errsecusercanceled")
+        || lower.contains("errsecinteractionnotallowed")
+    {
+        let reason = if trimmed.is_empty() {
+            format!("macOS Keychain access denied (exit {:?})", exit_code)
+        } else {
+            trimmed.to_string()
+        };
+        return KeychainLookupOutcome::Denied(reason);
+    }
+
+    KeychainLookupOutcome::NotFound
+}
+
+#[cfg(target_os = "macos")]
+fn macos_keychain_coordinator() -> &'static KeychainReadCoordinator {
+    static COORDINATOR: OnceLock<KeychainReadCoordinator> = OnceLock::new();
+    COORDINATOR.get_or_init(|| {
+        KeychainReadCoordinator::new(MACOS_KEYCHAIN_CACHE_TTL, MACOS_KEYCHAIN_DENIED_COOLDOWN)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn invalidate_macos_keychain_cache(service: &str, account: &str) {
+    macos_keychain_coordinator().invalidate(service, account);
+}
+
+#[cfg(target_os = "macos")]
+fn read_macos_keychain_generic_password(
+    service: &str,
+    account: &str,
+    bypass_cache: bool,
+) -> KeychainLookupOutcome {
+    macos_keychain_coordinator().read_with(service, account, bypass_cache, || {
+        match Command::new("security")
+            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                KeychainLookupOutcome::Found(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let outcome = classify_macos_security_failure(output.status.code(), &stderr);
+                if let KeychainLookupOutcome::Denied(ref reason) = outcome {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Keychain] macOS Keychain read denied/canceled for {}:{}; entering {}s cooldown ({})",
+                        service,
+                        account,
+                        MACOS_KEYCHAIN_DENIED_COOLDOWN.as_secs(),
+                        reason
+                    ));
+                }
+                outcome
+            }
+            Err(e) => {
+                crate::modules::logger::log_warn(&format!(
+                    "[Keychain] Failed to invoke /usr/bin/security for {}:{}: {}",
+                    service, account, e
+                ));
+                KeychainLookupOutcome::NotFound
+            }
+        }
+    })
+}
 
 #[allow(async_fn_in_trait)]
 pub trait SystemIntegration: Send + Sync {
@@ -676,6 +864,9 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
             let err_msg = String::from_utf8_lossy(&output.stderr);
             return Err(format!("macOS security command failed: {}", err_msg.trim()));
         }
+
+        // Clear any cached read or prior denial cooldown after active ACL-repaired write.
+        invalidate_macos_keychain_cache("gemini", "antigravity");
     }
 
     #[cfg(target_os = "windows")]
@@ -1240,13 +1431,22 @@ pub fn read_antigravity_cli_credentials() -> Vec<crate::modules::migration::Impo
 
 /// 辅助方法：从宿主操作系统的 Keychain/Credentials Manager 读取 Token
 pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedOAuthState, String> {
-    read_system_credentials(true)
+    read_system_credentials(true, false)
 }
 
 /// Read only the system store: stale fallback files must not confirm an agy switch.
+/// Bypasses the passive read cache so post-switch verification and explicit imports are fresh.
 pub(crate) fn read_from_system_keyring_only(
 ) -> Result<crate::modules::migration::ImportedOAuthState, String> {
-    read_system_credentials(false)
+    read_system_credentials(false, true)
+}
+
+/// Passive status detection reader for system credentials:
+/// uses single-flight coordination, short TTL cache, and denial cooldown on macOS,
+/// falling back cleanly to passwordless local credential files when Keychain is denied or absent.
+pub(crate) fn read_from_system_keyring_passive(
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    read_system_credentials(true, false)
 }
 
 fn verify_agy_credentials(expected: &str, stored: &str) -> Result<(), String> {
@@ -1261,32 +1461,27 @@ fn verify_agy_credentials(expected: &str, stored: &str) -> Result<(), String> {
 
 fn read_system_credentials(
     allow_file_fallback: bool,
+    bypass_cache: bool,
 ) -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = bypass_cache;
+
     #[cfg(target_os = "macos")]
     {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
-        let output = Command::new("security")
-            .args([
-                "find-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity",
-                "-w",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to execute security command: {}", e))?;
-
-        if !output.status.success() {
-            if allow_file_fallback {
-                if let Ok(file_state) = read_from_file_credentials() {
-                    return Ok(file_state);
+        let secret_str =
+            match read_macos_keychain_generic_password("gemini", "antigravity", bypass_cache) {
+                KeychainLookupOutcome::Found(secret) => secret,
+                KeychainLookupOutcome::NotFound | KeychainLookupOutcome::Denied(_) => {
+                    if allow_file_fallback {
+                        if let Ok(file_state) = read_from_file_credentials() {
+                            return Ok(file_state);
+                        }
+                    }
+                    return Err("No credential found in macOS Keychain".to_string());
                 }
-            }
-            return Err("No credential found in macOS Keychain".to_string());
-        }
+            };
 
-        let secret_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let payload_str = if secret_str.starts_with("go-keyring-base64:") {
             let b64_part = &secret_str["go-keyring-base64:".len()..];
             let decoded = STANDARD
@@ -1619,6 +1814,9 @@ pub fn write_to_acp_credentials(account: &crate::models::Account) -> Result<(), 
                 ));
             }
         }
+
+        // Clear cached read / denial cooldown after active ACL-repaired ACP write.
+        invalidate_macos_keychain_cache("gemini", "antigravity-acp");
     }
 
     crate::modules::logger::log_info(&format!(
@@ -1629,27 +1827,54 @@ pub fn write_to_acp_credentials(account: &crate::models::Account) -> Result<(), 
     Ok(())
 }
 
-/// Read the active Antigravity ACP IDE Plugin (`antigravity-acp`) OAuth state.
+/// Read the active Antigravity ACP IDE Plugin (`antigravity-acp`) OAuth state (authoritative).
 pub fn read_acp_credentials() -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    read_acp_credentials_inner(true)
+}
+
+/// Passive status detection reader for `antigravity-acp`:
+/// skips macOS Keychain probing when the `~/.gemini/antigravity-acp` directory does not exist,
+/// prefers the passwordless `acp_token.json` file when present, and otherwise uses single-flight
+/// cached Keychain lookup with denial cooldown.
+pub(crate) fn read_acp_credentials_passive(
+    has_known_acp_account: bool,
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    let acp_dir = resolve_acp_dir()?;
+    let token_path = acp_dir.join("acp_token.json");
+    if token_path.exists() {
+        if let Ok(content) = fs::read_to_string(&token_path) {
+            if let Ok(state) = parse_keyring_payload(&content) {
+                if !state.refresh_token.is_empty() {
+                    return Ok(state);
+                }
+            }
+        }
+    }
+
+    if !acp_dir.exists() && !has_known_acp_account {
+        return Err(format!(
+            "Antigravity ACP directory does not exist at {:?}",
+            acp_dir
+        ));
+    }
+
+    read_acp_credentials_inner(false)
+}
+
+fn read_acp_credentials_inner(
+    bypass_cache: bool,
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = bypass_cache;
+
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("security")
-            .args([
-                "find-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity-acp",
-                "-w",
-            ])
-            .output()
+        if let KeychainLookupOutcome::Found(secret_str) =
+            read_macos_keychain_generic_password("gemini", "antigravity-acp", bypass_cache)
         {
-            if output.status.success() {
-                let secret_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if let Ok(state) = parse_keyring_payload(&secret_str) {
-                    if !state.refresh_token.is_empty() {
-                        return Ok(state);
-                    }
+            if let Ok(state) = parse_keyring_payload(&secret_str) {
+                if !state.refresh_token.is_empty() {
+                    return Ok(state);
                 }
             }
         }
@@ -2491,6 +2716,7 @@ mod tests {
                         ])
                         .output();
                 }
+                invalidate_macos_keychain_cache(self.service, self.account);
             }
         }
     }
@@ -2600,6 +2826,88 @@ mod tests {
         )
         .expect("resolve next for ide-plugin");
         assert_eq!(next_for_plugin_alias.id, "id-1");
+    }
+
+    #[test]
+    fn test_classify_macos_security_failure_distinguishes_not_found_and_denied() {
+        assert_eq!(
+            classify_macos_security_failure(
+                Some(44),
+                "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain."
+            ),
+            KeychainLookupOutcome::NotFound
+        );
+        assert!(matches!(
+            classify_macos_security_failure(
+                Some(128),
+                "security: SecKeychainSearchCopyNext: User canceled the operation."
+            ),
+            KeychainLookupOutcome::Denied(_)
+        ));
+        assert!(matches!(
+            classify_macos_security_failure(
+                Some(36),
+                "security: SecKeychainSearchCopyNext: User interaction is not allowed."
+            ),
+            KeychainLookupOutcome::Denied(_)
+        ));
+        assert!(matches!(
+            classify_macos_security_failure(Some(51), "Authentication failed."),
+            KeychainLookupOutcome::Denied(_)
+        ));
+    }
+
+    #[test]
+    fn test_keychain_read_coordinator_caches_coalesces_cooldowns_and_invalidates() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let coordinator =
+            KeychainReadCoordinator::new(Duration::from_secs(60), Duration::from_secs(300));
+        let calls = AtomicUsize::new(0);
+
+        // First call populates the cache
+        let first = coordinator.read_with("gemini", "antigravity", false, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Found("token-v1".to_string())
+        });
+        assert_eq!(first, KeychainLookupOutcome::Found("token-v1".to_string()));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Second passive read hits cache without re-invoking security
+        let second = coordinator.read_with("gemini", "antigravity", false, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Found("token-v2".to_string())
+        });
+        assert_eq!(second, KeychainLookupOutcome::Found("token-v1".to_string()));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Denial triggers cooldown so passive readers stop re-prompting
+        coordinator.invalidate("gemini", "antigravity");
+        let denied = coordinator.read_with("gemini", "antigravity", false, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Denied("User canceled".to_string())
+        });
+        assert!(matches!(denied, KeychainLookupOutcome::Denied(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let during_cooldown = coordinator.read_with("gemini", "antigravity", false, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Found("should-not-run".to_string())
+        });
+        assert!(matches!(during_cooldown, KeychainLookupOutcome::Denied(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        // Active write invalidation clears cooldown and bypass_cache reads fresh state
+        coordinator.invalidate("gemini", "antigravity");
+        let refreshed = coordinator.read_with("gemini", "antigravity", true, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Found("token-v3".to_string())
+        });
+        assert_eq!(
+            refreshed,
+            KeychainLookupOutcome::Found("token-v3".to_string())
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
