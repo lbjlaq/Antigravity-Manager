@@ -245,8 +245,20 @@ pub fn resolve_non_variant_model(model: &str) -> Option<RealModelSpec> {
     if key == "gpt-oss-120b-medium" {
         return Some(apply_official_params(SPEC_GPT_OSS_120B));
     }
+    if key == "gemini-pro-orchestrator-neon" {
+        return Some(apply_official_params(SPEC_PRO_ORCHESTRATOR_NEON));
+    }
+    if key == "gemini-pro-orchestrator" {
+        return Some(apply_official_params(SPEC_PRO_ORCHESTRATOR_CARBON));
+    }
+    if key == "gemini-pro-orchestrator-argon" {
+        return Some(apply_official_params(SPEC_PRO_ORCHESTRATOR_ARGON));
+    }
     if key == "gemini-pro-orchestrator-g1-pro" {
         return Some(apply_official_params(SPEC_PRO_ORCHESTRATOR_G1_PRO));
+    }
+    if key == "gemini-4-hydrogen-sonar" {
+        return Some(apply_official_params(SPEC_4_HYDROGEN_SONAR));
     }
     None
 }
@@ -476,7 +488,12 @@ pub fn resolve(canonical: &str, budget_tokens: Option<u32>) -> Option<RealModelS
 /// 请求路由不能再把它映回客户端公开名，否则上游会收到无法生成的别名。
 pub fn is_physical_upstream_id(model: &str) -> bool {
     let key = model.trim();
-    if key.ends_with("-high") || key.ends_with("-medium") || key.ends_with("-low") {
+    if key.ends_with("-high")
+        || key.ends_with("-medium")
+        || key.ends_with("-low")
+        || key.ends_with("-sonar")
+        || key.starts_with("gemini-pro-orchestrator")
+    {
         return true;
     }
     GEMINI_FAMILIES.iter().any(|family| {
@@ -564,8 +581,36 @@ const SPEC_GPT_OSS_120B: RealModelSpec = RealModelSpec {
     include_thoughts: true,
     preserve_client_budget: false,
 };
+const SPEC_PRO_ORCHESTRATOR_NEON: RealModelSpec = RealModelSpec {
+    id: "gemini-pro-orchestrator-neon",
+    thinking_budget: 0,
+    max_output_tokens: 262144,
+    include_thoughts: true,
+    preserve_client_budget: false,
+};
+const SPEC_PRO_ORCHESTRATOR_CARBON: RealModelSpec = RealModelSpec {
+    id: "gemini-pro-orchestrator",
+    thinking_budget: 0,
+    max_output_tokens: 262144,
+    include_thoughts: true,
+    preserve_client_budget: false,
+};
+const SPEC_PRO_ORCHESTRATOR_ARGON: RealModelSpec = RealModelSpec {
+    id: "gemini-pro-orchestrator-argon",
+    thinking_budget: 0,
+    max_output_tokens: 65536,
+    include_thoughts: true,
+    preserve_client_budget: false,
+};
 const SPEC_PRO_ORCHESTRATOR_G1_PRO: RealModelSpec = RealModelSpec {
     id: "gemini-pro-orchestrator-g1-pro",
+    thinking_budget: 0,
+    max_output_tokens: 65536,
+    include_thoughts: true,
+    preserve_client_budget: false,
+};
+const SPEC_4_HYDROGEN_SONAR: RealModelSpec = RealModelSpec {
+    id: "gemini-4-hydrogen-sonar",
     thinking_budget: 0,
     max_output_tokens: 65536,
     include_thoughts: true,
@@ -1260,7 +1305,28 @@ mod tests {
             32768,
         );
 
-        // ── Orchestrator (Argon) ──────────────────────────────────────
+        // ── Orchestrator (Neon / Carbon / Argon) & Hydrogen Sonar ─────
+        check(
+            "gemini-pro-orchestrator-neon",
+            None,
+            "gemini-pro-orchestrator-neon",
+            0,
+            262144,
+        );
+        check(
+            "gemini-pro-orchestrator",
+            None,
+            "gemini-pro-orchestrator",
+            0,
+            262144,
+        );
+        check(
+            "gemini-pro-orchestrator-argon",
+            None,
+            "gemini-pro-orchestrator-argon",
+            0,
+            65536,
+        );
         check(
             "gemini-pro-orchestrator-g1-pro",
             None,
@@ -1272,6 +1338,13 @@ mod tests {
             "gemini-pro-orchestrator-g1-pro",
             Some(1000),
             "gemini-pro-orchestrator-g1-pro",
+            0,
+            65536,
+        );
+        check(
+            "gemini-4-hydrogen-sonar",
+            None,
+            "gemini-4-hydrogen-sonar",
             0,
             65536,
         );

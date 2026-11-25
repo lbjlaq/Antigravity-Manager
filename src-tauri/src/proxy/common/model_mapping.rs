@@ -217,7 +217,7 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
 
     // 特许放行的官方轻量级与图像专用模型，以及新一代 Gemini 4 Argon / Orchestrator 旗舰模型
     if m.contains("argon")
-        || m == "gemini-pro-orchestrator-g1-pro"
+        || m.starts_with("gemini-pro-orchestrator")
         || m == "gemini-3.5-flash-lite"
         || m == "gemini-3.1-flash-image"
         || m == "gemini-3-pro-image"
@@ -1065,6 +1065,10 @@ fn is_high_tier_flash(lower: &str) -> bool {
 /// - `some-model@default`         → `some-model`
 pub fn strip_tier_suffix(model: &str) -> String {
     const TIER_SUFFIXES: &[&str] = &[
+        "-tiered-xhigh",
+        "-tiered-high",
+        "-tiered-medium",
+        "-tiered-low",
         "-extra-low",
         "-xhigh",
         "-high",
@@ -1072,6 +1076,7 @@ pub fn strip_tier_suffix(model: &str) -> String {
         "-low",
         "-thinking",
         "-tiered",
+        "-sonar",
         "@default",
     ];
     let lower = model.trim().to_lowercase();
@@ -1141,7 +1146,16 @@ fn extract_gemini_codename_with_version(model_name: &str) -> Option<(String, Str
             }
         }
     }
-    if lower.contains("argon") || stripped == "gemini-pro-orchestrator-g1-pro" {
+    if stripped == "gemini-pro-orchestrator-neon" {
+        return Some(("4".to_string(), "neon".to_string()));
+    }
+    if stripped == "gemini-pro-orchestrator" {
+        return Some(("4".to_string(), "carbon".to_string()));
+    }
+    if lower.contains("argon")
+        || stripped == "gemini-pro-orchestrator-g1-pro"
+        || stripped == "gemini-pro-orchestrator-argon"
+    {
         return Some(("4".to_string(), "argon".to_string()));
     }
     None
@@ -1774,6 +1788,46 @@ mod tests {
         assert_eq!(
             resolve_model_route_with_effort("gemini-pro-orchestrator-g1-pro", &empty, Some("high")),
             "gemini-pro-orchestrator-g1-pro"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-pro-orchestrator-neon", &empty, None),
+            "gemini-pro-orchestrator-neon"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-pro-orchestrator", &empty, None),
+            "gemini-pro-orchestrator"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-pro-orchestrator-argon", &empty, None),
+            "gemini-pro-orchestrator-argon"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-4-neon", &empty, Some("xhigh")),
+            "gemini-4-neon-xhigh"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-4-hydrogen-sonar", &empty, None),
+            "gemini-4-hydrogen-sonar"
+        );
+        assert_eq!(
+            extract_gemini4_codename("gemini-pro-orchestrator-neon").as_deref(),
+            Some("neon")
+        );
+        assert_eq!(
+            extract_gemini4_codename("gemini-pro-orchestrator").as_deref(),
+            Some("carbon")
+        );
+        assert_eq!(
+            extract_gemini4_codename("gemini-pro-orchestrator-argon").as_deref(),
+            Some("argon")
+        );
+        assert_eq!(
+            extract_gemini4_codename("gemini-4-hydrogen-tiered-xhigh").as_deref(),
+            Some("hydrogen")
+        );
+        assert_eq!(
+            extract_gemini4_codename("gemini-4-hydrogen-sonar").as_deref(),
+            Some("hydrogen")
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-opus-4-6", &empty, None),

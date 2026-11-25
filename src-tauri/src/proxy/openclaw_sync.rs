@@ -344,8 +344,12 @@ pub fn resolve_model_specs(model_id: &str) -> (u64, u64, bool, Vec<&'static str>
     let is_reasoning = lower.contains("thinking")
         || lower.contains("reasoning")
         || lower.contains("claude-3-7")
+        || lower.contains("claude-opus-5")
+        || lower.contains("claude-sonnet-5")
         || lower.contains("gemini-2.5")
         || lower.contains("gemini-3")
+        || lower.contains("gemini-4")
+        || lower.starts_with("gemini-pro-orchestrator")
         || lower.contains("o1")
         || lower.contains("o3")
         || lower.contains("r1");
@@ -353,11 +357,22 @@ pub fn resolve_model_specs(model_id: &str) -> (u64, u64, bool, Vec<&'static str>
     let inputs = vec!["text", "image"];
 
     if is_gemini {
-        // 用户指定: Gemini 3 及以上上下文 1024000，输出 65536
         let context_window = 1024000;
-        let max_tokens = 65536;
+        let max_tokens = if lower.starts_with("gemini-4-neon")
+            || lower.starts_with("gemini-4-carbon")
+            || (lower.starts_with("gemini-4-hydrogen") && !lower.ends_with("-sonar"))
+            || lower == "gemini-pro-orchestrator-neon"
+            || lower == "gemini-pro-orchestrator"
+        {
+            262144
+        } else {
+            65536
+        };
         (context_window, max_tokens, is_reasoning, inputs)
     } else if is_claude {
+        if lower.starts_with("claude-opus-5-5") || lower.starts_with("claude-sonnet-5-5") {
+            return (1000000, 128000, true, inputs);
+        }
         // 用户指定: Claude 系列上下文基本都是 256K (256000)，输出 65536
         let context_window = 256000;
         let max_tokens = 65536;

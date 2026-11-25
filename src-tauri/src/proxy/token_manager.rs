@@ -1725,19 +1725,21 @@ impl TokenManager {
         available_models: &mut HashSet<String>,
         model_limits: &mut HashMap<String, u64>,
     ) {
-        const ARGON_DEFAULT_MODELS: [&str; 5] = [
+        const ARGON_DEFAULT_MODELS: [&str; 6] = [
             "gemini-4-argon",
             "gemini-4-argon-high",
             "gemini-4-argon-medium",
             "gemini-4-argon-low",
             "gemini-pro-orchestrator-g1-pro",
+            "gemini-pro-orchestrator-argon",
         ];
-        const CARBON_DEFAULT_MODELS: [&str; 5] = [
+        const CARBON_DEFAULT_MODELS: [&str; 6] = [
             "gemini-4-carbon",
             "gemini-4-carbon-high",
             "gemini-4-carbon-medium",
             "gemini-4-carbon-low",
             "gemini-4-carbon-xhigh",
+            "gemini-pro-orchestrator",
         ];
 
         let primary_fraction_for = |family: &str| -> Option<f64> {
@@ -1780,6 +1782,7 @@ impl TokenManager {
                 "gemini-4-argon-medium",
                 "gemini-4-argon-low",
                 "gemini-pro-orchestrator-g1-pro",
+                "gemini-pro-orchestrator-argon",
             ] {
                 model_quotas.remove(m);
                 available_models.remove(m);
@@ -2559,6 +2562,7 @@ impl TokenManager {
                 "gemini-4-argon-medium",
                 "gemini-4-argon-low",
                 "gemini-pro-orchestrator-g1-pro",
+                "gemini-pro-orchestrator-argon",
             ] {
                 available_models.insert(m.to_string());
                 model_limits.entry(m.to_string()).or_insert(65536);
@@ -2573,6 +2577,7 @@ impl TokenManager {
                 "gemini-4-carbon-medium",
                 "gemini-4-carbon-low",
                 "gemini-4-carbon-xhigh",
+                "gemini-pro-orchestrator",
             ] {
                 available_models.insert(m.to_string());
                 model_limits.entry(m.to_string()).or_insert(262144);
@@ -3022,12 +3027,14 @@ impl TokenManager {
                 result.insert("gemini-4-argon-medium".to_string());
                 result.insert("gemini-4-argon-low".to_string());
                 result.insert("gemini-pro-orchestrator-g1-pro".to_string());
+                result.insert("gemini-pro-orchestrator-argon".to_string());
             } else {
                 result.remove("gemini-4-argon");
                 result.remove("gemini-4-argon-high");
                 result.remove("gemini-4-argon-medium");
                 result.remove("gemini-4-argon-low");
                 result.remove("gemini-pro-orchestrator-g1-pro");
+                result.remove("gemini-pro-orchestrator-argon");
             }
 
             let has_carbon = groups.iter().any(|g| {
@@ -3063,12 +3070,14 @@ impl TokenManager {
                 result.insert("gemini-4-carbon-medium".to_string());
                 result.insert("gemini-4-carbon-low".to_string());
                 result.insert("gemini-4-carbon-xhigh".to_string());
+                result.insert("gemini-pro-orchestrator".to_string());
             } else {
                 result.remove("gemini-4-carbon");
                 result.remove("gemini-4-carbon-high");
                 result.remove("gemini-4-carbon-medium");
                 result.remove("gemini-4-carbon-low");
                 result.remove("gemini-4-carbon-xhigh");
+                result.remove("gemini-pro-orchestrator");
             }
         }
         Some(result)
@@ -8257,6 +8266,17 @@ impl TokenManager {
                                     "gemini-4-argon-medium".to_string(),
                                     "gemini-4-argon-low".to_string(),
                                     "gemini-pro-orchestrator-g1-pro".to_string(),
+                                    "gemini-pro-orchestrator-argon".to_string(),
+                                ]
+                            } else if code == "carbon" {
+                                vec![
+                                    "gemini-4-carbon".to_string(),
+                                    "gemini-pro-orchestrator".to_string(),
+                                ]
+                            } else if code == "neon" {
+                                vec![
+                                    "gemini-4-neon".to_string(),
+                                    "gemini-pro-orchestrator-neon".to_string(),
                                 ]
                             } else {
                                 vec![format!("gemini-4-{}", code)]

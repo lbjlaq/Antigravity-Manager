@@ -59,6 +59,7 @@ pub fn payload_enables_thinking(gemini_body: &serde_json::Value, model_hint: Opt
             || lower.contains("-high-")
             || crate::proxy::model_specs::is_explicit_heuristic_tier_model(&lower)
             || crate::proxy::model_specs::is_gemini_v4_or_above(&lower)
+            || crate::proxy::model_specs::is_claude_v5_or_above(&lower)
         {
             return true;
         }

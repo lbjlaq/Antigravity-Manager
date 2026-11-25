@@ -20,6 +20,7 @@ export function getModelIcon(id: string, group?: string): React.ReactNode {
     if (
         idLower.includes('gemini') ||
         groupLower.includes('gemini') ||
+        idLower.includes('neon') ||
         idLower.includes('hydrogen') ||
         idLower.includes('argon') ||
         idLower.includes('orchestrator') ||
@@ -46,18 +47,27 @@ export interface CanonicalFamilyDto {
 }
 
 const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: string }> = {
-    // Gemini 4 系列 (Carbon / Argon / Hydrogen)
+    // Gemini 4 系列 (Neon / Carbon / Argon / Hydrogen + Orchestrators)
+    'gemini-4-neon': { id: 'gemini-4-neon', name: 'gemini-4-neon', group: 'Gemini 4' },
+    'gemini-4-neon-xhigh': { id: 'gemini-4-neon-xhigh', name: 'gemini-4-neon-xhigh', group: 'Gemini 4' },
+    'gemini-4-neon-high': { id: 'gemini-4-neon-high', name: 'gemini-4-neon-high', group: 'Gemini 4' },
+    'gemini-4-neon-medium': { id: 'gemini-4-neon-medium', name: 'gemini-4-neon-medium', group: 'Gemini 4' },
+    'gemini-4-neon-low': { id: 'gemini-4-neon-low', name: 'gemini-4-neon-low', group: 'Gemini 4' },
+    'gemini-pro-orchestrator-neon': { id: 'gemini-pro-orchestrator-neon', name: 'gemini-pro-orchestrator-neon', group: 'Gemini 4' },
+
     'gemini-4-carbon': { id: 'gemini-4-carbon', name: 'gemini-4-carbon', group: 'Gemini 4' },
     'gemini-4-carbon-xhigh': { id: 'gemini-4-carbon-xhigh', name: 'gemini-4-carbon-xhigh', group: 'Gemini 4' },
     'gemini-4-carbon-high': { id: 'gemini-4-carbon-high', name: 'gemini-4-carbon-high', group: 'Gemini 4' },
     'gemini-4-carbon-medium': { id: 'gemini-4-carbon-medium', name: 'gemini-4-carbon-medium', group: 'Gemini 4' },
     'gemini-4-carbon-low': { id: 'gemini-4-carbon-low', name: 'gemini-4-carbon-low', group: 'Gemini 4' },
+    'gemini-pro-orchestrator': { id: 'gemini-pro-orchestrator', name: 'gemini-pro-orchestrator', group: 'Gemini 4' },
 
     'gemini-4-argon': { id: 'gemini-4-argon', name: 'gemini-4-argon', group: 'Gemini 4' },
     'gemini-4-argon-xhigh': { id: 'gemini-4-argon-xhigh', name: 'gemini-4-argon-xhigh', group: 'Gemini 4' },
     'gemini-4-argon-high': { id: 'gemini-4-argon-high', name: 'gemini-4-argon-high', group: 'Gemini 4' },
     'gemini-4-argon-medium': { id: 'gemini-4-argon-medium', name: 'gemini-4-argon-medium', group: 'Gemini 4' },
     'gemini-4-argon-low': { id: 'gemini-4-argon-low', name: 'gemini-4-argon-low', group: 'Gemini 4' },
+    'gemini-pro-orchestrator-argon': { id: 'gemini-pro-orchestrator-argon', name: 'gemini-pro-orchestrator-argon', group: 'Gemini 4' },
     'gemini-pro-orchestrator-g1-pro': { id: 'gemini-pro-orchestrator-g1-pro', name: 'gemini-pro-orchestrator-g1-pro', group: 'Gemini 4' },
 
     'gemini-4-hydrogen': { id: 'gemini-4-hydrogen', name: 'gemini-4-hydrogen', group: 'Gemini 4' },
@@ -65,6 +75,9 @@ const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: stri
     'gemini-4-hydrogen-high': { id: 'gemini-4-hydrogen-high', name: 'gemini-4-hydrogen-high', group: 'Gemini 4' },
     'gemini-4-hydrogen-medium': { id: 'gemini-4-hydrogen-medium', name: 'gemini-4-hydrogen-medium', group: 'Gemini 4' },
     'gemini-4-hydrogen-low': { id: 'gemini-4-hydrogen-low', name: 'gemini-4-hydrogen-low', group: 'Gemini 4' },
+    'gemini-4-hydrogen-tiered-xhigh': { id: 'gemini-4-hydrogen-tiered-xhigh', name: 'gemini-4-hydrogen-tiered-xhigh', group: 'Gemini 4' },
+    'gemini-4-hydrogen-tiered-high': { id: 'gemini-4-hydrogen-tiered-high', name: 'gemini-4-hydrogen-tiered-high', group: 'Gemini 4' },
+    'gemini-4-hydrogen-sonar': { id: 'gemini-4-hydrogen-sonar', name: 'gemini-4-hydrogen-sonar', group: 'Gemini 4' },
 
     // Gemini 3.8
     'gemini-3.8-flash': { id: 'gemini-3.8-flash', name: 'gemini-3.8-flash', group: 'Gemini 3' },

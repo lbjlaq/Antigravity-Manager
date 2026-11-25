@@ -227,11 +227,14 @@ export function checkFlagshipEligibility(
         return true;
     }
 
-    // 判据 2.1: Pro 套餐被上游赋予了 Carbon 旗舰模型（共享通用 Gemini 配额池）
+    // 判据 2.1: Pro 套餐被上游赋予了 Carbon 旗舰模型（含 Orchestrator Carbon，共享通用 Gemini 配额池）
     if (tier === 'pro') {
         const hasActiveCarbon = models.some(m => {
             const n = (m?.name || '').toLowerCase();
-            return n.includes('carbon') && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+            return (n.includes('carbon') || n === 'gemini-pro-orchestrator')
+                && !n.includes('-disabled')
+                && !n.endsWith('_disabled')
+                && !(m as any)?.disabled;
         });
         if (hasActiveCarbon) return true;
     }

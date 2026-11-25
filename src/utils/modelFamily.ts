@@ -49,8 +49,13 @@ export interface ModelFamilyTokenStats {
 }
 
 export const TIER_SUFFIXES = [
+    '-tiered-xhigh',
+    '-tiered-high',
+    '-tiered-medium',
+    '-tiered-low',
     '-extra-low',
     '-tiered',
+    '-sonar',
     '-xhigh',
     '-high',
     '-medium',
@@ -81,6 +86,11 @@ export function getTierLabel(modelId: string, familyId?: string): string {
     const fam = familyId ? familyId.toLowerCase().trim() : getModelFamilyId(id);
 
     if (id === fam) return 'Default (无后缀)';
+    if (id.endsWith('-tiered-xhigh')) return 'Tiered X-High';
+    if (id.endsWith('-tiered-high')) return 'Tiered High';
+    if (id.endsWith('-tiered-medium')) return 'Tiered Medium';
+    if (id.endsWith('-tiered-low')) return 'Tiered Low';
+    if (id.endsWith('-sonar')) return 'Sonar';
     if (id.endsWith('-extra-low')) return 'Extra-Low';
     if (id.endsWith('-xhigh')) return 'X-High';
     if (id.endsWith('-high')) return 'High';
@@ -100,6 +110,12 @@ export function getTierBadgeClass(tierLabel: string): string {
     if (tierLabel.includes('Default') || tierLabel.includes('无后缀')) {
         return 'bg-gray-100 text-gray-700 border-gray-200/90 dark:bg-base-200 dark:text-gray-300 dark:border-base-300';
     }
+    if (tierLabel.includes('Tiered')) {
+        return 'bg-cyan-50 text-cyan-700 border-cyan-200/90 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/60';
+    }
+    if (tierLabel.includes('Sonar')) {
+        return 'bg-teal-50 text-teal-700 border-teal-200/90 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-800/60';
+    }
     if (tierLabel.includes('X-High')) {
         return 'bg-purple-50 text-purple-700 border-purple-200/90 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800/60';
     }
@@ -115,23 +131,25 @@ export function getTierBadgeClass(tierLabel: string): string {
     if (tierLabel.includes('Extra-Low')) {
         return 'bg-orange-50 text-orange-700 border-orange-200/90 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800/60';
     }
-    if (tierLabel.includes('Tiered')) {
-        return 'bg-cyan-50 text-cyan-700 border-cyan-200/90 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/60';
-    }
     return 'bg-indigo-50 text-indigo-700 border-indigo-200/90 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/60';
 }
 
 function tierPriority(v: ModelVariantTokenStats): number {
     if (v.isBase) return 0;
     const l = v.tierLabel.toLowerCase();
+    if (l.includes('tiered')) {
+        if (l.includes('x-high')) return 6;
+        if (l.includes('high')) return 7;
+        return 8;
+    }
+    if (l.includes('sonar')) return 9;
     if (l.includes('x-high')) return 1;
     if (l.includes('high')) return 2;
     if (l.includes('medium')) return 3;
     if (l.includes('low') && !l.includes('extra-low')) return 4;
     if (l.includes('extra-low')) return 5;
-    if (l.includes('tiered')) return 6;
-    if (l.includes('thinking')) return 7;
-    return 8;
+    if (l.includes('thinking')) return 10;
+    return 11;
 }
 
 /**
@@ -258,7 +276,7 @@ export function resolvePricingRule(
     if (pricing[famId]) return pricing[famId];
 
     // 3. 剥除扩展后缀匹配
-    const stripped = key.replace(/-(tiered|max|xhigh|high|medium|default|low|extra-low|lite|thinking|online)$/, '');
+    const stripped = key.replace(/-(tiered-xhigh|tiered-high|tiered-medium|tiered-low|tiered|sonar|max|xhigh|high|medium|default|low|extra-low|lite|thinking|online)$/, '');
     if (pricing[stripped]) return pricing[stripped];
 
     // 4. 点分与破折号互通匹配 (如 claude-sonnet-4.6 与 claude-sonnet-4-6)
