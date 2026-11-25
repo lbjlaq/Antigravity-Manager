@@ -12,21 +12,6 @@ use tokio::sync::RwLock;
 
 use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
 
-/// 检查是否为 Web 控制台的静态资源或前端路由
-pub fn is_static_asset_path(path: &str) -> bool {
-    path == "/"
-        || path == "/index.html"
-        || path == "/favicon.ico"
-        || path.starts_with("/assets/")
-        || path.starts_with("/icons/")
-        || path.ends_with(".js")
-        || path.ends_with(".css")
-        || path.ends_with(".png")
-        || path.ends_with(".svg")
-        || path.ends_with(".woff")
-        || path.ends_with(".woff2")
-}
-
 /// 从请求中提取 API Key / Token
 /// 支持提取顺序：
 /// 1. Authorization header (Bearer token / Raw token)
@@ -132,18 +117,16 @@ async fn auth_middleware_internal(
     let method = request.method().clone();
     let path = request.uri().path().to_string();
 
-    // 静态资源文件与前端入口白名单 (用于 Headless/Docker/Web UI 正常加载)
-    let is_static_asset = is_static_asset_path(&path);
-
     // 过滤心跳、健康检查与探针请求,避免日志噪音
+    // 仅匹配显式端点；Web UI 静态资源由外层 fallback_service 提供，不经过本中间件，
+    // 因此不得按路径后缀放行，否则 `/v1beta/models/x.js` 之类的路由会绕过鉴权。
     let is_health_check = path == "/healthz"
         || path == "/api/health"
         || path == "/health"
         || path == "/version"
         || path == "/v1/version"
         || path == "/props"
-        || path == "/v1/props"
-        || is_static_asset;
+        || path == "/v1/props";
     let is_internal_endpoint = path.starts_with("/internal/");
     if !path.contains("event_logging") && !is_health_check {
         tracing::info!("Request: {} {}", method, path);
@@ -437,6 +420,104 @@ mod tests {
             ));
         let resp = app.clone().oneshot(req_spoofed).await.unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_static_asset_suffix_does_not_bypass_auth() {
+        use axum::routing::{delete, get, post};
+        use tower::ServiceExt;
+
+        let security = Arc::new(RwLock::new(ProxySecurityConfig {
+            auth_mode: ProxyAuthMode::AllExceptHealth,
+            api_key: "sk-test".to_string(),
+            admin_password: None,
+            allow_lan_access: true,
+            port: 8045,
+            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+        }));
+
+        // 与 server.rs 的组合方式一致：鉴权层只作用于 proxy/admin 路由，
+        // 静态文件 fallback 加在最外层，不经过鉴权中间件。
+        let proxy = axum::Router::new()
+            .route("/v1beta/models/:model", post(|| async { StatusCode::OK }))
+            .route("/health", get(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn_with_state(
+                security.clone(),
+                auth_middleware,
+            ));
+        let admin = axum::Router::new()
+            .route("/accounts/:accountId", delete(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn_with_state(
+                security.clone(),
+                admin_auth_middleware,
+            ));
+        let app = axum::Router::new()
+            .nest("/api", admin)
+            .merge(proxy)
+            .fallback(|| async { "static" });
+
+        let send = |method: &'static str, uri: &'static str, key: Option<&'static str>| {
+            let app = app.clone();
+            async move {
+                let mut builder = Request::builder().method(method).uri(uri);
+                if let Some(key) = key {
+                    builder = builder.header("Authorization", format!("Bearer {}", key));
+                }
+                let mut req = builder.body(axum::body::Body::empty()).unwrap();
+                req.extensions_mut().insert(axum::extract::ConnectInfo(
+                    "192.168.1.50:5000".parse::<std::net::SocketAddr>().unwrap(),
+                ));
+                app.oneshot(req).await.unwrap().status()
+            }
+        };
+
+        // a. 代理路由以 .js 结尾：无 Key -> 401，带 Key -> 200
+        assert_eq!(
+            send("POST", "/v1beta/models/gemini-x.js", None).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            send("POST", "/v1beta/models/gemini-x.js", Some("sk-test")).await,
+            StatusCode::OK
+        );
+
+        // b. 其它静态后缀同样不得绕过鉴权
+        for uri in [
+            "/v1beta/models/gemini-x.png",
+            "/v1beta/models/gemini-x.css",
+            "/v1beta/models/gemini-x.svg",
+            "/v1beta/models/gemini-x.woff2",
+        ] {
+            assert_eq!(
+                send("POST", uri, None).await,
+                StatusCode::UNAUTHORIZED,
+                "{} must require auth",
+                uri
+            );
+        }
+
+        // c. 管理路由以 .js 结尾：无 Key -> 401，带 Key -> 200
+        assert_eq!(
+            send("DELETE", "/api/accounts/abc.js", None).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            send("DELETE", "/api/accounts/abc.js", Some("sk-test")).await,
+            StatusCode::OK
+        );
+
+        // d. Web UI 静态资源由 fallback 提供，不经过鉴权
+        for uri in ["/assets/index.js", "/", "/index.html"] {
+            assert_eq!(
+                send("GET", uri, None).await,
+                StatusCode::OK,
+                "{} must be served by fallback",
+                uri
+            );
+        }
+
+        // e. 显式健康检查端点在 AllExceptHealth 下保持公开
+        assert_eq!(send("GET", "/health", None).await, StatusCode::OK);
     }
 
     #[test]

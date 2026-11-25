@@ -24,41 +24,105 @@ const THINKING_SESSION_HEADERS: &[&str] = &[
     "mcp-session-id",
 ];
 
-fn is_thinking_session_header(name: &str) -> bool {
-    THINKING_SESSION_HEADERS
-        .iter()
-        .any(|h| name.eq_ignore_ascii_case(h))
+/// Canonical form shared by header and query-parameter names: lowercase, with `_`, `-`, any
+/// other non-alphanumeric character and camelCase boundaries all collapsed to a single `-`
+/// (`maxOutputTokens` -> `max-output-tokens`, `APIKey` -> `api-key`, `x_goog_api_key` ->
+/// `x-goog-api-key`).
+fn normalize_name(name: &str) -> String {
+    fn push_sep(out: &mut String) {
+        if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, &c) in chars.iter().enumerate() {
+        if !c.is_alphanumeric() {
+            push_sep(&mut out);
+            continue;
+        }
+        if c.is_uppercase() && i > 0 {
+            let prev = chars[i - 1];
+            let next_is_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            if prev.is_lowercase()
+                || prev.is_ascii_digit()
+                || (prev.is_uppercase() && next_is_lower)
+            {
+                push_sep(&mut out);
+            }
+        }
+        out.extend(c.to_lowercase());
+    }
+    out.trim_end_matches('-').to_string()
 }
 
-fn is_sensitive_header(name: &str) -> bool {
-    if is_thinking_session_header(name) {
+/// Exact (normalized) session markers kept in clear for ops comparison.
+fn is_thinking_session_header(normalized: &str) -> bool {
+    THINKING_SESSION_HEADERS.contains(&normalized)
+}
+
+/// Substrings that mark a credential-bearing name (checked on the normalized name).
+const SENSITIVE_NAME_PARTS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "bearer",
+    "cookie",
+    "credential",
+    "api-key",
+    "apikey",
+];
+
+/// Leading words of the token-count metrics that stay in clear (`input-tokens`,
+/// `prompt-token-count`, `cached-content-token-count`, ...).
+const TOKEN_METRIC_PREFIXES: &[&str] = &[
+    "input",
+    "output",
+    "total",
+    "cached",
+    "cached-content",
+    "cache-read",
+    "cache-creation",
+    "reasoning",
+    "prompt",
+    "completion",
+    "candidates",
+    "thoughts",
+    "tool-use-prompt",
+    "max",
+    "max-output",
+    "max-completion",
+];
+
+/// Explicit allowlist of token-count metrics, on a normalized name: bare `token-count`,
+/// `<prefix>-tokens` and `<prefix>-token-count`. Anything else containing `token`
+/// (`id-tokens`, `oauth-tokens`, bare `tokens`, ...) is treated as a credential.
+fn is_token_metric_name(n: &str) -> bool {
+    n == "token-count"
+        || n.strip_suffix("-tokens")
+            .or_else(|| n.strip_suffix("-token-count"))
+            .is_some_and(|stem| TOKEN_METRIC_PREFIXES.contains(&stem))
+}
+
+/// Fail-closed credential-name check shared by headers and URI query parameters: a name is
+/// redacted unless it is an exact session marker or an allowlisted token-count metric.
+fn is_sensitive_name(name: &str) -> bool {
+    let n = normalize_name(name);
+    if is_thinking_session_header(&n) {
         return false;
     }
-    let n = name.to_ascii_lowercase();
-    matches!(
-        n.as_str(),
-        "authorization"
-            | "proxy-authorization"
-            | "x-api-key"
-            | "api-key"
-            | "x-goog-api-key"
-            | "anthropic-api-key"
-            | "x-auth-token"
-            | "x-access-token"
-            | "cookie"
-            | "set-cookie"
-    ) || n.contains("api-key")
-        || n.contains("apikey")
-        || n.contains("access-token")
-        || n.contains("access_token")
-        || (n.contains("token") && !n.contains("session") && !n.contains("count"))
+    if n == "key" || n.ends_with("-key") {
+        return true;
+    }
+    SENSITIVE_NAME_PARTS
+        .iter()
+        .any(|part| n.contains(part) && !(*part == "token" && is_token_metric_name(&n)))
 }
 
 pub fn redact_header_value(name: &str, value: &str) -> String {
-    if is_thinking_session_header(name) {
-        return value.to_string();
-    }
-    if !is_sensitive_header(name) {
+    if !is_sensitive_name(name) {
         return value.to_string();
     }
     let trimmed = value.trim();
@@ -69,6 +133,35 @@ pub fn redact_header_value(name: &str, value: &str) -> String {
         return "Bearer ***REDACTED***".to_string();
     }
     "***REDACTED***".to_string()
+}
+
+/// Redacts the values of credential-bearing query parameters (e.g. `?key=...`)
+/// in a request URI. Everything else is preserved byte-for-byte.
+pub fn redact_uri(uri: &str) -> String {
+    let (before_fragment, fragment) = match uri.find('#') {
+        Some(i) => (&uri[..i], &uri[i..]),
+        None => (uri, ""),
+    };
+    let Some((path, query)) = before_fragment.split_once('?') else {
+        return uri.to_string();
+    };
+
+    let redacted_query = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((name, _))
+                if url::form_urlencoded::parse(name.as_bytes())
+                    .next()
+                    .is_some_and(|(decoded, _)| is_sensitive_name(&decoded)) =>
+            {
+                format!("{}=***REDACTED***", name)
+            }
+            _ => pair.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+
+    format!("{}?{}{}", path, redacted_query, fragment)
 }
 
 pub fn headers_to_redacted_json(headers: &HeaderMap) -> String {
@@ -756,6 +849,278 @@ pub fn apply_storage_mode_to_body(raw: Option<String>, mode: &str) -> Option<Str
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    #[test]
+    fn query_param_sensitivity() {
+        for name in [
+            "key",
+            "KEY",
+            "api_key",
+            "apikey",
+            "x-goog-api-key",
+            "access_token",
+            "token",
+            "auth_token",
+        ] {
+            assert!(is_sensitive_name(name), "{name} should be sensitive");
+        }
+        for name in ["alt", "model", "stream", "session_id"] {
+            assert!(!is_sensitive_name(name), "{name} should not be sensitive");
+        }
+    }
+
+    #[test]
+    fn redact_uri_masks_key_query_param() {
+        let out =
+            redact_uri("/v1beta/models/gemini-x:streamGenerateContent?alt=sse&key=AIzaSECRET");
+        assert_eq!(
+            out,
+            "/v1beta/models/gemini-x:streamGenerateContent?alt=sse&key=***REDACTED***"
+        );
+        assert!(!out.contains("AIzaSECRET"));
+    }
+
+    #[test]
+    fn redact_uri_masks_every_repeated_key() {
+        let out = redact_uri("/v1/models?key=a&key=b");
+        assert_eq!(out, "/v1/models?key=***REDACTED***&key=***REDACTED***");
+    }
+
+    #[test]
+    fn redact_uri_leaves_non_sensitive_uris_unchanged() {
+        assert_eq!(redact_uri("/v1/chat/completions"), "/v1/chat/completions");
+        assert_eq!(redact_uri("/x?alt=sse"), "/x?alt=sse");
+        assert_eq!(
+            redact_uri("/x?session_id=abc&a=%41%20b&&c#frag"),
+            "/x?session_id=abc&a=%41%20b&&c#frag"
+        );
+    }
+
+    #[test]
+    fn redact_uri_masks_named_variants_and_keeps_order() {
+        assert_eq!(
+            redact_uri("/x?api_key=s&model=m"),
+            "/x?api_key=***REDACTED***&model=m"
+        );
+    }
+
+    #[test]
+    fn redact_uri_decodes_percent_encoded_names() {
+        let out = redact_uri("/x?k%65y=s");
+        assert_eq!(out, "/x?k%65y=***REDACTED***");
+        assert!(!out.contains("=s"));
+    }
+
+    #[test]
+    fn redact_uri_handles_flag_pairs_empty_values_and_fragments() {
+        assert_eq!(redact_uri("/x?flag&key="), "/x?flag&key=***REDACTED***");
+        assert_eq!(
+            redact_uri("/x?flag&&key=secret#key=frag"),
+            "/x?flag&&key=***REDACTED***#key=frag"
+        );
+        assert_eq!(redact_uri("/x#a?key=s"), "/x#a?key=s");
+    }
+
+    #[test]
+    fn redact_uri_masks_session_token_names_but_keeps_session_id_and_counts() {
+        for uri in [
+            "/x?session_token=st-secret",
+            "/x?session-token=st-secret",
+            "/x?session%5Ftoken=st-secret",
+        ] {
+            let out = redact_uri(uri);
+            assert!(!out.contains("st-secret"), "{uri} leaked: {out}");
+            assert!(out.contains("=***REDACTED***"), "{uri} -> {out}");
+        }
+        assert_eq!(redact_uri("/x?session_id=abc"), "/x?session_id=abc");
+        assert_eq!(redact_uri("/x?max_token_count=5"), "/x?max_token_count=5");
+    }
+
+    #[test]
+    fn redact_header_value_masks_session_tokens_only() {
+        assert_eq!(
+            redact_header_value("x-session-token", "s"),
+            "***REDACTED***"
+        );
+        assert_eq!(
+            redact_header_value("sessionAuthToken", "s"),
+            "***REDACTED***"
+        );
+        assert_eq!(redact_header_value("x-session-id", "abc"), "abc");
+        assert_eq!(redact_header_value("token-count", "5"), "5");
+    }
+
+    #[test]
+    fn account_token_names_are_redacted_but_token_counts_are_not() {
+        assert_eq!(
+            redact_header_value("x-account-token", "s"),
+            "***REDACTED***"
+        );
+        assert_eq!(redact_header_value("accountToken", "s"), "***REDACTED***");
+        assert_eq!(redact_header_value("token-count", "5"), "5");
+
+        let out = redact_uri("/x?account_token=acct-secret");
+        assert!(!out.contains("acct-secret"), "leaked: {out}");
+        assert_eq!(out, "/x?account_token=***REDACTED***");
+        assert_eq!(redact_uri("/x?max_token_count=5"), "/x?max_token_count=5");
+        assert_eq!(redact_uri("/x?account_id=42"), "/x?account_id=42");
+    }
+
+    #[test]
+    fn token_metric_names_are_not_redacted_in_uris_and_headers() {
+        for name in [
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_tokens",
+            "reasoning_tokens",
+            "max_tokens",
+            "max-tokens",
+            "maxOutputTokens",
+            "prompt_token_count",
+            "candidates_token_count",
+            "token_count",
+            "total_token_count",
+            "thoughts_token_count",
+            "cached_content_token_count",
+        ] {
+            assert!(!is_sensitive_name(name), "{name} should not be sensitive");
+            assert_eq!(redact_header_value(name, "123"), "123", "{name}");
+            let uri = format!("/x?{name}=123");
+            assert_eq!(redact_uri(&uri), uri, "{name}");
+        }
+    }
+
+    #[test]
+    fn token_credential_names_stay_redacted_in_uris_and_headers() {
+        for name in [
+            "token",
+            "tokens",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "id_tokens",
+            "oauth_tokens",
+            "api_tokens",
+            "apitokens",
+            "gh_tokens",
+            "bearer_tokens",
+            "my_tokens",
+            "session_token",
+            "account_token",
+            "auth_token",
+            "refresh_tokens",
+            "x-goog-api-key",
+            "api-key",
+            "api_key",
+            "key",
+            "x-ratelimit-remaining-tokens",
+        ] {
+            assert!(is_sensitive_name(name), "{name} should be sensitive");
+            assert_eq!(
+                redact_header_value(name, "secret"),
+                "***REDACTED***",
+                "{name}"
+            );
+            let out = redact_uri(&format!("/x?{name}=secret&input_tokens=7"));
+            assert!(!out.contains("secret"), "{name} leaked: {out}");
+            assert!(out.ends_with("&input_tokens=7"), "{name} -> {out}");
+        }
+        assert_eq!(redact_uri("/x?key=secret"), "/x?key=***REDACTED***");
+    }
+
+    #[test]
+    fn name_normalizer_unifies_separators_and_camel_case() {
+        assert_eq!(normalize_name("maxOutputTokens"), "max-output-tokens");
+        assert_eq!(normalize_name("max_output_tokens"), "max-output-tokens");
+        assert_eq!(normalize_name("APIKey"), "api-key");
+        assert_eq!(normalize_name("X_Goog-Api_Key"), "x-goog-api-key");
+        assert_eq!(normalize_name("KEY"), "key");
+        assert_eq!(normalize_name("_token__"), "token");
+    }
+
+    #[test]
+    fn credential_names_are_redacted_fail_closed_in_uris_and_headers() {
+        for name in [
+            "key",
+            "api_key",
+            "api-key",
+            "apiKey",
+            "x-goog-api-key",
+            "token",
+            "access_token",
+            "refresh_token",
+            "refresh_tokens",
+            "id_tokens",
+            "oauth_tokens",
+            "api_tokens",
+            "apitokens",
+            "gh_tokens",
+            "bearer_tokens",
+            "session_token",
+            "account_token",
+            "my_tokens",
+            "max_tokens_secret",
+            "input_tokens_auth",
+        ] {
+            assert!(is_sensitive_name(name), "{name} should be sensitive");
+            assert_eq!(
+                redact_header_value(name, "secret"),
+                "***REDACTED***",
+                "{name}"
+            );
+            let out = redact_uri(&format!("/x?{name}=secret&alt=sse"));
+            assert_eq!(out, format!("/x?{name}=***REDACTED***&alt=sse"), "{name}");
+        }
+        assert_eq!(
+            redact_header_value("authorization", "Bearer abc"),
+            "Bearer ***REDACTED***"
+        );
+        // `key` / `api_key` header names must not be stored in clear.
+        let mut headers = HeaderMap::new();
+        headers.insert("key", HeaderValue::from_static("k-secret"));
+        headers.insert("api_key", HeaderValue::from_static("ak-secret"));
+        let json = headers_to_redacted_json(&headers);
+        assert!(
+            !json.contains("k-secret") && !json.contains("ak-secret"),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn token_metrics_and_plain_params_stay_in_clear_in_uris_and_headers() {
+        for name in [
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_tokens",
+            "reasoning_tokens",
+            "max_tokens",
+            "maxOutputTokens",
+            "prompt_token_count",
+            "candidates_token_count",
+            "total_token_count",
+            "token_count",
+            "alt",
+        ] {
+            assert!(!is_sensitive_name(name), "{name} should not be sensitive");
+            assert_eq!(redact_header_value(name, "7"), "7", "{name}");
+            let uri = format!("/x?{name}=7");
+            assert_eq!(redact_uri(&uri), uri, "{name}");
+        }
+        assert_eq!(redact_uri("/x?alt=sse"), "/x?alt=sse");
+        assert_eq!(redact_header_value("alt", "sse"), "sse");
+    }
+
+    #[test]
+    fn session_markers_stay_in_clear_but_do_not_exempt_session_token() {
+        for name in ["x-session-id", "mcp-session-id", "x_antigravity_session_id"] {
+            assert!(!is_sensitive_name(name), "{name}");
+        }
+        for name in ["session-token", "x-session-token", "mcp-session-token"] {
+            assert!(is_sensitive_name(name), "{name}");
+        }
+    }
 
     #[test]
     fn redacts_api_keys_but_keeps_session_markers() {

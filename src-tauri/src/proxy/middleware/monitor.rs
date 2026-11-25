@@ -973,7 +973,7 @@ pub async fn monitor_middleware(
     let _logging_enabled = state.monitor.is_enabled();
 
     let method = request.method().to_string();
-    let uri = request.uri().to_string();
+    let uri = crate::proxy::payload_audit::redact_uri(&request.uri().to_string());
 
     if uri.contains("event_logging") || uri.contains("/api/") || uri.starts_with("/internal/") {
         return next.run(request).await;
