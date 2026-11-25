@@ -225,6 +225,24 @@ pub fn is_direct_loopback(request: &Request) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns true only when the TCP peer is loopback AND no reverse-proxy forwarding
+/// headers are attached (prevents same-host tunnels like cloudflared/nginx from
+/// inheriting direct-loopback local-file privileges).
+pub fn is_unproxied_direct_loopback(request: &Request) -> bool {
+    if !is_direct_loopback(request) {
+        return false;
+    }
+    const FORWARDING_HEADERS: &[&str] = &[
+        "x-forwarded-for",
+        "x-real-ip",
+        "forwarded",
+        "cf-connecting-ip",
+    ];
+    !FORWARDING_HEADERS
+        .iter()
+        .any(|name| request.headers().contains_key(*name))
+}
+
 fn ip_is_loopback(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => v4.is_loopback(),
@@ -448,5 +466,31 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let _ = security_db::remove_from_blacklist(&added.id);
+    }
+
+    #[test]
+    fn unproxied_direct_loopback_rejects_forwarding_headers() {
+        let direct = request_from("127.0.0.1".parse().unwrap(), None);
+        assert!(is_unproxied_direct_loopback(&direct));
+
+        for header in [
+            "x-forwarded-for",
+            "x-real-ip",
+            "forwarded",
+            "cf-connecting-ip",
+        ] {
+            let mut req = request_from("127.0.0.1".parse().unwrap(), None);
+            req.headers_mut().insert(
+                axum::http::header::HeaderName::from_static(header),
+                axum::http::HeaderValue::from_static("203.0.113.10"),
+            );
+            assert!(
+                !is_unproxied_direct_loopback(&req),
+                "{header} should disqualify loopback local-file privilege"
+            );
+        }
+
+        let remote = request_from("192.168.1.50".parse().unwrap(), None);
+        assert!(!is_unproxied_direct_loopback(&remote));
     }
 }

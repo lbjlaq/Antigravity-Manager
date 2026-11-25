@@ -521,22 +521,28 @@ pub fn transform_openai_request_with_session(
                                         parts.push(json!({
                                             "fileData": { "fileUri": &image_url.url, "mimeType": "image/jpeg" }
                                         }));
+                                    } else if !crate::proxy::pipeline::budget::can_read_local_files() {
+                                        tracing::warn!(
+                                            "[OpenAI-Request] Denied local image path outside loopback owner context"
+                                        );
+                                        parts.push(json!({
+                                            "text": "[Image: local file access denied]"
+                                        }));
                                     } else {
                                         // [NEW] 处理本地文件路径 (file:// 或 Windows/Unix 路径)
-                                        let file_path = if image_url.url.starts_with("file://") {
-                                            // 移除 file:// 前缀
-                                            #[cfg(target_os = "windows")]
-                                            { image_url.url.trim_start_matches("file:///").replace('/', "\\") }
-                                            #[cfg(not(target_os = "windows"))]
-                                            { image_url.url.trim_start_matches("file://").to_string() }
-                                        } else {
-                                            image_url.url.clone()
-                                        };
+                                        let file_path = crate::proxy::mappers::common_utils::strip_file_scheme(
+                                            &image_url.url,
+                                        );
 
                                         tracing::debug!("[OpenAI-Request] Reading local image: {}", file_path);
 
-                                        // 读取文件并转换为 base64
-                                        if let Ok(file_bytes) = std::fs::read(&file_path) {
+                                        // 读取文件并转换为 base64（预校验文件类型与大小上限，且强制魔数检查）
+                                        if let Ok(file_bytes) =
+                                            crate::proxy::mappers::common_utils::read_bounded_local_file(
+                                                &file_path,
+                                                crate::proxy::mappers::common_utils::MAX_LOCAL_MEDIA_BYTES,
+                                            )
+                                        {
                                             use base64::Engine as _;
                                             let b64 = base64::engine::general_purpose::STANDARD.encode(&file_bytes);
 
@@ -3509,5 +3515,57 @@ mod tests {
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
             &crate::proxy::config::PromptRewriteConfig::default(),
         );
+    }
+
+    #[tokio::test]
+    async fn test_local_image_path_denied_outside_loopback_context() {
+        let dir = std::env::temp_dir().join(format!("ag_img_sec_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_png = dir.join("secret.png");
+        std::fs::write(&fake_png, b"secret-env-token").unwrap();
+
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash-high".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIContent::Array(vec![OpenAIContentBlock::ImageUrl {
+                    image_url: OpenAIImageUrl {
+                        url: format!("file://{}", fake_png.display()),
+                        detail: None,
+                    },
+                }])),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        // 1. Outside loopback RequestContext -> denied without reading disk
+        let (result, _, _, _) =
+            transform_openai_request(&req, "test-proj", "gemini-3.8-flash-high", None);
+        let parts = result["request"]["contents"][0]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts[0]["text"], "[Image: local file access denied]");
+
+        // 2. Inside loopback RequestContext -> non-PNG magic bytes rejected by inline validator
+        let ctx = crate::proxy::pipeline::budget::RequestContext::new(
+            crate::proxy::pipeline::budget::deadline_now(),
+        );
+        ctx.set_allow_local_files(true);
+        crate::proxy::pipeline::budget::scope(ctx, async {
+            let (result_loopback, _, _, _) =
+                transform_openai_request(&req, "test-proj", "gemini-3.8-flash-high", None);
+            let parts = result_loopback["request"]["contents"][0]["parts"]
+                .as_array()
+                .unwrap();
+            assert!(parts[0].get("inlineData").is_none());
+            assert!(parts[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("invalid or corrupted data omitted"));
+        })
+        .await;
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

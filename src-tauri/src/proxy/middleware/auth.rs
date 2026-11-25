@@ -184,6 +184,7 @@ async fn auth_middleware_internal(
                 if let Ok(Some(user_token)) =
                     crate::modules::user_token_db::get_token_by_value(token)
                 {
+                    crate::proxy::pipeline::budget::set_allow_local_files(false);
                     let identity = UserTokenIdentity::from_user_token(user_token);
                     // 注入 identity 到请求
                     let (mut parts, body) = request.into_parts();
@@ -262,6 +263,7 @@ async fn auth_middleware_internal(
                 if let Ok(Some(user_token)) =
                     crate::modules::user_token_db::get_token_by_value(token)
                 {
+                    crate::proxy::pipeline::budget::set_allow_local_files(false);
                     let identity = UserTokenIdentity::from_user_token(user_token);
 
                     // [FIX] 将身份信息注入到请求 extensions 中，而不是响应

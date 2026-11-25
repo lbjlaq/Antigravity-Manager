@@ -16,7 +16,7 @@
 //! 3. **规模提示**：handler 把真实估算 token 数写进来，供首字节预算按真实 prefill
 //!    规模选取，而不是只靠 `body_len / 3.5` 猜（工具 schema 大或含 base64 图片时会低估）。
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::task_local;
@@ -53,6 +53,7 @@ pub struct RequestContext {
     deadline: std::time::Instant,
     upstream_calls: AtomicUsize,
     estimated_tokens: AtomicU32,
+    allow_local_files: AtomicBool,
 }
 
 impl RequestContext {
@@ -61,7 +62,12 @@ impl RequestContext {
             deadline,
             upstream_calls: AtomicUsize::new(0),
             estimated_tokens: AtomicU32::new(0),
+            allow_local_files: AtomicBool::new(false),
         })
+    }
+
+    pub fn set_allow_local_files(&self, allow: bool) {
+        self.allow_local_files.store(allow, Ordering::Relaxed);
     }
 
     fn remaining_secs(&self) -> u64 {
@@ -80,6 +86,7 @@ impl RequestContext {
             deadline: self.deadline,
             upstream_calls: AtomicUsize::new(0),
             estimated_tokens: AtomicU32::new(self.estimated_tokens.load(Ordering::Relaxed)),
+            allow_local_files: AtomicBool::new(self.allow_local_files.load(Ordering::Relaxed)),
         })
     }
 
@@ -197,6 +204,20 @@ pub fn estimated_tokens() -> Option<u32> {
         0 => None,
         tokens => Some(tokens),
     })
+}
+
+/// 设置当前请求是否允许读取本地磁盘文件（仅限本机直连回环且非 UserToken 子令牌）
+pub fn set_allow_local_files(allow: bool) {
+    if let Some(ctx) = current() {
+        ctx.set_allow_local_files(allow);
+    }
+}
+
+/// 当前请求上下文是否允许读取本地多模态文件（默认严格关闭）
+pub fn can_read_local_files() -> bool {
+    current()
+        .map(|ctx| ctx.allow_local_files.load(Ordering::Relaxed))
+        .unwrap_or(false)
 }
 
 /// 读取当前生效的大 body 判定门限（优先遵从用户在 GUI 配置的 large_body_threshold_mb，默认保底 4MB）
