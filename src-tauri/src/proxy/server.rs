@@ -2411,12 +2411,32 @@ struct SetPreferredAccountRequest {
 async fn admin_set_preferred_account(
     State(state): State<AppState>,
     Json(payload): Json<SetPreferredAccountRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    // 过滤空字符串为 None，与桌面端 set_preferred_account 命令保持一致
+    let cleaned_id = payload.account_id.filter(|s| !s.trim().is_empty());
+
+    // 1. 更新内存状态
     state
         .token_manager
-        .set_preferred_account(payload.account_id)
+        .set_preferred_account(cleaned_id.clone())
         .await;
-    StatusCode::OK
+
+    // 2. 持久化到配置文件，避免重启后丢失固定账号设置
+    let mut app_config = config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    app_config.proxy.preferred_account_id = cleaned_id.clone();
+    config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn admin_set_proxy_monitor_enabled(
@@ -4911,7 +4931,7 @@ async fn admin_clear_ip_whitelist() -> Result<impl IntoResponse, (StatusCode, Js
         )
     })?;
     for entry in entries {
-        security_db::remove_from_whitelist(&entry.ip_pattern).map_err(|e| {
+        security_db::remove_from_whitelist(&entry.id).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e }),
