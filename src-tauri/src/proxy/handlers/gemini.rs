@@ -80,15 +80,21 @@ pub async fn handle_generate(
     let mut ttft_ms: f64 = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
     let mut headers_ms: f64 = 0.0;
 
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
+
     // 1. 验证方法
     // [NEW] :countTokens 冒号语法，直接代理到上游 v1internal:countTokens
     if method == "countTokens" {
         // [MODEL GATE] 探测端点同样接入门禁（POST 也需要，不能只靠 GET 拦截）
-        if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+        if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
             &state,
             Some(model_name.as_str()),
             "gemini",
             upstream_recorder.as_ref().map(|recorder| &recorder.0),
+            allowed_accounts.as_ref(),
         )
         .await
         {
@@ -100,6 +106,7 @@ pub async fn handle_generate(
             user_identity
                 .as_ref()
                 .map(|identity| identity.token_id.clone()),
+            allowed_accounts,
             model_name,
             body,
         )
@@ -140,11 +147,12 @@ pub async fn handle_generate(
 
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
     // 必须放在任何 `state.*` 字段被 move 之前，避免 borrow-after-partial-move。
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(model_name.as_str()),
         "gemini",
         upstream_recorder.as_ref().map(|recorder| &recorder.0),
+        allowed_accounts.as_ref(),
     )
     .await
     {
@@ -270,12 +278,13 @@ pub async fn handle_generate(
         } else if config.request_type == "image_gen" {
             drop(image_permit.take());
             match token_manager
-                .get_image_token(
+                .get_image_token_scoped(
                     force_rotate,
                     Some(&affinity_key),
                     &config.final_model,
                     &image_scheduler,
                     request_timeout,
+                    allowed_accounts.as_ref(),
                 )
                 .await
             {
@@ -291,12 +300,13 @@ pub async fn handle_generate(
             }
         } else {
             let mut token_result = token_manager
-                .get_token_filtered(
+                .get_token_scoped(
                     &config.request_type,
                     force_rotate,
                     Some(&affinity_key),
                     &config.final_model,
                     &attempted_accounts,
+                    allowed_accounts.as_ref(),
                 )
                 .await;
 
@@ -308,12 +318,13 @@ pub async fn handle_generate(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token_filtered(
+                        .get_token_scoped(
                             &config.request_type,
                             true,
                             Some(&affinity_key),
                             &config.final_model,
                             &attempted_accounts,
+                            allowed_accounts.as_ref(),
                         )
                         .await;
                 }
@@ -1373,17 +1384,21 @@ pub async fn handle_list_models(
 pub async fn handle_get_model(
     State(state): State<AppState>,
     Path(model_name): Path<String>,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
 ) -> impl IntoResponse {
     use crate::proxy::common::model_mapping::{
         find_dynamic_model, get_all_dynamic_models_metadata,
     };
 
     // [MODEL GATE] GET /v1beta/models/:model 探测端点同样接入门禁（含已下线模型族 404）
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(model_name.as_str()),
         "gemini",
         None,
+        user_identity.as_ref().and_then(|id| id.allowed_accounts()),
     )
     .await
     {
@@ -1469,12 +1484,18 @@ pub async fn handle_count_tokens(
     >,
     Json(body): Json<Value>,
 ) -> Response {
+    let allowed_accounts = user_identity
+        .as_ref()
+        .and_then(|id| id.allowed_accounts())
+        .cloned();
+
     // [MODEL GATE] POST /v1beta/models/:model/countTokens 探测端点同样接入门禁
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate(
+    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(model_name.as_str()),
         "gemini",
         None,
+        allowed_accounts.as_ref(),
     )
     .await
     {
@@ -1485,6 +1506,7 @@ pub async fn handle_count_tokens(
         state,
         headers,
         user_identity.map(|identity| identity.token_id.clone()),
+        allowed_accounts,
         model_name,
         body,
     )
@@ -1499,6 +1521,7 @@ pub async fn execute_count_tokens(
     state: AppState,
     headers: HeaderMap,
     tenant_id: Option<String>,
+    allowed_accounts: Option<std::collections::HashSet<String>>,
     model_name: String,
     mut body: Value,
 ) -> Response {
@@ -1547,11 +1570,13 @@ pub async fn execute_count_tokens(
 
     let (access_token, _project_id, email, account_id, _wait_ms) = match state
         .token_manager
-        .get_token(
+        .get_token_scoped(
             &config.request_type,
             false,
             Some(&session_scope.affinity_key),
             &config.final_model,
+            &std::collections::HashSet::new(),
+            allowed_accounts.as_ref(),
         )
         .await
     {

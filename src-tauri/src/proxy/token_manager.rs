@@ -4097,6 +4097,26 @@ impl TokenManager {
         scheduler: &Arc<ImageScheduler>,
         request_timeout: u64,
     ) -> Result<(String, String, String, String, u64, ImagePermit), (StatusCode, String)> {
+        self.get_image_token_scoped(
+            force_rotate,
+            session_id,
+            target_model,
+            scheduler,
+            request_timeout,
+            None,
+        )
+        .await
+    }
+
+    pub async fn get_image_token_scoped(
+        &self,
+        force_rotate: bool,
+        session_id: Option<&str>,
+        target_model: &str,
+        scheduler: &Arc<ImageScheduler>,
+        request_timeout: u64,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> Result<(String, String, String, String, u64, ImagePermit), (StatusCode, String)> {
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(request_timeout);
         let mut scheduler_changes = scheduler.subscribe_changes();
@@ -4108,12 +4128,13 @@ impl TokenManager {
             loop {
                 let selection = wait_for_image_token_selection(
                     deadline,
-                    self.get_token_filtered(
+                    self.get_token_scoped(
                         "image_gen",
                         force_rotate,
                         session_id,
                         target_model,
                         &busy_accounts,
+                        allowed_accounts,
                     ),
                 )
                 .await;
@@ -4138,6 +4159,9 @@ impl TokenManager {
                         busy_accounts.insert(account_id);
                     }
                     Some(Err(selection_error)) => {
+                        if selection_error.contains("allowed account list") {
+                            return Err((StatusCode::SERVICE_UNAVAILABLE, selection_error));
+                        }
                         // [FIX #3329, #3409] 图像队列降级与瞬态限流救援：
                         // 如果选号错误是临时的全账号限流冷却（如 "All accounts limited. Wait 2s."），
                         // 且距离请求截止时间 (deadline) 仍有充裕预算，则等待冷却时长后自动重选，
@@ -4202,6 +4226,26 @@ impl TokenManager {
         target_model: &str,
         excluded_accounts: &HashSet<String>,
     ) -> Result<(String, String, String, String, u64), String> {
+        self.get_token_scoped(
+            quota_group,
+            force_rotate,
+            session_id,
+            target_model,
+            excluded_accounts,
+            None,
+        )
+        .await
+    }
+
+    pub async fn get_token_scoped(
+        &self,
+        quota_group: &str,
+        force_rotate: bool,
+        session_id: Option<&str>,
+        target_model: &str,
+        excluded_accounts: &HashSet<String>,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> Result<(String, String, String, String, u64), String> {
         // [FIX] 检查并处理待重新加载的账号（配额保护同步）
         let pending_reload = crate::proxy::server::take_pending_reload_accounts();
         for account_id in pending_reload {
@@ -4235,6 +4279,7 @@ impl TokenManager {
                 session_id,
                 target_model,
                 excluded_accounts,
+                allowed_accounts,
             ),
         )
         .await
@@ -4331,6 +4376,7 @@ impl TokenManager {
         session_id: Option<&str>,
         target_model: &str,
         excluded_accounts: &HashSet<String>,
+        allowed_accounts: Option<&HashSet<String>>,
     ) -> Result<(String, String, String, String, u64), String> {
         let now_ts = chrono::Utc::now().timestamp();
         let mut tokens_snapshot: Vec<ProxyToken> = self
@@ -4348,8 +4394,16 @@ impl TokenManager {
             })
             .collect();
         tokens_snapshot.retain(|token| !excluded_accounts.contains(&token.account_id));
+        if let Some(allowed) = allowed_accounts {
+            tokens_snapshot.retain(|token| allowed.contains(&token.account_id));
+        }
         let mut total = tokens_snapshot.len();
         if total == 0 {
+            if allowed_accounts.is_some() {
+                return Err(
+                    "No available accounts in user token's allowed account list".to_string()
+                );
+            }
             return Err(self.empty_pool_error());
         }
 
@@ -4687,6 +4741,12 @@ impl TokenManager {
                             }
 
                             if total == 0 {
+                                if allowed_accounts.is_some() {
+                                    return Err(
+                                        "No available accounts in user token's allowed account list"
+                                            .to_string(),
+                                    );
+                                }
                                 return Err(self.empty_pool_error());
                             }
                         }
@@ -4699,6 +4759,12 @@ impl TokenManager {
                             tokens_snapshot.retain(|t| t.account_id != preferred_token.account_id);
                             total = tokens_snapshot.len();
                             if total == 0 {
+                                if allowed_accounts.is_some() {
+                                    return Err(
+                                        "No available accounts in user token's allowed account list"
+                                            .to_string(),
+                                    );
+                                }
                                 return Err(self.empty_pool_error());
                             }
                         }
@@ -5886,7 +5952,15 @@ impl TokenManager {
     /// 用于入站模型的配额闸门：返回 0 且池中确实存在支持该模型的活跃账号时，
     /// 应当由网关直接 502 拒答；若当前活跃池中没有任何支持该模型的账号，则由门禁返回 503。
     pub fn accounts_with_positive_quota(&self, model: &str) -> usize {
-        self.count_matching_accounts(model, true)
+        self.accounts_with_positive_quota_scoped(model, None)
+    }
+
+    pub fn accounts_with_positive_quota_scoped(
+        &self,
+        model: &str,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> usize {
+        self.count_matching_accounts(model, true, allowed_accounts)
     }
 
     /// 检查当前活跃代理池（`self.tokens`）中是否存在至少一个“具备该模型资格（含 0% 配额）”的可用账号。
@@ -5896,11 +5970,43 @@ impl TokenManager {
     /// - 503 `no available accounts`（活跃池中没有支持/未禁用此模型的账号）
     /// - 502 `no quota accounts`（活跃池里有支持此模型的账号，但全部剩余配额归零）
     pub fn has_any_capable_account_in_pool(&self, model: &str) -> bool {
-        self.count_matching_accounts(model, false) > 0
+        self.has_any_capable_account_in_pool_scoped(model, None)
+    }
+
+    pub fn has_any_capable_account_in_pool_scoped(
+        &self,
+        model: &str,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> bool {
+        self.count_matching_accounts(model, false, allowed_accounts) > 0
+    }
+
+    /// 检查作用域内是否存在至少一个非验证锁定的活跃账号（用于模型门禁 fail-closed 校验）。
+    pub fn has_any_active_account_in_scope(
+        &self,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> bool {
+        let now_ts = chrono::Utc::now().timestamp();
+        self.tokens.iter().any(|entry| {
+            let token = entry.value();
+            if token.validation_blocked
+                && (token.validation_blocked_until == 0 || token.validation_blocked_until > now_ts)
+            {
+                return false;
+            }
+            allowed_accounts
+                .map(|allowed| allowed.contains(&token.account_id))
+                .unwrap_or(true)
+        })
     }
 
     /// 共享账号能力/正配额判定 helper：避免双套族判规则漂移。
-    fn count_matching_accounts(&self, model: &str, require_positive_quota: bool) -> usize {
+    fn count_matching_accounts(
+        &self,
+        model: &str,
+        require_positive_quota: bool,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> usize {
         let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
             .unwrap_or_else(|| model.to_string());
         // 生图基底：若账号只上报了尺寸变体（-4k / -2k / -preview …），同族变体配额即代表基底可用
@@ -5922,6 +6028,11 @@ impl TokenManager {
             .iter()
             .filter(|entry| {
                 let token = entry.value();
+                if let Some(allowed) = allowed_accounts {
+                    if !allowed.contains(&token.account_id) {
+                        return false;
+                    }
+                }
                 // 模型级 403 冻结：该模型不计入可用账号/可用配额
                 if token.is_model_forbidden(model) {
                     return false;
@@ -15107,6 +15218,264 @@ mod tests {
             .available_models
             .contains("gemini-pro-orchestrator-g1-pro"));
         assert!(!pro_tok.available_models.contains("gemini-flash-worker-agy"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    fn make_scoped_test_token(
+        account_id: &str,
+        email: &str,
+        account_path: PathBuf,
+        model: &str,
+        quota: i32,
+    ) -> ProxyToken {
+        let mut model_quotas = HashMap::new();
+        model_quotas.insert(model.to_string(), quota);
+        let mut available_models = HashSet::new();
+        available_models.insert(model.to_string());
+        ProxyToken {
+            account_id: account_id.to_string(),
+            priority: 0,
+            model_priorities: HashMap::new(),
+            access_token: format!("ya29.{}", account_id),
+            refresh_token: format!("1//{}", account_id),
+            expires_in: 3600,
+            timestamp: chrono::Utc::now().timestamp() + 3600,
+            email: email.to_string(),
+            account_path,
+            project_id: Some(format!("proj-{}", account_id)),
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(quota),
+            protected_models: HashSet::new(),
+            forbidden_models: HashSet::new(),
+            reset_time: None,
+            weekly_reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas,
+            model_limits: HashMap::new(),
+            available_models,
+            model_metadata: HashMap::new(),
+            model_reset_times: HashMap::new(),
+            model_weekly_reset_times: HashMap::new(),
+            model_quota_windows: HashMap::new(),
+            is_gcp_tos: false,
+            raw_tier: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_issue_4058_get_token_scoped_allowlist_and_fail_closed() {
+        let tmp_root =
+            std::env::temp_dir().join(format!("tm_scoped_4058_{}", uuid::Uuid::new_v4()));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc_a_path = accounts_dir.join("acc-a.json");
+        let acc_b_path = accounts_dir.join("acc-b.json");
+        std::fs::write(
+            &acc_a_path,
+            r#"{"id":"acc-a","disabled":false,"proxy_disabled":false}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &acc_b_path,
+            r#"{"id":"acc-b","disabled":false,"proxy_disabled":false}"#,
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        let model = "gemini-3.8-flash-high";
+        manager.tokens.insert(
+            "acc-a".to_string(),
+            make_scoped_test_token("acc-a", "a@test.com", acc_a_path, model, 100),
+        );
+        manager.tokens.insert(
+            "acc-b".to_string(),
+            make_scoped_test_token("acc-b", "b@test.com", acc_b_path, model, 100),
+        );
+
+        let excluded = HashSet::new();
+        let allow_b: HashSet<String> = ["acc-b".to_string()].into_iter().collect();
+        let (_, _, _, picked, _) = manager
+            .get_token_scoped("gemini", false, None, model, &excluded, Some(&allow_b))
+            .await
+            .expect("should pick acc-b when allowlist restricts to acc-b");
+        assert_eq!(picked, "acc-b");
+
+        // Empty allowlist must fail closed
+        let empty_allow: HashSet<String> = HashSet::new();
+        let err = manager
+            .get_token_scoped("gemini", false, None, model, &excluded, Some(&empty_allow))
+            .await
+            .unwrap_err();
+        assert!(err.contains("allowed account list"));
+
+        // Missing/disabled account in allowlist must fail closed
+        let missing_allow: HashSet<String> = ["acc-missing".to_string()].into_iter().collect();
+        let err = manager
+            .get_token_scoped(
+                "gemini",
+                false,
+                None,
+                model,
+                &excluded,
+                Some(&missing_allow),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.contains("allowed account list"));
+
+        // Rate-limited allowed account must NOT fall back outside allowlist
+        manager.rate_limit_tracker.parse_from_error(
+            "acc-b",
+            429,
+            "quota exhausted",
+            None,
+            Some(model),
+            &[],
+        );
+        let err = manager
+            .get_token_scoped("gemini", false, None, model, &excluded, Some(&allow_b))
+            .await
+            .unwrap_err();
+        assert!(!err.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_issue_4058_get_token_scoped_preferred_and_sticky_session() {
+        let tmp_root =
+            std::env::temp_dir().join(format!("tm_scoped_pref_4058_{}", uuid::Uuid::new_v4()));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc_a_path = accounts_dir.join("acc-a.json");
+        let acc_b_path = accounts_dir.join("acc-b.json");
+        std::fs::write(
+            &acc_a_path,
+            r#"{"id":"acc-a","disabled":false,"proxy_disabled":false}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &acc_b_path,
+            r#"{"id":"acc-b","disabled":false,"proxy_disabled":false}"#,
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        let model = "gemini-3.8-flash-high";
+        manager.tokens.insert(
+            "acc-a".to_string(),
+            make_scoped_test_token("acc-a", "a@test.com", acc_a_path, model, 100),
+        );
+        manager.tokens.insert(
+            "acc-b".to_string(),
+            make_scoped_test_token("acc-b", "b@test.com", acc_b_path, model, 100),
+        );
+
+        // Set global preferred_account_id to acc-a
+        *manager.preferred_account_id.write().await = Some("acc-a".to_string());
+
+        let excluded = HashSet::new();
+        let allow_b: HashSet<String> = ["acc-b".to_string()].into_iter().collect();
+
+        // Preferred outside allowlist: must pick acc-b and NOT clear global preferred_account_id
+        let (_, _, _, picked, _) = manager
+            .get_token_scoped("gemini", false, None, model, &excluded, Some(&allow_b))
+            .await
+            .expect("should pick acc-b when preferred acc-a is outside allowlist");
+        assert_eq!(picked, "acc-b");
+        assert_eq!(
+            manager.preferred_account_id.read().await.as_deref(),
+            Some("acc-a")
+        );
+
+        // Preferred inside allowlist: normal preferred-account precedence applies
+        let allow_both: HashSet<String> = ["acc-a".to_string(), "acc-b".to_string()]
+            .into_iter()
+            .collect();
+        let (_, _, _, picked, _) = manager
+            .get_token_scoped("gemini", false, None, model, &excluded, Some(&allow_both))
+            .await
+            .expect("should pick preferred acc-a when inside allowlist");
+        assert_eq!(picked, "acc-a");
+
+        // Clear preferred, test sticky session rebinding when bound account is removed from allowlist
+        *manager.preferred_account_id.write().await = None;
+        manager
+            .session_accounts
+            .insert("sid-4058".to_string(), "acc-a".to_string());
+        let (_, _, _, picked, _) = manager
+            .get_token_scoped(
+                "gemini",
+                false,
+                Some("sid-4058"),
+                model,
+                &excluded,
+                Some(&allow_b),
+            )
+            .await
+            .expect("should unbind acc-a and rebind to acc-b");
+        assert_eq!(picked, "acc-b");
+        assert_eq!(
+            manager.session_accounts.get("sid-4058").map(|v| v.clone()),
+            Some("acc-b".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[test]
+    fn test_issue_4058_scoped_quota_and_active_helpers() {
+        let tmp_root =
+            std::env::temp_dir().join(format!("tm_scoped_helpers_4058_{}", uuid::Uuid::new_v4()));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        let model = "gemini-3.8-flash-high";
+        manager.tokens.insert(
+            "acc-a".to_string(),
+            make_scoped_test_token(
+                "acc-a",
+                "a@test.com",
+                accounts_dir.join("acc-a.json"),
+                model,
+                100,
+            ),
+        );
+        manager.tokens.insert(
+            "acc-b".to_string(),
+            make_scoped_test_token(
+                "acc-b",
+                "b@test.com",
+                accounts_dir.join("acc-b.json"),
+                model,
+                0,
+            ),
+        );
+
+        let allow_a: HashSet<String> = ["acc-a".to_string()].into_iter().collect();
+        let allow_b: HashSet<String> = ["acc-b".to_string()].into_iter().collect();
+        let allow_none: HashSet<String> = ["acc-missing".to_string()].into_iter().collect();
+
+        assert!(manager.has_any_active_account_in_scope(Some(&allow_a)));
+        assert!(manager.has_any_active_account_in_scope(Some(&allow_b)));
+        assert!(!manager.has_any_active_account_in_scope(Some(&allow_none)));
+
+        assert_eq!(
+            manager.accounts_with_positive_quota_scoped(model, Some(&allow_a)),
+            1
+        );
+        assert_eq!(
+            manager.accounts_with_positive_quota_scoped(model, Some(&allow_b)),
+            0
+        );
+        assert!(manager.has_any_capable_account_in_pool_scoped(model, Some(&allow_b)));
+        assert!(!manager.has_any_capable_account_in_pool_scoped(model, Some(&allow_none)));
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }

@@ -363,6 +363,16 @@ pub async fn gate_inbound_model(
     custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
     token_manager: &TokenManager,
 ) -> ModelGate {
+    gate_inbound_model_scoped(requested_model, custom_mapping, token_manager, None).await
+}
+
+/// 带可选账号作用域的入站模型闸门主入口。
+pub async fn gate_inbound_model_scoped(
+    requested_model: Option<&str>,
+    custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
+    token_manager: &TokenManager,
+    allowed_accounts: Option<&HashSet<String>>,
+) -> ModelGate {
     let requested = requested_model.map(str::trim).unwrap_or("");
     if requested.is_empty() {
         return ModelGate::NotFound;
@@ -383,6 +393,17 @@ pub async fn gate_inbound_model(
     if is_retired_model_id(&final_model) {
         tracing::warn!("[ModelGate] Rejected retired model family: {}", final_model);
         return ModelGate::NotFound;
+    }
+
+    // Fail-closed: when a token restricts allowed_accounts, never fail-open if
+    // no active account in the allowed scope exists in the pool.
+    if let Some(allowed_set) = allowed_accounts {
+        if !token_manager.has_any_active_account_in_scope(Some(allowed_set)) {
+            token_manager.refresh_pool_for_gate_if_stale().await;
+            if !token_manager.has_any_active_account_in_scope(Some(allowed_set)) {
+                return ModelGate::NoAvailableAccounts;
+            }
+        }
     }
 
     let only_raw_quota_models = crate::modules::config::load_app_config()
@@ -512,9 +533,10 @@ pub async fn gate_inbound_model(
     } else {
         final_model.clone()
     };
-    let accounts_quota = token_manager.accounts_with_positive_quota(&quota_model);
+    let accounts_quota =
+        token_manager.accounts_with_positive_quota_scoped(&quota_model, allowed_accounts);
     let accounts_final = if quota_model != final_model {
-        token_manager.accounts_with_positive_quota(&final_model)
+        token_manager.accounts_with_positive_quota_scoped(&final_model, allowed_accounts)
     } else {
         accounts_quota
     };
@@ -525,16 +547,19 @@ pub async fn gate_inbound_model(
         // 因此在下“整池无配额”结论前，强制刷新一次账号池并复查。
         token_manager.refresh_pool_for_gate_if_stale().await;
 
-        let retry_quota = token_manager.accounts_with_positive_quota(&quota_model);
+        let retry_quota =
+            token_manager.accounts_with_positive_quota_scoped(&quota_model, allowed_accounts);
         let retry_final = if quota_model != final_model {
-            token_manager.accounts_with_positive_quota(&final_model)
+            token_manager.accounts_with_positive_quota_scoped(&final_model, allowed_accounts)
         } else {
             retry_quota
         };
         if retry_quota == 0 && retry_final == 0 {
-            let has_capable = token_manager.has_any_capable_account_in_pool(&quota_model)
+            let has_capable = token_manager
+                .has_any_capable_account_in_pool_scoped(&quota_model, allowed_accounts)
                 || (quota_model != final_model
-                    && token_manager.has_any_capable_account_in_pool(&final_model));
+                    && token_manager
+                        .has_any_capable_account_in_pool_scoped(&final_model, allowed_accounts));
             return if has_capable {
                 ModelGate::NoQuota
             } else {
@@ -557,6 +582,16 @@ pub async fn gate_inbound_model_exists(
     custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
     token_manager: &TokenManager,
 ) -> ModelGate {
+    gate_inbound_model_exists_scoped(requested_model, custom_mapping, token_manager, None).await
+}
+
+/// 带可选账号作用域的「只查存在性」入站模型闸门。
+pub async fn gate_inbound_model_exists_scoped(
+    requested_model: Option<&str>,
+    custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
+    token_manager: &TokenManager,
+    allowed_accounts: Option<&HashSet<String>>,
+) -> ModelGate {
     let requested = requested_model.map(str::trim).unwrap_or("");
     if requested.is_empty() {
         return ModelGate::NotFound;
@@ -574,6 +609,17 @@ pub async fn gate_inbound_model_exists(
     if is_retired_model_id(&final_model) {
         tracing::warn!("[ModelGate] Rejected retired model family: {}", final_model);
         return ModelGate::NotFound;
+    }
+
+    // Fail-closed: when a token restricts allowed_accounts, never fail-open if
+    // no active account in the allowed scope exists in the pool.
+    if let Some(allowed_set) = allowed_accounts {
+        if !token_manager.has_any_active_account_in_scope(Some(allowed_set)) {
+            token_manager.refresh_pool_for_gate_if_stale().await;
+            if !token_manager.has_any_active_account_in_scope(Some(allowed_set)) {
+                return ModelGate::NoAvailableAccounts;
+            }
+        }
     }
 
     // 冷启动（号池与磁盘均尚未同步模型目录）：只做已下线检查，避免误杀；
@@ -1210,5 +1256,152 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_issue_4058_gate_inbound_model_scoped_isolation_and_fail_closed() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let accounts_dir = data_dir.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let tm = TokenManager::new(data_dir.clone());
+        let custom_mapping = tokio::sync::RwLock::new(HashMap::new());
+        let missing_scope: HashSet<String> = ["acc-missing".to_string()].into_iter().collect();
+
+        // Cold start / empty pool must STILL fail closed when allowed_accounts is Some
+        assert_eq!(
+            gate_inbound_model_scoped(
+                Some("gemini-3.8-flash-high"),
+                &custom_mapping,
+                &tm,
+                Some(&missing_scope),
+            )
+            .await,
+            ModelGate::NoAvailableAccounts
+        );
+        assert_eq!(
+            gate_inbound_model_exists_scoped(
+                Some("gemini-3.1-flash-image"),
+                &custom_mapping,
+                &tm,
+                Some(&missing_scope),
+            )
+            .await,
+            ModelGate::NoAvailableAccounts
+        );
+
+        let now = chrono::Utc::now().timestamp();
+        let future_reset = chrono::DateTime::from_timestamp(now + 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+        let acc_pos = serde_json::json!({
+            "id": "acc-pos",
+            "email": "pos@example.com",
+            "proxy_disabled": false,
+            "token": {
+                "access_token": "ya29.pos",
+                "refresh_token": "1//pos",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "last_updated": now,
+                "models": [
+                    { "name": "gemini-3.8-flash-high", "percentage": 80, "reset_time": future_reset }
+                ]
+            }
+        });
+        let acc_zero = serde_json::json!({
+            "id": "acc-zero",
+            "email": "zero@example.com",
+            "proxy_disabled": false,
+            "token": {
+                "access_token": "ya29.zero",
+                "refresh_token": "1//zero",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "last_updated": now,
+                "models": [
+                    { "name": "gemini-3.8-flash-high", "percentage": 0, "reset_time": future_reset }
+                ],
+                "quota_groups": [
+                    {
+                        "display_name": "Gemini Models",
+                        "buckets": [{ "bucket_id": "gemini-5h", "window": "5h", "remaining_fraction": 0.0, "reset_time": future_reset }]
+                    }
+                ]
+            }
+        });
+        std::fs::write(
+            accounts_dir.join("acc-pos.json"),
+            serde_json::to_string(&acc_pos).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            accounts_dir.join("acc-zero.json"),
+            serde_json::to_string(&acc_zero).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            data_dir.join("accounts.json"),
+            serde_json::json!({
+                "accounts": [
+                    { "id": "acc-pos", "email": "pos@example.com", "disabled": false, "proxy_disabled": false },
+                    { "id": "acc-zero", "email": "zero@example.com", "disabled": false, "proxy_disabled": false }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        tm.load_accounts().await.unwrap();
+
+        let pos_scope: HashSet<String> = ["acc-pos".to_string()].into_iter().collect();
+        let zero_scope: HashSet<String> = ["acc-zero".to_string()].into_iter().collect();
+
+        assert!(matches!(
+            gate_inbound_model_scoped(
+                Some("gemini-3.8-flash-high"),
+                &custom_mapping,
+                &tm,
+                Some(&pos_scope),
+            )
+            .await,
+            ModelGate::Allow(_)
+        ));
+        // Scoped to zero-quota account -> 502 NoQuota (never borrows acc-pos quota)
+        assert_eq!(
+            gate_inbound_model_scoped(
+                Some("gemini-3.8-flash-high"),
+                &custom_mapping,
+                &tm,
+                Some(&zero_scope),
+            )
+            .await,
+            ModelGate::NoQuota
+        );
+        // Scoped to missing account -> 503 NoAvailableAccounts
+        assert_eq!(
+            gate_inbound_model_scoped(
+                Some("gemini-3.8-flash-high"),
+                &custom_mapping,
+                &tm,
+                Some(&missing_scope),
+            )
+            .await,
+            ModelGate::NoAvailableAccounts
+        );
+        assert_eq!(
+            gate_inbound_model_exists_scoped(
+                Some("gemini-3.8-flash-high"),
+                &custom_mapping,
+                &tm,
+                Some(&missing_scope),
+            )
+            .await,
+            ModelGate::NoAvailableAccounts
+        );
     }
 }
