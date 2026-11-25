@@ -1390,7 +1390,12 @@
             "first_byte_effective": "Em vigor agora: texto/código {{text}}s　imagem {{image}}s　vídeo {{video}}s　auxiliar {{aux}}s",
             "section_stream": "③ Primeiro token e saída contínua",
             "stream_desc": "A espera de cabeçalhos e o primeiro token foram unificados em uma única latência do primeiro byte: a troca de endpoint é permitida antes de HTTP 200 e, depois disso, apenas finalização segura.",
-            "auto_summary": "Ex.: espera máxima = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} s;"
+            "auto_summary": "Ex.: espera máxima = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} s;",
+            "http2_keepalive_label": "Keep-Alive HTTP/2 (PING)",
+            "http2_keepalive_desc": "Envia sondas PING a cada 15s sem encerrar fluxos ativos na falta de ACK, evitando quedas do proxy em raciocínio longo.",
+            "http2_keepalive_hint": "Recarrega na hora ao salvar; defina ABV_HTTP2_KEEPALIVE=0 para forçar desativação.",
+            "http2_keepalive_on": "Ativado (Seguro)",
+            "http2_keepalive_off": "Desativado"
         },
         "cloudflared": {
             "title": "Túnel Cloudflare (Cloudflared)",

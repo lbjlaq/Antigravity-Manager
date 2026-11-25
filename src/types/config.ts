@@ -49,6 +49,7 @@ export interface UploadTimeoutConfig {
     header_wait_secs?: number;
     large_body_threshold_mb?: number;
     large_body_endpoint_attempts?: number;
+    http2_keepalive_enabled?: boolean;
 }
 
 export interface StreamTimeoutConfig {

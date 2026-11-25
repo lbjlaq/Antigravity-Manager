@@ -1424,7 +1424,12 @@
             "first_byte_effective": "Đang áp dụng: văn bản/mã {{text}}s　hình ảnh {{image}}s　video {{video}}s　phụ trợ {{aux}}s",
             "section_stream": "③ Token đầu và xuất liên tục",
             "stream_desc": "Chờ header và token đầu tiên đã được gộp thành một độ trễ byte đầu duy nhất: được phép chuyển endpoint trước HTTP 200, sau đó chỉ kết thúc an toàn.",
-            "auto_summary": "Ví dụ: chờ tối đa = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} giây;"
+            "auto_summary": "Ví dụ: chờ tối đa = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} giây;",
+            "http2_keepalive_label": "Giữ kết nối HTTP/2 (PING)",
+            "http2_keepalive_desc": "Gửi thăm dò PING mỗi 15s mà không tự ngắt luồng đang chạy khi thiếu ACK, tránh proxy ngắt kết nối khi suy luận dài.",
+            "http2_keepalive_hint": "Áp dụng ngay khi lưu; đặt ABV_HTTP2_KEEPALIVE=0 để tắt bắt buộc.",
+            "http2_keepalive_on": "Đang bật (An toàn)",
+            "http2_keepalive_off": "Đã tắt"
         },
         "example": {
             "title": "Ví dụ Sử dụng",
