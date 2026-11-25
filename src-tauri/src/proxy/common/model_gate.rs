@@ -1330,7 +1330,7 @@ mod tests {
                 "quota_groups": [
                     {
                         "display_name": "Gemini Models",
-                        "buckets": [{ "bucket_id": "gemini-5h", "window": "5h", "remaining_fraction": 0.0, "reset_time": future_reset }]
+                        "buckets": [{ "bucket_id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.0, "reset_time": future_reset }]
                     }
                 ]
             }

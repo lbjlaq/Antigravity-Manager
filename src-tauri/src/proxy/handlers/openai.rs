@@ -6478,6 +6478,7 @@ pub async fn handle_images_generations_internal(
         let attempted_account = attempted_account.clone();
         let image_scheduler = image_scheduler.clone();
         let affinity_key = affinity_key.clone();
+        let allowed_accounts = allowed_accounts.clone();
 
         tasks.spawn(async move {
             let mut image_permit = None;
@@ -7113,6 +7114,7 @@ pub async fn handle_images_edits(
         let model_to_use = clean_model_name.clone();
         let image_scheduler = image_scheduler.clone();
         let affinity_key = affinity_key.clone();
+        let allowed_accounts = allowed_accounts.clone();
 
         tasks.spawn(async move {
             let mut image_permit = None;
@@ -7569,11 +7571,21 @@ pub async fn handle_responses_websocket(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     State(state): State<AppState>,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_websocket_session(socket, headers, state))
+    ws.on_upgrade(move |socket| handle_websocket_session(socket, headers, state, user_identity))
 }
 
-async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, state: AppState) {
+async fn handle_websocket_session(
+    mut socket: WebSocket,
+    headers: HeaderMap,
+    state: AppState,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
+) {
     tracing::info!("Codex responses websocket: client connected");
     let mut session_state = WebsocketSessionState {
         last_request: None,
@@ -7680,7 +7692,7 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
             State(state.clone()),
             headers.clone(),
             None,
-            None,
+            user_identity.clone(),
             Json(openai_body),
         )
         .await;

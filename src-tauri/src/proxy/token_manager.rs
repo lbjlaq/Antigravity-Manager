@@ -15328,14 +15328,15 @@ mod tests {
         assert!(err.contains("allowed account list"));
 
         // Rate-limited allowed account must NOT fall back outside allowlist
-        manager.rate_limit_tracker.parse_from_error(
-            "acc-b",
-            429,
-            "quota exhausted",
-            None,
-            Some(model),
-            &[],
-        );
+        manager
+            .mark_rate_limited_fast(
+                "b@test.com",
+                429,
+                None,
+                r#"{"error":{"details":[{"reason":"QUOTA_EXHAUSTED","metadata":{"quotaResetDelay":"2h"}}]}}"#,
+                Some(model),
+            )
+            .await;
         let err = manager
             .get_token_scoped("gemini", false, None, model, &excluded, Some(&allow_b))
             .await
@@ -15456,6 +15457,14 @@ mod tests {
                 model,
                 0,
             ),
+        );
+        manager.rate_limit_tracker.parse_from_error(
+            "acc-b",
+            429,
+            Some("60"),
+            "quota exhausted",
+            Some(model.to_string()),
+            &[],
         );
 
         let allow_a: HashSet<String> = ["acc-a".to_string()].into_iter().collect();
