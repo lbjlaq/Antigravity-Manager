@@ -141,6 +141,49 @@ pub fn create_auto_heal_continuation_body(
     new_body
 }
 
+fn rewrite_empty_heal_request_id(val: &mut Value, attempt: usize) {
+    if let Some(s) = val.as_str() {
+        let base = s
+            .rsplit_once("_empty_heal")
+            .filter(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+            .map(|(prefix, _)| prefix)
+            .unwrap_or(s);
+        *val = json!(format!("{}_empty_heal{}", base, attempt));
+    }
+}
+
+/// 构造用于「早退空流 / signature-only EOF」自愈的重试请求 Body (Fixes #4055)
+///
+/// 在原请求体基础上更新 `requestId` 防止上游去重，并调用 `try_degrade_thinking_step`
+/// 执行渐进式思考降级（如 `HIGH -> MEDIUM -> LOW`），返回 `(new_body, degraded)`。
+pub fn build_premature_empty_retry_body(prev_body: &Value, attempt: usize) -> (Value, bool) {
+    let mut retry_body = prev_body.clone();
+    if let Some(req_id) = retry_body.get_mut("requestId") {
+        rewrite_empty_heal_request_id(req_id, attempt);
+    }
+    if let Some(req) = retry_body
+        .get_mut("request")
+        .and_then(|r| r.as_object_mut())
+    {
+        if let Some(req_id) = req.get_mut("requestId") {
+            rewrite_empty_heal_request_id(req_id, attempt);
+        }
+    }
+    let degraded = InboundThinkingPipeline::try_degrade_thinking_step(&mut retry_body, true);
+    (retry_body, degraded)
+}
+
+fn extract_model_for_log(body: &Value) -> &str {
+    body.get("model")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            body.get("request")
+                .and_then(|r| r.get("model"))
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or("unknown")
+}
+
 /// 统一的「原地自愈」请求状态（每个请求一份）
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AutoHealFlags {
@@ -430,13 +473,119 @@ pub fn make_clean_empty_thought_stop_chunks(last_usage: Option<&Value>) -> (Byte
     (Bytes::from(stop_chunk), Bytes::from("data: [DONE]\n\n"))
 }
 
-/// 统一纯思考空回复自愈流式包装器（Pipeline First）
+const MAX_PENDING_EMPTY_FRAMES: usize = 8;
+const MAX_PREMATURE_EMPTY_RETRIES: usize = 2;
+const MIN_PREMATURE_EMPTY_RETRY_BUDGET_SECS: u64 = 10;
+
+/// 解析并跟踪上游单条 SSE `data: <json>` 负载的思考 / 正文 / 工具 / 终结状态：
+/// - 若尚未产生任何实质内容或终结符（如 Issue #4055 的 `thoughtSignature + text: ""` 空壳帧），
+///   暂存进 `pending_empty_frames` 而不立即透传，防止空转帧触发提前 EOF 时泄漏到下游或污染签名库；
+/// - 一旦后续帧产出任何实质内容或终结符，按序先冲刷全部暂存帧再发出当前帧。
+#[allow(clippy::too_many_arguments)]
+fn inspect_and_buffer_sse_json(
+    json_part: &str,
+    saw_thought: &mut bool,
+    saw_content: &mut bool,
+    saw_tool_call: &mut bool,
+    saw_finish_reason: &mut bool,
+    finish_reason_val: &mut Option<String>,
+    last_usage_val: &mut Option<Value>,
+    pending_empty_frames: &mut Vec<Bytes>,
+) -> Vec<Bytes> {
+    let was_before_real_output =
+        !*saw_thought && !*saw_content && !*saw_tool_call && !*saw_finish_reason;
+
+    let mut json = match serde_json::from_str::<Value>(json_part) {
+        Ok(v) => v,
+        Err(_) => {
+            return vec![Bytes::from(format!("data: {}\n\n", json_part))];
+        }
+    };
+
+    let has_resp = json.get("response").is_some();
+    let inner = if has_resp {
+        json.get_mut("response").unwrap()
+    } else {
+        &mut json
+    };
+    if let Some(usage) = inner.get("usageMetadata").or_else(|| inner.get("usage")) {
+        *last_usage_val = Some(usage.clone());
+    }
+    let mut chunk_has_finish = false;
+    let mut chunk_finish_is_stop = false;
+    let mut chunk_has_parts = false;
+
+    if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
+        for cand in candidates.iter_mut() {
+            inspect_gemini_candidate_parts(cand, saw_thought, saw_content, saw_tool_call);
+            if let Some(parts) = cand
+                .get("content")
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+            {
+                if !parts.is_empty() {
+                    chunk_has_parts = true;
+                }
+            }
+            if let Some(fr) = cand.get("finishReason").and_then(|f| f.as_str()) {
+                chunk_has_finish = true;
+                *saw_finish_reason = true;
+                *finish_reason_val = Some(fr.to_string());
+                if fr == "STOP" {
+                    chunk_finish_is_stop = true;
+                }
+            }
+        }
+    }
+
+    let has_any_signal = *saw_thought || *saw_content || *saw_tool_call || *saw_finish_reason;
+    if !has_any_signal {
+        pending_empty_frames.push(Bytes::from(format!("data: {}\n\n", json_part)));
+        if pending_empty_frames.len() >= MAX_PENDING_EMPTY_FRAMES {
+            return pending_empty_frames.drain(..).collect();
+        }
+        return Vec::new();
+    }
+
+    let mut out = if was_before_real_output && !pending_empty_frames.is_empty() {
+        pending_empty_frames.drain(..).collect()
+    } else {
+        Vec::new()
+    };
+
+    if *saw_content || *saw_tool_call {
+        out.push(Bytes::from(format!("data: {}\n\n", json_part)));
+    } else if *saw_thought && chunk_has_finish && chunk_finish_is_stop {
+        // 思考空回复异常候选帧（仅限 finishReason == "STOP"）：
+        // 若当前帧还包含思考部件，清洗剥离 finishReason 与 usageMetadata 后放行思考，不发射终止信号
+        if chunk_has_parts {
+            if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
+                for cand in candidates.iter_mut() {
+                    if let Some(obj) = cand.as_object_mut() {
+                        obj.remove("finishReason");
+                    }
+                }
+            }
+            if let Some(obj) = inner.as_object_mut() {
+                obj.remove("usageMetadata");
+            }
+            let sanitized = serde_json::to_string(&json).unwrap_or_default();
+            out.push(Bytes::from(format!("data: {}\n\n", sanitized)));
+        }
+    } else {
+        // 普通思考块、中间流帧、以及非 STOP 终止帧（如 MAX_TOKENS、SAFETY 等）：原样透传
+        out.push(Bytes::from(format!("data: {}\n\n", json_part)));
+    }
+
+    out
+}
+
+/// 统一流式自愈包装器（Pipeline First）：
 ///
-/// 对上游原始 Gemini SSE 流进行透明包装：
-/// - 思考内容实时透传；
-/// - 若正常产出正文或工具调用，全流程无任何额外开销；
-/// - 若发现仅产出思考后立即返回终止符，截留终止信号并在同一连接中自动续跑；
-/// - 续跑上限严格为 1 次，具有完备的熔断与兜底保障。
+/// 同时防护两类上游退化流：
+/// 1. **纯思考空回复**（有思考、0 正文、0 工具调用且以 `finishReason: STOP` 收尾）→ 自动续跑 1 次；
+/// 2. **早退空流 / signature-only EOF**（如仅返回 `{"thoughtSignature": ..., "text": ""}`、无 `finishReason` 即断流, Fixes #4055）
+///    → 暂存空壳帧不泄漏，按当前剩余全局预算在同连接内执行最多 2 次渐进思考降级重放（如 `HIGH -> MEDIUM -> LOW`）。
 pub fn wrap_stream_with_empty_thinking_auto_heal<S, E>(
     stream: Pin<Box<S>>,
     ctx: ThinkingAutoHealContext,
@@ -444,6 +593,65 @@ pub fn wrap_stream_with_empty_thinking_auto_heal<S, E>(
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display + Send + 'static,
+{
+    let upstream = ctx.upstream;
+    let method = ctx.method;
+    let access_token = ctx.access_token;
+    let query_string = ctx.query_string;
+    let extra_headers = ctx.extra_headers;
+    let account_id = ctx.account_id;
+    let budget_for_call = ctx.budget.clone();
+
+    wrap_stream_with_auto_heal_inner(
+        stream,
+        ctx.original_body,
+        ctx.trace_id,
+        ctx.budget,
+        move |req_body| {
+            let upstream = upstream.clone();
+            let access_token = access_token.clone();
+            let extra_headers = extra_headers.clone();
+            let account_id = account_id.clone();
+            let budget = budget_for_call.clone();
+            async move {
+                let res = crate::proxy::pipeline::budget::scope_optional(
+                    budget,
+                    upstream.call_v1_internal_with_headers(
+                        method,
+                        &access_token,
+                        req_body,
+                        query_string,
+                        extra_headers,
+                        account_id.as_deref(),
+                    ),
+                )
+                .await;
+                match res {
+                    Ok(call_success) if call_success.response.status().is_success() => {
+                        Ok(Box::pin(call_success.response.bytes_stream()))
+                    }
+                    Ok(call_fail) => Err(format!("HTTP {}", call_fail.response.status())),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+        },
+    )
+}
+
+fn wrap_stream_with_auto_heal_inner<S, E, F, Fut, S2, E2>(
+    stream: Pin<Box<S>>,
+    original_body: Value,
+    trace_id: String,
+    budget: Option<Arc<crate::proxy::pipeline::budget::RequestContext>>,
+    mut retry_call: F,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+    F: FnMut(Value) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Pin<Box<S2>>, String>> + Send + 'static,
+    S2: Stream<Item = Result<Bytes, E2>> + Send + ?Sized + 'static,
+    E2: std::fmt::Debug + Send + 'static,
 {
     let stream = async_stream::stream! {
         let mut buffer = BytesMut::new();
@@ -453,6 +661,7 @@ where
         let mut saw_finish_reason = false;
         let mut finish_reason_val: Option<String> = None;
         let mut last_usage_val: Option<Value> = None;
+        let mut pending_empty_frames: Vec<Bytes> = Vec::new();
 
         let mut stream1 = stream;
         while let Some(item) = stream1.next().await {
@@ -482,79 +691,25 @@ where
                                     && !saw_tool_call
                                     && finish_reason_val.as_deref() == Some("STOP");
                                 if !is_empty_thought_stop_collapse {
+                                    for pending in pending_empty_frames.drain(..) {
+                                        yield Ok(pending);
+                                    }
                                     yield Ok(Bytes::from("data: [DONE]\n\n"));
                                 }
                                 continue;
                             }
 
-                            match serde_json::from_str::<Value>(json_part) {
-                                Ok(mut json) => {
-                                    let has_resp = json.get("response").is_some();
-                                    let inner = if has_resp {
-                                        json.get_mut("response").unwrap()
-                                    } else {
-                                        &mut json
-                                    };
-                                    if let Some(usage) = inner.get("usageMetadata").or_else(|| inner.get("usage")) {
-                                        last_usage_val = Some(usage.clone());
-                                    }
-                                    let mut chunk_has_finish = false;
-                                    let mut chunk_finish_is_stop = false;
-                                    let mut chunk_has_parts = false;
-
-                                    if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
-                                        for cand in candidates.iter_mut() {
-                                            inspect_gemini_candidate_parts(
-                                                cand,
-                                                &mut saw_thought,
-                                                &mut saw_content,
-                                                &mut saw_tool_call,
-                                            );
-                                            if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
-                                                if !parts.is_empty() {
-                                                    chunk_has_parts = true;
-                                                }
-                                            }
-                                            if let Some(fr) = cand.get("finishReason").and_then(|f| f.as_str()) {
-                                                chunk_has_finish = true;
-                                                saw_finish_reason = true;
-                                                finish_reason_val = Some(fr.to_string());
-                                                if fr == "STOP" {
-                                                    chunk_finish_is_stop = true;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if saw_content || saw_tool_call {
-                                        // 正常回复流程：已看到正文或工具调用，原样放行
-                                        yield Ok(Bytes::from(format!("data: {}\n\n", json_part)));
-                                    } else if saw_thought && chunk_has_finish && chunk_finish_is_stop {
-                                        // 思考空回复异常候选帧（仅限 finishReason == "STOP"）：
-                                        // 若当前帧还包含思考部件，清洗剥离 finishReason 与 usageMetadata 后放行思考，不发射终止信号
-                                        if chunk_has_parts {
-                                            if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
-                                                for cand in candidates.iter_mut() {
-                                                    if let Some(obj) = cand.as_object_mut() {
-                                                        obj.remove("finishReason");
-                                                    }
-                                                }
-                                            }
-                                            if let Some(obj) = inner.as_object_mut() {
-                                                obj.remove("usageMetadata");
-                                            }
-                                            let sanitized = serde_json::to_string(&json).unwrap_or_default();
-                                            yield Ok(Bytes::from(format!("data: {}\n\n", sanitized)));
-                                        }
-                                        // 若无有效部件仅有 finishReason: "STOP"，彻底拦截暂存，不往下游发送
-                                    } else {
-                                        // 普通思考块、中间流帧、以及非 STOP 终止帧（如 MAX_TOKENS、SAFETY 等）：原样透传
-                                        yield Ok(Bytes::from(format!("data: {}\n\n", json_part)));
-                                    }
-                                }
-                                Err(_) => {
-                                    yield Ok(Bytes::from(format!("{}\n\n", line)));
-                                }
+                            for chunk in inspect_and_buffer_sse_json(
+                                json_part,
+                                &mut saw_thought,
+                                &mut saw_content,
+                                &mut saw_tool_call,
+                                &mut saw_finish_reason,
+                                &mut finish_reason_val,
+                                &mut last_usage_val,
+                                &mut pending_empty_frames,
+                            ) {
+                                yield Ok(chunk);
                             }
                         } else {
                             // 保持非 data 行（如保活注释）正常下发
@@ -563,23 +718,247 @@ where
                     }
                 }
                 Err(e) => {
+                    for pending in pending_empty_frames.drain(..) {
+                        yield Ok(pending);
+                    }
                     yield Err(e);
                     return;
                 }
             }
         }
 
-        // 冲刷残留缓冲区
+        // 冲刷残留缓冲区（含末尾无换行符的 data 行）
         if !buffer.is_empty() {
             if let Ok(line_str) = std::str::from_utf8(&buffer) {
                 let line = line_str.trim();
                 if !line.is_empty() {
-                    yield Ok(Bytes::from(format!("{}\n\n", line)));
+                    if line.starts_with("data: ") {
+                        let json_part = line.trim_start_matches("data: ").trim();
+                        if json_part == "[DONE]" {
+                            let is_empty_thought_stop_collapse = saw_thought
+                                && !saw_content
+                                && !saw_tool_call
+                                && finish_reason_val.as_deref() == Some("STOP");
+                            if !is_empty_thought_stop_collapse {
+                                for pending in pending_empty_frames.drain(..) {
+                                    yield Ok(pending);
+                                }
+                                yield Ok(Bytes::from("data: [DONE]\n\n"));
+                            }
+                        } else {
+                            for chunk in inspect_and_buffer_sse_json(
+                                json_part,
+                                &mut saw_thought,
+                                &mut saw_content,
+                                &mut saw_tool_call,
+                                &mut saw_finish_reason,
+                                &mut finish_reason_val,
+                                &mut last_usage_val,
+                                &mut pending_empty_frames,
+                            ) {
+                                yield Ok(chunk);
+                            }
+                        }
+                    } else {
+                        yield Ok(Bytes::from(format!("{}\n\n", line)));
+                    }
                 }
             }
         }
 
-        // 核心自愈判断条件：
+        // 1. 早退空流 / signature-only EOF 自愈 (Fixes #4055)
+        // 触发条件：上游在未产出任何思考、正文、工具调用或 finishReason 的情况下直接 EOF
+        let is_premature_empty_eof =
+            !saw_thought && !saw_content && !saw_tool_call && !saw_finish_reason;
+
+        if is_premature_empty_eof {
+            // 丢弃孤立的 signature-only 空壳帧，防止污染下游或缓存
+            pending_empty_frames.clear();
+
+            let has_budget = crate::proxy::pipeline::budget::scope_optional(
+                budget.clone(),
+                async {
+                    crate::proxy::pipeline::budget::remaining_secs()
+                        .map_or(true, |r| r >= MIN_PREMATURE_EMPTY_RETRY_BUDGET_SECS)
+                },
+            )
+            .await;
+
+            if has_budget {
+                let mut current_body = original_body.clone();
+                for attempt in 1..=MAX_PREMATURE_EMPTY_RETRIES {
+                    let (next_body, degraded) =
+                        build_premature_empty_retry_body(&current_body, attempt);
+                    if attempt > 1 && !degraded {
+                        break;
+                    }
+
+                    if attempt > 1 {
+                        let still_has_budget = crate::proxy::pipeline::budget::scope_optional(
+                            budget.clone(),
+                            async {
+                                crate::proxy::pipeline::budget::remaining_secs()
+                                    .map_or(true, |r| r >= MIN_PREMATURE_EMPTY_RETRY_BUDGET_SECS)
+                            },
+                        )
+                        .await;
+                        if !still_has_budget {
+                            break;
+                        }
+                    }
+
+                    tracing::warn!(
+                        "[{}] [Stream-AutoHeal] 🚨 Premature empty/signature-only EOF before content/finishReason. Triggering progressive retry {}/{} (model={}, degraded={})...",
+                        trace_id,
+                        attempt,
+                        MAX_PREMATURE_EMPTY_RETRIES,
+                        extract_model_for_log(&next_body),
+                        degraded
+                    );
+                    yield Ok(Bytes::from(": auto-healing premature empty stream\n\n"));
+
+                    match retry_call(next_body.clone()).await {
+                        Ok(mut retry_stream) => {
+                            let mut r_thought = false;
+                            let mut r_content = false;
+                            let mut r_tool = false;
+                            let mut r_finish = false;
+                            let mut r_finish_val: Option<String> = None;
+                            let mut r_usage: Option<Value> = None;
+                            let mut r_pending: Vec<Bytes> = Vec::new();
+                            let mut r_buffer = BytesMut::new();
+                            let mut r_err = false;
+
+                            while let Some(chunk_res) = retry_stream.next().await {
+                                match chunk_res {
+                                    Ok(bytes) => {
+                                        r_buffer.extend_from_slice(&bytes);
+                                        while let Some(pos) =
+                                            r_buffer.iter().position(|&b| b == b'\n')
+                                        {
+                                            let line_raw = r_buffer.split_to(pos + 1);
+                                            let line_str = match std::str::from_utf8(&line_raw) {
+                                                Ok(s) => s,
+                                                Err(_) => {
+                                                    yield Ok(line_raw.freeze());
+                                                    continue;
+                                                }
+                                            };
+                                            let line = line_str.trim();
+                                            if line.is_empty() {
+                                                continue;
+                                            }
+                                            if line.starts_with("data: ") {
+                                                let json_part =
+                                                    line.trim_start_matches("data: ").trim();
+                                                if json_part == "[DONE]" {
+                                                    if r_thought || r_content || r_tool || r_finish
+                                                    {
+                                                        for p in r_pending.drain(..) {
+                                                            yield Ok(p);
+                                                        }
+                                                        yield Ok(Bytes::from("data: [DONE]\n\n"));
+                                                    }
+                                                    continue;
+                                                }
+                                                for out_chunk in inspect_and_buffer_sse_json(
+                                                    json_part,
+                                                    &mut r_thought,
+                                                    &mut r_content,
+                                                    &mut r_tool,
+                                                    &mut r_finish,
+                                                    &mut r_finish_val,
+                                                    &mut r_usage,
+                                                    &mut r_pending,
+                                                ) {
+                                                    yield Ok(out_chunk);
+                                                }
+                                            } else {
+                                                yield Ok(Bytes::from(format!("{}\n\n", line)));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "[{}] [Stream-AutoHeal] Premature empty retry {}/{} read error: {:?}",
+                                            trace_id,
+                                            attempt,
+                                            MAX_PREMATURE_EMPTY_RETRIES,
+                                            e
+                                        );
+                                        r_err = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if !r_err && !r_buffer.is_empty() {
+                                if let Ok(line_str) = std::str::from_utf8(&r_buffer) {
+                                    let line = line_str.trim();
+                                    if !line.is_empty() {
+                                        if line.starts_with("data: ") {
+                                            let json_part =
+                                                line.trim_start_matches("data: ").trim();
+                                            if json_part == "[DONE]" {
+                                                if r_thought || r_content || r_tool || r_finish {
+                                                    for p in r_pending.drain(..) {
+                                                        yield Ok(p);
+                                                    }
+                                                    yield Ok(Bytes::from("data: [DONE]\n\n"));
+                                                }
+                                            } else {
+                                                for out_chunk in inspect_and_buffer_sse_json(
+                                                    json_part,
+                                                    &mut r_thought,
+                                                    &mut r_content,
+                                                    &mut r_tool,
+                                                    &mut r_finish,
+                                                    &mut r_finish_val,
+                                                    &mut r_usage,
+                                                    &mut r_pending,
+                                                ) {
+                                                    yield Ok(out_chunk);
+                                                }
+                                            }
+                                        } else {
+                                            yield Ok(Bytes::from(format!("{}\n\n", line)));
+                                        }
+                                    }
+                                }
+                            }
+
+                            if r_thought || r_content || r_tool || r_finish {
+                                tracing::info!(
+                                    "[{}] [Stream-AutoHeal] ✓ Premature empty EOF healed on retry {}/{}",
+                                    trace_id,
+                                    attempt,
+                                    MAX_PREMATURE_EMPTY_RETRIES
+                                );
+                                return;
+                            }
+                            if r_err {
+                                break;
+                            }
+                            r_pending.clear();
+                            current_body = next_body;
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                "[{}] [Stream-AutoHeal] Premature empty retry {}/{} failed: {}",
+                                trace_id,
+                                attempt,
+                                MAX_PREMATURE_EMPTY_RETRIES,
+                                err
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // 2. 纯思考空回复续跑自愈判断条件：
         // 1. 存在思考块 (saw_thought)
         // 2. 无任何正文 (saw_content == false)
         // 3. 无任何工具调用 (saw_tool_call == false)
@@ -594,35 +973,21 @@ where
         if is_empty_thought_stop_collapse {
             tracing::warn!(
                 "[{}] [Stream-AutoHeal] 🚨 Detected empty thinking completion (thought present, 0 content, 0 tool_calls, finishReason=STOP). Triggering auto-heal continuation 1/1...",
-                ctx.trace_id
+                trace_id
             );
 
             // 发射 SSE 心跳注释保持客户端下游连接存活
             yield Ok(Bytes::from(": auto-healing empty thinking\n\n"));
 
-            let prompt = resolve_continuation_prompt(&ctx.original_body);
-            let heal_body = create_auto_heal_continuation_body(&ctx.original_body, prompt);
+            let prompt = resolve_continuation_prompt(&original_body);
+            let heal_body = create_auto_heal_continuation_body(&original_body, prompt);
 
-            let call_res = crate::proxy::pipeline::budget::scope_optional(
-                ctx.budget.clone(),
-                ctx.upstream.call_v1_internal_with_headers(
-                    ctx.method,
-                    &ctx.access_token,
-                    heal_body,
-                    ctx.query_string,
-                    ctx.extra_headers.clone(),
-                    ctx.account_id.as_deref(),
-                ),
-            )
-            .await;
-
-            match call_res {
-                Ok(call_success) if call_success.response.status().is_success() => {
+            match retry_call(heal_body).await {
+                Ok(mut stream2) => {
                     tracing::info!(
                         "[{}] [Stream-AutoHeal] ✓ Continuation request succeeded (HTTP 200), piping healed stream directly into client connection...",
-                        ctx.trace_id
+                        trace_id
                     );
-                    let mut stream2 = call_success.response.bytes_stream();
                     let mut stream2_saw_output = false;
                     let mut s2_buffer = BytesMut::new();
 
@@ -664,7 +1029,7 @@ where
                                 yield Ok(bytes);
                             }
                             Err(e) => {
-                                tracing::warn!("[{}] [Stream-AutoHeal] Stream 2 read error: {:?}", ctx.trace_id, e);
+                                tracing::warn!("[{}] [Stream-AutoHeal] Stream 2 read error: {:?}", trace_id, e);
                                 break;
                             }
                         }
@@ -674,7 +1039,7 @@ where
                     if !stream2_saw_output {
                         tracing::warn!(
                             "[{}] [Stream-AutoHeal] Continuation stream also returned 0 output. Emitting clean STOP and [DONE] without fake content.",
-                            ctx.trace_id
+                            trace_id
                         );
                         let (stop_chunk, done_chunk) =
                             make_clean_empty_thought_stop_chunks(last_usage_val.as_ref());
@@ -682,21 +1047,10 @@ where
                         yield Ok(done_chunk);
                     }
                 }
-                Ok(call_fail) => {
-                    let status = call_fail.response.status();
-                    tracing::warn!(
-                        "[{}] [Stream-AutoHeal] Continuation request returned HTTP {}. Emitting clean STOP and [DONE] without fake content.",
-                        ctx.trace_id, status
-                    );
-                    let (stop_chunk, done_chunk) =
-                        make_clean_empty_thought_stop_chunks(last_usage_val.as_ref());
-                    yield Ok(stop_chunk);
-                    yield Ok(done_chunk);
-                }
                 Err(e) => {
                     tracing::warn!(
                         "[{}] [Stream-AutoHeal] Continuation request failed: {}. Emitting clean STOP and [DONE] without fake content.",
-                        ctx.trace_id, e
+                        trace_id, e
                     );
                     let (stop_chunk, done_chunk) =
                         make_clean_empty_thought_stop_chunks(last_usage_val.as_ref());
@@ -1352,5 +1706,279 @@ mod tests {
         assert!(no_schema_body["generationConfig"]
             .get("thinkingConfig")
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn test_issue_4055_signature_only_empty_eof_auto_heals_with_degraded_thinking() {
+        let signature_only_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuIDCt8DAWkUfRNLU1\",\"text\":\"\"}]}}],\"usageMetadata\":{\"promptTokenCount\":124160,\"totalTokenCount\":124160},\"modelVersion\":\"gemini-4-hydrogen\",\"responseId\":\"LFgGa5Py\"}}\n\n";
+        let healed_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Healed answer\"}]},\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n";
+
+        let stream1 = Box::pin(async_stream::stream! {
+            yield Ok::<Bytes, String>(Bytes::from(signature_only_sse));
+        });
+
+        let original_body = json!({
+            "requestId": "req_4055_1",
+            "model": "gemini-4-hydrogen-high",
+            "labels": { "model_enum": "MODEL_PLACEHOLDER_M525" },
+            "request": {
+                "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": true,
+                        "thinkingLevel": "HIGH"
+                    }
+                }
+            }
+        });
+
+        let recorded_bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let recorded_clone = recorded_bodies.clone();
+
+        let mut wrapped = wrap_stream_with_auto_heal_inner(
+            stream1,
+            original_body,
+            "trace_4055_1".to_string(),
+            None,
+            move |req_body| {
+                recorded_clone.lock().unwrap().push(req_body);
+                async move {
+                    let retry_stream: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> =
+                        Box::pin(async_stream::stream! {
+                            yield Ok::<Bytes, String>(Bytes::from(healed_sse));
+                        });
+                    Ok(retry_stream)
+                }
+            },
+        );
+
+        let mut chunks = Vec::new();
+        while let Some(item) = wrapped.next().await {
+            chunks.push(String::from_utf8_lossy(&item.unwrap()).to_string());
+        }
+        let output = chunks.join("");
+
+        let captured = recorded_bodies.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0]["model"], "gemini-4-hydrogen-medium");
+        assert_eq!(
+            captured[0]["labels"]["model_enum"],
+            "MODEL_PLACEHOLDER_M526"
+        );
+        assert_eq!(
+            captured[0]["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+        assert_eq!(captured[0]["requestId"], "req_4055_1_empty_heal1");
+
+        assert!(
+            !output.contains("EuIDCt8DAWkUfRNLU1"),
+            "Orphan signature-only frame from aborted stream1 must not be leaked"
+        );
+        assert!(output.contains(": auto-healing premature empty stream"));
+        assert!(output.contains("Healed answer"));
+        assert!(output.contains("data: [DONE]"));
+    }
+
+    #[tokio::test]
+    async fn test_issue_4055_progressive_degrade_high_to_medium_to_low() {
+        let signature_only_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuIDEmpty\",\"text\":\"\"}]}}]}}\n\n";
+        let healed_tool_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"bash\",\"args\":{\"cmd\":\"ls\"}}}]},\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n";
+
+        let stream1 = Box::pin(async_stream::stream! {
+            yield Ok::<Bytes, String>(Bytes::from(signature_only_sse));
+        });
+
+        let original_body = json!({
+            "requestId": "req_4055_2",
+            "model": "gemini-4-hydrogen-high",
+            "labels": { "model_enum": "MODEL_PLACEHOLDER_M525" },
+            "request": {
+                "contents": [{ "role": "user", "parts": [{ "text": "run tool" }] }],
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": true,
+                        "thinkingLevel": "HIGH"
+                    }
+                }
+            }
+        });
+
+        let recorded_bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let recorded_clone = recorded_bodies.clone();
+        let attempt_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempt_clone = attempt_counter.clone();
+
+        let mut wrapped = wrap_stream_with_auto_heal_inner(
+            stream1,
+            original_body,
+            "trace_4055_2".to_string(),
+            None,
+            move |req_body| {
+                recorded_clone.lock().unwrap().push(req_body);
+                let idx = attempt_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    let payload = if idx == 0 {
+                        signature_only_sse
+                    } else {
+                        healed_tool_sse
+                    };
+                    let retry_stream: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> =
+                        Box::pin(async_stream::stream! {
+                            yield Ok::<Bytes, String>(Bytes::from(payload));
+                        });
+                    Ok(retry_stream)
+                }
+            },
+        );
+
+        let mut chunks = Vec::new();
+        while let Some(item) = wrapped.next().await {
+            chunks.push(String::from_utf8_lossy(&item.unwrap()).to_string());
+        }
+        let output = chunks.join("");
+
+        let captured = recorded_bodies.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        // Attempt 1: MEDIUM
+        assert_eq!(captured[0]["model"], "gemini-4-hydrogen-medium");
+        assert_eq!(
+            captured[0]["labels"]["model_enum"],
+            "MODEL_PLACEHOLDER_M526"
+        );
+        assert_eq!(
+            captured[0]["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+        assert_eq!(captured[0]["requestId"], "req_4055_2_empty_heal1");
+        // Attempt 2: LOW
+        assert_eq!(captured[1]["model"], "gemini-4-hydrogen-low");
+        assert_eq!(
+            captured[1]["labels"]["model_enum"],
+            "MODEL_PLACEHOLDER_M527"
+        );
+        assert_eq!(
+            captured[1]["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
+        );
+        assert_eq!(captured[1]["requestId"], "req_4055_2_empty_heal2");
+
+        assert!(!output.contains("EuIDEmpty"));
+        assert!(output.contains("\"functionCall\""));
+        assert!(output.contains("data: [DONE]"));
+    }
+
+    #[tokio::test]
+    async fn test_issue_4055_leading_empty_signature_frame_flushed_when_real_content_follows() {
+        let frame1 = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"SigRealFirst\",\"text\":\"\"}]}}]}}\n\n";
+        let frame2 = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Real text\"}]},\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n";
+
+        let stream1 = Box::pin(async_stream::stream! {
+            yield Ok::<Bytes, String>(Bytes::from(frame1));
+            yield Ok::<Bytes, String>(Bytes::from(frame2));
+        });
+
+        let retry_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let retry_clone = retry_count.clone();
+
+        let mut wrapped = wrap_stream_with_auto_heal_inner(
+            stream1,
+            json!({ "model": "gemini-4-hydrogen-high" }),
+            "trace_4055_3".to_string(),
+            None,
+            move |_req_body| {
+                retry_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    let retry_stream: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> =
+                        Box::pin(async_stream::stream! {
+                            if false {
+                                yield Ok::<Bytes, String>(Bytes::new());
+                            }
+                        });
+                    Ok(retry_stream)
+                }
+            },
+        );
+
+        let mut chunks = Vec::new();
+        while let Some(item) = wrapped.next().await {
+            chunks.push(String::from_utf8_lossy(&item.unwrap()).to_string());
+        }
+        let output = chunks.join("");
+
+        assert_eq!(retry_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let sig_pos = output.find("SigRealFirst").expect("leading frame flushed");
+        let text_pos = output.find("Real text").expect("content frame present");
+        assert!(sig_pos < text_pos);
+    }
+
+    #[tokio::test]
+    async fn test_issue_4055_exhausted_premature_empty_eof_emits_openai_error_via_lifecycle() {
+        let signature_only_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuIDFail\",\"text\":\"\"}]}}]}}\n\n";
+
+        let stream1 = Box::pin(async_stream::stream! {
+            yield Ok::<Bytes, String>(Bytes::from(signature_only_sse));
+        });
+
+        let auto_healed = wrap_stream_with_auto_heal_inner(
+            stream1,
+            json!({
+                "requestId": "req_4055_fail",
+                "model": "gemini-4-hydrogen-high",
+                "request": {
+                    "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
+                    "generationConfig": { "thinkingConfig": { "thinkingLevel": "HIGH" } }
+                }
+            }),
+            "trace_4055_4".to_string(),
+            None,
+            move |_req_body| async move {
+                let empty_retry: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> =
+                    Box::pin(async_stream::stream! {
+                        yield Ok::<Bytes, String>(Bytes::from(signature_only_sse));
+                    });
+                Ok(empty_retry)
+            },
+        );
+
+        let mut openai_stream =
+            crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor(
+                auto_healed,
+                "gemini-4-hydrogen-high".to_string(),
+                "sess_4055".to_string(),
+                1,
+                None,
+                false,
+                None,
+                false,
+            );
+
+        let mut ok_output = Vec::new();
+        let mut saw_err = false;
+        while let Some(item) = openai_stream.next().await {
+            match item {
+                Ok(b) => ok_output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(_) => saw_err = true,
+            }
+        }
+        let full_output = ok_output.join("");
+        assert!(
+            full_output.contains("\"error\""),
+            "Exhausted premature empty EOF must emit an OpenAI error SSE frame instead of silent 200 empty body; got: {}",
+            full_output
+        );
+        assert!(
+            full_output.contains("\"choices\":[]") && !full_output.contains("\"delta\""),
+            "Must NOT fabricate assistant choices/content on exhausted premature empty EOF; got: {}",
+            full_output
+        );
+        assert!(
+            !full_output.contains("EuIDFail"),
+            "Orphan signature-only frame must not be leaked on exhausted failure"
+        );
+        assert!(
+            saw_err,
+            "Must still propagate Err when retries are exhausted"
+        );
     }
 }

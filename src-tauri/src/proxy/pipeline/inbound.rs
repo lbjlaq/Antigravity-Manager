@@ -2216,6 +2216,140 @@ impl InboundThinkingPipeline {
         degraded
     }
 
+    /// [FIX #4055] 渐进式思考降级 + `labels.model_enum` 同步（供早退空流 / signature-only EOF 自愈调用）：
+    ///
+    /// - 当 `allow_low == false` 时，与 `try_degrade_thinking_budget` 对齐（`100/XHIGH -> HIGH -> MEDIUM`，`budget > 4000 -> 4000`）；
+    /// - 当 `allow_low == true` 时，支持继续从 `MEDIUM -> LOW`、`budget > 1024 -> 1024`，并按 `-xhigh -> -high -> -medium -> -low` 步进模型后缀；
+    /// - 仅在官方目录存在目标后缀模型（或原模型不在官方目录）时改写 `model` 字段，避免凭空拼出无效模型名，
+    ///   并在改写后同步更新同层级的 `labels.model_enum`。
+    pub fn try_degrade_thinking_step(body: &mut Value, allow_low: bool) -> bool {
+        let mut degraded = false;
+
+        let degrade_tc = |tc: &mut Value| -> bool {
+            let mut changed = false;
+            if let Some(obj) = tc.as_object_mut() {
+                if let Some(level_val) = obj.get("thinkingLevel") {
+                    if level_val.as_i64().is_some_and(|n| n > 3)
+                        || level_val.as_str().is_some_and(|s| {
+                            let u = s.trim().to_ascii_uppercase();
+                            u == "XHIGH" || u == "X-HIGH"
+                        })
+                    {
+                        obj.insert("thinkingLevel".to_string(), json!("HIGH"));
+                        changed = true;
+                    } else if level_val.as_str().is_some_and(|s| {
+                        let u = s.trim().to_ascii_uppercase();
+                        u == "HIGH" || u == "3"
+                    }) {
+                        obj.insert("thinkingLevel".to_string(), json!("MEDIUM"));
+                        changed = true;
+                    } else if allow_low
+                        && level_val.as_str().is_some_and(|s| {
+                            let u = s.trim().to_ascii_uppercase();
+                            u == "MEDIUM" || u == "2"
+                        })
+                    {
+                        obj.insert("thinkingLevel".to_string(), json!("LOW"));
+                        changed = true;
+                    }
+                } else if let Some(budget_val) = obj.get("thinkingBudget") {
+                    if let Some(budget) = budget_val.as_i64() {
+                        if budget == -1 || budget > 4000 {
+                            obj.insert("thinkingBudget".to_string(), json!(4000));
+                            changed = true;
+                        } else if allow_low && budget > 1024 {
+                            obj.insert("thinkingBudget".to_string(), json!(1024));
+                            changed = true;
+                        }
+                    }
+                } else if obj.get("includeThoughts").and_then(|v| v.as_bool()) == Some(true) {
+                    obj.insert("thinkingBudget".to_string(), json!(4000));
+                    changed = true;
+                }
+            }
+            changed
+        };
+
+        let check_gc = |gc: &mut Value| -> bool {
+            let mut gc_degraded = false;
+            if let Some(tc) = gc.get_mut("thinkingConfig") {
+                if degrade_tc(tc) {
+                    gc_degraded = true;
+                }
+            }
+            if let Some(tc) = gc.get_mut("thinking_config") {
+                if degrade_tc(tc) {
+                    gc_degraded = true;
+                }
+            }
+            gc_degraded
+        };
+
+        for container_key in ["generationConfig", "generation_config"] {
+            if let Some(gc) = body.get_mut(container_key) {
+                if check_gc(gc) {
+                    degraded = true;
+                }
+            }
+            if let Some(req) = body.get_mut("request") {
+                if let Some(gc) = req.get_mut(container_key) {
+                    if check_gc(gc) {
+                        degraded = true;
+                    }
+                }
+            }
+        }
+
+        let step_down_model_container = |container: &mut Value| -> bool {
+            let Some(orig_model) = container
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            else {
+                return false;
+            };
+            let candidate = if let Some(prefix) = orig_model.strip_suffix("-xhigh") {
+                Some(format!("{}-high", prefix))
+            } else if let Some(prefix) = orig_model.strip_suffix("-high") {
+                Some(format!("{}-medium", prefix))
+            } else if allow_low {
+                orig_model
+                    .strip_suffix("-medium")
+                    .map(|prefix| format!("{}-low", prefix))
+            } else {
+                None
+            };
+            let Some(cand) = candidate else {
+                return false;
+            };
+
+            let cand_info = crate::models::OfficialModelCatalog::get(&cand);
+            let orig_known = crate::models::OfficialModelCatalog::get(&orig_model).is_some();
+            if cand_info.is_none() && orig_known {
+                return false;
+            }
+
+            container["model"] = json!(cand);
+            if let Some(info) = cand_info.filter(|i| !i.model.is_empty()) {
+                if let Some(labels) = container.get_mut("labels").and_then(|l| l.as_object_mut()) {
+                    labels.insert("model_enum".to_string(), json!(info.model));
+                }
+            }
+            true
+        };
+
+        if step_down_model_container(body) {
+            degraded = true;
+        }
+        if let Some(req) = body.get_mut("request") {
+            if step_down_model_container(req) {
+                degraded = true;
+            }
+        }
+
+        degraded
+    }
+
     /// 400 "Thinking level is unsupported" 自愈：把账号不支持的扩展思考档位钳制为 `HIGH`。
     ///
     /// 只处理扩展档：数字 `> 3`（如官方 `-xhigh` 的 `100`）或字符串 `XHIGH` / `X-HIGH`。
@@ -6830,6 +6964,89 @@ mod tests {
         assert_eq!(
             minimal_gc["thinkingConfig"],
             json!({ "includeThoughts": true, "thinkingLevel": "MINIMAL" })
+        );
+    }
+
+    #[test]
+    fn test_try_degrade_thinking_step_progressive_and_model_enum_sync() {
+        // 1. Progressive degradation on gemini-4-hydrogen-high:
+        //    step 1: high -> medium (M526), step 2: medium -> low (M527), step 3: no-op (false)
+        let mut body = json!({
+            "model": "gemini-4-hydrogen-high",
+            "labels": { "model_enum": "MODEL_PLACEHOLDER_M525" },
+            "request": {
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": true,
+                        "thinkingLevel": "HIGH"
+                    }
+                }
+            }
+        });
+
+        assert!(InboundThinkingPipeline::try_degrade_thinking_step(
+            &mut body, true
+        ));
+        assert_eq!(body["model"], "gemini-4-hydrogen-medium");
+        assert_eq!(body["labels"]["model_enum"], "MODEL_PLACEHOLDER_M526");
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+
+        assert!(InboundThinkingPipeline::try_degrade_thinking_step(
+            &mut body, true
+        ));
+        assert_eq!(body["model"], "gemini-4-hydrogen-low");
+        assert_eq!(body["labels"]["model_enum"], "MODEL_PLACEHOLDER_M527");
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
+        );
+
+        // Already at LOW & -low: no further step-down
+        assert!(!InboundThinkingPipeline::try_degrade_thinking_step(
+            &mut body, true
+        ));
+
+        // 2. Non-suffixed model (gemini-pro-orchestrator-neon) preserves model name while stepping thinkingLevel
+        let mut orch_body = json!({
+            "model": "gemini-pro-orchestrator-neon",
+            "labels": { "model_enum": "MODEL_PLACEHOLDER_M537" },
+            "request": {
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": true,
+                        "thinkingLevel": 100
+                    }
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_step(
+            &mut orch_body,
+            true
+        ));
+        assert_eq!(orch_body["model"], "gemini-pro-orchestrator-neon");
+        assert_eq!(orch_body["labels"]["model_enum"], "MODEL_PLACEHOLDER_M537");
+        assert_eq!(
+            orch_body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+        assert!(InboundThinkingPipeline::try_degrade_thinking_step(
+            &mut orch_body,
+            true
+        ));
+        assert_eq!(
+            orch_body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+        assert!(InboundThinkingPipeline::try_degrade_thinking_step(
+            &mut orch_body,
+            true
+        ));
+        assert_eq!(
+            orch_body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
         );
     }
 }

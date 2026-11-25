@@ -394,8 +394,21 @@ where
                                     handler.has_thinking(),
                                     report.client_message()
                                 );
+                                if !handler.has_thinking() {
+                                    let err_chunks = handler.emit_initial_error(&report);
+                                    for c in err_chunks {
+                                        yield Ok(c);
+                                    }
+                                }
+                                let (error_frames, error_handled) =
+                                    handler.emit_error_finalize(&report);
+                                for c in error_frames {
+                                    yield Ok(c);
+                                }
                                 error_emitted = true;
-                                yield Err(report.client_message());
+                                if !error_handled {
+                                    yield Err(report.client_message());
+                                }
                                 break;
                             }
                             break; // 上游流正常到达 EOF
@@ -550,7 +563,19 @@ where
                 handler.has_thinking(),
                 report.client_message()
             );
-            yield Err(report.client_message());
+            if !handler.has_thinking() {
+                let err_chunks = handler.emit_initial_error(&report);
+                for c in err_chunks {
+                    yield Ok(c);
+                }
+            }
+            let (error_frames, error_handled) = handler.emit_error_finalize(&report);
+            for c in error_frames {
+                yield Ok(c);
+            }
+            if !error_handled {
+                yield Err(report.client_message());
+            }
             handler.on_finish();
             return;
         }
