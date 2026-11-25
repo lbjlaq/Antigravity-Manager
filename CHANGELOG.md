@@ -33,6 +33,9 @@
         -   **[账号切换菜单 Portal 化与表头/容器防遮挡智能定位] (PR #4056, Thanks to @hugo1120)**:
             -   **脱离 sticky 单元格与滚动容器层叠裁切**: 将 `AccountSwitchMenu` 切换菜单通过 `createPortal(..., document.body)` 与 `position: fixed`（`zIndex: 90`）渲染至顶层，彻底修复账号列表视图（`AccountTable`）和卡片视图（`AccountCard`）中弹出菜单被表头「操作」列、相邻行或滚动容器遮挡裁切的问题。(PR #4056, Thanks to @hugo1120)
             -   **表头/容器感知定位与滚动联动**: 新增定位工具 `accountSwitchMenuPosition.ts` 与单元测试，按祖先裁剪容器与可见 `<thead>` 底部空间自动决策上下翻转与水平边界夹紧（兼容 RTL），并在滚出可见区或切换/禁用状态变更时自动收起。(PR #4056, Thanks to @hugo1120)
+        -   **[流式早退空流 / signature-only EOF 流内渐进自愈与错误显式透出] (Fixes #4055)**:
+            -   **早退空流（无正文/思考/`finishReason` 即 EOF）同连接渐进降级重放**: 解决 `gemini-4-hydrogen`（`thinkingLevel=HIGH`）等模型在长上下文流式请求下，上游仅返回一帧 `{"thoughtSignature": "...", "text": ""}` 空壳即 TCP EOF、同时绕过首包 peek 与纯思考 `STOP` 自愈并向客户端返回静默 HTTP 200 空响应的问题。在通用流水线 `auto_heal.rs` 中先暂存未产出实字的 `signature-only` 空壳帧（避免孤立空帧泄漏），一旦检测早退 EOF，在剩余全局预算内保持原连接心跳并同账号保留 Prompt Cache 发起最多 2 次渐进降级重放（`try_degrade_thinking_step`：`XHIGH/100 → HIGH → MEDIUM → LOW`，并同步更新 `labels.model_enum`）。(Fixes #4055)
+            -   **耗尽后显式下发协议错误帧杜绝静默空回复**: 当流内重放依然无实质内容即 EOF 时，在 `stream_lifecycle.rs` 无内容 EOF 守卫中补齐 `emit_initial_error` / `emit_error_finalize` 协议错误帧发射并维持错误透传，消除客户端仅收到 HTTP 200 + 心跳却无任何报错与正文的静默失败。(Fixes #4055)
 
     *   **v5.0.5-beta.1 (2026-11-23)**:
         -   **[Claude 结构化输出降级为 Prompt 约束与 tool_choice 400 冲突自愈] (Fixes #4033, Thanks to @ALight777)**:
