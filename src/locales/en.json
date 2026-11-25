@@ -1460,7 +1460,11 @@
                 "platform_label": "Client User-Agent Platform",
                 "platform_windows": "Windows x64 (Default, Calibrated)",
                 "platform_linux": "Linux x64 (Optional)",
-                "platform_linux_warning": "Linux checks for the latest version from its own update manifest; actual outbound User-Agent version and CL remain managed by existing custom/local detection rules without stitching unverified versions."
+                "platform_linux_warning": "Linux checks for the latest version from its own update manifest; actual outbound User-Agent version and CL remain managed by existing custom/local detection rules without stitching unverified versions.",
+                "detect_success_newer_available_web": "Official Hub v{{latest}} is available (Web/Docker mode cannot auto-extract CL, so outbound safely retains v{{version}}; enter a paired Version + CL below and save to override, or wait for an updated image baseline).",
+                "banner_newer_available_web": "💡 Official Hub v{{latest}} is available. Web/Docker mode cannot extract CL from a local desktop client; enter a paired Version and matching CL above and save, or wait for a future image baseline update.",
+                "fill_latest_version": "Fill v{{latest}}",
+                "pair_required_error": "Hub Version and Piper Build Number (CL) must both be filled as a pair, or both left empty to restore the auto/stable baseline."
             }
         },
         "stream_timeouts": {

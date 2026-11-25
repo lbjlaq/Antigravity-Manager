@@ -1324,7 +1324,11 @@
                 "detect_success": "Определена последняя версия Hub: v{{version}} (CL: {{cl}})",
                 "detect_failed": "Ошибка определения: {{error}}",
                 "version_label": "Версия Hub",
-                "cl_label": "Номер сборки Piper (CL)"
+                "cl_label": "Номер сборки Piper (CL)",
+                "detect_success_newer_available_web": "Доступна официальная версия Hub v{{latest}} (в режиме Web/Docker невозможно автоматически извлечь CL, поэтому безопасно используется v{{version}}; укажите пару Version + CL ниже и сохраните или дождитесь обновления образа).",
+                "banner_newer_available_web": "💡 Обнаружена новая официальная версия Hub v{{latest}}. Режим Web/Docker не может автоматически извлечь CL из локального клиента; укажите выше пару Version и соответствующий CL и сохраните, или дождитесь обновления базового профиля в образе.",
+                "fill_latest_version": "Вставить v{{latest}}",
+                "pair_required_error": "Версия Hub и номер сборки Piper (CL) должны заполняться парой или оба оставаться пустыми для возврата к базовому профилю."
             }
         },
         "stream_timeouts": {

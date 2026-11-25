@@ -1324,7 +1324,11 @@
                 "detect_success": "تم اكتشاف ومزامنة Hub بنجاح: v{{version}} (CL: {{cl}})",
                 "detect_failed": "فشل الاكتشاف: {{error}}",
                 "version_label": "إصدار Hub",
-                "cl_label": "رقم بناء Piper (CL)"
+                "cl_label": "رقم بناء Piper (CL)",
+                "detect_success_newer_available_web": "يتوفر الإصدار الرسمي Hub v{{latest}} (لا يمكن لوضع Web/Docker استخراج CL تلقائياً، لذا يتم الإبقاء بأمان على v{{version}}؛ أدخل Version و CL معاً بالأسفل واحفظ للتجاوز، أو انتظر تحديث الصورة القادمة).",
+                "banner_newer_available_web": "💡 تم اكتشاف إصدار رسمي جديد من Hub هو v{{latest}}. لا يمكن لوضع Web/Docker استخراج CL من العميل المحلي تلقائياً؛ أدخل Version و CL المطابق له بالأعلى واحفظ، أو انتظر تحديث القاعدة المدمجة في الصورة القادمة.",
+                "fill_latest_version": "تعبئة v{{latest}}",
+                "pair_required_error": "يجب تعبئة إصدار Hub ورقم بناء Piper (CL) معاً كزوج، أو تركهما فارغين معاً لاستعادة القاعدة التلقائية/المستقرة."
             }
         },
         "stream_timeouts": {

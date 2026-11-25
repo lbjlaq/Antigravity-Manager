@@ -650,6 +650,48 @@ pub async fn detect_and_update_hub_fingerprint_with(
     resolved
 }
 
+/// Apply Hub fingerprint overrides from Headless/Docker environment variables.
+/// Returns true if any field in `proxy` changed.
+pub fn apply_hub_env_overrides(
+    proxy: &mut crate::proxy::ProxyConfig,
+    env_version: Option<&str>,
+    env_cl: Option<&str>,
+    env_platform: Option<&str>,
+) -> bool {
+    let mut modified = false;
+
+    if let Some(version) = env_version.map(str::trim).filter(|s| !s.is_empty()) {
+        if proxy.hub_version.as_deref() != Some(version) {
+            proxy.hub_version = Some(version.to_string());
+            modified = true;
+        }
+    }
+
+    if let Some(cl) = env_cl.map(str::trim).filter(|s| !s.is_empty()) {
+        if proxy.hub_cl.as_deref() != Some(cl) {
+            proxy.hub_cl = Some(cl.to_string());
+            modified = true;
+        }
+    }
+
+    if let Some(platform) = env_platform.map(str::trim).filter(|s| !s.is_empty()) {
+        let normalized = platform.to_lowercase();
+        if normalized == "windows" || normalized == "linux" {
+            if proxy.hub_platform.as_deref() != Some(normalized.as_str()) {
+                proxy.hub_platform = Some(normalized);
+                modified = true;
+            }
+        } else {
+            tracing::warn!(
+                hub_platform = %platform,
+                "Invalid HUB_PLATFORM environment variable (expected 'windows' or 'linux'), ignoring"
+            );
+        }
+    }
+
+    modified
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,5 +827,49 @@ files:
                 OFFICIAL_HUB_VERSION, OFFICIAL_HUB_CL
             )
         );
+    }
+
+    #[test]
+    fn test_apply_hub_env_overrides() {
+        let mut proxy = crate::proxy::ProxyConfig::default();
+
+        // Empty or whitespace-only overrides make no changes
+        assert!(!apply_hub_env_overrides(
+            &mut proxy,
+            Some("  "),
+            None,
+            Some("")
+        ));
+        assert!(proxy.hub_version.is_none());
+        assert!(proxy.hub_cl.is_none());
+        assert!(proxy.hub_platform.is_none());
+
+        // Valid pair + case-insensitive platform apply cleanly
+        assert!(apply_hub_env_overrides(
+            &mut proxy,
+            Some(" 2.35.1 "),
+            Some(" 1025000001 "),
+            Some("Linux"),
+        ));
+        assert_eq!(proxy.hub_version.as_deref(), Some("2.35.1"));
+        assert_eq!(proxy.hub_cl.as_deref(), Some("1025000001"));
+        assert_eq!(proxy.hub_platform.as_deref(), Some("linux"));
+
+        // Re-applying the exact same values is idempotent
+        assert!(!apply_hub_env_overrides(
+            &mut proxy,
+            Some("2.35.1"),
+            Some("1025000001"),
+            Some("linux"),
+        ));
+
+        // Invalid platform is ignored without modifying existing platform
+        assert!(!apply_hub_env_overrides(
+            &mut proxy,
+            None,
+            None,
+            Some("darwin")
+        ));
+        assert_eq!(proxy.hub_platform.as_deref(), Some("linux"));
     }
 }

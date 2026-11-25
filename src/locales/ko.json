@@ -1324,7 +1324,11 @@
                 "detect_success": "공식 최신 Hub 감지 및 동기화 성공: v{{version}} (CL: {{cl}})",
                 "detect_failed": "감지 실패: {{error}}",
                 "version_label": "Hub 버전 (Version)",
-                "cl_label": "Piper 빌드 번호 (CL)"
+                "cl_label": "Piper 빌드 번호 (CL)",
+                "detect_success_newer_available_web": "공식 Hub v{{latest}} 버전이 출시되었습니다(Web/Docker 모드에서는 CL을 자동으로 추출할 수 없어 현재 v{{version}}을 안전하게 유지합니다. 아래에 Version과 CL을 짝지어 입력 후 저장하거나 새 이미지 업데이트를 기다려 주세요).",
+                "banner_newer_available_web": "💡 공식 Hub 새 버전 v{{latest}}이 감지되었습니다. Web/Docker 모드에서는 로컬 클라이언트에서 CL을 자동 추출할 수 없으므로 위 입력란에 Version과 일치하는 CL을 함께 입력해 저장하거나 다음 이미지 기준 업데이트를 기다려 주세요.",
+                "fill_latest_version": "v{{latest}} 입력",
+                "pair_required_error": "Hub 버전(Version)과 Piper 빌드 번호(CL)는 반드시 쌍으로 함께 입력하거나 모두 비워 자동/기본 기준으로 복원해야 합니다."
             }
         },
         "stream_timeouts": {

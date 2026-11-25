@@ -1315,7 +1315,11 @@
                 "detect_success": "တရားဝင် Hub ဗားရှင်းကို အောင်မြင်စွာ ရယူပြီး: v{{version}} (CL: {{cl}})",
                 "detect_failed": "စစ်ဆေးမှု မအောင်မြင်ပါ: {{error}}",
                 "version_label": "Hub ဗားရှင်း",
-                "cl_label": "Piper Build နံပါတ် (CL)"
+                "cl_label": "Piper Build နံပါတ် (CL)",
+                "detect_success_newer_available_web": "တရားဝင် Hub v{{latest}} ထွက်ရှိနေပါပြီ (Web/Docker စနစ်တွင် CL ကို အလိုအလျောက် ထုတ်ယူနိုင်ခြင်း မရှိသောကြောင့် v{{version}} ကို ဆက်လက်အသုံးပြုထားပါသည်၊ အောက်တွင် Version + CL အတွဲလိုက် ထည့်သွင်းသိမ်းဆည်းပါ သို့မဟုတ် image အသစ်ကို စောင့်ပါ)။",
+                "banner_newer_available_web": "💡 တရားဝင် Hub ဗားရှင်းအသစ် v{{latest}} ကို တွေ့ရှိပါသည်။ Web/Docker စနစ်တွင် CL ကို အလိုအလျောက် မထုတ်ယူနိုင်ပါ၊ အပေါ်တွင် Version နှင့် ကိုက်ညီသော CL ကို အတွဲလိုက်ထည့်၍ သိမ်းဆည်းပါ သို့မဟုတ် နောက်ထွက် image အပ်ဒိတ်ကို စောင့်ပါ။",
+                "fill_latest_version": "v{{latest}} ဖြည့်ရန်",
+                "pair_required_error": "Hub ဗားရှင်း (Version) နှင့် Piper Build နံပါတ် (CL) ကို အတွဲလိုက် ဖြည့်သွင်းရမည် သို့မဟုတ် အလိုအလျောက် စံနှုန်းသို့ ပြန်ပြောင်းရန် နှစ်ခုစလုံးကို ဗလာထားရပါမည်။"
             }
         },
         "stream_timeouts": {

@@ -1324,7 +1324,11 @@
                 "detect_success": "Hub oficial detectado y sincronizado con éxito: v{{version}} (CL: {{cl}})",
                 "detect_failed": "Error al detectar: {{error}}",
                 "version_label": "Versión de Hub",
-                "cl_label": "Número de compilación Piper (CL)"
+                "cl_label": "Número de compilación Piper (CL)",
+                "detect_success_newer_available_web": "Hay una nueva versión oficial v{{latest}} disponible (el modo Web/Docker no puede extraer el CL automáticamente; se mantiene v{{version}} de forma segura. Ingresa Version y CL emparejados abajo y guarda, o espera una actualización de la imagen).",
+                "banner_newer_available_web": "💡 Se detectó la nueva versión oficial de Hub v{{latest}}. El modo Web/Docker no puede extraer el CL del cliente local; ingresa Version y su CL correspondiente arriba y guarda, o espera una actualización futura de la imagen.",
+                "fill_latest_version": "Rellenar v{{latest}}",
+                "pair_required_error": "La versión de Hub y el número de compilación Piper (CL) deben completarse juntos como par, o dejarse ambos vacíos para restaurar la base automática."
             }
         },
         "stream_timeouts": {

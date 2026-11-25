@@ -1451,7 +1451,11 @@
                 "platform_label": "客户端 User-Agent 平台",
                 "platform_windows": "Windows x64（默认，已校准）",
                 "platform_linux": "Linux x64（可选）",
-                "platform_linux_warning": "Linux 从自己的更新清单检查最新版本；实际 User-Agent 的版本与 CL 仍按现有自定义/本地探测规则管理，不会拼接尚未匹配的最新版本。"
+                "platform_linux_warning": "Linux 从自己的更新清单检查最新版本；实际 User-Agent 的版本与 CL 仍按现有自定义/本地探测规则管理，不会拼接尚未匹配的最新版本。",
+                "detect_success_newer_available_web": "官方已发布新版 v{{latest}}（Web/Docker 模式无法自动提取 CL，当前出站安全沿用 v{{version}}；可在下方成对填写 Version + CL 保存覆盖，或等待新版镜像更新基准）",
+                "banner_newer_available_web": "💡 检测到官方 Hub 已发布新版本 v{{latest}}。Web/Docker 模式无法从本地客户端自动提取 CL；可在上方成对填写 Version 与对应的 CL 并保存，或等待后续镜像更新内置基准。",
+                "fill_latest_version": "填入 v{{latest}}",
+                "pair_required_error": "Hub 版本号 (Version) 与 Piper 构建编号 (CL) 必须成对填写，或同时留空以恢复自动/稳态基准。"
             }
         },
         "stream_timeouts": {

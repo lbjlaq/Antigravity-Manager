@@ -245,6 +245,26 @@ pub async fn run_headless_server(
         }
     }
 
+    // Support Hub fingerprint overrides from env
+    let env_hub_version = std::env::var("ABV_HUB_VERSION")
+        .or_else(|_| std::env::var("HUB_VERSION"))
+        .ok();
+    let env_hub_cl = std::env::var("ABV_HUB_CL")
+        .or_else(|_| std::env::var("HUB_CL"))
+        .ok();
+    let env_hub_platform = std::env::var("ABV_HUB_PLATFORM")
+        .or_else(|_| std::env::var("HUB_PLATFORM"))
+        .ok();
+    if crate::modules::hub_version::apply_hub_env_overrides(
+        &mut config.proxy,
+        env_hub_version.as_deref(),
+        env_hub_cl.as_deref(),
+        env_hub_platform.as_deref(),
+    ) {
+        info!("Using Hub fingerprint configuration from environment variables");
+        modified = true;
+    }
+
     let is_web_disabled = std::env::var("ABV_DISABLE_WEB")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false);

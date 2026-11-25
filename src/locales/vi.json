@@ -1371,7 +1371,11 @@
                 "detect_success": "Đã dò tìm và đồng bộ Hub chính thức: v{{version}} (CL: {{cl}})",
                 "detect_failed": "Dò tìm thất bại: {{error}}",
                 "version_label": "Phiên bản Hub",
-                "cl_label": "Số hiệu Piper CL"
+                "cl_label": "Số hiệu Piper CL",
+                "detect_success_newer_available_web": "Đã có Hub chính thức v{{latest}} (chế độ Web/Docker không thể tự trích xuất CL, hiện vẫn giữ an toàn v{{version}}; hãy nhập cặp Version + CL bên dưới và lưu, hoặc chờ bản cập nhật image mới).",
+                "banner_newer_available_web": "💡 Phát hiện phiên bản Hub chính thức mới v{{latest}}. Chế độ Web/Docker không thể tự trích xuất CL từ ứng dụng cục bộ; hãy nhập cặp Version và CL tương ứng ở trên rồi lưu, hoặc chờ bản cập nhật chuẩn trong image tiếp theo.",
+                "fill_latest_version": "Điền v{{latest}}",
+                "pair_required_error": "Phiên bản Hub (Version) và mã bản dựng Piper (CL) phải được điền theo cặp, hoặc để trống cả hai để khôi phục mức chuẩn tự động."
             }
         },
         "stream_timeouts": {

@@ -1,4 +1,4 @@
-import { useState, useEffect, startTransition } from 'react';
+import { useState, useEffect, useRef, startTransition } from 'react';
 import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, Copy, Check, ShieldAlert, Terminal } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -166,14 +166,41 @@ function Settings() {
     const [hubFingerprint, setHubFingerprint] = useState<HubFingerprint | null>(null);
     const [detectingHub, setDetectingHub] = useState(false);
     const [copiedHubUa, setCopiedHubUa] = useState(false);
+    const hubClInputRef = useRef<HTMLInputElement>(null);
+
+    const refreshHubFingerprint = async () => {
+        try {
+            const [fpRes, updateRes] = await Promise.allSettled([
+                invoke<HubFingerprint>('get_hub_fingerprint'),
+                invoke<{ current: string; latest: string | null; update_available: boolean }>('check_hub_update'),
+            ]);
+            if (fpRes.status !== 'fulfilled') {
+                console.error('Failed to get hub fingerprint:', fpRes.reason);
+                return;
+            }
+            const fp = fpRes.value;
+            const updateStatus = updateRes.status === 'fulfilled' ? updateRes.value : null;
+            if (updateStatus) {
+                setHubFingerprint({
+                    ...fp,
+                    latest_remote_version: fp.latest_remote_version ?? updateStatus.latest ?? undefined,
+                    update_available: fp.latest_remote_version
+                        ? fp.update_available
+                        : updateStatus.update_available,
+                });
+            } else {
+                setHubFingerprint(fp);
+            }
+        } catch (err) {
+            console.error('Failed to get hub fingerprint:', err);
+        }
+    };
 
     useEffect(() => {
         loadConfig();
 
-        // 获取当前 Hub 客户端指纹
-        invoke<HubFingerprint>('get_hub_fingerprint')
-            .then(fp => setHubFingerprint(fp))
-            .catch(err => console.error('Failed to get hub fingerprint:', err));
+        // 获取当前 Hub 客户端指纹与官网最新版本状态
+        refreshHubFingerprint();
 
         // 获取真实数据目录路径
         invoke<string>('get_data_dir_path')
@@ -233,13 +260,23 @@ function Settings() {
                 return;
             }
 
+            const hubVersion = formData.proxy?.hub_version?.trim() || '';
+            const hubCl = formData.proxy?.hub_cl?.trim() || '';
+            if ((hubVersion && !hubCl) || (!hubVersion && hubCl)) {
+                showToast(
+                    t('proxy.config.hub.pair_required_error', {
+                        defaultValue: 'Hub 版本号 (Version) 与 Piper 构建编号 (CL) 必须成对填写，或同时留空以恢复自动/稳态基准。'
+                    }),
+                    'error'
+                );
+                return;
+            }
+
             await saveConfig(formData);
             showToast(t('common.saved'), 'success');
 
-            // 刷新当前 Hub 指纹状态
-            invoke<HubFingerprint>('get_hub_fingerprint')
-                .then(fp => setHubFingerprint(fp))
-                .catch(() => {});
+            // 刷新当前 Hub 指纹与更新状态
+            refreshHubFingerprint();
 
             // 如果修改了代理配置，提示用户需要重启
             if (proxyEnabled && proxyUrl) {
@@ -262,12 +299,19 @@ function Settings() {
 
             if (fp.update_available && fp.latest_remote_version) {
                 showToast(
-                    t('proxy.config.hub.detect_success_newer_available', {
-                        version: fp.version,
-                        cl: fp.cl,
-                        latest: fp.latest_remote_version,
-                        defaultValue: `官方已发布新版 v${fp.latest_remote_version}（当前出站安全沿用 v${fp.version}，更新本地客户端后再次探测可同步最新 CL）`
-                    }),
+                    isTauri()
+                        ? t('proxy.config.hub.detect_success_newer_available', {
+                            version: fp.version,
+                            cl: fp.cl,
+                            latest: fp.latest_remote_version,
+                            defaultValue: `官方已发布新版 v${fp.latest_remote_version}（当前出站安全沿用 v${fp.version}，更新本地客户端后再次探测可同步最新 CL）`
+                        })
+                        : t('proxy.config.hub.detect_success_newer_available_web', {
+                            version: fp.version,
+                            cl: fp.cl,
+                            latest: fp.latest_remote_version,
+                            defaultValue: `官方已发布新版 v${fp.latest_remote_version}（Web/Docker 模式无法自动提取 CL，当前出站安全沿用 v${fp.version}；可在下方成对填写 Version + CL 保存覆盖，或等待新版镜像更新基准）`
+                        }),
                     'info',
                     7000
                 );
@@ -1701,6 +1745,7 @@ function Settings() {
                                                 {t('proxy.config.hub.cl_label', { defaultValue: 'Piper 构建编号 (CL)' })}
                                             </label>
                                             <input
+                                                ref={hubClInputRef}
                                                 type="text"
                                                 value={formData.proxy?.hub_cl || ''}
                                                 onChange={(e) => {
@@ -1718,15 +1763,49 @@ function Settings() {
                                             />
                                         </div>
                                     </div>
+                                    {/* Version / CL 成对校验提醒 */}
+                                    {(Boolean(formData.proxy?.hub_version?.trim()) !== Boolean(formData.proxy?.hub_cl?.trim())) && (
+                                        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                                            {t('proxy.config.hub.pair_required_error', {
+                                                defaultValue: 'Hub 版本号 (Version) 与 Piper 构建编号 (CL) 必须成对填写，或同时留空以恢复自动/稳态基准。'
+                                            })}
+                                        </p>
+                                    )}
                                     {/* 官方新版本可用提示 Banner */}
                                     {hubFingerprint?.update_available && hubFingerprint.latest_remote_version && (
-                                        <div className="mt-3 bg-amber-50/60 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-800/30 rounded-lg p-2.5 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
-                                            <span className="leading-relaxed">
-                                                {t('proxy.config.hub.banner_newer_available', {
-                                                    latest: hubFingerprint.latest_remote_version,
-                                                    defaultValue: `💡 检测到官方 Hub 已发布新版本 v${hubFingerprint.latest_remote_version}。更新本地官方客户端后点击「动态探测」，可自动提取并同步最新 CL。`
-                                                })}
+                                        <div className="mt-3 bg-amber-50/60 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-800/30 rounded-lg p-2.5 text-xs text-amber-700 dark:text-amber-400 flex items-center justify-between gap-2 flex-wrap">
+                                            <span className="leading-relaxed flex-1 min-w-[200px]">
+                                                {isTauri()
+                                                    ? t('proxy.config.hub.banner_newer_available', {
+                                                        latest: hubFingerprint.latest_remote_version,
+                                                        defaultValue: `💡 检测到官方 Hub 已发布新版本 v${hubFingerprint.latest_remote_version}。更新本地官方客户端后点击「动态探测」，可自动提取并同步最新 CL。`
+                                                    })
+                                                    : t('proxy.config.hub.banner_newer_available_web', {
+                                                        latest: hubFingerprint.latest_remote_version,
+                                                        defaultValue: `💡 检测到官方 Hub 已发布新版本 v${hubFingerprint.latest_remote_version}。Web/Docker 模式无法从本地客户端自动提取 CL；可在上方成对填写 Version 与对应的 CL 并保存，或等待后续镜像更新内置基准。`
+                                                    })}
                                             </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const latestVer = hubFingerprint.latest_remote_version;
+                                                    if (!latestVer) return;
+                                                    setFormData({
+                                                        ...formData,
+                                                        proxy: {
+                                                            ...formData.proxy,
+                                                            hub_version: latestVer,
+                                                        }
+                                                    });
+                                                    setTimeout(() => hubClInputRef.current?.focus(), 0);
+                                                }}
+                                                className="px-2.5 py-1 rounded-md border border-amber-300 dark:border-amber-700/60 bg-white/80 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100/80 dark:hover:bg-amber-900/50 transition-colors font-medium shrink-0"
+                                            >
+                                                {t('proxy.config.hub.fill_latest_version', {
+                                                    latest: hubFingerprint.latest_remote_version,
+                                                    defaultValue: `填入 v${hubFingerprint.latest_remote_version}`
+                                                })}
+                                            </button>
                                         </div>
                                     )}
 

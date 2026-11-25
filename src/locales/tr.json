@@ -1373,7 +1373,11 @@
                 "detect_success": "Resmi Hub başarıyla algılandı ve senkronize edildi: v{{version}} (CL: {{cl}})",
                 "detect_failed": "Algılama başarısız: {{error}}",
                 "version_label": "Hub Sürümü",
-                "cl_label": "Piper Derleme Numarası (CL)"
+                "cl_label": "Piper Derleme Numarası (CL)",
+                "detect_success_newer_available_web": "Resmi Hub v{{latest}} yayınlandı (Web/Docker modu CL değerini otomatik çıkaramaz; giden istekler güvenle v{{version}} sürümünü korur. Aşağıda Version + CL çiftini girip kaydedin veya yeni imaj güncellemesini bekleyin).",
+                "banner_newer_available_web": "💡 Resmi Hub için yeni v{{latest}} sürümü algılandı. Web/Docker modu yerel istemciden otomatik CL çıkaramaz; yukarıya eşleşen Version ve CL bilgilerini birlikte girip kaydedin veya sonraki imaj temel güncellemesini bekleyin.",
+                "fill_latest_version": "v{{latest}} Doldur",
+                "pair_required_error": "Hub Sürümü ve Piper Derleme Numarası (CL) birlikte çift olarak doldurulmalı ya da otomatik/kararlı temele dönmek için ikisi de boş bırakılmalıdır."
             }
         },
         "stream_timeouts": {

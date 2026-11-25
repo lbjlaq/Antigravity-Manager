@@ -3379,24 +3379,7 @@ async fn admin_get_hub_fingerprint() -> impl IntoResponse {
 }
 
 async fn admin_check_hub_update() -> impl IntoResponse {
-    if crate::modules::hub_version::current_hub_platform() == "linux" {
-        return Json(crate::commands::proxy::check_hub_update().await);
-    }
-
-    // Preserve the original Windows update-check behavior.
-    let current = crate::constants::OFFICIAL_HUB_VERSION.to_string();
-    let latest = crate::modules::hub_version::fetch_remote_hub_release()
-        .await
-        .map(|release| release.version);
-    let update_available = latest
-        .as_deref()
-        .map_or(false, crate::modules::hub_version::is_update_available);
-
-    Json(crate::commands::proxy::HubUpdateStatus {
-        current,
-        latest,
-        update_available,
-    })
+    Json(crate::commands::proxy::check_hub_update().await)
 }
 
 #[derive(Debug, Deserialize)]
