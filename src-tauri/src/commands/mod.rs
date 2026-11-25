@@ -267,6 +267,8 @@ pub async fn switch_account(
         .switch_account(&account_id, target_ide.as_deref())
         .await?;
 
+    // 清除 MiniView 临时选中的托盘账号，让状态栏跟随最新切换的活动账号 (Fixes #4048)
+    crate::modules::tray::set_tray_selected_account_id(None);
     // 同步托盘
     crate::modules::tray::update_tray_menus(&app);
 
@@ -403,10 +405,11 @@ pub async fn refresh_all_quotas_internal(
         let _ = tm.reload_all_accounts().await;
     }
 
-    // 发送全局刷新事件给 UI (如果需要)
+    // 发送全局刷新事件给 UI 并刷新托盘状态栏配额 (Fixes #4048)
     if let Some(handle) = app_handle.as_ref() {
         use tauri::Emitter;
         let _ = handle.emit("accounts://refreshed", ());
+        crate::modules::tray::update_tray_menus(handle);
     }
 
     // 经典款配额耗尽自动热切换检查与执行

@@ -1083,12 +1083,7 @@ pub async fn fetch_quota_with_cache(
                         n.starts_with("claude") || n.starts_with("gpt")
                     });
                     if !has_claude_or_gpt {
-                        groups.retain(|g| {
-                            let gname = g.display_name.to_lowercase();
-                            !gname.contains("claude")
-                                && !gname.contains("gpt")
-                                && !gname.contains("3p")
-                        });
+                        groups.retain(|g| !g.is_third_party());
                     }
                 }
 
@@ -1184,6 +1179,7 @@ async fn fetch_quota_summary(
                     }
                 };
 
+                let observed_at = chrono::Utc::now().timestamp_millis();
                 let groups: Vec<crate::models::quota::QuotaGroup> = summary
                     .groups
                     .into_iter()
@@ -1193,18 +1189,7 @@ async fn fetch_quota_summary(
                         buckets: g
                             .buckets
                             .into_iter()
-                            .filter_map(|b| {
-                                Some(crate::models::quota::QuotaBucket {
-                                    bucket_id: b.bucket_id.unwrap_or_default(),
-                                    window: b.window.unwrap_or_default(),
-                                    remaining_fraction: b.remaining_fraction?,
-                                    reset_time: b.reset_time.unwrap_or_default(),
-                                    observed_at: Some(chrono::Utc::now().timestamp_millis()),
-                                    cycle_tokens: None,
-                                    display_name: b.display_name,
-                                    description: b.description,
-                                })
-                            })
+                            .filter_map(|b| parse_quota_summary_bucket(b, observed_at))
                             .collect(),
                     })
                     .collect();
@@ -1710,34 +1695,14 @@ fn group_matches_codename(group: &crate::models::quota::QuotaGroup, code: &str) 
 }
 
 fn is_claude_or_3p_group(group: &crate::models::quota::QuotaGroup) -> bool {
-    let gname = group.display_name.to_lowercase();
-    gname.contains("claude") || gname.contains("gpt") || gname.contains("3p")
+    group.is_third_party()
 }
 
 fn is_dedicated_g4_group(
     group: &crate::models::quota::QuotaGroup,
     known_codenames: &[String],
 ) -> bool {
-    let gname = group.display_name.to_lowercase();
-    if crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
-        &gname,
-        "",
-        known_codenames,
-    )
-    .is_some()
-    {
-        return true;
-    }
-    group.buckets.iter().any(|b| {
-        let bid = b.bucket_id.to_lowercase();
-        let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
-        crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
-            &bname,
-            &bid,
-            known_codenames,
-        )
-        .is_some()
-    })
+    group.dedicated_g4_codename(known_codenames).is_some()
 }
 
 fn find_general_gemini_group<'a>(
@@ -1829,6 +1794,41 @@ fn match_quota_group_for_model<'a>(
 /// 已耗尽的模型显示 100%。
 ///
 /// `quotaInfo` 缺失，或既没有 `remainingFraction` 也没有非空 `resetTime` 时，返回 `None`（未知）。
+/// 解析 `retrieveUserQuotaSummary` 单个配额桶。
+///
+/// proto3 JSON 会省略值为 0 的浮点字段：已耗尽的桶（如 `3p-weekly`、`gemini-weekly`）
+/// 会省略 `remainingFraction`，仅保留 `resetTime` / `bucketId` / `window`。
+/// 与 `model_quota_percentage` 保持一致：存在非空 `reset_time` 时将缺失的
+/// `remaining_fraction` 还原为 `0.0`，避免整条已耗尽桶被静默丢弃 (Fixes #4048)。
+fn parse_quota_summary_bucket(
+    b: QuotaSummaryBucket,
+    observed_at: i64,
+) -> Option<crate::models::quota::QuotaBucket> {
+    let reset_time = b.reset_time.unwrap_or_default();
+    let bucket_id = b.bucket_id.unwrap_or_default();
+    let window = b.window.unwrap_or_default();
+    let remaining_fraction = match b.remaining_fraction {
+        Some(fraction) => fraction.clamp(0.0, 1.0),
+        None if !reset_time.trim().is_empty()
+            || (!bucket_id.trim().is_empty() && !window.trim().is_empty()) =>
+        {
+            0.0
+        }
+        None => return None,
+    };
+
+    Some(crate::models::quota::QuotaBucket {
+        bucket_id,
+        window,
+        remaining_fraction,
+        reset_time,
+        observed_at: Some(observed_at),
+        cycle_tokens: None,
+        display_name: b.display_name,
+        description: b.description,
+    })
+}
+
 fn model_quota_percentage(
     quota_info: Option<&crate::models::official_model::OfficialQuotaInfo>,
 ) -> Option<i32> {
@@ -2147,5 +2147,36 @@ mod tests {
             QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
             other => panic!("expected Gemini group, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_quota_summary_bucket_preserves_exhausted_proto3_omitted_fraction() {
+        let exhausted: QuotaSummaryBucket = serde_json::from_str(
+            r#"{"bucketId":"3p-weekly","window":"weekly","resetTime":"2026-12-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let parsed = parse_quota_summary_bucket(exhausted, 12345)
+            .expect("exhausted proto3 bucket omitting remainingFraction must parse as 0.0");
+        assert_eq!(parsed.bucket_id, "3p-weekly");
+        assert_eq!(parsed.window, "weekly");
+        assert_eq!(parsed.remaining_fraction, 0.0);
+        assert_eq!(parsed.reset_time, "2026-12-01T00:00:00Z");
+
+        let explicit: QuotaSummaryBucket = serde_json::from_str(
+            r#"{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.75,"resetTime":"2026-12-01T05:00:00Z"}"#,
+        )
+        .unwrap();
+        let parsed_explicit = parse_quota_summary_bucket(explicit, 12345).unwrap();
+        assert_eq!(parsed_explicit.remaining_fraction, 0.75);
+
+        let empty: QuotaSummaryBucket = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(parse_quota_summary_bucket(empty, 12345).is_none());
+    }
+
+    #[test]
+    fn test_is_claude_or_3p_group_matches_bucket_id_when_display_name_is_generic() {
+        let group = make_test_group("Third-party models", "3p-weekly");
+        assert!(is_claude_or_3p_group(&group));
+        assert!(group.is_third_party());
     }
 }

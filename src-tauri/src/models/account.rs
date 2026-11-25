@@ -869,21 +869,73 @@ impl Account {
     }
 
     pub fn update_quota(&mut self, mut quota: QuotaData) {
-        // A failed/partial summary is not evidence that a previously observed bucket recovered.
+        // A failed/partial summary is not evidence that a previously observed active bucket recovered,
+        // but already-expired buckets and retired groups omitted from a fresh summary must not resurrect (Fixes #4048).
+        let now_ts = chrono::Utc::now().timestamp();
+        let has_fresh_groups = quota
+            .quota_groups
+            .as_ref()
+            .is_some_and(|groups| !groups.is_empty());
+        let active_g4_codenames: HashSet<String> = quota
+            .models
+            .iter()
+            .filter_map(|m| {
+                let lower = m.name.to_lowercase();
+                if lower.contains("-disabled") || lower.ends_with("_disabled") {
+                    return None;
+                }
+                crate::proxy::common::model_mapping::extract_gemini4_codename(&lower)
+            })
+            .collect();
+        let known_codenames: Vec<String> = active_g4_codenames.iter().cloned().collect();
+
         if let Some(existing) = &self.quota {
             if let Some(old_groups) = &existing.quota_groups {
                 let groups = quota.quota_groups.get_or_insert_with(Vec::new);
                 for old_group in old_groups {
-                    let index = groups
+                    let fresh_index = groups
                         .iter()
-                        .position(|g| g.display_name == old_group.display_name)
-                        .unwrap_or_else(|| {
-                            groups.push(crate::models::quota::QuotaGroup {
-                                buckets: Vec::new(),
-                                ..old_group.clone()
-                            });
-                            groups.len() - 1
+                        .position(|g| g.display_name == old_group.display_name);
+
+                    if fresh_index.is_none() && has_fresh_groups {
+                        // A fresh non-empty summary dropped this group entirely.
+                        // Never resurrect a dedicated G4 group (e.g. retired Gemini 4 Argon) whose
+                        // codename is no longer in the account's active models, and never resurrect
+                        // any dropped group whose buckets have all expired.
+                        if let Some(code) = old_group.dedicated_g4_codename(&known_codenames) {
+                            if !quota.models.is_empty() && !active_g4_codenames.contains(&code) {
+                                continue;
+                            }
+                        }
+                        let active_old_buckets: Vec<_> = old_group
+                            .buckets
+                            .iter()
+                            .filter(|b| !b.is_expired(now_ts))
+                            .cloned()
+                            .collect();
+                        if active_old_buckets.is_empty() {
+                            continue;
+                        }
+                        let mut restored = old_group.clone();
+                        restored.buckets = active_old_buckets
+                            .into_iter()
+                            .map(|mut b| {
+                                b.observed_at
+                                    .get_or_insert(existing.last_updated.saturating_mul(1000));
+                                b
+                            })
+                            .collect();
+                        groups.push(restored);
+                        continue;
+                    }
+
+                    let index = fresh_index.unwrap_or_else(|| {
+                        groups.push(crate::models::quota::QuotaGroup {
+                            buckets: Vec::new(),
+                            ..old_group.clone()
                         });
+                        groups.len() - 1
+                    });
                     for old_bucket in &old_group.buckets {
                         let mut previous = old_bucket.clone();
                         let observed_at = *previous
@@ -897,10 +949,10 @@ impl Account {
                             let current_observed_at = current
                                 .observed_at
                                 .unwrap_or(quota.last_updated.saturating_mul(1000));
-                            if current_observed_at <= observed_at {
+                            if current_observed_at <= observed_at && !previous.is_expired(now_ts) {
                                 *current = previous;
                             }
-                        } else {
+                        } else if !has_fresh_groups || !previous.is_expired(now_ts) {
                             groups[index].buckets.push(previous);
                         }
                     }
@@ -922,10 +974,7 @@ impl Account {
         });
         if !has_claude_or_gpt {
             if let Some(ref mut groups) = quota.quota_groups {
-                groups.retain(|g| {
-                    let gname = g.display_name.to_lowercase();
-                    !gname.contains("claude") && !gname.contains("gpt") && !gname.contains("3p")
-                });
+                groups.retain(|g| !g.is_third_party());
             }
         }
 
@@ -1485,6 +1534,123 @@ mod tests {
         // 3P 分组必须被彻底剥离留空，不得残留任何 Claude and GPT models 分组
         assert_eq!(final_groups.len(), 1);
         assert_eq!(final_groups[0].display_name, "Gemini Models");
+    }
+
+    #[test]
+    fn account_update_quota_drops_retired_argon_and_expired_buckets_on_fresh_summary() {
+        let now = chrono::Utc::now().timestamp();
+        let past_reset = chrono::DateTime::from_timestamp(now - 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+        let future_reset = chrono::DateTime::from_timestamp(now + 7200, 0)
+            .unwrap()
+            .to_rfc3339();
+
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+
+        let mut initial_quota = QuotaData::new();
+        initial_quota.quota_groups = Some(vec![
+            crate::models::quota::QuotaGroup {
+                display_name: "Gemini Models".to_string(),
+                description: None,
+                buckets: vec![
+                    crate::models::quota::QuotaBucket {
+                        bucket_id: "gemini-5h".to_string(),
+                        window: "5h".to_string(),
+                        remaining_fraction: 0.0,
+                        reset_time: past_reset.clone(),
+                        observed_at: Some((now - 7200) * 1000),
+                        cycle_tokens: None,
+                        display_name: None,
+                        description: None,
+                    },
+                    crate::models::quota::QuotaBucket {
+                        bucket_id: "gemini-weekly".to_string(),
+                        window: "weekly".to_string(),
+                        remaining_fraction: 0.9,
+                        reset_time: future_reset.clone(),
+                        observed_at: Some((now - 60) * 1000),
+                        cycle_tokens: None,
+                        display_name: None,
+                        description: None,
+                    },
+                ],
+            },
+            crate::models::quota::QuotaGroup {
+                display_name: "Gemini 4 Argon".to_string(),
+                description: None,
+                buckets: vec![crate::models::quota::QuotaBucket {
+                    bucket_id: "gemini-argon-wtu-weekly".to_string(),
+                    window: "weekly".to_string(),
+                    remaining_fraction: 0.0,
+                    reset_time: future_reset.clone(),
+                    observed_at: Some((now - 60) * 1000),
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                }],
+            },
+        ]);
+        account.update_quota(initial_quota);
+
+        // Fresh summary removes retired Gemini 4 Argon and only returns active Gemini Models + Neon model
+        let mut fresh_quota = QuotaData::new();
+        fresh_quota.last_updated = now;
+        fresh_quota.models = vec![crate::models::quota::ModelQuota {
+            name: "gemini-4-neon".to_string(),
+            percentage: 90,
+            reset_time: future_reset.clone(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            model: None,
+            supported_mime_types: None,
+        }];
+        fresh_quota.quota_groups = Some(vec![crate::models::quota::QuotaGroup {
+            display_name: "Gemini Models".to_string(),
+            description: None,
+            buckets: vec![crate::models::quota::QuotaBucket {
+                bucket_id: "gemini-weekly".to_string(),
+                window: "weekly".to_string(),
+                remaining_fraction: 0.9,
+                reset_time: future_reset,
+                observed_at: Some(now * 1000),
+                cycle_tokens: None,
+                display_name: None,
+                description: None,
+            }],
+        }]);
+        account.update_quota(fresh_quota);
+
+        let groups = account
+            .quota
+            .as_ref()
+            .unwrap()
+            .quota_groups
+            .as_ref()
+            .unwrap();
+        assert_eq!(groups.len(), 1, "retired Gemini 4 Argon must not resurrect");
+        assert_eq!(groups[0].display_name, "Gemini Models");
+        assert_eq!(
+            groups[0].buckets.len(),
+            1,
+            "expired gemini-5h bucket must not be carried over"
+        );
+        assert_eq!(groups[0].buckets[0].bucket_id, "gemini-weekly");
     }
 
     #[test]

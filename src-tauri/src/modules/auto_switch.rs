@@ -32,41 +32,25 @@ pub fn get_category_percentage(quota: &QuotaData, category: &str) -> Option<i32>
             })
             .collect();
         for group in groups {
-            let name = group.display_name.to_lowercase();
-            let is_dedicated_g4 =
-                crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
-                    &name,
-                    "",
-                    &known_codenames,
-                )
-                .is_some()
-                    || group.buckets.iter().any(|b| {
-                        let bid = b.bucket_id.to_lowercase();
-                        let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
-                        crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
-                            &bname,
-                            &bid,
-                            &known_codenames,
-                        )
-                        .is_some()
-                    });
+            let is_dedicated_g4 = group.dedicated_g4_codename(&known_codenames).is_some();
             if is_dedicated_g4 {
                 continue;
             }
+            let is_3p = group.is_third_party();
             let is_target = if is_claude {
-                name.contains("claude") || name.contains("gpt") || name.contains("3p")
+                is_3p
             } else if is_gemini {
-                name.contains("gemini")
-                    || (!name.contains("claude") && !name.contains("gpt") && !name.contains("3p"))
+                !is_3p
             } else {
                 false
             };
 
             if is_target {
-                // 周配额熔断检查：周额度 <= 5% 视为枯竭
+                let now_ts = chrono::Utc::now().timestamp();
+                // 周配额熔断检查：未过期的周额度 <= 5% 视为枯竭
                 let weekly_bucket = group.buckets.iter().find(|b| {
                     let win = format!("{} {}", b.window, b.bucket_id).to_lowercase();
-                    win.contains("week") || win.contains("7d")
+                    (win.contains("week") || win.contains("7d")) && !b.is_expired(now_ts)
                 });
                 if let Some(b) = weekly_bucket {
                     if b.remaining_fraction <= 0.05 {
@@ -77,7 +61,7 @@ pub fn get_category_percentage(quota: &QuotaData, category: &str) -> Option<i32>
                 // 5H 滚动桶
                 let five_hour_bucket = group.buckets.iter().find(|b| {
                     let win = format!("{} {}", b.window, b.bucket_id).to_lowercase();
-                    win.contains("5h") || win.contains("hour")
+                    (win.contains("5h") || win.contains("hour")) && !b.is_expired(now_ts)
                 });
                 if let Some(b) = five_hour_bucket {
                     return Some((b.remaining_fraction * 100.0).round() as i32);
@@ -141,24 +125,41 @@ pub fn find_model_percentage(quota: &QuotaData, model_pattern: &str) -> Option<i
     // 1. 双窗口周配额检查 (quota_groups 熔断)
     //    若对应分类的周配额已耗尽 (<= 0.01)，则无论 5h 剩余多少，该模型均视为耗尽 (0%)
     if let Some(ref groups) = quota.quota_groups {
+        let now_ts = chrono::Utc::now().timestamp();
         let is_gemini_pat = pat.contains("gemini");
         let is_claude_pat = pat.contains("claude") || pat.contains("gpt") || pat.contains("3p");
+        let pat_codename = crate::proxy::common::model_mapping::extract_gemini4_codename(&pat);
+        let known_codenames: Vec<String> = quota
+            .models
+            .iter()
+            .filter_map(|m| {
+                crate::proxy::common::model_mapping::extract_gemini4_codename(
+                    &m.name.to_lowercase(),
+                )
+            })
+            .collect();
 
         for group in groups {
-            let group_name = group.display_name.to_lowercase();
-            let matches_group = (is_gemini_pat && group_name.contains("gemini"))
-                || (is_claude_pat
-                    && (group_name.contains("claude")
-                        || group_name.contains("gpt")
-                        || group_name.contains("3p")));
+            let group_codename = group.dedicated_g4_codename(&known_codenames);
+            let matches_group = if let Some(ref gcode) = group_codename {
+                // Dedicated G4 group (e.g. Gemini 4 Argon) only constrains models with that exact codename
+                pat_codename.as_deref() == Some(gcode.as_str())
+            } else if is_claude_pat {
+                group.is_third_party()
+            } else if is_gemini_pat {
+                !group.is_third_party()
+            } else {
+                false
+            };
 
             if matches_group {
                 for bucket in &group.buckets {
                     let win = format!("{} {}", bucket.window, bucket.bucket_id).to_lowercase();
-                    if win.contains("week") || win.contains("7d") {
-                        if bucket.remaining_fraction <= 0.01 {
-                            return Some(0);
-                        }
+                    if (win.contains("week") || win.contains("7d"))
+                        && !bucket.is_expired(now_ts)
+                        && bucket.remaining_fraction <= 0.01
+                    {
+                        return Some(0);
                     }
                 }
             }
@@ -671,5 +672,93 @@ mod tests {
 
         // 阈值降至 3% 时，5% > 3% -> 未耗尽
         assert!(!is_account_depleted(&acc, 3, &["gemini".to_string()]));
+    }
+
+    #[test]
+    fn test_find_model_percentage_isolates_dedicated_g4_argon_and_matches_3p_bucket_id() {
+        let now = chrono::Utc::now().timestamp();
+        let future_reset = chrono::DateTime::from_timestamp(now + 7200, 0)
+            .unwrap()
+            .to_rfc3339();
+        let mut q = QuotaData::new();
+        q.models = vec![
+            crate::models::quota::ModelQuota {
+                name: "gemini-4-neon".to_string(),
+                percentage: 85,
+                reset_time: future_reset.clone(),
+                display_name: None,
+                supports_images: None,
+                supports_thinking: None,
+                thinking_budget: None,
+                recommended: None,
+                max_tokens: None,
+                max_output_tokens: None,
+                model: None,
+                supported_mime_types: None,
+            },
+            crate::models::quota::ModelQuota {
+                name: "claude-opus-5-5-high".to_string(),
+                percentage: 70,
+                reset_time: future_reset.clone(),
+                display_name: None,
+                supports_images: None,
+                supports_thinking: None,
+                thinking_budget: None,
+                recommended: None,
+                max_tokens: None,
+                max_output_tokens: None,
+                model: None,
+                supported_mime_types: None,
+            },
+        ];
+        q.quota_groups = Some(vec![
+            QuotaGroup {
+                display_name: "Gemini Models".to_string(),
+                description: None,
+                buckets: vec![QuotaBucket {
+                    bucket_id: "gemini-weekly".to_string(),
+                    window: "weekly".to_string(),
+                    remaining_fraction: 0.85,
+                    reset_time: future_reset.clone(),
+                    observed_at: None,
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                }],
+            },
+            QuotaGroup {
+                display_name: "Gemini 4 Argon".to_string(),
+                description: None,
+                buckets: vec![QuotaBucket {
+                    bucket_id: "gemini-argon-wtu-weekly".to_string(),
+                    window: "weekly".to_string(),
+                    remaining_fraction: 0.0,
+                    reset_time: future_reset.clone(),
+                    observed_at: None,
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                }],
+            },
+            QuotaGroup {
+                display_name: "Third Party Pool".to_string(),
+                description: None,
+                buckets: vec![QuotaBucket {
+                    bucket_id: "3p-weekly".to_string(),
+                    window: "weekly".to_string(),
+                    remaining_fraction: 0.0,
+                    reset_time: future_reset,
+                    observed_at: None,
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                }],
+            },
+        ]);
+
+        // Zeroed Argon group must NOT zero out gemini-4-neon
+        assert_eq!(find_model_percentage(&q, "gemini-4-neon"), Some(85));
+        // Exhausted 3p-weekly bucket (matched via bucket_id even without "claude" in display_name) MUST zero out claude
+        assert_eq!(find_model_percentage(&q, "claude-opus-5-5-high"), Some(0));
     }
 }
