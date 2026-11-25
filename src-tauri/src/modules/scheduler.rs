@@ -64,46 +64,76 @@ fn parse_reset_time_ts(s: &str) -> Option<i64> {
     None
 }
 
-/// Select a model to ping for a given group, honoring user's monitored_models preference if available.
+/// Select a real upstream model from `pool_models` to ping for a given group, honoring
+/// any valid model in `monitored_models` that actually exists on the account.
 ///
-/// Fallbacks are fully pool-driven: the newest `gemini-<x.x>-flash-low` from the account's own
-/// quota list, then the bare `gemini-<x.x>-flash`. Never falls back to a hardcoded model id.
+/// Never returns logical group placeholders (such as `"claude"` or `"gemini"`) or retired IDs
+/// absent from `pool_models`, avoiding upstream 404 errors during warmup.
 fn pick_model_for_group(
     group_name: &str,
     bucket_id: &str,
     monitored_models: &[String],
     pool_models: &[String],
 ) -> String {
+    let active_pool: Vec<&str> = pool_models
+        .iter()
+        .map(|s| s.trim())
+        .filter(|m| {
+            !m.is_empty()
+                && !m.to_lowercase().contains("-disabled")
+                && !m.to_lowercase().ends_with("_disabled")
+                && !m.eq_ignore_ascii_case("gemini-flash-worker-agy")
+        })
+        .collect();
+
+    let find_in_pool = |candidate: &str| -> Option<String> {
+        let trimmed = candidate.trim();
+        active_pool
+            .iter()
+            .find(|m| m.eq_ignore_ascii_case(trimmed))
+            .map(|m| (*m).to_string())
+    };
+
     let is_3p = bucket_id.to_lowercase().contains("3p")
         || group_name.to_lowercase().contains("claude")
         || group_name.to_lowercase().contains("gpt");
 
     if is_3p {
-        if let Some(m) = monitored_models.iter().find(|m| {
+        for m in monitored_models {
             let l = m.to_lowercase();
-            l.contains("claude") || l.contains("gpt")
-        }) {
-            return m.clone();
+            if l.contains("claude") || l.contains("gpt") {
+                if let Some(actual) = find_in_pool(m) {
+                    return actual;
+                }
+            }
         }
-        // 3P 兜底：同样从当前账号真实拥有的模型中挑选，不再硬编码具体型号
-        pool_models
+        // 3P 兜底：从当前账号真实拥有的激活模型中挑选，绝不发送裸 "claude" 分组占位名
+        active_pool
             .iter()
             .find(|m| {
                 let l = m.to_lowercase();
                 l.contains("claude") || l.contains("gpt")
             })
-            .cloned()
+            .map(|m| (*m).to_string())
             .unwrap_or_default()
     } else {
-        if let Some(m) = monitored_models.iter().find(|m| {
-            let l = m.to_lowercase();
-            l.contains("gemini")
-        }) {
-            return m.clone();
+        for m in monitored_models {
+            if m.to_lowercase().contains("gemini") {
+                if let Some(actual) = find_in_pool(m) {
+                    return actual;
+                }
+            }
         }
-        // Gemini 兜底：取号池最新 flash-low，无 low 档则取无后缀衍生 flash；都没有则返回空串由调用方跳过
-        let pool: std::collections::HashSet<String> = pool_models.iter().cloned().collect();
-        crate::proxy::common::model_gate::pick_background_model(&pool).unwrap_or_default()
+        // Gemini 兜底：取号池最新 flash-low / 无后缀衍生 flash；若无则回退号池首个激活 Gemini 模型
+        let pool_set: std::collections::HashSet<String> =
+            active_pool.iter().map(|m| (*m).to_string()).collect();
+        crate::proxy::common::model_gate::pick_background_model(&pool_set).unwrap_or_else(|| {
+            active_pool
+                .iter()
+                .find(|m| m.to_lowercase().starts_with("gemini-"))
+                .map(|m| (*m).to_string())
+                .unwrap_or_default()
+        })
     }
 }
 
@@ -417,5 +447,57 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pick_model_for_group_never_returns_bare_group_placeholders() {
+        let monitored = vec!["claude".to_string(), "gemini".to_string()];
+        let pool = vec![
+            "gemini-3.8-flash-high".to_string(),
+            "gemini-3.8-flash-low".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            "claude-opus-4-6-thinking".to_string(),
+        ];
+
+        let claude_model =
+            pick_model_for_group("Claude and GPT models", "3p-weekly", &monitored, &pool);
+        assert_ne!(claude_model, "claude");
+        assert!(pool.contains(&claude_model));
+
+        let gemini_model =
+            pick_model_for_group("Gemini Models", "gemini-weekly", &monitored, &pool);
+        assert_ne!(gemini_model, "gemini");
+        assert_eq!(gemini_model, "gemini-3.8-flash-low");
+    }
+
+    #[test]
+    fn test_pick_model_for_group_honors_present_monitored_and_skips_retired() {
+        let pool = vec![
+            "gemini-4-neon-high".to_string(),
+            "claude-opus-4-6-thinking".to_string(),
+        ];
+
+        // Present monitored model is honored
+        let explicit = pick_model_for_group(
+            "Claude and GPT models",
+            "3p-weekly",
+            &["claude-opus-4-6-thinking".to_string()],
+            &pool,
+        );
+        assert_eq!(explicit, "claude-opus-4-6-thinking");
+
+        // Retired monitored model not in pool falls back to an active pool model
+        let fallback_gemini = pick_model_for_group(
+            "Gemini Models",
+            "gemini-weekly",
+            &["gemini-3.1-pro-high".to_string()],
+            &pool,
+        );
+        assert_eq!(fallback_gemini, "gemini-4-neon-high");
     }
 }
