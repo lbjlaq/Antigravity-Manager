@@ -84,6 +84,21 @@ const getInitialActiveClients = (): ActiveClientsStatus => {
     return {};
 };
 
+// Coalesce concurrent getActiveClientsStatus IPC calls (e.g. parallel fetchAccounts +
+// fetchCurrentAccount + focus refresh) so macOS Keychain probes are never fanned out concurrently.
+let activeClientsInFlight: Promise<ActiveClientsStatus> | null = null;
+
+function getActiveClientsStatusDeduped(): Promise<ActiveClientsStatus> {
+    if (!activeClientsInFlight) {
+        activeClientsInFlight = accountService
+            .getActiveClientsStatus()
+            .finally(() => {
+                activeClientsInFlight = null;
+            });
+    }
+    return activeClientsInFlight;
+}
+
 export const useAccountStore = create<AccountState>((set, get) => ({
     accounts: getInitialAccounts(),
     currentAccount: getInitialCurrentAccount(),
@@ -99,7 +114,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             console.log('[Store] Fetching accounts...');
             const [accounts, activeClients] = await Promise.all([
                 accountService.listAccounts(),
-                accountService.getActiveClientsStatus().catch(() => ({} as ActiveClientsStatus))
+                getActiveClientsStatusDeduped().catch(() => ({} as ActiveClientsStatus))
             ]);
             try {
                 localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
@@ -119,7 +134,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         try {
             const [account, activeClients] = await Promise.all([
                 accountService.getCurrentAccount(),
-                accountService.getActiveClientsStatus().catch(() => ({} as ActiveClientsStatus))
+                getActiveClientsStatusDeduped().catch(() => ({} as ActiveClientsStatus))
             ]);
             try {
                 if (account) {
@@ -137,7 +152,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
 
     fetchActiveClients: async () => {
         try {
-            const activeClients = await accountService.getActiveClientsStatus();
+            const activeClients = await getActiveClientsStatusDeduped();
             set({ activeClients });
         } catch (error) {
             console.error('[Store] Fetch active clients failed:', error);

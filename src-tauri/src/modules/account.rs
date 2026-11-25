@@ -4289,11 +4289,6 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
     }
 
     // 2. 读取底层凭据
-    // 系统钥匙串（Keyring / Secret Service）：Antigravity 2.0+ 原生经典款与 CLI 共享的核心凭据
-    let keyring_acc = crate::modules::integration::read_from_system_keyring_only()
-        .ok()
-        .and_then(|st| find_by_rt(&st.refresh_token));
-
     // CLI 专属独立文件凭据 (~/.gemini/antigravity-cli/antigravity-oauth-token)
     let cli_file_acc = crate::modules::integration::read_antigravity_cli_credentials()
         .first()
@@ -4314,6 +4309,17 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
                     != std::cmp::Ordering::Less
             })
             .unwrap_or(true);
+
+    // 系统钥匙串（Keyring / Secret Service）：Antigravity 2.0+ 原生经典款与 CLI 共享的核心凭据
+    // 被动状态探测使用单飞 + 短 TTL 缓存 + 拒绝冷却 + 本地文件回退，避免 macOS 并发/循环弹出钥匙串授权框；
+    // 若经典款为旧版 SQLite 且 CLI 文件凭据已命中，则无需触碰系统钥匙串。
+    let keyring_acc = if is_classic_v2 || cli_file_acc.is_none() {
+        crate::modules::integration::read_from_system_keyring_passive()
+            .ok()
+            .and_then(|st| find_by_rt(&st.refresh_token))
+    } else {
+        None
+    };
 
     // 3. 确定经典款当前账号
     if is_classic_v2 {
@@ -4375,9 +4381,11 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
     }
 
     // 5. Determine active account for IDE Plugin (antigravity-acp)
-    let acp_acc = crate::modules::integration::read_acp_credentials()
-        .ok()
-        .and_then(|st| find_by_rt(&st.refresh_token));
+    let acp_acc = crate::modules::integration::read_acp_credentials_passive(
+        index.current_acp_account_id.is_some(),
+    )
+    .ok()
+    .and_then(|st| find_by_rt(&st.refresh_token));
     if let Some((a_id, a_email)) = acp_acc {
         status.acp_account_id = Some(a_id);
         status.acp_email = Some(a_email);
