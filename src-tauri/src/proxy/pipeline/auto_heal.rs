@@ -476,6 +476,12 @@ pub fn make_clean_empty_thought_stop_chunks(last_usage: Option<&Value>) -> (Byte
 const MAX_PENDING_EMPTY_FRAMES: usize = 8;
 const MAX_PREMATURE_EMPTY_RETRIES: usize = 2;
 const MIN_PREMATURE_EMPTY_RETRY_BUDGET_SECS: u64 = 10;
+const EMPTY_STOP_ERROR: &str =
+    "Upstream stream ended with STOP before emitting content or tool calls";
+
+fn is_empty_stop(saw_content: bool, saw_tool_call: bool, finish_reason: Option<&str>) -> bool {
+    !saw_content && !saw_tool_call && finish_reason == Some("STOP")
+}
 
 /// 解析并跟踪上游单条 SSE `data: <json>` 负载的思考 / 正文 / 工具 / 终结状态：
 /// - 若尚未产生任何实质内容或终结符（如 Issue #4055 的 `thoughtSignature + text: ""` 空壳帧），
@@ -555,10 +561,10 @@ fn inspect_and_buffer_sse_json(
 
     if *saw_content || *saw_tool_call {
         out.push(Bytes::from(format!("data: {}\n\n", json_part)));
-    } else if *saw_thought && chunk_has_finish && chunk_finish_is_stop {
+    } else if chunk_has_finish && chunk_finish_is_stop {
         // 思考空回复异常候选帧（仅限 finishReason == "STOP"）：
         // 若当前帧还包含思考部件，清洗剥离 finishReason 与 usageMetadata 后放行思考，不发射终止信号
-        if chunk_has_parts {
+        if *saw_thought && chunk_has_parts {
             if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
                 for cand in candidates.iter_mut() {
                     if let Some(obj) = cand.as_object_mut() {
@@ -589,7 +595,7 @@ fn inspect_and_buffer_sse_json(
 pub fn wrap_stream_with_empty_thinking_auto_heal<S, E>(
     stream: Pin<Box<S>>,
     ctx: ThinkingAutoHealContext,
-) -> Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display + Send + 'static,
@@ -644,7 +650,7 @@ fn wrap_stream_with_auto_heal_inner<S, E, F, Fut, S2, E2>(
     trace_id: String,
     budget: Option<Arc<crate::proxy::pipeline::budget::RequestContext>>,
     mut retry_call: F,
-) -> Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display + Send + 'static,
@@ -686,10 +692,9 @@ where
                             let json_part = line.trim_start_matches("data: ").trim();
                             if json_part == "[DONE]" {
                                 // 仅当确认属于思考空回复异常（无正文、无工具调用且以 STOP 结束）时才暂缓发射 [DONE] 以便进行自愈
-                                let is_empty_thought_stop_collapse = saw_thought
-                                    && !saw_content
-                                    && !saw_tool_call
-                                    && finish_reason_val.as_deref() == Some("STOP");
+                                let is_empty_thought_stop_collapse = is_empty_stop(
+                                    saw_content, saw_tool_call, finish_reason_val.as_deref(),
+                                );
                                 if !is_empty_thought_stop_collapse {
                                     for pending in pending_empty_frames.drain(..) {
                                         yield Ok(pending);
@@ -721,7 +726,7 @@ where
                     for pending in pending_empty_frames.drain(..) {
                         yield Ok(pending);
                     }
-                    yield Err(e);
+                    yield Err(e.to_string());
                     return;
                 }
             }
@@ -735,10 +740,9 @@ where
                     if line.starts_with("data: ") {
                         let json_part = line.trim_start_matches("data: ").trim();
                         if json_part == "[DONE]" {
-                            let is_empty_thought_stop_collapse = saw_thought
-                                && !saw_content
-                                && !saw_tool_call
-                                && finish_reason_val.as_deref() == Some("STOP");
+                            let is_empty_thought_stop_collapse = is_empty_stop(
+                                saw_content, saw_tool_call, finish_reason_val.as_deref(),
+                            );
                             if !is_empty_thought_stop_collapse {
                                 for pending in pending_empty_frames.drain(..) {
                                     yield Ok(pending);
@@ -764,6 +768,11 @@ where
                     }
                 }
             }
+        }
+
+        if !saw_thought && is_empty_stop(saw_content, saw_tool_call, finish_reason_val.as_deref()) {
+            yield Err(EMPTY_STOP_ERROR.to_string());
+            return;
         }
 
         // 1. 早退空流 / signature-only EOF 自愈 (Fixes #4055)
@@ -852,7 +861,8 @@ where
                                                 let json_part =
                                                     line.trim_start_matches("data: ").trim();
                                                 if json_part == "[DONE]" {
-                                                    if r_thought || r_content || r_tool || r_finish
+                                                    if (r_thought || r_content || r_tool || r_finish)
+                                                        && !is_empty_stop(r_content, r_tool, r_finish_val.as_deref())
                                                     {
                                                         for p in r_pending.drain(..) {
                                                             yield Ok(p);
@@ -900,7 +910,8 @@ where
                                             let json_part =
                                                 line.trim_start_matches("data: ").trim();
                                             if json_part == "[DONE]" {
-                                                if r_thought || r_content || r_tool || r_finish {
+                                                if (r_thought || r_content || r_tool || r_finish)
+                                                    && !is_empty_stop(r_content, r_tool, r_finish_val.as_deref()) {
                                                     for p in r_pending.drain(..) {
                                                         yield Ok(p);
                                                     }
@@ -927,6 +938,10 @@ where
                                 }
                             }
 
+                            if is_empty_stop(r_content, r_tool, r_finish_val.as_deref()) {
+                                yield Err(EMPTY_STOP_ERROR.to_string());
+                                return;
+                            }
                             if r_thought || r_content || r_tool || r_finish {
                                 tracing::info!(
                                     "[{}] [Stream-AutoHeal] ✓ Premature empty EOF healed on retry {}/{}",
@@ -1910,6 +1925,96 @@ mod tests {
         let sig_pos = output.find("SigRealFirst").expect("leading frame flushed");
         let text_pos = output.find("Real text").expect("content frame present");
         assert!(sig_pos < text_pos);
+    }
+
+    #[tokio::test]
+    async fn test_empty_stop_is_not_success_in_any_streaming_format() {
+        use crate::proxy::mappers::{claude, gemini, openai::streaming as openai};
+
+        let upstream = || {
+            wrap_stream_with_auto_heal_inner(
+                Box::pin(futures::stream::iter([Ok::<Bytes, String>(Bytes::from_static(
+                    b"data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n",
+                ))])),
+                json!({}),
+                "empty-stop-test".into(),
+                None,
+                |_| async { panic!("bare STOP should not replay the request"); #[allow(unreachable_code)] Ok(Box::pin(futures::stream::empty::<Result<Bytes, String>>())) },
+            )
+        };
+        let model = || "gemini-test".to_string();
+        let session = || "empty-stop-test".to_string();
+        let formats = [
+            (
+                "messages",
+                claude::create_claude_sse_stream(
+                    upstream(),
+                    session(),
+                    String::new(),
+                    None,
+                    false,
+                    1_000,
+                    None,
+                    1,
+                    None,
+                    vec![],
+                ),
+                "message_stop",
+            ),
+            (
+                "chat",
+                openai::create_openai_sse_stream(upstream(), model(), session(), 1, None, false),
+                "\"finish_reason\":\"stop\"",
+            ),
+            (
+                "responses",
+                openai::create_codex_sse_stream(
+                    upstream(),
+                    model(),
+                    session(),
+                    1,
+                    0,
+                    "resp_test".into(),
+                    None,
+                    false,
+                ),
+                "response.completed",
+            ),
+            (
+                "gemini",
+                crate::proxy::pipeline::run_stream_lifecycle(
+                    upstream(),
+                    gemini::streaming::GeminiStreamHandler::new(
+                        None,
+                        session(),
+                        model(),
+                        1,
+                        session(),
+                        false,
+                        None,
+                        String::new(),
+                        model(),
+                    ),
+                    crate::proxy::pipeline::StreamLifecycleConfig::new("gemini", "test", session()),
+                ),
+                "\"finishReason\":\"STOP\"",
+            ),
+        ];
+        for (format, mut stream, success_marker) in formats {
+            let mut frames = String::new();
+            let mut saw_error = false;
+            while let Some(frame) = stream.next().await {
+                match frame {
+                    Ok(bytes) => frames.push_str(&String::from_utf8_lossy(&bytes)),
+                    Err(_) => saw_error = true,
+                }
+            }
+            assert!(
+                saw_error || frames.contains("\"error\""),
+                "{format}: {frames}"
+            );
+            assert!(!frames.contains(success_marker), "{format}: {frames}");
+        }
     }
 
     #[tokio::test]
