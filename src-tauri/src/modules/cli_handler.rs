@@ -68,7 +68,8 @@ fn print_cli_help() {
           sync [app]         One-click sync proxy URL and API key to Agent tools (dsh, claude, codex, etc.)\n  \
           help               Show this help message\n\n\
         Flags:\n  \
-          --headless         Run as a background headless proxy daemon (no GUI / Wayland display required)\n\n\
+          --headless         Run as a background headless proxy daemon (no GUI / Wayland display required)\n  \
+          --silent-mode      Disable periodic background network probes (also via ABV_SILENT_MODE=1)\n\n\
         Options for `switch`:\n  \
           --target <target>  Target client: 'agy' (default), 'acp' ('plugin'), 'ide', or 'classic'\n  \
           -c, --continue     Automatically resume agy conversation via `agy --continue` after switch\n\n\

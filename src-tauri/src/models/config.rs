@@ -66,6 +66,9 @@ pub struct AppConfig {
     /// 自定义 WSL 用户主目录路径（例如 \\wsl.localhost\Ubuntu\home\myuser）
     #[serde(default)]
     pub wsl_custom_home: Option<String>,
+    /// 静默常驻模式：暂停所有后台自动联网探测与轮询，仅保留手动切号与手动刷新
+    #[serde(default)]
+    pub silent_mode: bool,
 }
 
 fn default_tray_click_action() -> String {
@@ -305,6 +308,7 @@ impl AppConfig {
             tray_click_action: default_tray_click_action(),
             wsl_sync_enabled: false,
             wsl_custom_home: None,
+            silent_mode: false,
         }
     }
 }
@@ -389,5 +393,21 @@ mod tests {
         let saved = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&saved).unwrap();
         assert_eq!(restored.tray_click_action, "main");
+    }
+
+    #[test]
+    fn silent_mode_defaults_to_false_and_roundtrips() {
+        let mut config = AppConfig::new();
+        assert!(!config.silent_mode);
+        config.silent_mode = true;
+
+        let mut value = serde_json::to_value(&config).unwrap();
+        value.as_object_mut().unwrap().remove("silent_mode");
+        let restored_missing: AppConfig = serde_json::from_value(value).unwrap();
+        assert!(!restored_missing.silent_mode);
+
+        let saved = serde_json::to_string(&config).unwrap();
+        let restored: AppConfig = serde_json::from_str(&saved).unwrap();
+        assert!(restored.silent_mode);
     }
 }

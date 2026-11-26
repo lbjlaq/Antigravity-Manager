@@ -596,8 +596,9 @@ pub fn compare_versions(latest: &str, current: &str) -> bool {
 }
 
 /// Check if enough time has passed since last check
-pub fn should_check_for_updates(settings: &UpdateSettings) -> bool {
-    if !settings.auto_check {
+/// Pure decision helper for automatic update checks with explicit silent-mode flag.
+pub fn should_check_for_updates_with_silent(settings: &UpdateSettings, silent_mode: bool) -> bool {
+    if silent_mode || !settings.auto_check {
         return false;
     }
 
@@ -613,6 +614,10 @@ pub fn should_check_for_updates(settings: &UpdateSettings) -> bool {
         DEFAULT_CHECK_INTERVAL_HOURS
     };
     elapsed_hours >= interval
+}
+
+pub fn should_check_for_updates(settings: &UpdateSettings) -> bool {
+    should_check_for_updates_with_silent(settings, crate::modules::config::is_silent_mode_enabled())
 }
 
 /// Load update settings from config file
@@ -852,16 +857,17 @@ mod tests {
     #[test]
     fn test_should_check_for_updates() {
         let mut settings = UpdateSettings::default();
-        assert!(should_check_for_updates(&settings));
+        assert!(should_check_for_updates_with_silent(&settings, false));
+        assert!(!should_check_for_updates_with_silent(&settings, true));
 
         settings.last_check_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        assert!(!should_check_for_updates(&settings));
+        assert!(!should_check_for_updates_with_silent(&settings, false));
 
         settings.auto_check = false;
-        assert!(!should_check_for_updates(&settings));
+        assert!(!should_check_for_updates_with_silent(&settings, false));
     }
 
     #[test]

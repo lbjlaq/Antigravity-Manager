@@ -597,6 +597,9 @@
         },
         "account": {
             "title": "Configurações de Conta",
+            "silent_mode": "Modo silencioso",
+            "silent_mode_desc": "Pausa a atualização ao iniciar, a consulta periódica em segundo plano, o aquecimento programado, as sondas de token/QoS e a verificação automática de atualizações, mantendo a troca e a atualização manuais.",
+            "silent_mode_active_hint": "O modo silencioso está ativo: as sondas automáticas em segundo plano estão pausadas, mas as ações manuais continuam disponíveis.",
             "auto_refresh": "Atualização Automática em Segundo Plano",
             "auto_refresh_desc": "Atualizar automaticamente todas as cotas de conta em segundo plano. Isso é necessário para proteção de cota e aquecimento inteligente.",
             "auto_refresh_locked_hint": "A proteção de cota está ativada; a atualização automática em segundo plano é mantida permanentemente ativa",

@@ -158,8 +158,9 @@ pub fn start_scheduler(
                 continue;
             };
 
-            // Must be enabled by user in Settings
-            if !app_config.scheduled_warmup.enabled {
+            // Must be enabled by user in Settings and not paused by silent mode
+            if !app_config.scheduled_warmup.enabled || config::is_silent_mode_effective(&app_config)
+            {
                 continue;
             }
 
@@ -377,7 +378,7 @@ pub async fn trigger_warmup_for_account(account: &Account) {
         return;
     };
 
-    if !app_config.scheduled_warmup.enabled {
+    if !app_config.scheduled_warmup.enabled || config::is_silent_mode_effective(&app_config) {
         return;
     }
 

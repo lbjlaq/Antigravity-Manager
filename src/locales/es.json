@@ -593,6 +593,9 @@
         },
         "account": {
             "title": "Configuración de Cuenta",
+            "silent_mode": "Modo silencioso",
+            "silent_mode_desc": "Pausa la actualización al iniciar, el sondeo periódico en segundo plano, el precalentamiento programado, las sondas de token/QoS y las comprobaciones automáticas de actualización, manteniendo el cambio y la actualización manuales.",
+            "silent_mode_active_hint": "El modo silencioso está activo: las sondas automáticas en segundo plano están en pausa, mientras las acciones manuales siguen disponibles.",
             "auto_refresh": "Actualización Automática en Segundo Plano",
             "auto_refresh_desc": "Actualizar automáticamente las cuotas de todas las cuentas en segundo plano. Esto es necesario para la protección de cuota y calentamiento inteligente.",
             "auto_refresh_locked_hint": "La protección de cuota está activada; la actualización automática en segundo plano se mantiene permanentemente activa",

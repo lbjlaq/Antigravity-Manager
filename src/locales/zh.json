@@ -709,6 +709,9 @@
         },
         "account": {
             "title": "账号设置",
+            "silent_mode": "静默常驻模式",
+            "silent_mode_desc": "暂停启动刷新、后台定时轮询、智能预热、后台 Token/QoS 探测及自动更新检查，仅保留手动切号与手动刷新配额。",
+            "silent_mode_active_hint": "静默常驻已开启：后台自动联网探测已暂停，代理手动转发与手动操作不受影响。",
             "auto_refresh": "后台自动刷新",
             "auto_refresh_desc": "后台自动刷新所有账号的配额信息，这是额度保护和智能预热的基础。",
             "auto_refresh_locked_hint": "配额保护已开启，后台自动刷新强制保持常驻",

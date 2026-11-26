@@ -592,6 +592,9 @@
         },
         "account": {
             "title": "帳號設定",
+            "silent_mode": "靜默常駐模式",
+            "silent_mode_desc": "暫停啟動重新整理、背景定時輪詢、智慧預熱、背景 Token/QoS 探測與自動更新檢查，僅保留手動切換帳號與手動重新整理配額。",
+            "silent_mode_active_hint": "靜默常駐已開啟：背景自動連線探測已暫停，手動操作與代理轉發不受影響。",
             "auto_refresh": "于背景自動重新整理",
             "auto_refresh_desc": "于背景自動重新整理所有帳號的配額資訊，這是額度保護和智慧預熱的基礎。",
             "auto_refresh_locked_hint": "配額保護已開啟，後台自動重新整理強制保持常駐",

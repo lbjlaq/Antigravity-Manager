@@ -548,6 +548,12 @@ pub fn run() {
 
     // Check for headless mode
     let args: Vec<String> = std::env::args().collect();
+    if args
+        .iter()
+        .any(|arg| arg.eq_ignore_ascii_case("--silent-mode"))
+    {
+        modules::config::set_cli_silent_mode_override(true);
+    }
 
     // Check for CLI subcommands (switch, list, current, etc.)
     if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()

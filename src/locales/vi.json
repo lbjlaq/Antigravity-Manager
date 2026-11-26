@@ -593,6 +593,9 @@
         },
         "account": {
             "title": "Cài đặt Tài khoản",
+            "silent_mode": "Chế độ im lặng",
+            "silent_mode_desc": "Tạm dừng làm mới khi khởi động, thăm dò nền định kỳ, làm ấm theo lịch, kiểm tra token/QoS nền và tự động kiểm tra cập nhật, chỉ giữ lại chuyển tài khoản và làm mới thủ công.",
+            "silent_mode_active_hint": "Chế độ im lặng đang bật: các tác vụ thăm dò mạng tự động ở nền đã tạm dừng, thao tác thủ công vẫn hoạt động bình thường.",
             "auto_refresh": "Tự động làm mới ngầm",
             "auto_refresh_desc": "Tự động làm mới hạn mức tất cả tài khoản trong nền. Cần thiết cho tính năng bảo vệ hạn mức và làm nóng thông minh.",
             "auto_refresh_locked_hint": "Bảo vệ hạn mức đang bật; tự động làm mới trong nền được duy trì luôn hoạt động",

@@ -1149,9 +1149,9 @@ impl ProxyPoolManager {
         tokio::spawn(async move {
             tracing::info!("Starting proxy pool health check loop...");
             loop {
-                // Perform check only if enabled
+                // Perform check only if enabled and silent mode is off
                 let enabled = self.config.read().await.enabled;
-                if enabled {
+                if enabled && !crate::modules::config::is_silent_mode_enabled() {
                     if let Err(e) = self.health_check().await {
                         tracing::error!("Proxy pool health check failed: {}", e);
                     }
