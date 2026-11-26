@@ -464,20 +464,62 @@ jobs:
           echo "Generated updater.json:"
           cat updater.json
 
+      - name: Record current Latest release (AM channel guardrail)
+        id: prev-latest
+        if: needs.verify-release-target.outputs.is_am_channel == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          LATEST_JSON=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases/latest" || true)
+          PREV_ID=$(printf '%s' "$LATEST_JSON" | jq -r '.id // empty')
+          PREV_TAG=$(printf '%s' "$LATEST_JSON" | jq -r '.tag_name // empty')
+          if [ -n "$PREV_ID" ] && [ "$PREV_TAG" != "antigravity-manager" ] && [[ ! "$PREV_TAG" =~ ^am-v ]]; then
+            echo "Recorded previous Latest release: ${PREV_TAG} (id=${PREV_ID})"
+            echo "id=${PREV_ID}" >> "$GITHUB_OUTPUT"
+            echo "tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No non-AM Latest release recorded before publish (current: ${PREV_TAG:-none})."
+          fi
+
+      - name: Prepare GitHub Release body with Edition & Download Guide
+        env:
+          IS_AM_CHANNEL: ${{ needs.verify-release-target.outputs.is_am_channel }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$IS_AM_CHANNEL" = "true" ]; then
+            cat <<EOF > release_body.md
+          > [!NOTE]
+          > **Edition Guide / 版本说明**: This release is **Antigravity Manager** (lightweight zero-proxy 4-host switcher, dual-pool quota monitor, local SQLite telemetry & \`am\` CLI). Looking for the full AI protocol proxy gateway? Download **[Antigravity Tools (Latest)](https://github.com/${REPO}/releases/latest)** instead.
+          >
+          > **Quick Download / 快速选包**:
+          > - **macOS**: \`.dmg\` (\`aarch64\` for Apple Silicon, \`x64\` for Intel, or \`universal\`) — or \`brew tap lbjlaq/antigravity-manager https://github.com/${REPO} && brew install --cask antigravity-manager\`
+          > - **Windows**: \`-setup.exe\` (NSIS) or \`.msi\`
+          > - **Linux**: \`.AppImage\`, \`.deb\`, or \`.rpm\` (\`amd64\` / \`aarch64\`)
+          > - *(\`.app.tar.gz\` and \`.sig\` files are for the in-app updater only.)*
+
+          ---
+
+          EOF
+            cat release_notes.md >> release_body.md
+          else
+            cp release_notes.md release_body.md
+          fi
+
       - name: Create or Update GitHub Release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           tag: ${{ needs.verify-release-target.outputs.release_tag }}
-          name: "Antigravity Manager v${{ needs.verify-release-target.outputs.app_version }}"
-          bodyFile: "release_notes.md"
+          name: ${{ needs.verify-release-target.outputs.release_tag == 'antigravity-manager' && format('📌 [Manager] Antigravity Manager v{0} (Latest Rolling)', needs.verify-release-target.outputs.app_version) || format('⚡ [Manager] Antigravity Manager v{0}', needs.verify-release-target.outputs.app_version) }}
+          bodyFile: "release_body.md"
           generateReleaseNotes: true
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
           artifactErrorsFailBuild: false
           replacesArtifacts: true
           prerelease: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' }}
-          makeLatest: ${{ (needs.verify-release-target.outputs.is_prerelease == 'true' || needs.verify-release-target.outputs.is_am_channel == 'true') && 'false' || 'legacy' }}
+          makeLatest: ${{ (needs.verify-release-target.outputs.is_prerelease == 'true' || needs.verify-release-target.outputs.is_am_channel == 'true') && 'false' || 'true' }}
 
       # 当通过归档版本 Tag (am-vX.Y.Z) 发布时，自动同步到固定滚动入口 `antigravity-manager`
       # 确保应用内更新器 (updater.json) 与 Homebrew Cask 始终能拉取到最新版本
@@ -487,15 +529,50 @@ jobs:
         with:
           allowUpdates: true
           tag: "antigravity-manager"
-          name: "Antigravity Manager v${{ needs.verify-release-target.outputs.app_version }}"
-          bodyFile: "release_notes.md"
+          name: "📌 [Manager] Antigravity Manager v${{ needs.verify-release-target.outputs.app_version }} (Latest Rolling)"
+          bodyFile: "release_body.md"
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
           artifactErrorsFailBuild: false
           removeArtifacts: true
           replacesArtifacts: true
           prerelease: false
-          makeLatest: false
+          makeLatest: 'false'
+
+      - name: Guard repository Latest release (prevent AM channel hijack)
+        if: needs.verify-release-target.outputs.is_am_channel == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PREV_ID: ${{ steps.prev-latest.outputs.id }}
+          PREV_TAG: ${{ steps.prev-latest.outputs.tag }}
+        run: |
+          CUR_TAG=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases/latest" | jq -r '.tag_name // empty')
+          echo "Post-publish repository latest tag: ${CUR_TAG:-none}"
+          if [ "$CUR_TAG" != "antigravity-manager" ] && [[ ! "$CUR_TAG" =~ ^am-v ]]; then
+            echo "✅ Repository Latest release intact: ${CUR_TAG}"
+            exit 0
+          fi
+
+          TARGET_ID="$PREV_ID"
+          TARGET_TAG="$PREV_TAG"
+          if [ -z "$TARGET_ID" ]; then
+            FALLBACK=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases?per_page=30" | jq -r '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | .[0] | "\(.id // "") \(.tag_name // "")"')
+            TARGET_ID=$(printf '%s' "$FALLBACK" | awk '{print $1}')
+            TARGET_TAG=$(printf '%s' "$FALLBACK" | awk '{print $2}')
+          fi
+
+          if [ -n "$TARGET_ID" ]; then
+            echo "⚠️ Restoring repository Latest release back to ${TARGET_TAG} (id=${TARGET_ID})..."
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/releases/${TARGET_ID}" \
+              -d '{"make_latest":"true"}' > /dev/null
+            echo "✅ Restored repository Latest release to ${TARGET_TAG}."
+          else
+            echo "::warning::Could not find a stable v* release to restore as Latest."
+          fi
 
       - name: Sync Preview Channel Release (Beta Only)
         if: needs.verify-release-target.outputs.is_prerelease == 'true'
@@ -503,7 +580,7 @@ jobs:
         with:
           allowUpdates: true
           tag: "preview"
-          name: "Antigravity Manager Preview Channel (${{ needs.verify-release-target.outputs.release_tag }})"
+          name: "🧪 [Beta] Antigravity Manager Preview Channel (${{ needs.verify-release-target.outputs.release_tag }})"
           body: "Preview Channel build for version ${{ needs.verify-release-target.outputs.release_tag }}. Automatically synced for in-app Beta updater."
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
@@ -511,4 +588,4 @@ jobs:
           removeArtifacts: true
           replacesArtifacts: true
           prerelease: true
-          makeLatest: false
+          makeLatest: 'false'
