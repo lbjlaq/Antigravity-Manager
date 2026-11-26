@@ -3651,9 +3651,14 @@ pub async fn switch_account(
     account.update_last_used();
     save_account(&account)?;
 
-    // 5. 跨环境凭据同步：Windows 宿主机切号完成后，异步触发 WSL 环境同步（若已启用）
+    // 5. 跨环境凭据同步：Desktop IDE/经典版路径已在重启前有界同步；此处兜底 Headless/CLI 及 agy/ACP 路径
+    let wsl_synced_by_integration = integration.handles_wsl_sync(target_ide);
     #[cfg(target_os = "windows")]
-    crate::modules::wsl_sync::sync_account_to_wsl(&account);
+    if !wsl_synced_by_integration {
+        crate::modules::wsl_sync::sync_account_to_wsl(&account);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = wsl_synced_by_integration;
 
     crate::modules::logger::log_info(&format!(
         "Account switch core logic completed: {}",
