@@ -67,7 +67,7 @@ export const MultimodalSettings: React.FC<MultimodalSettingsProps> = ({
                 </div>
                 <p className="text-gray-600 dark:text-gray-400">
                     {t("proxy.multimodal.banner_desc", {
-                        defaultValue: "针对长程多模态 Agent（如 Codex、Claude Code、Cursor）频繁查看截图或文档的场景，提供协议无关的多模态历史保鲜滑窗与独立策略治理，彻底根治会话历史因累积图片过多引发的 400 阻断崩溃与 Token 急速膨胀。"
+                        defaultValue: "针对长程多模态 Agent（如 Codex、Claude Code、Cursor、agy_cli）频繁查看截图或 PDF/音视频文档的场景，提供协议无关的多模态历史保鲜滑窗与独立策略治理，涵盖顶层输入与工具回执（functionResponse）内的多模态附件，彻底根治会话历史因累积附件过多引发的 400/413 阻断与 Token 急速膨胀。"
                     })}
                 </p>
             </div>
@@ -87,7 +87,7 @@ export const MultimodalSettings: React.FC<MultimodalSettingsProps> = ({
                         </div>
                         <p className="text-[11px] text-gray-500 dark:text-gray-400">
                             {t("proxy.multimodal.sliding_window_desc", {
-                                defaultValue: "默认关闭（100% 原始透传所有图片）。开启后，网关在请求流水线中自动执行独立保鲜策略，对超出配额的更早历史图片剔除 Base64 并替换为结构化占位符。"
+                                defaultValue: "默认关闭（100% 原始透传所有多模态输入）。开启后，网关在请求流水线中自动执行独立保鲜策略，对超出配额的更早历史图片、PDF 文档与音视频（含工具回执附带的 inlineData）剔除 Base64 并替换为结构化占位符。"
                             })}
                         </p>
                     </div>

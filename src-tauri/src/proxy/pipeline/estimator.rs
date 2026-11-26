@@ -284,6 +284,25 @@ impl PipelineTokenEstimator {
                             if let Some(resp) = fr.get("response") {
                                 total += estimate_content_str_tokens(&resp.to_string());
                             }
+                            if let Some(fr_parts) = fr.get("parts").and_then(Value::as_array) {
+                                for fr_part in fr_parts {
+                                    if let Some(inline_data) = fr_part
+                                        .get("inlineData")
+                                        .or_else(|| fr_part.get("inline_data"))
+                                    {
+                                        let mime = inline_data
+                                            .get("mimeType")
+                                            .or_else(|| inline_data.get("mime_type"))
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("");
+                                        let data_len = inline_data
+                                            .get("data")
+                                            .and_then(Value::as_str)
+                                            .map_or(0, |s| s.len());
+                                        total += estimate_inline_data_tokens(mime, data_len);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -879,6 +898,36 @@ mod tests {
         assert!(
             tokens >= 4000 && tokens < 5000,
             "Expected ~4020 tokens for 2 high-res images + short text in /v1/responses, got {tokens}"
+        );
+    }
+
+    #[test]
+    fn test_estimate_gemini_format_counts_function_response_inline_data_parts() {
+        let large_pdf_b64 = "A".repeat(400_000);
+        let body = json!({
+            "model": "gemini-3.5-pro",
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{
+                        "functionResponse": {
+                            "id": "call_read_pdf",
+                            "name": "read_file",
+                            "response": {"ok": true},
+                            "parts": [
+                                {"inlineData": {"mimeType": "application/pdf", "data": large_pdf_b64}}
+                            ]
+                        }
+                    }]
+                }
+            ]
+        });
+
+        let tokens = PipelineTokenEstimator::estimate_tokens(&body);
+        // Non-image inlineData fallback uses ceil(b64_len / 4 / 3.5) -> > 28,000 tokens
+        assert!(
+            tokens >= 25_000,
+            "Expected functionResponse.parts PDF inlineData to be counted, got {tokens}"
         );
     }
 }

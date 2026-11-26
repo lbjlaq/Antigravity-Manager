@@ -12,11 +12,156 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 use std::time::Instant;
 
-const MAX_REQUEST_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB
+const MAX_REQUEST_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB log capture cap (never drops larger bodies)
 const MAX_RESPONSE_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB for image responses
 /// Bound in-memory SSE log capture to prevent unbounded per-stream heap growth (Issue #4054).
 const MAX_STREAM_CAPTURE_BYTES: usize = 4 * 1024 * 1024; // 4MB
 const MAX_LOGGED_FIELD_CHARS: usize = 500;
+
+fn parse_content_length(headers: &axum::http::HeaderMap) -> Option<usize> {
+    headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+}
+
+fn build_body_error_response(
+    status: axum::http::StatusCode,
+    code: &str,
+    message: String,
+) -> Response {
+    let body = serde_json::json!({
+        "error": {
+            "message": message,
+            "type": code,
+            "code": status.as_u16()
+        }
+    })
+    .to_string();
+    Response::builder()
+        .status(status)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .unwrap_or_else(|_| Response::new(Body::empty()))
+}
+
+fn is_body_length_limit_error(err: &axum::Error) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = current {
+        if e.to_string().to_ascii_lowercase().contains("length limit") {
+            return true;
+        }
+        current = e.source();
+    }
+    false
+}
+
+async fn prepare_post_request_for_monitor(
+    request: Request,
+    max_body_size: usize,
+    max_log_size: usize,
+    request_content_type: &str,
+    uri: &str,
+    model: &mut Option<String>,
+) -> Result<(Request, Option<String>), Response> {
+    if let Some(declared_len) = parse_content_length(request.headers()) {
+        if declared_len > max_body_size {
+            tracing::warn!(
+                declared_bytes = declared_len,
+                limit_bytes = max_body_size,
+                uri = uri,
+                "Rejecting POST request exceeding max body limit with HTTP 413"
+            );
+            return Err(build_body_error_response(
+                axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                "payload_too_large",
+                format!(
+                    "Request body size ({} bytes) exceeds gateway limit ({} MB). Raise ABV_MAX_BODY_SIZE or enable Multimodal Sliding Window.",
+                    declared_len,
+                    (max_body_size / (1024 * 1024)).max(1)
+                ),
+            ));
+        }
+
+        // Larger than log capture cap but within max_body_size: pass original Body through
+        // without double-buffering or replacing with Body::empty().
+        if declared_len > max_log_size {
+            return Ok((
+                request,
+                Some(format!(
+                    "[Large Request Body: {} bytes, log capture skipped]",
+                    declared_len
+                )),
+            ));
+        }
+    }
+
+    let (parts, body) = request.into_parts();
+    match axum::body::to_bytes(body, max_body_size).await {
+        Ok(bytes) => {
+            let captured = if bytes.len() > max_log_size {
+                Some(format!(
+                    "[Large Request Body: {} bytes, log capture skipped]",
+                    bytes.len()
+                ))
+            } else if request_content_type.starts_with("multipart/form-data") {
+                if let Some((summary, multipart_model)) =
+                    summarize_multipart_request(&bytes, request_content_type, uri)
+                {
+                    if model.is_none() {
+                        *model = multipart_model;
+                    }
+                    Some(summary)
+                } else {
+                    Some(format!(
+                        "[Multipart Request Data: {} bytes, failed to parse summary]",
+                        bytes.len()
+                    ))
+                }
+            } else if let Ok(s) = std::str::from_utf8(&bytes) {
+                if model.is_none() {
+                    *model = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| {
+                        v.get("model")
+                            .and_then(|m| m.as_str())
+                            .map(|m_str| m_str.to_string())
+                    });
+                }
+                Some(s.to_string())
+            } else {
+                Some("[Binary Request Data]".to_string())
+            };
+            Ok((Request::from_parts(parts, Body::from(bytes)), captured))
+        }
+        Err(err) => {
+            if is_body_length_limit_error(&err) {
+                tracing::warn!(
+                    limit_bytes = max_body_size,
+                    uri = uri,
+                    "Streaming POST body exceeded max body limit; returning HTTP 413"
+                );
+                Err(build_body_error_response(
+                    axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                    "payload_too_large",
+                    format!(
+                        "Request body exceeds gateway limit ({} MB). Raise ABV_MAX_BODY_SIZE or enable Multimodal Sliding Window.",
+                        (max_body_size / (1024 * 1024)).max(1)
+                    ),
+                ))
+            } else {
+                tracing::warn!(
+                    error = %err,
+                    uri = uri,
+                    "Failed to buffer POST request body in monitor middleware"
+                );
+                Err(build_body_error_response(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "invalid_request_body",
+                    format!("Failed to read request body: {}", err),
+                ))
+            }
+        }
+    }
+}
 
 async fn next_chunk_while_receiver_open<S, T>(
     stream: &mut S,
@@ -1045,52 +1190,26 @@ pub async fn monitor_middleware(
     let request_headers_json =
         crate::proxy::payload_audit::headers_to_redacted_json(request.headers());
 
-    let request_body_str;
-
     // [FIX] 从请求 extensions 提取 UserTokenIdentity (由 Auth 中间件注入)
     // 必须在处理 request body 之前提取，因为 into_parts() 后需要保留这个值
     let user_token_identity = request.extensions().get::<UserTokenIdentity>().cloned();
 
-    let request = if method == "POST" {
-        let (parts, body) = request.into_parts();
-        match axum::body::to_bytes(body, MAX_REQUEST_LOG_SIZE).await {
-            Ok(bytes) => {
-                request_body_str = if request_content_type.starts_with("multipart/form-data") {
-                    if let Some((summary, multipart_model)) =
-                        summarize_multipart_request(&bytes, &request_content_type, &uri)
-                    {
-                        if model.is_none() {
-                            model = multipart_model;
-                        }
-                        Some(summary)
-                    } else {
-                        Some(format!(
-                            "[Multipart Request Data: {} bytes, failed to parse summary]",
-                            bytes.len()
-                        ))
-                    }
-                } else if let Ok(s) = std::str::from_utf8(&bytes) {
-                    if model.is_none() {
-                        model = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| {
-                            v.get("model")
-                                .and_then(|m| m.as_str())
-                                .map(|s| s.to_string())
-                        });
-                    }
-                    Some(s.to_string())
-                } else {
-                    Some("[Binary Request Data]".to_string())
-                };
-                Request::from_parts(parts, Body::from(bytes))
-            }
-            Err(_) => {
-                request_body_str = None;
-                Request::from_parts(parts, Body::empty())
-            }
+    let (request, request_body_str) = if method == "POST" {
+        match prepare_post_request_for_monitor(
+            request,
+            crate::proxy::server::resolve_max_body_size(),
+            MAX_REQUEST_LOG_SIZE,
+            &request_content_type,
+            &uri,
+            &mut model,
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err(err_response) => return err_response,
         }
     } else {
-        request_body_str = None;
-        request
+        (request, None)
     };
 
     let upstream_holder = UpstreamRequestBodyHolder::new();
@@ -2480,6 +2599,89 @@ mod tests {
                 None
             ),
             "真实用户问答绝不可被误杀"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_prepare_post_request_skips_log_capture_and_preserves_body_when_between_log_and_max_limit(
+    ) {
+        let payload = br#"{"model":"gemini-3-flash","contents":[{"role":"user","parts":[{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}"#;
+        let payload_len = payload.len();
+        let req = axum::extract::Request::builder()
+            .method("POST")
+            .header(axum::http::header::CONTENT_LENGTH, payload_len.to_string())
+            .body(axum::body::Body::from(payload.to_vec()))
+            .unwrap();
+
+        let mut model = None;
+        let (passed_req, log_note) = super::prepare_post_request_for_monitor(
+            req,
+            payload_len + 64,
+            32,
+            "application/json",
+            "/v1beta/models/gemini-3-flash:streamGenerateContent",
+            &mut model,
+        )
+        .await
+        .expect("body within max_body_size must pass through");
+
+        assert!(
+            log_note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("log capture skipped"),
+            "oversized-for-log body should skip string capture"
+        );
+        let forwarded_bytes = axum::body::to_bytes(passed_req.into_body(), payload_len + 64)
+            .await
+            .unwrap();
+        assert_eq!(forwarded_bytes.as_ref(), payload);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_post_request_returns_413_when_exceeding_max_body_size() {
+        // 1. Declared Content-Length > max_body_size -> immediate 413 JSON response
+        let req_with_len = axum::extract::Request::builder()
+            .method("POST")
+            .header(axum::http::header::CONTENT_LENGTH, "4096")
+            .body(axum::body::Body::from("x".repeat(64)))
+            .unwrap();
+        let mut model = None;
+        let resp_err = super::prepare_post_request_for_monitor(
+            req_with_len,
+            1024,
+            512,
+            "application/json",
+            "/v1beta/models/gemini-3-flash:streamGenerateContent",
+            &mut model,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(resp_err.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+        let err_body = axum::body::to_bytes(resp_err.into_body(), 8192)
+            .await
+            .unwrap();
+        let err_json: serde_json::Value = serde_json::from_slice(&err_body).unwrap();
+        assert_eq!(err_json["error"]["type"], "payload_too_large");
+
+        // 2. No Content-Length (streaming/chunked) > max_body_size -> 413 JSON response (never Body::empty())
+        let req_chunked = axum::extract::Request::builder()
+            .method("POST")
+            .body(axum::body::Body::from("y".repeat(2048)))
+            .unwrap();
+        let resp_chunked_err = super::prepare_post_request_for_monitor(
+            req_chunked,
+            1024,
+            512,
+            "application/json",
+            "/v1beta/models/gemini-3-flash:streamGenerateContent",
+            &mut model,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            resp_chunked_err.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE
         );
     }
 }

@@ -435,6 +435,19 @@ fn to_account_response(
 }
 
 /// Axum 服务器实例
+/// 默认最大 HTTP 请求体限制（256 MB）：避免多份 PDF / 多模态长程工具调用（如 `agy_cli` read_file）触发 100MB 阈值截断，
+/// 同时仍保留 OOM 防线，可通过 `ABV_MAX_BODY_SIZE` 环境变量按需覆盖。
+pub const DEFAULT_MAX_BODY_SIZE: usize = 256 * 1024 * 1024;
+
+/// 解析服务端允许的最大请求体大小（字节），最低保护下限 1 MB
+pub fn resolve_max_body_size() -> usize {
+    std::env::var("ABV_MAX_BODY_SIZE")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|v| *v >= 1024 * 1024)
+        .unwrap_or(DEFAULT_MAX_BODY_SIZE)
+}
+
 #[derive(Clone)]
 pub struct AxumServer {
     cancel_token: tokio_util::sync::CancellationToken,
@@ -1142,11 +1155,8 @@ impl AxumServer {
             ));
 
         // 3. 整合并应用全局层
-        // 从环境变量读取 body 大小限制，默认 50MB
-        let max_body_size: usize = std::env::var("ABV_MAX_BODY_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(100 * 1024 * 1024); // 默认 100MB
+        // 从环境变量读取 body 大小限制，默认 256MB
+        let max_body_size = resolve_max_body_size();
         tracing::info!("请求体大小限制: {} MB", max_body_size / 1024 / 1024);
 
         let app = Router::new()

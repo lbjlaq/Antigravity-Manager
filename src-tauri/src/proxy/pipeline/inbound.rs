@@ -845,17 +845,74 @@ impl InboundThinkingPipeline {
         stripped
     }
 
+    fn is_managed_multimodal_mime(mime: &str) -> bool {
+        let lower = mime.trim().to_ascii_lowercase();
+        lower.is_empty()
+            || lower.starts_with("image/")
+            || lower == "application/pdf"
+            || lower.starts_with("audio/")
+            || lower.starts_with("video/")
+    }
+
+    fn multimodal_label_for_mime(mime: &str) -> &'static str {
+        let lower = mime.trim().to_ascii_lowercase();
+        if lower.is_empty() || lower.starts_with("image/") {
+            "Image"
+        } else if lower == "application/pdf" {
+            "PDF"
+        } else if lower.starts_with("audio/") {
+            "Audio"
+        } else if lower.starts_with("video/") {
+            "Video"
+        } else {
+            "Media"
+        }
+    }
+
+    fn format_pruned_multimodal_notice(
+        seq: usize,
+        is_remote: bool,
+        mime: &str,
+        strategy: &str,
+        max_total_mb: usize,
+    ) -> String {
+        let label = Self::multimodal_label_for_mime(mime);
+        if is_remote {
+            if strategy.eq_ignore_ascii_case("memory") {
+                format!(
+                    "[Historical Remote {} #{}: omitted due to memory budget]",
+                    label, seq
+                )
+            } else {
+                format!(
+                    "[Historical Remote {} #{}: omitted to preserve context]",
+                    label, seq
+                )
+            }
+        } else if strategy.eq_ignore_ascii_case("memory") {
+            format!(
+                "[Historical {} #{}: omitted due to memory budget ({}, {} MB max)]",
+                label, seq, mime, max_total_mb
+            )
+        } else {
+            format!(
+                "[Historical {} #{}: omitted to preserve context ({})]",
+                label, seq, mime
+            )
+        }
+    }
+
     /// 全协议多模态历史保鲜滑动窗口与累积容量治理（Pipeline First）：
-    /// 1. 扫描所有 contents 中的图片 parts（包括 inlineData base64 与 fileData 远程直链）
+    /// 1. 扫描所有 contents 中的多模态 parts（含 `image/*`、`application/pdf`、`audio/*`、`video/*` 的 `inlineData` 与 `fileData` 远程直链），
+    ///    同时覆盖顶层 `contents[i].parts` 与嵌套在工具回执内的 `functionResponse.parts`；
     /// 2. 若启用了保鲜滑动窗口（enable_sliding_window=true 且 max_fresh_images > 0）：
-    ///    - 逆序保鲜最近的 N 张图片（从最新轮次往前计数），保留其完整数据；
-    ///    - 对超出保鲜窗口的早期历史图片：
-    ///      * inlineData (Base64)：剥离 Base64 并替换为结构化占位符 `[Historical Image #k: omitted to preserve context (mime)]`
-    ///      * fileData (远程直链)：若 strip_remote_urls=true，亦替换为 `[Historical Remote Image #k: omitted to preserve context]`；否则完整保留 URL
-    /// 3. 内存防爆与累积容量兜底（max_total_image_mb）：
-    ///    - 统计剩余所有 inlineData 图片的总字节大小
-    ///    - 若依然超出上限，执行 LRU / Recency-First 淘汰：自底向上（从最早的历史轮次）继续将旧图剥离为占位符，
-    ///      绝对力保当前轮（最新轮次）的视觉感知输入完好无损！
+    ///    - 逆序保鲜最近的 N 个多模态部件（从最新轮次往前计数），保留其完整数据；
+    ///    - 对超出保鲜窗口的早期历史条目：
+    ///      * 顶层 inlineData/fileData：剥离并替换为结构化文本占位符 `[Historical <Media> #k: ...]`；
+    ///      * 嵌套于 `functionResponse.parts` 内的条目：安全移除该 `FunctionResponsePart`（若 `parts` 清空则移除键），
+    ///        并将省略说明写入 `functionResponse.response._omitted_multimodal_parts`（绝不在 `FunctionResponsePart` 内塞入 `{"text": ...}` 触发上游 400）；
+    /// 3. 内存防爆与累积容量兜底（strategy = "memory", max_total_image_mb）：
+    ///    - 逆序统计累计解码字节大小，始终力保当前最新一条多模态输入完好无损。
     pub fn apply_multimodal_sliding_window_and_limits(
         contents: &mut [Value],
         config: &crate::proxy::config::MultimodalConfig,
@@ -865,54 +922,108 @@ impl InboundThinkingPipeline {
             return 0;
         }
 
-        let mut image_locations: Vec<(usize, usize, bool, String, usize)> = Vec::new();
-        // (content_idx, part_idx, is_remote, mime, approx_byte_len)
+        #[derive(Clone)]
+        enum MultimodalLocation {
+            TopLevel {
+                content_idx: usize,
+                part_idx: usize,
+            },
+            FunctionResponsePart {
+                content_idx: usize,
+                part_idx: usize,
+                fr_key: &'static str,
+                fr_part_idx: usize,
+            },
+        }
+
+        struct MultimodalEntry {
+            location: MultimodalLocation,
+            is_remote: bool,
+            mime: String,
+            approx_bytes: usize,
+        }
+
+        let mut media_locations: Vec<MultimodalEntry> = Vec::new();
+
+        let classify_part = |part: &Value| -> Option<(bool, String, usize)> {
+            let inline_obj = part.get("inlineData").or_else(|| part.get("inline_data"));
+            if let Some(obj) = inline_obj {
+                let mime = obj
+                    .get("mimeType")
+                    .or_else(|| obj.get("mime_type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("image/png");
+                if Self::is_managed_multimodal_mime(mime) {
+                    let b64_len = obj
+                        .get("data")
+                        .and_then(Value::as_str)
+                        .map_or(0, |s| s.len());
+                    let approx_bytes = b64_len.saturating_mul(3) / 4;
+                    return Some((false, mime.to_string(), approx_bytes));
+                }
+                return None;
+            }
+
+            let file_obj = part.get("fileData").or_else(|| part.get("file_data"));
+            if let Some(obj) = file_obj {
+                let uri = obj
+                    .get("fileUri")
+                    .or_else(|| obj.get("file_uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let mime = obj
+                    .get("mimeType")
+                    .or_else(|| obj.get("mime_type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("image/jpeg");
+                if (uri.starts_with("http://") || uri.starts_with("https://"))
+                    && Self::is_managed_multimodal_mime(mime)
+                {
+                    return Some((true, mime.to_string(), uri.len()));
+                }
+            }
+
+            None
+        };
 
         for (c_idx, content) in contents.iter().enumerate() {
             if let Some(parts) = content.get("parts").and_then(Value::as_array) {
                 for (p_idx, part) in parts.iter().enumerate() {
-                    let inline_obj = part.get("inlineData").or_else(|| part.get("inline_data"));
-                    if let Some(obj) = inline_obj {
-                        let mime = obj
-                            .get("mimeType")
-                            .or_else(|| obj.get("mime_type"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("image/png");
-                        if mime.starts_with("image/") || mime.is_empty() {
-                            let b64_len = obj
-                                .get("data")
-                                .and_then(Value::as_str)
-                                .map_or(0, |s| s.len());
-                            let approx_bytes = b64_len.saturating_mul(3) / 4;
-                            image_locations.push((
-                                c_idx,
-                                p_idx,
-                                false,
-                                mime.to_string(),
-                                approx_bytes,
-                            ));
-                        }
-                    } else {
-                        let file_obj = part.get("fileData").or_else(|| part.get("file_data"));
-                        if let Some(obj) = file_obj {
-                            let uri = obj
-                                .get("fileUri")
-                                .or_else(|| obj.get("file_uri"))
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            let mime = obj
-                                .get("mimeType")
-                                .or_else(|| obj.get("mime_type"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("image/jpeg");
-                            if uri.starts_with("http://") || uri.starts_with("https://") {
-                                image_locations.push((
-                                    c_idx,
-                                    p_idx,
-                                    true,
-                                    mime.to_string(),
-                                    uri.len(),
-                                ));
+                    if let Some((is_remote, mime, approx_bytes)) = classify_part(part) {
+                        media_locations.push(MultimodalEntry {
+                            location: MultimodalLocation::TopLevel {
+                                content_idx: c_idx,
+                                part_idx: p_idx,
+                            },
+                            is_remote,
+                            mime,
+                            approx_bytes,
+                        });
+                        continue;
+                    }
+
+                    for fr_key in ["functionResponse", "function_response"] {
+                        if let Some(fr_parts) = part
+                            .get(fr_key)
+                            .and_then(|fr| fr.get("parts"))
+                            .and_then(Value::as_array)
+                        {
+                            for (fr_p_idx, fr_part) in fr_parts.iter().enumerate() {
+                                if let Some((is_remote, mime, approx_bytes)) =
+                                    classify_part(fr_part)
+                                {
+                                    media_locations.push(MultimodalEntry {
+                                        location: MultimodalLocation::FunctionResponsePart {
+                                            content_idx: c_idx,
+                                            part_idx: p_idx,
+                                            fr_key,
+                                            fr_part_idx: fr_p_idx,
+                                        },
+                                        is_remote,
+                                        mime,
+                                        approx_bytes,
+                                    });
+                                }
                             }
                         }
                     }
@@ -920,104 +1031,149 @@ impl InboundThinkingPipeline {
             }
         }
 
-        let total_images = image_locations.len();
-        if total_images == 0 {
+        let total_items = media_locations.len();
+        if total_items == 0 {
             return 0;
         }
 
-        let mut pruned_count = 0;
-
-        if config.strategy.eq_ignore_ascii_case("memory") {
-            // =========================================================================
-            // 策略二：基于累积内存体积滑动保鲜 (Memory-Based Strategy)
-            // 逆序从最新轮次往前回溯累加 Base64 字节，超出配额的更早历史图片剥离降级
-            // =========================================================================
+        let prune_limit = if config.strategy.eq_ignore_ascii_case("memory") {
             let budget_bytes = config.max_total_image_mb.max(1).saturating_mul(1024 * 1024);
             let mut accumulated_bytes = 0usize;
             let mut keep_from_idx = 0usize;
 
-            // 逆序扫描：从最新的一张图片（total_images - 1）往回计算
-            for (i, (_, _, is_remote, _, bytes)) in image_locations.iter().enumerate().rev() {
-                if !*is_remote {
-                    // 最新的一张图片永远保留；其余图片在预算内保留
-                    if accumulated_bytes.saturating_add(*bytes) <= budget_bytes
-                        || i == total_images - 1
+            for (i, entry) in media_locations.iter().enumerate().rev() {
+                if !entry.is_remote {
+                    // 最新一条多媒体始终保留；其余条目在预算内保留
+                    if accumulated_bytes.saturating_add(entry.approx_bytes) <= budget_bytes
+                        || i == total_items - 1
                     {
-                        accumulated_bytes = accumulated_bytes.saturating_add(*bytes);
+                        accumulated_bytes = accumulated_bytes.saturating_add(entry.approx_bytes);
                     } else {
                         keep_from_idx = i + 1;
                         break;
                     }
                 }
             }
-
-            // 对超出内存预算的早期历史图片进行剥离
-            for i in 0..keep_from_idx {
-                let (c_idx, p_idx, is_remote, mime, _) = &image_locations[i];
-                let seq = i + 1;
-                if *is_remote {
-                    if config.strip_remote_urls {
-                        if let Some(parts) = contents[*c_idx]
-                            .get_mut("parts")
-                            .and_then(Value::as_array_mut)
-                        {
-                            parts[*p_idx] = json!({
-                                "text": format!("[Historical Remote Image #{}: omitted due to memory budget]", seq)
-                            });
-                            pruned_count += 1;
-                        }
-                    }
-                } else if let Some(parts) = contents[*c_idx]
-                    .get_mut("parts")
-                    .and_then(Value::as_array_mut)
-                {
-                    parts[*p_idx] = json!({
-                        "text": format!("[Historical Image #{}: omitted due to memory budget ({}, {} MB max)]", seq, mime, config.max_total_image_mb)
-                    });
-                    pruned_count += 1;
-                }
-            }
+            keep_from_idx
+        } else if config.max_fresh_images > 0 && total_items > config.max_fresh_images {
+            total_items.saturating_sub(config.max_fresh_images)
         } else {
-            // =========================================================================
-            // 策略一：基于图片张数滑动保鲜 (Count-Based Strategy)
-            // 逆序保鲜最近的 N 张图片，超过 N 张的早期历史图片剥离降级
-            // =========================================================================
-            if config.max_fresh_images > 0 && total_images > config.max_fresh_images {
-                let to_prune = total_images.saturating_sub(config.max_fresh_images);
-                for i in 0..to_prune {
-                    let (c_idx, p_idx, is_remote, mime, _) = &image_locations[i];
-                    let seq = i + 1;
-                    if *is_remote {
-                        if config.strip_remote_urls {
-                            if let Some(parts) = contents[*c_idx]
-                                .get_mut("parts")
-                                .and_then(Value::as_array_mut)
-                            {
-                                parts[*p_idx] = json!({
-                                    "text": format!("[Historical Remote Image #{}: omitted to preserve context]", seq)
-                                });
-                                pruned_count += 1;
-                            }
-                        }
-                    } else if let Some(parts) = contents[*c_idx]
+            0
+        };
+
+        if prune_limit == 0 {
+            return 0;
+        }
+
+        let mut pruned_count = 0usize;
+        let mut fr_removals: std::collections::BTreeMap<
+            (usize, usize, &'static str),
+            Vec<(usize, String)>,
+        > = std::collections::BTreeMap::new();
+
+        for (i, entry) in media_locations.iter().take(prune_limit).enumerate() {
+            if entry.is_remote && !config.strip_remote_urls {
+                continue;
+            }
+            let notice = Self::format_pruned_multimodal_notice(
+                i + 1,
+                entry.is_remote,
+                &entry.mime,
+                &config.strategy,
+                config.max_total_image_mb,
+            );
+            match &entry.location {
+                MultimodalLocation::TopLevel {
+                    content_idx,
+                    part_idx,
+                } => {
+                    if let Some(parts) = contents[*content_idx]
                         .get_mut("parts")
                         .and_then(Value::as_array_mut)
                     {
-                        parts[*p_idx] = json!({
-                            "text": format!("[Historical Image #{}: omitted to preserve context ({})]", seq, mime)
-                        });
+                        parts[*part_idx] = json!({ "text": notice });
                         pruned_count += 1;
                     }
                 }
+                MultimodalLocation::FunctionResponsePart {
+                    content_idx,
+                    part_idx,
+                    fr_key,
+                    fr_part_idx,
+                } => {
+                    fr_removals
+                        .entry((*content_idx, *part_idx, *fr_key))
+                        .or_default()
+                        .push((*fr_part_idx, notice));
+                }
+            }
+        }
+
+        // 先按倒序安全移除 functionResponse.parts 中的历史内联文件，避免索引漂移，
+        // 并将省略提示写入 functionResponse.response._omitted_multimodal_parts
+        for ((content_idx, part_idx, fr_key), mut items) in fr_removals {
+            let notices: Vec<String> = items.iter().map(|(_, n)| n.clone()).collect();
+            items.sort_by(|a, b| b.0.cmp(&a.0));
+
+            let Some(parts) = contents[content_idx]
+                .get_mut("parts")
+                .and_then(Value::as_array_mut)
+            else {
+                continue;
+            };
+            let Some(fr_obj) = parts[part_idx]
+                .get_mut(fr_key)
+                .and_then(Value::as_object_mut)
+            else {
+                continue;
+            };
+
+            let mut removed_for_fr = 0usize;
+            if let Some(fr_parts) = fr_obj.get_mut("parts").and_then(Value::as_array_mut) {
+                for (fr_part_idx, _) in items {
+                    if fr_part_idx < fr_parts.len() {
+                        fr_parts.remove(fr_part_idx);
+                        removed_for_fr += 1;
+                    }
+                }
+                if fr_parts.is_empty() {
+                    fr_obj.remove("parts");
+                }
+            }
+
+            if removed_for_fr > 0 {
+                pruned_count += removed_for_fr;
+                let existing_resp = fr_obj.remove("response");
+                let mut resp_map = match existing_resp {
+                    Some(Value::Object(map)) => map,
+                    Some(other) => {
+                        let mut map = serde_json::Map::new();
+                        map.insert("output".to_string(), other);
+                        map
+                    }
+                    None => serde_json::Map::new(),
+                };
+                let existing_notes = resp_map
+                    .entry("_omitted_multimodal_parts".to_string())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Some(arr) = existing_notes.as_array_mut() {
+                    for notice in notices {
+                        arr.push(Value::String(notice));
+                    }
+                } else {
+                    *existing_notes =
+                        Value::Array(notices.into_iter().map(Value::String).collect());
+                }
+                fr_obj.insert("response".to_string(), Value::Object(resp_map));
             }
         }
 
         if pruned_count > 0 {
             tracing::info!(
-                "[Multimodal-Pipeline] Pruned {} historical image(s) via strategy '{}' (total: {}, fresh_limit: {}, max_mb: {})",
+                "[Multimodal-Pipeline] Pruned {} historical multimodal part(s) via strategy '{}' (total: {}, fresh_limit: {}, max_mb: {})",
                 pruned_count,
                 config.strategy,
-                total_images,
+                total_items,
                 config.max_fresh_images,
                 config.max_total_image_mb,
             );
@@ -5161,6 +5317,113 @@ mod tests {
         );
         assert!(contents[0]["parts"][0].get("inlineData").is_some());
         assert!(contents[1]["parts"][0].get("inlineData").is_some());
+    }
+
+    #[test]
+    fn test_multimodal_sliding_window_prunes_historical_pdfs_and_media_under_memory_strategy() {
+        // ~1.5 MB decoded PDF / audio payloads each (2 MB base64 -> ~1.5 MB decoded)
+        let big_b64 = "A".repeat(2 * 1024 * 1024);
+        let mut contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{"inlineData": {"mimeType": "application/pdf", "data": big_b64}}]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{"inlineData": {"mimeType": "audio/mp3", "data": big_b64}}]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{"inlineData": {"mimeType": "application/pdf", "data": big_b64}}]
+            }),
+        ];
+
+        // 2 MB budget: only the newest PDF (~1.5 MB) fits; older PDF & audio must be evicted
+        let config = crate::proxy::config::MultimodalConfig {
+            enable_sliding_window: true,
+            strategy: "memory".to_string(),
+            max_fresh_images: 10,
+            strip_remote_urls: false,
+            max_total_image_mb: 2,
+        };
+
+        let pruned = InboundThinkingPipeline::apply_multimodal_sliding_window_and_limits(
+            &mut contents,
+            &config,
+        );
+        assert_eq!(pruned, 2);
+        assert!(contents[0]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Historical PDF #1"));
+        assert!(contents[1]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Historical Audio #2"));
+        assert!(contents[2]["parts"][0].get("inlineData").is_some());
+    }
+
+    #[test]
+    fn test_multimodal_sliding_window_prunes_function_response_inline_pdfs_without_invalid_text_parts(
+    ) {
+        let big_b64 = "A".repeat(2 * 1024 * 1024);
+        let mut contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "id": "call_read_1",
+                        "name": "read_file",
+                        "response": {"status": "ok"},
+                        "parts": [
+                            {"inlineData": {"mimeType": "application/pdf", "data": big_b64}},
+                            {"inlineData": {"mimeType": "application/pdf", "data": big_b64}}
+                        ]
+                    }
+                }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "id": "call_read_2",
+                        "name": "read_file",
+                        "response": {"status": "ok"},
+                        "parts": [
+                            {"inlineData": {"mimeType": "application/pdf", "data": big_b64}}
+                        ]
+                    }
+                }]
+            }),
+        ];
+
+        let config = crate::proxy::config::MultimodalConfig {
+            enable_sliding_window: true,
+            strategy: "memory".to_string(),
+            max_fresh_images: 10,
+            strip_remote_urls: false,
+            max_total_image_mb: 2,
+        };
+
+        let pruned = InboundThinkingPipeline::apply_multimodal_sliding_window_and_limits(
+            &mut contents,
+            &config,
+        );
+        assert_eq!(pruned, 2);
+
+        // Older functionResponse.parts had all items evicted -> "parts" key removed (never {"text": ...}!)
+        let fr0 = &contents[0]["parts"][0]["functionResponse"];
+        assert!(fr0.get("parts").is_none());
+        let omitted = fr0["response"]["_omitted_multimodal_parts"]
+            .as_array()
+            .expect("omitted notices should be recorded inside response object");
+        assert_eq!(omitted.len(), 2);
+        assert!(omitted[0].as_str().unwrap().contains("Historical PDF #1"));
+        assert!(omitted[1].as_str().unwrap().contains("Historical PDF #2"));
+
+        // Newest functionResponse.parts PDF must stay intact
+        let fr1 = &contents[1]["parts"][0]["functionResponse"];
+        assert!(fr1["parts"][0].get("inlineData").is_some());
     }
 
     #[test]
