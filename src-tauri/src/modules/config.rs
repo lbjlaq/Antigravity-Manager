@@ -177,6 +177,29 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
             modified = true;
         }
 
+        if builtin_version < 2 {
+            // 升级至版本 2：注入精确辅助模型映射（默认 expose: false；用户已有该 key 时不覆盖，删除后不复活）
+            let key = "gemini-3.1-flash-lite-preview";
+            if !custom_mapping.contains_key(key) {
+                custom_mapping.insert(
+                    key.to_string(),
+                    serde_json::Value::String("auto:background".to_string()),
+                );
+            }
+            if !custom_mapping_expose.contains_key(key) {
+                custom_mapping_expose.insert(key.to_string(), serde_json::Value::Bool(false));
+            }
+            proxy.as_object_mut().unwrap().insert(
+                "builtin_mapping_version".to_string(),
+                serde_json::Value::Number(2.into()),
+            );
+            proxy.as_object_mut().unwrap().insert(
+                "custom_mapping_expose".to_string(),
+                serde_json::Value::Object(custom_mapping_expose.clone()),
+            );
+            modified = true;
+        }
+
         // 旧出厂默认 flash_high = 16384 或 32768。只在首次启动且模式为 default 时改成官方 -1。
         if let Some(tb) = proxy
             .get_mut("thinking_budget")
@@ -355,5 +378,46 @@ mod tests {
         let (valid_cfg, _) =
             parse_and_migrate_config(&default_json).expect("valid config should parse");
         assert!(!valid_cfg.proxy.api_key.is_empty());
+    }
+
+    #[test]
+    fn test_builtin_mapping_v1_to_v2_migration() {
+        const KEY: &str = "gemini-3.1-flash-lite-preview";
+        let migrate = |ver: u32, custom_val: Option<&str>| {
+            let mut cfg = AppConfig::new();
+            cfg.proxy.builtin_mapping_version = ver;
+            cfg.proxy.custom_mapping.remove(KEY);
+            cfg.proxy.custom_mapping_expose.remove(KEY);
+            if let Some(v) = custom_val {
+                cfg.proxy
+                    .custom_mapping
+                    .insert(KEY.to_string(), v.to_string());
+            }
+            parse_and_migrate_config(&serde_json::to_string(&cfg).unwrap()).unwrap()
+        };
+
+        // 1. v1 missing key -> migrated to v2 with auto:background + expose=false
+        let (migrated, modified) = migrate(1, None);
+        assert!(modified);
+        assert_eq!(migrated.proxy.builtin_mapping_version, 2);
+        assert_eq!(
+            migrated.proxy.custom_mapping.get(KEY).map(String::as_str),
+            Some("auto:background")
+        );
+        assert_eq!(
+            migrated.proxy.custom_mapping_expose.get(KEY).copied(),
+            Some(false)
+        );
+
+        // 2. v1 user-customized entry preserved
+        let (custom, _) = migrate(1, Some("gemini-3.5-flash-lite"));
+        assert_eq!(
+            custom.proxy.custom_mapping.get(KEY).map(String::as_str),
+            Some("gemini-3.5-flash-lite")
+        );
+
+        // 3. v2 deleted entry must not resurrect
+        let (v2_deleted, _) = migrate(2, None);
+        assert!(!v2_deleted.proxy.custom_mapping.contains_key(KEY));
     }
 }

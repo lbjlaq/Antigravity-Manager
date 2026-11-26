@@ -1633,7 +1633,7 @@ pub struct UpstreamProxyConfig {
 }
 
 pub fn default_builtin_mapping_version() -> u32 {
-    1
+    2
 }
 
 pub fn default_custom_mapping() -> std::collections::HashMap<String, String> {
@@ -1647,6 +1647,10 @@ pub fn default_custom_mapping() -> std::collections::HashMap<String, String> {
         "claude-haiku-*".to_string(),
         "auto:gemini-flash-low".to_string(),
     );
+    m.insert(
+        "gemini-3.1-flash-lite-preview".to_string(),
+        "auto:background".to_string(),
+    );
     m
 }
 
@@ -1655,6 +1659,7 @@ pub fn default_custom_mapping_expose() -> std::collections::HashMap<String, bool
     m.insert("claude-fable-*".to_string(), false);
     m.insert("claude-opus-4-7*".to_string(), false);
     m.insert("claude-haiku-*".to_string(), false);
+    m.insert("gemini-3.1-flash-lite-preview".to_string(), false);
     m
 }
 
