@@ -660,11 +660,25 @@ pub async fn fetch_quota_with_cache(
                 // [2026-10-29] 不再向官方可用集合里注入任何“字典存在但未开通”的模型（如 gemini-3.1-flash-lite），
                 // 对外模型列表严格等于 fetchAvailableModels 的可用集合。
 
-                // 使用在线官方推荐结构同步动态目录（替换静态快照推荐列表并刷新模型规格）
+                // Parse deprecated model routing rules before moving into sync_live_catalog
+                let deprecated_redirects: std::collections::HashMap<String, String> =
+                    quota_response
+                        .deprecated_model_ids
+                        .as_ref()
+                        .map(|dep| {
+                            dep.iter()
+                                .map(|(old_id, info)| (old_id.clone(), info.new_model_id.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                // 使用在线官方推荐结构同步动态目录（替换静态快照推荐列表、分层元数据并刷新模型规格）
                 crate::models::OfficialModelCatalog::sync_live_catalog(
                     Some(email),
                     quota_response.models.clone(),
                     &official_supported_ids,
+                    quota_response.tiered_model_ids.as_ref(),
+                    (!deprecated_redirects.is_empty()).then_some(&deprecated_redirects),
                 );
 
                 // Parse deprecated model routing rules

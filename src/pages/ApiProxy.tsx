@@ -831,23 +831,25 @@ export default function ApiProxy() {
         if (!appConfig) return;
         setIsResetConfirmOpen(false);
 
-        // 恢复到官方自适应暗路由默认预设 (防复活且保留内置 3 条自适应规则)
+        // 恢复到官方自适应暗路由默认预设 (防复活且保留内置自适应规则)
         const defaultCustomMapping: Record<string, string> = {
             'claude-fable-*': 'auto:claude-opus',
             'claude-opus-4-7*': 'auto:claude-opus-4-7',
             'claude-haiku-*': 'auto:gemini-flash-low',
+            'gemini-3.1-flash-lite-preview': 'auto:background',
         };
         const defaultCustomMappingExpose: Record<string, boolean> = {
             'claude-fable-*': false,
             'claude-opus-4-7*': false,
             'claude-haiku-*': false,
+            'gemini-3.1-flash-lite-preview': false,
         };
 
         const newConfig = {
             ...appConfig.proxy,
             custom_mapping: defaultCustomMapping,
             custom_mapping_expose: defaultCustomMappingExpose,
-            builtin_mapping_version: 1,
+            builtin_mapping_version: 2,
         };
 
         try {
@@ -904,14 +906,14 @@ export default function ApiProxy() {
             mappings: {
                 "gpt-4*": "gemini-3.8-flash-high",
                 "gpt-4o*": "gemini-3.8-flash-medium",
-                "gpt-3.5*": "gemini-3.1-flash-lite",
+                "gpt-3.5*": "auto:background",
                 "o1-*": "gemini-3.8-flash-high",
                 "o3-*": "gemini-3.8-flash-high",
                 "claude-3-5-sonnet-*": "gemini-3.8-flash-high",
                 "claude-3-opus-*": "gemini-3.8-flash-high",
                 "claude-opus-4-*": "gemini-3.8-flash-high",
-                "claude-haiku-*": "gemini-3.1-flash-lite",
-                "claude-3-haiku-*": "gemini-3.1-flash-lite",
+                "claude-haiku-*": "auto:background",
+                "claude-3-haiku-*": "auto:background",
             }
         },
         {

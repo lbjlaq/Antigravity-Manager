@@ -24,8 +24,6 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-sonnet-4-6-thinking", "claude-sonnet-4-6");
     m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
     m.insert("gpt-oss-120b", "gpt-oss-120b-medium");
-    // 网关内部摘要虚拟任务路由至官方轻量模型
-    m.insert("internal-background-task", "gemini-3.5-flash-lite");
 
     m
 });
@@ -813,15 +811,37 @@ pub fn resolve_custom_model_route(
         return Some(forwarded.value().clone());
     }
 
+    // 4. 网关内部后台任务别名（未在 custom_mapping 中显式覆写时统一收敛到 auto:background）
+    if original_model
+        .trim()
+        .eq_ignore_ascii_case(INTERNAL_BACKGROUND_TASK)
+    {
+        return Some(AUTO_BACKGROUND_TARGET.to_string());
+    }
+
     None
 }
 
-/// 解析号池自适应暗路由目标 (auto:*)
+/// 后台任务虚拟别名键（与前端「后台任务模型」配置项同源）
+pub const INTERNAL_BACKGROUND_TASK: &str = "internal-background-task";
+/// 中性后台任务自适应目标（`auto:gemini-flash-low` 作为旧名保留兼容）
+pub const AUTO_BACKGROUND_TARGET: &str = "auto:background";
+pub const LEGACY_AUTO_BACKGROUND_TARGET: &str = "auto:gemini-flash-low";
+
+fn manual_background_override(
+    custom_mapping: Option<&std::collections::HashMap<String, String>>,
+) -> Option<String> {
+    let trimmed = custom_mapping?.get(INTERNAL_BACKGROUND_TASK)?.trim();
+    (!trimmed.is_empty() && !trimmed.starts_with("auto:")).then(|| trimmed.to_string())
+}
+
+/// 解析号池自适应暗路由目标 (auto:*)，支持读取用户手动设置的后台模型覆盖。
 ///
 /// 规则：
-/// 1. `auto:gemini-flash-low`:
-///    优先复用 `pick_background_model_from_pool` 动态挑选非 Pro 账号共享桶中最新 `gemini-<x.x>-flash-low`；
-///    未同步或未找到时兜底返回最新官方基准轻量模型 `gemini-3.8-flash-low`。
+/// 1. `auto:background`（`auto:gemini-flash-low` 为向后兼容旧名）：
+///    优先遵从用户手动配置的 `custom_mapping["internal-background-task"]`；
+///    未手动设置时按官方目录 `tieredModelIds`（`flashLite` -> `flash`）推导确定性候选链，
+///    并结合号池真实可用性以缓存优先原则锁定首个有正配额（其次有支持账号）的候选模型，避免在模型间横跳。
 /// 2. `auto:claude-opus`:
 ///    若号池拥有正配额的 `claude-opus-5-5`（或其档位变体），返回 `claude-opus-5-5`；
 ///    否则若号池拥有正配额的 `claude-opus-4-6` / `claude-opus-4-6-thinking`，返回 `claude-opus-4-6-thinking`；
@@ -834,27 +854,75 @@ pub fn resolve_custom_model_route(
 pub fn resolve_adaptive_target(
     target: &str,
     requested_model: &str,
-    _effort: Option<&str>,
+    effort: Option<&str>,
+    custom_mapping: Option<&std::collections::HashMap<String, String>>,
     token_manager: Option<&crate::proxy::token_manager::TokenManager>,
+) -> String {
+    resolve_adaptive_target_scoped(
+        target,
+        requested_model,
+        effort,
+        custom_mapping,
+        token_manager,
+        None,
+    )
+}
+
+pub fn resolve_adaptive_target_scoped(
+    target: &str,
+    requested_model: &str,
+    _effort: Option<&str>,
+    custom_mapping: Option<&std::collections::HashMap<String, String>>,
+    token_manager: Option<&crate::proxy::token_manager::TokenManager>,
+    allowed_accounts: Option<&std::collections::HashSet<String>>,
 ) -> String {
     if !target.starts_with("auto:") {
         return target.to_string();
     }
 
     match target {
-        "auto:gemini-flash-low" => {
-            if let Some(tm) = token_manager {
-                if let Some(bg) =
-                    crate::proxy::common::model_gate::pick_background_model_from_pool(tm)
-                {
-                    crate::modules::logger::log_info(&format!(
-                        "[AdaptiveRoute] auto:gemini-flash-low (requested: {}) 动态挑选轻量模型: {}",
-                        requested_model, bg
-                    ));
-                    return bg;
-                }
+        AUTO_BACKGROUND_TARGET | LEGACY_AUTO_BACKGROUND_TARGET => {
+            if let Some(manual) = manual_background_override(custom_mapping) {
+                crate::modules::logger::log_info(&format!(
+                    "[AdaptiveRoute] {} (requested: {}) 使用用户手动设置的后台模型: {}",
+                    target, requested_model, manual
+                ));
+                return manual;
             }
-            "gemini-3.8-flash-low".to_string()
+            let candidates = crate::models::OfficialModelCatalog::background_model_candidates();
+            if !candidates.is_empty() {
+                if let Some(tm) = token_manager {
+                    if !tm.get_all_collected_models().is_empty() {
+                        if let Some(bg) = candidates.iter().find(|c| {
+                            tm.has_available_model_scoped(c, allowed_accounts)
+                                && tm.accounts_with_positive_quota_scoped(c, allowed_accounts) > 0
+                        }) {
+                            crate::modules::logger::log_info(&format!(
+                                "[AdaptiveRoute] {} (requested: {}) 使用官方轻量分层模型: {}",
+                                target, requested_model, bg
+                            ));
+                            return bg.clone();
+                        }
+                        if let Some(bg) = candidates.iter().find(|c| {
+                            tm.has_available_model_scoped(c, allowed_accounts)
+                                && tm.has_any_capable_account_in_pool_scoped(c, allowed_accounts)
+                        }) {
+                            crate::modules::logger::log_info(&format!(
+                                "[AdaptiveRoute] {} (requested: {}) 命中号池支持的官方轻量模型: {}",
+                                target, requested_model, bg
+                            ));
+                            return bg.clone();
+                        }
+                    }
+                }
+                let primary = candidates[0].clone();
+                crate::modules::logger::log_info(&format!(
+                    "[AdaptiveRoute] {} (requested: {}) 使用官方轻量分层模型: {}",
+                    target, requested_model, primary
+                ));
+                return primary;
+            }
+            requested_model.to_string()
         }
         "auto:claude-opus" => {
             if let Some(tm) = token_manager {
@@ -938,7 +1006,13 @@ pub fn resolve_model_route_with_effort_and_pool(
     if let Some(custom) = resolve_custom_model_route(original_model, custom_mapping) {
         // 自适应暗路由解析 (auto:*)
         let target = if custom.starts_with("auto:") {
-            resolve_adaptive_target(&custom, original_model, client_effort, token_manager)
+            resolve_adaptive_target(
+                &custom,
+                original_model,
+                client_effort,
+                Some(custom_mapping),
+                token_manager,
+            )
         } else {
             custom
         };
@@ -1019,6 +1093,37 @@ pub fn resolve_model_route_with_effort(
     client_effort: Option<&str>,
 ) -> String {
     resolve_model_route_with_effort_and_pool(original_model, custom_mapping, client_effort, None)
+}
+
+/// 协议层复用 `ModelGate` 解析结果时的最终路由收口：
+/// - 若经过自定义映射/后台暗路由（`from_custom_route == true`），保持「未显式指定思考等级时不改写用户目标裸模型」契约；
+/// - 若未命中自定义映射（`from_custom_route == false`），按标准裸模型与思考档位规则路由。
+pub fn finalize_gated_model_route(
+    gated_model: &str,
+    from_custom_route: bool,
+    client_effort: Option<&str>,
+) -> String {
+    if from_custom_route {
+        let has_explicit_effort = client_effort
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "default")
+            .is_some();
+        if has_explicit_effort {
+            if let Some(routed) = crate::proxy::model_specs::resolve_bare_tiered_model_route(
+                gated_model,
+                client_effort,
+            ) {
+                return map_claude_model_to_gemini(&routed);
+            }
+        }
+        return map_claude_model_to_gemini(gated_model);
+    }
+
+    resolve_model_route_with_effort(
+        gated_model,
+        &std::collections::HashMap::new(),
+        client_effort,
+    )
 }
 
 /// Normalize any physical model name to one of the 3 standard protection IDs.
@@ -1318,7 +1423,7 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("internal-background-task"),
-            "gemini-3.5-flash-lite"
+            "internal-background-task"
         );
         assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
     }
@@ -1419,7 +1524,7 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("internal-background-task"),
-            "gemini-3.5-flash-lite"
+            "internal-background-task"
         );
         let empty = HashMap::new();
         assert_eq!(
@@ -1865,15 +1970,15 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-haiku-4-5", &default_custom, None),
-            "gemini-3.8-flash-low"
+            "gemini-3.5-flash-lite"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-haiku-4-5-20251001", &default_custom, None),
-            "gemini-3.8-flash-low"
+            "gemini-3.5-flash-lite"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-haiku-5-5", &default_custom, None),
-            "gemini-3.8-flash-low"
+            "gemini-3.5-flash-lite"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-opus-4-7", &default_custom, None),
@@ -1884,16 +1989,80 @@ mod tests {
     #[test]
     fn test_resolve_adaptive_target() {
         assert_eq!(
-            resolve_adaptive_target("auto:gemini-flash-low", "claude-haiku-4-5", None, None),
-            "gemini-3.8-flash-low"
+            resolve_adaptive_target(
+                "auto:background",
+                "internal-background-task",
+                None,
+                None,
+                None
+            ),
+            "gemini-3.5-flash-lite"
         );
         assert_eq!(
-            resolve_adaptive_target("auto:claude-opus", "claude-fable-5", None, None),
+            resolve_adaptive_target(
+                "auto:gemini-flash-low",
+                "claude-haiku-4-5",
+                None,
+                None,
+                None
+            ),
+            "gemini-3.5-flash-lite"
+        );
+        // Manual background model override takes precedence over tiered-derived model
+        let manual = HashMap::from([
+            (
+                "internal-background-task".to_string(),
+                "gemini-4-hydrogen-low".to_string(),
+            ),
+            (
+                "gemini-3.1-flash-lite-preview".to_string(),
+                "auto:background".to_string(),
+            ),
+            (
+                "claude-haiku-*".to_string(),
+                "auto:gemini-flash-low".to_string(),
+            ),
+        ]);
+        for req in [
+            "internal-background-task",
+            "gemini-3.1-flash-lite-preview",
+            "claude-haiku-4-5",
+        ] {
+            assert_eq!(
+                resolve_model_route_with_effort(req, &manual, None),
+                "gemini-4-hydrogen-low"
+            );
+        }
+        assert_eq!(
+            resolve_adaptive_target("auto:claude-opus", "claude-fable-5", None, None, None),
             "claude-opus-5-5"
         );
         assert_eq!(
-            resolve_adaptive_target("auto:claude-opus-4-7", "claude-opus-4-7", None, None),
+            resolve_adaptive_target("auto:claude-opus-4-7", "claude-opus-4-7", None, None, None),
             "claude-opus-4-6-thinking"
+        );
+    }
+
+    #[test]
+    fn test_finalize_gated_model_route_preserves_bare_custom_target() {
+        // Custom mapping pointing to a bare model must NOT be overwritten to a default tier when effort is unset
+        assert_eq!(
+            finalize_gated_model_route("gemini-4-hydrogen", true, None),
+            "gemini-4-hydrogen"
+        );
+        assert_eq!(
+            finalize_gated_model_route("gemini-4-hydrogen", true, Some("default")),
+            "gemini-4-hydrogen"
+        );
+        // Explicit effort on a custom bare model still selects the requested tier
+        assert_eq!(
+            finalize_gated_model_route("gemini-4-hydrogen", true, Some("low")),
+            "gemini-4-hydrogen-low"
+        );
+        // Unmapped bare model routes to default tier normally
+        assert_ne!(
+            finalize_gated_model_route("gemini-4-hydrogen", false, None),
+            "gemini-4-hydrogen"
         );
     }
 
