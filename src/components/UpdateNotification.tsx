@@ -23,9 +23,14 @@ type UpdateState = 'checking' | 'downloading' | 'ready' | 'error' | 'none' | 'ma
 interface UpdateNotificationProps {
   onClose: () => void;
   manualTrigger?: boolean;
+  manualTriggerSeq?: number;
 }
 
-export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose, manualTrigger = false }) => {
+export const UpdateNotification: React.FC<UpdateNotificationProps> = ({
+  onClose,
+  manualTrigger = false,
+  manualTriggerSeq = 0,
+}) => {
   const { t } = useTranslation();
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -33,12 +38,38 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose,
   const [updateState, setUpdateState] = useState<UpdateState>('checking');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const downloadStarted = useRef(false);
+  const updateStateRef = useRef<UpdateState>('checking');
+  const lastManualTriggerSeq = useRef(manualTriggerSeq);
+
+  useEffect(() => {
+    updateStateRef.current = updateState;
+  }, [updateState]);
 
   useEffect(() => {
     checkAndDownload();
   }, []);
 
-  const checkAndDownload = async () => {
+  useEffect(() => {
+    if (manualTriggerSeq === lastManualTriggerSeq.current) {
+      return;
+    }
+    lastManualTriggerSeq.current = manualTriggerSeq;
+    const currentState = updateStateRef.current;
+    if (
+      currentState === 'downloading' ||
+      currentState === 'brew_upgrading' ||
+      currentState === 'ready' ||
+      currentState === 'brew_done'
+    ) {
+      return;
+    }
+    downloadStarted.current = false;
+    setUpdateState('checking');
+    setDownloadProgress(0);
+    void checkAndDownload(true);
+  }, [manualTriggerSeq]);
+
+  const checkAndDownload = async (isManual: boolean = manualTrigger) => {
     try {
       // 1. Check for updates via backend
       const info = await invoke<UpdateInfo>('check_for_updates');
@@ -69,7 +100,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose,
 
       // On macOS Homebrew Cask stable updates during auto-check, avoid silently overwriting the
       // Caskroom-managed app bundle via native updater unless explicitly triggered by the user.
-      if (!manualTrigger && info.channel !== 'beta') {
+      if (!isManual && info.channel !== 'beta') {
         const isBrewInstalled = await invoke<boolean>('check_homebrew_installation').catch(() => false);
         if (isBrewInstalled) {
           setUpdateState('brew');
@@ -177,6 +208,9 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose,
       await tauriRelaunch();
     } catch (error) {
       console.error('Relaunch failed:', error);
+      if (updateState === 'brew_done') {
+        showToast(t('settings.about.brew_restart_failed'), 'error');
+      }
     }
   };
 
@@ -215,7 +249,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose,
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 shadow-sm">
-                {updateState === 'ready' ? (
+                {updateState === 'ready' || updateState === 'brew_done' ? (
                   <CheckCircle className="w-4 h-4 text-white" />
                 ) : (
                   <Sparkles className="w-4 h-4 text-white" />
@@ -273,6 +307,11 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose,
                   : 'We detected that you are not running the AppImage version. Auto-updates are only supported for AppImage. Please download the update manually.'
               )}
             </p>
+            {updateState === 'brew' && (
+              <code className="block mt-2 px-2.5 py-1.5 rounded-lg bg-black/5 dark:bg-white/10 font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">
+                brew upgrade --cask antigravity-tools
+              </code>
+            )}
           </div>
 
           {/* Progress bar during download */}

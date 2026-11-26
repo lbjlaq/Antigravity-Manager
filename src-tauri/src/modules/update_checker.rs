@@ -722,10 +722,6 @@ pub fn can_use_brew_upgrade(channel: UpdateChannel) -> bool {
 /// Execute `brew upgrade --cask antigravity-tools` with timeout (macOS only)
 #[cfg(not(target_os = "macos"))]
 pub async fn brew_upgrade_cask() -> Result<String, String> {
-    let channel = load_update_settings().unwrap_or_default().update_channel;
-    if !can_use_brew_upgrade(channel) {
-        return Err("brew_beta_not_supported".to_string());
-    }
     Err("brew_not_supported".to_string())
 }
 

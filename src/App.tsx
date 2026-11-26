@@ -182,6 +182,7 @@ function App() {
       listen('app://trigger-update', () => {
         console.log('[App] Received app://trigger-update event, showing updater...');
         setIsManualUpdateTrigger(true);
+        setManualUpdateTriggerSeq((seq) => seq + 1);
         setShowUpdateNotification(true);
       })
     );
@@ -272,6 +273,7 @@ function App() {
   // Update notification state
   const [showUpdateNotification, setShowUpdateNotification] = useState(false);
   const [isManualUpdateTrigger, setIsManualUpdateTrigger] = useState(false);
+  const [manualUpdateTriggerSeq, setManualUpdateTriggerSeq] = useState(0);
 
   // Check for updates on startup
   useEffect(() => {
@@ -377,6 +379,7 @@ function App() {
       {showUpdateNotification && (
         <UpdateNotification
           manualTrigger={isManualUpdateTrigger}
+          manualTriggerSeq={manualUpdateTriggerSeq}
           onClose={() => {
             setShowUpdateNotification(false);
             setIsManualUpdateTrigger(false);
