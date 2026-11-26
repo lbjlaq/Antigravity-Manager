@@ -452,7 +452,7 @@ Antigravity-Manager/           # (Branch: antigravity-manager)
 
 Only the latest release highlights are listed below. See **[CHANGELOG.md](CHANGELOG.md)** for full bilingual release history and the **[`antigravity-manager` Release Page](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)** for downloadable installers.
 
-- **v0.0.2**: Fixed cross-platform (`macOS` / `Windows` / `Linux`) active account detection across `App` / `IDE` / `ACP` / `CLI` (unified OS Keyring, `app_storage.json`, `state.vscdb` + JWT fallback, Windows `ProgramFiles` &amp; Linux directory/case-variant discovery), added `Active Account` column to `am current`, and localized unbound Dashboard labels.
+- **v0.0.2**: Fixed cross-platform (`macOS` / `Windows` / `Linux`) active account detection across `App` / `IDE` / `ACP` / `CLI` (unified OS Keyring, `app_storage.json`, `state.vscdb` + JWT fallback, Windows `ProgramFiles` &amp; Linux directory/case-variant discovery), redesigned the Accounts toolbar into a single-row Apple HIG layout across all 12 languages (iconized tag/sort/refresh controls, `⋯` import/export menu, focus-expanding search), added `Active Account` column to `am current`, and localized unbound Dashboard labels.
 - **v0.0.1 (`am-core` Workspace Edition)**: Modular `am-core` + `am-cli` + `am-gui` Rust workspace, zero-proxy 4-host credential injection (`App` / `IDE` / `ACP` / `CLI`), `5h`/`7d` Gemini &amp; Claude quota pools, local SQLite telemetry studio, shareable HD `16:9` posters, dual-mode Menu Bar Mini Popover, and bundled cross-platform `am` CLI sidecar.
 
 ---

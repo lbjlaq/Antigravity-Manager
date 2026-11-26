@@ -452,7 +452,7 @@ Antigravity-Manager/           # (所在分支: antigravity-manager)
 
 首页仅保留最新版本摘要，完整中英双语变更记录请查阅 **[CHANGELOG.md](CHANGELOG.md)**，安装包下载请前往 **[`antigravity-manager` 专属 Release 页面](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)**。
 
-- **v0.0.2**：修复 `macOS` / `Windows` / `Linux` 三端 `App` / `IDE` / `ACP` / `CLI` 当前账号检测与读取（统一系统凭据库、`app_storage.json`、`state.vscdb` + JWT 回退，加固 Windows 全局安装目录与 Linux 大小写目录/版本探测），`am current` 新增当前账号列并国际化仪表盘未绑定状态。
+- **v0.0.2**：修复 `macOS` / `Windows` / `Linux` 三端 `App` / `IDE` / `ACP` / `CLI` 当前账号检测与读取（统一系统凭据库、`app_storage.json`、`state.vscdb` + JWT 回退，加固 Windows 全局安装目录与 Linux 大小写目录/版本探测），按 Apple HIG 重构账号页多语言单行工具栏（统一 `28px` 基线、图标化标签/排序/刷新、`⋯` 收纳导入导出、聚焦微扩搜索框），`am current` 新增当前账号列并国际化仪表盘未绑定状态。
 - **v0.0.1 (`am-core` 模块化架构版)**：重构为 `am-core` + `am-cli` + `am-gui` Rust 工作空间；支持 `App` / `IDE` / `ACP` / `CLI` 四宿主零反代直写热切、`5h`/`7d` Gemini &amp; Claude 双池配额监控、本地 SQLite 全链路 Token 遥测分析、`16:9` 高清战报海报导出、菜单栏双模 Mini 灵动悬浮窗以及三端内嵌 `am` CLI Sidecar。
 
 ---

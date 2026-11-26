@@ -13,6 +13,7 @@
 - **ACP Plugin & Native `agy` CLI Credential Parity**: Unified cross-platform Keyring fallback (`gemini:antigravity-acp`) for ACP Plugin and Keyring / `oauth_creds.json` detection for native `agy` CLI installs without an exclusive `antigravity-oauth-token` file.
 - **Windows & Linux Host Discovery Hardening**: Added Windows `ProgramFiles` / `ProgramFiles(x86)` install discovery, `%APPDATA%` / `%LOCALAPPDATA%` fallbacks, Linux case-sensitive folder variants (`antigravity-ide` / `antigravity_ide` / `antigravity`), and fixed Linux static version resolution when target roots are directories.
 - **CLI & Dashboard Status Polish**: Added an `Active Account` column to `am current` for CLI/headless parity, and replaced the raw `'not_configured'` fallback string on the Dashboard switcher card with localized unbound labels.
+- **Single-Row Multilingual Accounts Toolbar (Apple HIG Redesign)**: Eliminated toolbar line-wrapping across all 12 UI languages and narrow (`900px`) windows by unifying controls to a `28px` baseline, adding a focus-expanding search field with inline clear, converting tag/sort/refresh controls into borderless icon buttons with tooltips and hairline dividers, consolidating `Import` / `Export` into a `⋯` overflow menu, and keeping `+ Add Account` as the sole filled primary CTA (also fixing icon-text spacing).
 
 ### 中文
 
@@ -20,6 +21,7 @@
 - **ACP 插件与原生 `agy` CLI 凭据读取补齐**：为 ACP 插件补充跨平台系统凭据库（`gemini:antigravity-acp`）回退，支持原生未生成独立 `antigravity-oauth-token` 文件的 `agy` CLI 自动读取系统凭据库与 `oauth_creds.json` / `google_accounts.json`。
 - **Windows / Linux 宿主路径与版本探测加固**：补齐 Windows `ProgramFiles` / `ProgramFiles(x86)` 全局安装目录与 `%APPDATA%` / `%LOCALAPPDATA%` 探测、Linux 大小写目录变体（`antigravity-ide` / `antigravity_ide` / `antigravity`），并修复 Linux 下目录型安装路径无法静态读取版本号的问题。
 - **CLI 与仪表盘展示优化**：`am current` 新增 `Active Account` 列实现终端诊断对齐，仪表盘切号卡片未绑定时改为国际化文案显示。
+- **账号页多语言单行工具栏重构（Apple HIG 风格）**：彻底解决 12 种语言及 `900px` 窄窗下的子工具栏换行问题；统一所有控件为 `28px` 基线高度，搜索框支持聚焦微扩与一键清空，标签 / 排序 / 刷新改为无边框图标按钮配悬停提示与细分割线，将导入 / 导出收纳进 `⋯` 更多菜单，仅保留蓝底 `+ 授权登录` 作为唯一主 CTA 并修复图标与文字间距。
 
 ---
 

@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "am-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "am-core",
  "anyhow",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "am-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "am-gui"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "am-core",
  "objc2",

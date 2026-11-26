@@ -1,4 +1,7 @@
 // Antigravity Manager 前后端全量通信桥接层 (Tauri 2 IPC + Browser Dev Fallback)
+import packageJson from '../../package.json';
+
+export const APP_VERSION_FALLBACK = packageJson.version;
 
 export type HostTarget = 'app' | 'ide' | 'plugin' | 'cli';
 
@@ -458,7 +461,7 @@ export const api = {
 
   // 20.1 获取应用版本号
   async getAppVersion(): Promise<string> {
-    if (!isTauri()) return '0.0.1';
+    if (!isTauri()) return APP_VERSION_FALLBACK;
     return invokeTauri<string>('get_app_version');
   },
 
@@ -485,8 +488,8 @@ export const api = {
   async checkForUpdates(): Promise<UpdateInfo> {
     if (!isTauri()) {
       return {
-        current_version: '0.0.1',
-        latest_version: '0.0.1',
+        current_version: APP_VERSION_FALLBACK,
+        latest_version: APP_VERSION_FALLBACK,
         has_update: false,
         download_url: 'https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager',
         release_notes: '',

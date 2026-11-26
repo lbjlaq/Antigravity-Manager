@@ -21,7 +21,7 @@ import {
   Send,
   RefreshCw,
 } from 'lucide-react';
-import { api, AppConfig, isTauri, SystemInfo, UpdateInfo } from '../api';
+import { api, APP_VERSION_FALLBACK, AppConfig, isTauri, SystemInfo, UpdateInfo } from '../api';
 import { tUi } from '../i18n/ui';
 
 interface SettingsProps {
@@ -104,7 +104,7 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [supportModalOpen, setSupportModalOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('0.0.1');
+  const [appVersion, setAppVersion] = useState(APP_VERSION_FALLBACK);
   const [cliPlatform, setCliPlatform] = useState<CliPlatform>(() => detectCliPlatform());
   const cliPlatformManual = useRef(false);
 
