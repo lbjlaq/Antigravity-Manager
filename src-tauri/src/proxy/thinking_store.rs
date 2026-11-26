@@ -168,7 +168,7 @@ pub struct ThinkingStore {
 }
 
 impl ThinkingStore {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             sessions: DashMap::new(),
             watermarks: DashMap::new(),
@@ -1532,6 +1532,29 @@ impl ThinkingStore {
             .map(|e| (e.turns.len(), e.bytes))
     }
 
+    /// 估算内存思维库中当前会话缓存的历史思考块与签名体积（tokens）。
+    /// 仅读取 L1 内存状态（零磁盘 I/O），供 `/v1/messages/count_tokens` 补偿回填开销 (Fixes #4024)。
+    pub fn estimate_session_thinking_tokens(&self, store_key: &str) -> u32 {
+        let Some(entry) = self.sessions.get(store_key) else {
+            return 0;
+        };
+        let mut total = 0u32;
+        for rec in &entry.turns {
+            total = total
+                .saturating_add(crate::proxy::pipeline::estimator::estimate_tokens_from_str(
+                    &rec.thought,
+                ))
+                .saturating_add(
+                    rec.signature
+                        .as_deref()
+                        .map(crate::proxy::pipeline::estimator::estimate_tokens_from_str)
+                        .unwrap_or(0),
+                )
+                .saturating_add(100);
+        }
+        total
+    }
+
     pub fn clear(&self) {
         self.sessions.clear();
     }
@@ -1752,7 +1775,7 @@ impl TurnAccumulator {
             )
     }
 
-    fn into_record(self) -> ThinkingRecord {
+    pub(crate) fn into_record(self) -> ThinkingRecord {
         let fp = fingerprint(&self.visible, &self.tool_ids, &self.tool_names);
         let context_anchor = if self.context_anchor.trim().is_empty() {
             "root".to_string()
@@ -7177,5 +7200,24 @@ mod signature_placement_tests {
             compute_causal_anchor(Some(&model_role_fr)),
             "functionResponse turn causal anchor must match across user/model role normalization"
         );
+    }
+
+    #[test]
+    fn test_estimate_session_thinking_tokens() {
+        let store_key = format!("t:estimate-thinking-{}", uuid::Uuid::new_v4());
+        let store = ThinkingStore::new();
+        assert_eq!(store.estimate_session_thinking_tokens(&store_key), 0);
+
+        let sig = format!("ErQD{}", "a".repeat(96));
+        let mut acc = TurnAccumulator::new();
+        acc.ingest_part(&json!({ "thought": true, "text": "x".repeat(400) }));
+        acc.ingest_part(&json!({ "text": "visible answer", "thoughtSignature": sig }));
+        store.record(&store_key, acc.into_record());
+
+        let est = store.estimate_session_thinking_tokens(&store_key);
+        // 400 ASCII chars (~100 tokens) + 100 signature chars (~25 tokens) + 100 base = 225 tokens
+        assert_eq!(est, 225);
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
     }
 }

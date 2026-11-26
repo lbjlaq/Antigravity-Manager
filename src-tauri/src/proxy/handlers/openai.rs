@@ -3713,13 +3713,26 @@ pub async fn handle_chat_completions(
 
         // [FIX session-1M] 上游按 sessionId 在服务端累计会话输入,长工具循环会把累计推过 1M,
         // 之后该 sessionId 的所有请求都 400 "input token count exceeds ... 1048576"。
-        // 给 (账号, 对话) 的 sessionId 升代并立即重试:新 sessionId = 上游全新会话,对话无感恢复。
-        if status_code == 400 && error_text.contains("exceeds the maximum number of tokens") {
+        // 给 (账号, 对话) 的 sessionId 升代并在同账号立即重试 1 次：若仍 400 说明单包物理超限，直接退出。
+        if crate::proxy::pipeline::UpstreamClassification::is_input_token_limit_exceeded(
+            status_code,
+            &error_text,
+        ) && !heal_flags.retried_session_token_limit_bump
+        {
+            heal_flags.retried_session_token_limit_bump = true;
             let generation = crate::proxy::common::session::bump_session(&account_id, &store_key);
             tracing::warn!(
-                "[OpenAI] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying with a fresh upstream session.",
+                "[OpenAI] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying once on same account.",
                 email, generation
             );
+            force_rotate = false;
+            retry_credentials = Some((
+                access_token.clone(),
+                project_id.clone(),
+                email.clone(),
+                account_id.clone(),
+                0,
+            ));
             continue; // 重试:下一轮 transform 时读取新代数,派生全新 sessionId
         }
 
@@ -5714,6 +5727,29 @@ pub async fn handle_completions(
             &error_text,
             retry_after.as_deref(),
         );
+
+        // [FIX session-1M / #4024] 上游按 sessionId 在服务端累计会话输入，最多升代同账号重试 1 次
+        if crate::proxy::pipeline::UpstreamClassification::is_input_token_limit_exceeded(
+            status_code,
+            &error_text,
+        ) && !heal_flags.retried_session_token_limit_bump
+        {
+            heal_flags.retried_session_token_limit_bump = true;
+            let generation = crate::proxy::common::session::bump_session(&account_id, &store_key);
+            tracing::warn!(
+                "[OpenAI-Responses] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying once on same account.",
+                email, generation
+            );
+            force_rotate = false;
+            retry_credentials = Some((
+                access_token.clone(),
+                project_id.clone(),
+                email.clone(),
+                account_id.clone(),
+                0,
+            ));
+            continue;
+        }
 
         // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：统一在同一账号原地修复重试
         if let Some(heal) = crate::proxy::pipeline::try_auto_heal(

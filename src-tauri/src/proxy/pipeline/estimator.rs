@@ -228,84 +228,7 @@ impl PipelineTokenEstimator {
         // contents
         if let Some(contents) = body.get("contents").and_then(Value::as_array) {
             for msg in contents {
-                total += 4; // 轮次基础开销
-                if let Some(parts) = msg.get("parts").and_then(Value::as_array) {
-                    for part in parts {
-                        if let Some(text) = part.get("text").and_then(Value::as_str) {
-                            total += estimate_tokens_from_str(text);
-                        }
-                        if let Some(thought) = part.get("thought").and_then(Value::as_bool) {
-                            if thought {
-                                total += 100; // 思维块基础开销
-                            }
-                        }
-                        if let Some(sig) = part
-                            .get("thoughtSignature")
-                            .or_else(|| part.get("thought_signature"))
-                            .or_else(|| part.get("signature"))
-                            .and_then(Value::as_str)
-                        {
-                            total += estimate_tokens_from_str(sig);
-                        }
-                        if let Some(inline_data) =
-                            part.get("inlineData").or_else(|| part.get("inline_data"))
-                        {
-                            let mime = inline_data
-                                .get("mimeType")
-                                .or_else(|| inline_data.get("mime_type"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("");
-                            let data_len = inline_data
-                                .get("data")
-                                .and_then(Value::as_str)
-                                .map_or(0, |s| s.len());
-                            total += estimate_inline_data_tokens(mime, data_len);
-                        }
-                        if let Some(fc) = part
-                            .get("functionCall")
-                            .or_else(|| part.get("function_call"))
-                        {
-                            total += 20;
-                            if let Some(name) = fc.get("name").and_then(Value::as_str) {
-                                total += estimate_tokens_from_str(name);
-                            }
-                            if let Some(args) = fc.get("args") {
-                                total += estimate_tokens_from_str(&args.to_string());
-                            }
-                        }
-                        if let Some(fr) = part
-                            .get("functionResponse")
-                            .or_else(|| part.get("function_response"))
-                        {
-                            total += 10;
-                            if let Some(name) = fr.get("name").and_then(Value::as_str) {
-                                total += estimate_tokens_from_str(name);
-                            }
-                            if let Some(resp) = fr.get("response") {
-                                total += estimate_content_str_tokens(&resp.to_string());
-                            }
-                            if let Some(fr_parts) = fr.get("parts").and_then(Value::as_array) {
-                                for fr_part in fr_parts {
-                                    if let Some(inline_data) = fr_part
-                                        .get("inlineData")
-                                        .or_else(|| fr_part.get("inline_data"))
-                                    {
-                                        let mime = inline_data
-                                            .get("mimeType")
-                                            .or_else(|| inline_data.get("mime_type"))
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("");
-                                        let data_len = inline_data
-                                            .get("data")
-                                            .and_then(Value::as_str)
-                                            .map_or(0, |s| s.len());
-                                        total += estimate_inline_data_tokens(mime, data_len);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                total += Self::estimate_gemini_content_tokens(msg);
             }
         }
 
@@ -316,6 +239,89 @@ impl PipelineTokenEstimator {
             }
         }
 
+        total
+    }
+
+    /// 估算单条 Gemini Canonical IR `content` 轮次的 token 数，供上下文裁剪预算复用
+    pub fn estimate_gemini_content_tokens(msg: &Value) -> u32 {
+        let mut total = 4u32; // 轮次基础开销
+        if let Some(parts) = msg.get("parts").and_then(Value::as_array) {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    total += estimate_tokens_from_str(text);
+                }
+                if let Some(thought) = part.get("thought").and_then(Value::as_bool) {
+                    if thought {
+                        total += 100; // 思维块基础开销
+                    }
+                }
+                if let Some(sig) = part
+                    .get("thoughtSignature")
+                    .or_else(|| part.get("thought_signature"))
+                    .or_else(|| part.get("signature"))
+                    .and_then(Value::as_str)
+                {
+                    total += estimate_tokens_from_str(sig);
+                }
+                if let Some(inline_data) =
+                    part.get("inlineData").or_else(|| part.get("inline_data"))
+                {
+                    let mime = inline_data
+                        .get("mimeType")
+                        .or_else(|| inline_data.get("mime_type"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let data_len = inline_data
+                        .get("data")
+                        .and_then(Value::as_str)
+                        .map_or(0, |s| s.len());
+                    total += estimate_inline_data_tokens(mime, data_len);
+                }
+                if let Some(fc) = part
+                    .get("functionCall")
+                    .or_else(|| part.get("function_call"))
+                {
+                    total += 20;
+                    if let Some(name) = fc.get("name").and_then(Value::as_str) {
+                        total += estimate_tokens_from_str(name);
+                    }
+                    if let Some(args) = fc.get("args") {
+                        total += estimate_tokens_from_str(&args.to_string());
+                    }
+                }
+                if let Some(fr) = part
+                    .get("functionResponse")
+                    .or_else(|| part.get("function_response"))
+                {
+                    total += 10;
+                    if let Some(name) = fr.get("name").and_then(Value::as_str) {
+                        total += estimate_tokens_from_str(name);
+                    }
+                    if let Some(resp) = fr.get("response") {
+                        total += estimate_content_str_tokens(&resp.to_string());
+                    }
+                    if let Some(fr_parts) = fr.get("parts").and_then(Value::as_array) {
+                        for fr_part in fr_parts {
+                            if let Some(inline_data) = fr_part
+                                .get("inlineData")
+                                .or_else(|| fr_part.get("inline_data"))
+                            {
+                                let mime = inline_data
+                                    .get("mimeType")
+                                    .or_else(|| inline_data.get("mime_type"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("");
+                                let data_len = inline_data
+                                    .get("data")
+                                    .and_then(Value::as_str)
+                                    .map_or(0, |s| s.len());
+                                total += estimate_inline_data_tokens(mime, data_len);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         total
     }
 

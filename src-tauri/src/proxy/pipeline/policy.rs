@@ -324,6 +324,15 @@ impl UpstreamClassification {
                 .to_lowercase()
                 .contains("thinking level is unsupported")
     }
+
+    /// 是否为上游输入 token 数量超过上下文硬上限的 400 错误
+    /// (例如 "The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377")。
+    pub fn is_input_token_limit_exceeded(status: u16, body: &str) -> bool {
+        status == 400
+            && body
+                .to_ascii_lowercase()
+                .contains("exceeds the maximum number of tokens")
+    }
 }
 
 /// 404「单模型不可用」的统一处置（协议无关）
@@ -607,5 +616,28 @@ mod tests {
         );
         assert!(normal_rotate);
         assert!(normal_marked);
+    }
+
+    #[test]
+    fn test_is_input_token_limit_exceeded() {
+        let with_parens = r#"{"error":{"code":400,"message":"The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377.","status":"INVALID_ARGUMENT"}}"#;
+        let without_parens =
+            "The input token count exceeds the maximum number of tokens allowed 1048576";
+        assert!(UpstreamClassification::is_input_token_limit_exceeded(
+            400,
+            with_parens
+        ));
+        assert!(UpstreamClassification::is_input_token_limit_exceeded(
+            400,
+            without_parens
+        ));
+        assert!(!UpstreamClassification::is_input_token_limit_exceeded(
+            500,
+            with_parens
+        ));
+        assert!(!UpstreamClassification::is_input_token_limit_exceeded(
+            400,
+            "Invalid signature in thinking block"
+        ));
     }
 }

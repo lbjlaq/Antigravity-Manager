@@ -3589,6 +3589,408 @@ impl InboundThinkingPipeline {
         }
     }
 
+    /// [Fixes #4024] 根据当前估算体积与上游报错限额，计算响应式压缩重放的自适应目标 token 预算。
+    pub fn compute_reactive_compaction_budget(
+        current_est: u32,
+        parsed_limit: Option<(u64, u64)>,
+    ) -> u32 {
+        if current_est == 0 {
+            return 700_000;
+        }
+        if let Some((max, input)) = parsed_limit {
+            if max > 0 && input > max {
+                return ((current_est as f64) * 0.75 * (max as f64 / input as f64))
+                    .round()
+                    .clamp(120_000.0, 750_000.0) as u32;
+            }
+        }
+        (current_est.saturating_mul(70) / 100).clamp(120_000, 750_000)
+    }
+
+    /// [Fixes #4024] 为超出上下文硬上限的 `/compact` 压缩摘要请求做渐进式载荷裁剪（Protocol-Agnostic Canonical IR）。
+    ///
+    /// 按破坏性从小到大分阶段削减：
+    /// 1. 剥离历史 `thought` / `thoughtSignature`（Gemini 目标保留 `functionCall` 哨兵签名，合并相邻同角色轮次；
+    ///    仅当实际剥离了思考块时同步移除 `thinkingConfig`）；
+    /// 2. 剥离非末尾轮次残余的 `inlineData` 媒体与 `functionResponse.parts`（只写 metadata 注释，不插非法 `text` part）；
+    /// 3. 按安全 `user` 轮次边界（不拆断 `functionCall` <-> `functionResponse` 配对）从头部淘汰最旧对话；
+    /// 4. 极端兜底：对仍超标的超长单条文本 / 工具输出执行首尾保留的 UTF-8 安全中间截断。
+    ///
+    /// 若载荷体积未超出 `target_tokens` 或无法继续压缩，返回 `false`；成功缩减体积返回 `true`。
+    pub fn compact_gemini_payload_to_budget(body: &mut Value, target_tokens: u32) -> bool {
+        let initial_tokens = crate::proxy::pipeline::estimate_tokens(body);
+        if initial_tokens <= target_tokens {
+            return false;
+        }
+
+        let target_tokens = target_tokens.max(4_000);
+        let is_claude_target = body
+            .get("model")
+            .and_then(Value::as_str)
+            .map_or(false, |m| m.to_ascii_lowercase().contains("claude"));
+
+        // Stage 1: 剥离历史思考块与签名（摘要无需历史 CoT）
+        {
+            let root = if body.get("request").is_some() {
+                body.get_mut("request").unwrap()
+            } else {
+                &mut *body
+            };
+            let mut stripped = 0usize;
+            if let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) {
+                for content in contents.iter_mut() {
+                    if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+                        let before_parts = parts.len();
+                        parts.retain(|p| p.get("thought").and_then(Value::as_bool) != Some(true));
+                        stripped += before_parts.saturating_sub(parts.len());
+                        for part in parts.iter_mut() {
+                            if let Some(obj) = part.as_object_mut() {
+                                let has_fc = obj.contains_key("functionCall")
+                                    || obj.contains_key("function_call");
+                                for key in ["thoughtSignature", "thought_signature"] {
+                                    let is_sentinel = obj
+                                        .get(key)
+                                        .and_then(Value::as_str)
+                                        .map(crate::proxy::thinking_store::is_sentinel_signature)
+                                        .unwrap_or(false);
+                                    if !is_sentinel && obj.remove(key).is_some() {
+                                        stripped += 1;
+                                    }
+                                }
+                                if !is_claude_target
+                                    && has_fc
+                                    && !obj.contains_key("thoughtSignature")
+                                    && !obj.contains_key("thought_signature")
+                                {
+                                    obj.insert(
+                                        "thoughtSignature".to_string(),
+                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                let last_idx = contents.len().saturating_sub(1);
+                let mut idx = 0usize;
+                contents.retain(|c| {
+                    let keep = idx == last_idx
+                        || c.get("parts")
+                            .and_then(Value::as_array)
+                            .map_or(true, |p| !p.is_empty());
+                    idx += 1;
+                    keep
+                });
+
+                // 删除空 model 轮次后，合并可能产生的相邻同角色轮次，保持 Gemini 角色交替合法
+                let mut merged: Vec<Value> = Vec::with_capacity(contents.len());
+                for mut turn in contents.drain(..) {
+                    let cur_role = turn
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let prev_same = merged
+                        .last()
+                        .and_then(|p| p.get("role"))
+                        .and_then(Value::as_str)
+                        == Some(cur_role.as_str())
+                        && !cur_role.is_empty();
+                    if prev_same {
+                        if let Some(new_parts) = turn.get_mut("parts").and_then(Value::as_array_mut)
+                        {
+                            if let Some(prev_parts) = merged
+                                .last_mut()
+                                .and_then(|p| p.get_mut("parts"))
+                                .and_then(Value::as_array_mut)
+                            {
+                                prev_parts.append(new_parts);
+                            }
+                        }
+                    } else {
+                        merged.push(turn);
+                    }
+                }
+                *contents = merged;
+            }
+            if let Some(contents) = root.get("contents").and_then(Value::as_array) {
+                if stripped > 0
+                    || contents.iter().any(|c| {
+                        c.get("role").and_then(Value::as_str) == Some("model")
+                            && c.get("parts").and_then(Value::as_array).map_or(false, |p| {
+                                !p.iter().any(|pt| {
+                                    pt.get("thought").and_then(Value::as_bool) == Some(true)
+                                })
+                            })
+                    })
+                {
+                    if let Some(gc) = root
+                        .get_mut("generationConfig")
+                        .and_then(Value::as_object_mut)
+                    {
+                        gc.remove("thinkingConfig");
+                    }
+                }
+            }
+        }
+
+        if crate::proxy::pipeline::estimate_tokens(body) <= target_tokens {
+            return crate::proxy::pipeline::estimate_tokens(body) < initial_tokens;
+        }
+
+        // Stage 2: 清理历史非末尾轮次的内联媒体 (`inlineData` / `functionResponse.parts`)
+        {
+            let root = if body.get("request").is_some() {
+                body.get_mut("request").unwrap()
+            } else {
+                &mut *body
+            };
+            if let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) {
+                let cutoff = contents.len().saturating_sub(1);
+                for (idx, content) in contents.iter_mut().enumerate() {
+                    if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+                        for part in parts.iter_mut() {
+                            if idx < cutoff
+                                && (part.get("inlineData").is_some()
+                                    || part.get("inline_data").is_some())
+                            {
+                                *part = json!({
+                                    "text": "[omitted inline media during context compaction]"
+                                });
+                                continue;
+                            }
+                            for fr_key in ["functionResponse", "function_response"] {
+                                if let Some(fr_obj) =
+                                    part.get_mut(fr_key).and_then(Value::as_object_mut)
+                                {
+                                    let removed_count = fr_obj
+                                        .get_mut("parts")
+                                        .and_then(Value::as_array_mut)
+                                        .map(|fr_parts| {
+                                            let before = fr_parts.len();
+                                            fr_parts.retain(|fp| {
+                                                fp.get("inlineData").is_none()
+                                                    && fp.get("inline_data").is_none()
+                                            });
+                                            before.saturating_sub(fr_parts.len())
+                                        })
+                                        .unwrap_or(0);
+                                    if fr_obj
+                                        .get("parts")
+                                        .and_then(Value::as_array)
+                                        .is_some_and(|a| a.is_empty())
+                                    {
+                                        fr_obj.remove("parts");
+                                    }
+                                    if removed_count > 0 {
+                                        let existing_resp = fr_obj.remove("response");
+                                        let mut resp_map = match existing_resp {
+                                            Some(Value::Object(map)) => map,
+                                            Some(other) => {
+                                                let mut map = serde_json::Map::new();
+                                                map.insert("output".to_string(), other);
+                                                map
+                                            }
+                                            None => serde_json::Map::new(),
+                                        };
+                                        resp_map.insert(
+                                            "_omitted_multimodal_parts".to_string(),
+                                            json!(removed_count),
+                                        );
+                                        fr_obj.insert(
+                                            "response".to_string(),
+                                            Value::Object(resp_map),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let after_media_tokens = crate::proxy::pipeline::estimate_tokens(body);
+        if after_media_tokens <= target_tokens {
+            return after_media_tokens < initial_tokens;
+        }
+
+        // Stage 3: 按安全 user 边界裁剪最旧对话轮次（始终保留末尾摘要指令轮次与有效函数配对）
+        {
+            let non_contents_overhead = {
+                let root = body.get("request").unwrap_or(body);
+                let mut shell = root.clone();
+                if let Some(obj) = shell.as_object_mut() {
+                    obj.remove("contents");
+                }
+                crate::proxy::pipeline::estimate_tokens(&shell)
+            };
+
+            let root = if body.get("request").is_some() {
+                body.get_mut("request").unwrap()
+            } else {
+                &mut *body
+            };
+            if let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) {
+                if contents.len() > 1 {
+                    let turn_tokens: Vec<u32> = contents
+                        .iter()
+                        .map(crate::proxy::pipeline::PipelineTokenEstimator::estimate_gemini_content_tokens)
+                        .collect();
+
+                    let turn_is_clean_user = |c: &Value| -> bool {
+                        let role = c.get("role").and_then(Value::as_str).unwrap_or("");
+                        if role != "user" {
+                            return false;
+                        }
+                        !c.get("parts")
+                            .and_then(Value::as_array)
+                            .map_or(false, |parts| {
+                                parts.iter().any(|p| {
+                                    p.get("functionResponse").is_some()
+                                        || p.get("function_response").is_some()
+                                })
+                            })
+                    };
+
+                    // 所有安全的切分起点（含 index 0 和最后一个安全边界）
+                    let mut suffix_remaining: u32 = turn_tokens.iter().sum();
+                    let total_with_overhead =
+                        non_contents_overhead.saturating_add(suffix_remaining);
+                    if total_with_overhead > target_tokens {
+                        let mut drop_until: Option<usize> = None;
+                        let mut running_remaining = suffix_remaining;
+                        for (idx, t_cost) in turn_tokens.iter().enumerate() {
+                            if idx > 0 && turn_is_clean_user(&contents[idx]) {
+                                if non_contents_overhead.saturating_add(running_remaining)
+                                    <= target_tokens
+                                {
+                                    drop_until = Some(idx);
+                                    break;
+                                }
+                                // 即便还未低于 target_tokens，也记录最后一个安全边界以便至少卸下历史前段
+                                drop_until = Some(idx);
+                            }
+                            running_remaining = running_remaining.saturating_sub(*t_cost);
+                            if idx + 1 >= contents.len() {
+                                break;
+                            }
+                        }
+
+                        if let Some(cut) = drop_until.filter(|&c| c > 0 && c < contents.len()) {
+                            contents.drain(0..cut);
+                            if let Some(parts) =
+                                contents[0].get_mut("parts").and_then(Value::as_array_mut)
+                            {
+                                const TRUNCATION_NOTE: &str =
+                                    "[Note: Earlier conversation turns were truncated to fit within the context compaction limit.]";
+                                if let Some(first_text) = parts
+                                    .first()
+                                    .and_then(|p| p.get("text"))
+                                    .and_then(Value::as_str)
+                                    .map(|s| s.to_string())
+                                {
+                                    parts[0]["text"] = Value::String(format!(
+                                        "{}\n\n{}",
+                                        TRUNCATION_NOTE, first_text
+                                    ));
+                                } else {
+                                    parts.insert(0, json!({ "text": TRUNCATION_NOTE }));
+                                }
+                            }
+                            suffix_remaining = turn_tokens[cut..].iter().sum();
+                            let _ = suffix_remaining;
+                        }
+                    }
+                }
+            }
+        }
+
+        if crate::proxy::pipeline::estimate_tokens(body) <= target_tokens {
+            return crate::proxy::pipeline::estimate_tokens(body) < initial_tokens;
+        }
+
+        // Stage 4: 极端兜底（单轮或末尾超大工具输出/转录块导致仍超标）：
+        // 先裁剪较早轮次大文本，若仍超标再对最后轮次超大文本做首尾保留的中间截断。
+        for max_chars in [48_000usize, 16_000, 6_000, 2_000] {
+            if crate::proxy::pipeline::estimate_tokens(body) <= target_tokens {
+                break;
+            }
+            // 第一小轮仅截断非末尾轮次，第二小轮才截断末尾轮次
+            for include_last in [false, true] {
+                {
+                    let root = if body.get("request").is_some() {
+                        body.get_mut("request").unwrap()
+                    } else {
+                        &mut *body
+                    };
+                    if let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) {
+                        let len = contents.len();
+                        let limit = if include_last {
+                            len
+                        } else {
+                            len.saturating_sub(1)
+                        };
+                        for content in contents.iter_mut().take(limit) {
+                            Self::truncate_oversized_strings_in_turn(content, max_chars);
+                        }
+                    }
+                }
+                if crate::proxy::pipeline::estimate_tokens(body) <= target_tokens {
+                    break;
+                }
+            }
+        }
+
+        crate::proxy::pipeline::estimate_tokens(body) < initial_tokens
+    }
+
+    fn middle_truncate_text_utf8(s: &str, max_chars: usize) -> String {
+        let total_chars = s.chars().count();
+        if total_chars <= max_chars || max_chars < 64 {
+            return s.to_string();
+        }
+        let marker = "\n\n... [truncated during context compaction to fit token limit] ...\n\n";
+        let budget = max_chars.saturating_sub(marker.len());
+        let head_chars = (budget * 2) / 5;
+        let tail_chars = budget.saturating_sub(head_chars);
+
+        let head: String = s.chars().take(head_chars).collect();
+        let tail: String = s
+            .chars()
+            .skip(total_chars.saturating_sub(tail_chars))
+            .collect();
+        format!("{}{}{}", head, marker, tail)
+    }
+
+    fn truncate_oversized_strings_in_turn(turn: &mut Value, max_chars: usize) {
+        let Some(parts) = turn.get_mut("parts").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for part in parts.iter_mut() {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                if text.chars().count() > max_chars {
+                    part["text"] = Value::String(Self::middle_truncate_text_utf8(text, max_chars));
+                }
+            }
+            for fr_key in ["functionResponse", "function_response"] {
+                if let Some(resp) = part
+                    .get_mut(fr_key)
+                    .and_then(|fr| fr.get_mut("response"))
+                    .and_then(Value::as_object_mut)
+                {
+                    for (_, val) in resp.iter_mut() {
+                        if let Some(s) = val.as_str() {
+                            if s.chars().count() > max_chars {
+                                *val = Value::String(Self::middle_truncate_text_utf8(s, max_chars));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// 剥离遗留思考块的前缀标记 (**Thinking**)
     fn strip_thinking_prefix(text: &str) -> String {
         let trimmed = text.trim_start();
@@ -7310,6 +7712,167 @@ mod tests {
         assert_eq!(
             orch_body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "LOW"
+        );
+    }
+
+    #[test]
+    fn test_compact_gemini_payload_to_budget_stages() {
+        // 1. No-op when already under target budget
+        let mut small = json!({
+            "request": {
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "compact this short chat" }] }
+                ]
+            }
+        });
+        assert!(!InboundThinkingPipeline::compact_gemini_payload_to_budget(
+            &mut small, 50_000
+        ));
+
+        // 2. Stage 1 strips historical thoughts + signatures without dropping conversation turns
+        let huge_thought = "t".repeat(40_000); // ~10k tokens
+        let huge_sig = "s".repeat(20_000); // ~5k tokens
+        let mut stage1_body = json!({
+            "request": {
+                "generationConfig": {
+                    "thinkingConfig": { "includeThoughts": true, "thinkingBudget": 16000 },
+                    "maxOutputTokens": 8192
+                },
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "hello" }] },
+                    { "role": "model", "parts": [
+                        { "thought": true, "text": huge_thought, "thoughtSignature": huge_sig },
+                        { "text": "world" }
+                    ]},
+                    { "role": "user", "parts": [{ "text": "please summarize the conversation" }] }
+                ]
+            }
+        });
+        assert!(InboundThinkingPipeline::compact_gemini_payload_to_budget(
+            &mut stage1_body,
+            5_000
+        ));
+        let contents1 = stage1_body["request"]["contents"].as_array().unwrap();
+        assert_eq!(contents1.len(), 3, "Stage 1 must keep all turns");
+        assert!(stage1_body["request"]["generationConfig"]
+            .get("thinkingConfig")
+            .is_none());
+        assert_eq!(contents1[1]["parts"].as_array().unwrap().len(), 1);
+        assert_eq!(contents1[1]["parts"][0]["text"], "world");
+
+        // 3. Stage 3 drops oldest safe user boundaries while keeping tool pairing & tail prompt intact
+        let big_turn = "x".repeat(40_000); // ~10k tokens per chunk
+        let mut stage3_body = json!({
+            "request": {
+                "contents": [
+                    { "role": "user", "parts": [{ "text": big_turn }] },
+                    { "role": "model", "parts": [{ "functionCall": { "name": "read", "args": {} } }] },
+                    { "role": "user", "parts": [{ "functionResponse": { "name": "read", "response": { "output": big_turn } } }] },
+                    { "role": "model", "parts": [{ "text": "read finished" }] },
+                    { "role": "user", "parts": [{ "text": "recent user context kept" }] },
+                    { "role": "model", "parts": [{ "text": "recent assistant answer" }] },
+                    { "role": "user", "parts": [{ "text": "Your task is to create a detailed summary of the conversation so far." }] }
+                ]
+            }
+        });
+        assert!(InboundThinkingPipeline::compact_gemini_payload_to_budget(
+            &mut stage3_body,
+            2_000
+        ));
+        let contents3 = stage3_body["request"]["contents"].as_array().unwrap();
+        assert_eq!(contents3.len(), 3);
+        assert_eq!(contents3[0]["role"], "user");
+        let kept_first = contents3[0]["parts"][0]["text"].as_str().unwrap();
+        assert!(kept_first.contains("Earlier conversation turns were truncated"));
+        assert!(kept_first.contains("recent user context kept"));
+        // Must not orphan functionResponse at front
+        assert!(contents3[0]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p.get("functionResponse").is_none()));
+        assert!(contents3.last().unwrap()["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("detailed summary"));
+
+        // 4. Stage 4 UTF-8-safe middle truncation when a single gigantic turn exceeds budget
+        let cjk_giant = "这是一段超长的中文工具日志输出。".repeat(2_000);
+        let mut stage4_body = json!({
+            "request": {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            { "text": format!("HEAD_KEEP\n{}\nTAIL_COMPACT_INSTRUCTION", cjk_giant) }
+                        ]
+                    }
+                ]
+            }
+        });
+        assert!(InboundThinkingPipeline::compact_gemini_payload_to_budget(
+            &mut stage4_body,
+            4_500
+        ));
+        let final_text = stage4_body["request"]["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(final_text.starts_with("HEAD_KEEP"));
+        assert!(final_text.contains("truncated during context compaction"));
+        assert!(final_text.ends_with("TAIL_COMPACT_INSTRUCTION"));
+
+        // 5. Gemini target preserves SENTINEL_SIGNATURE on functionCall, merges adjacent turns,
+        //    and strips functionResponse.parts media cleanly without inserting text parts.
+        let gemini_sig = "G".repeat(16_000);
+        let huge_pdf = "A".repeat(40_000);
+        let mut gemini_stage = json!({
+            "model": "gemini-4-hydrogen",
+            "request": {
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "read pdf" }] },
+                    { "role": "model", "parts": [{ "thought": true, "text": "t".repeat(12_000) }] },
+                    { "role": "user", "parts": [{ "text": "continue" }] },
+                    { "role": "model", "parts": [
+                        { "functionCall": { "name": "read", "args": {} }, "thoughtSignature": gemini_sig }
+                    ]},
+                    { "role": "user", "parts": [
+                        {
+                            "functionResponse": {
+                                "name": "read",
+                                "response": { "status": "ok" },
+                                "parts": [
+                                    { "inlineData": { "mimeType": "application/pdf", "data": huge_pdf } }
+                                ]
+                            }
+                        }
+                    ]},
+                    { "role": "user", "parts": [{ "text": "summarize now" }] }
+                ]
+            }
+        });
+        assert!(InboundThinkingPipeline::compact_gemini_payload_to_budget(
+            &mut gemini_stage,
+            6_000
+        ));
+        let g_contents = gemini_stage["request"]["contents"].as_array().unwrap();
+        // After dropping empty thought-only model turn, the two "user" turns ("read pdf" + "continue") merge cleanly!
+        assert_eq!(g_contents[0]["role"], "user");
+        assert_ne!(g_contents[1]["role"], "user");
+        assert_eq!(
+            g_contents[1]["parts"][0]["thoughtSignature"],
+            crate::proxy::thinking_store::SENTINEL_SIGNATURE
+        );
+        let fr = &g_contents[2]["parts"][0]["functionResponse"];
+        assert!(fr.get("parts").is_none());
+        assert_eq!(fr["response"]["_omitted_multimodal_parts"], 1);
+
+        // 6. Reactive budget helper scales cleanly inside [120k, 750k]
+        assert_eq!(
+            InboundThinkingPipeline::compute_reactive_compaction_budget(
+                980_000,
+                Some((1_048_576, 1_055_000))
+            ),
+            730_525
         );
     }
 }

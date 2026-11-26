@@ -582,31 +582,48 @@ pub fn check_outdated_user_agent_issue_with_lang(
 }
 
 static TOKEN_LIMIT_MAX_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)exceeds\s+the\s+maximum\s+number\s+of\s+tokens\s+allowed\s*\((\d+)\)")
-        .expect("valid regex for token limit max")
+    regex::Regex::new(
+        r"(?i)exceeds\s+the\s+maximum\s+number\s+of\s+tokens\s+allowed(?:\s+of)?\s*:?\s*\(?\s*(\d+)\s*\)?",
+    )
+    .expect("valid regex for token limit max")
 });
 
 static TOKEN_LIMIT_INPUT_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)input\s+token\s+count[:\s]+(\d+)")
+    regex::Regex::new(r"(?i)input\s+token\s+count(?:\s+of)?[:\s]+\(?(\d+)\)?")
         .expect("valid regex for token limit input")
 });
 
 /// [Fixes #4024] 解析上游 1M 上下文硬超限报错：
-/// "The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377."
-/// 返回 (最大允许 token 数, 实际输入 token 数)。
-pub fn parse_token_limit_error(status_code: u16, error_text: &str) -> Option<(u64, u64)> {
-    if status_code != 400 {
-        return None;
-    }
-    let lower = error_text.to_lowercase();
-    if !lower.contains("exceeds the maximum number of tokens") {
+/// - "The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377."
+/// - "The input token count exceeds the maximum number of tokens allowed 1048576"
+/// 若上游未返回具体 input token count，则使用 estimated_input 兜底并保证 > max，返回 (最大允许 token 数, 实际/估算输入 token 数)。
+pub fn parse_token_limit_error_with_estimate(
+    status_code: u16,
+    error_text: &str,
+    estimated_input: Option<u64>,
+) -> Option<(u64, u64)> {
+    if !crate::proxy::pipeline::UpstreamClassification::is_input_token_limit_exceeded(
+        status_code,
+        error_text,
+    ) {
         return None;
     }
     let max_caps = TOKEN_LIMIT_MAX_RE.captures(error_text)?;
-    let input_caps = TOKEN_LIMIT_INPUT_RE.captures(error_text)?;
     let max = max_caps.get(1)?.as_str().parse::<u64>().ok()?;
-    let input = input_caps.get(1)?.as_str().parse::<u64>().ok()?;
+    let input = TOKEN_LIMIT_INPUT_RE
+        .captures(error_text)
+        .and_then(|caps| caps.get(1))
+        .and_then(|m| m.as_str().parse::<u64>().ok())
+        .unwrap_or_else(|| estimated_input.unwrap_or(0).max(max.saturating_add(1)));
     Some((max, input))
+}
+
+/// [Fixes #4024] 解析上游 1M 上下文硬超限报错：
+/// "The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377."
+/// 兼容无括号变体 (`allowed 1048576`) 以及省略 `input token count` 的情况（回退为 `max + 1`）。
+/// 返回 (最大允许 token 数, 实际输入 token 数)。
+pub fn parse_token_limit_error(status_code: u16, error_text: &str) -> Option<(u64, u64)> {
+    parse_token_limit_error_with_estimate(status_code, error_text, None)
 }
 
 /// 格式化双轨制错误报文（四大标准协议原始字段散开 + 顶层/UI层不阉割双轨诊断）
@@ -615,6 +632,17 @@ pub fn build_dual_track_error(
     status_code: u16,
     model: &str,
     error_text: &str,
+) -> serde_json::Value {
+    build_dual_track_error_with_estimate(protocol, status_code, model, error_text, None)
+}
+
+/// [Fixes #4024] 格式化双轨制错误报文，允许传入网关本地估算输入 token（供上游省略 input token count 时兜底）
+pub fn build_dual_track_error_with_estimate(
+    protocol: &str, // "claude", "openai", "responses", or "gemini"
+    status_code: u16,
+    model: &str,
+    error_text: &str,
+    estimated_input: Option<u64>,
 ) -> serde_json::Value {
     // 动态提取当前生效的自定义 User-Agent 覆盖与语言环境
     let cfg = crate::modules::config::load_app_config().ok();
@@ -625,13 +653,14 @@ pub fn build_dual_track_error(
         .as_ref()
         .map(|c| c.language.clone())
         .unwrap_or_else(|| "zh".to_string());
-    build_dual_track_error_with_ua_and_lang(
+    build_dual_track_error_inner(
         protocol,
         status_code,
         model,
         error_text,
         active_ua_override.as_deref(),
         Some(&lang),
+        estimated_input,
     )
 }
 
@@ -647,13 +676,14 @@ pub fn build_dual_track_error_with_ua(
         .ok()
         .map(|c| c.language)
         .unwrap_or_else(|| "zh".to_string());
-    build_dual_track_error_with_ua_and_lang(
+    build_dual_track_error_inner(
         protocol,
         status_code,
         model,
         error_text,
         custom_ua,
         Some(&lang),
+        None,
     )
 }
 
@@ -665,6 +695,26 @@ pub fn build_dual_track_error_with_ua_and_lang(
     error_text: &str,
     custom_ua: Option<&str>,
     lang: Option<&str>,
+) -> serde_json::Value {
+    build_dual_track_error_inner(
+        protocol,
+        status_code,
+        model,
+        error_text,
+        custom_ua,
+        lang,
+        None,
+    )
+}
+
+fn build_dual_track_error_inner(
+    protocol: &str,
+    status_code: u16,
+    model: &str,
+    error_text: &str,
+    custom_ua: Option<&str>,
+    lang: Option<&str>,
+    estimated_input: Option<u64>,
 ) -> serde_json::Value {
     let effective_lang = lang.unwrap_or("zh");
     let i18n_err = crate::modules::i18n::get_gateway_error_strings(effective_lang);
@@ -699,7 +749,8 @@ pub fn build_dual_track_error_with_ua_and_lang(
     // [Fixes #4024] 上游 1M 上下文硬超限（400 "input token count exceeds ..."）：
     // 归一化为 Anthropic 标准的 invalid_request_error + "prompt is too long"，
     // 让 Claude Code 客户端的 prompt_too_long 恢复机制（自动压缩/降配）可以识别。
-    let token_limit = parse_token_limit_error(status_code, error_text);
+    let token_limit =
+        parse_token_limit_error_with_estimate(status_code, error_text, estimated_input);
 
     // 账号被上游封禁 / 权限拒绝：与「容量耗尽」「模型不存在」严格区分，
     // 避免 403 被 Claude 协议映射为 503 后与真实容量问题混淆。
@@ -1597,6 +1648,13 @@ mod retry_after_tests {
         let raw = "HTTP 400: {\"error\":{\"code\":400,\"message\":\"The input token count exceeds the maximum number of tokens allowed (1048576); input token count: 1050377.\",\"status\":\"INVALID_ARGUMENT\"}}";
 
         assert_eq!(parse_token_limit_error(400, raw), Some((1048576, 1050377)));
+        assert_eq!(
+            parse_token_limit_error(
+                400,
+                "The input token count exceeds the maximum number of tokens allowed 1048576"
+            ),
+            Some((1048576, 1048577))
+        );
         assert_eq!(parse_token_limit_error(500, raw), None);
         assert_eq!(parse_token_limit_error(400, "some other 400 error"), None);
 
@@ -1628,5 +1686,41 @@ mod retry_after_tests {
             .as_str()
             .unwrap()
             .contains("The input token count exceeds the maximum number of tokens allowed"));
+
+        // 兼容无括号形式以及未携带具体 input token count 的变体
+        let raw_no_parens =
+            "The input token count exceeds the maximum number of tokens allowed 1048576";
+        assert_eq!(
+            parse_token_limit_error(400, raw_no_parens),
+            Some((1048576, 1048577))
+        );
+        let fallback_res = build_dual_track_error_with_ua_and_lang(
+            "claude",
+            400,
+            "gemini-4-hydrogen",
+            raw_no_parens,
+            None,
+            Some("en"),
+        );
+        assert_eq!(
+            fallback_res["error"]["message"],
+            "prompt is too long: 1048577 tokens > 1048576 maximum"
+        );
+
+        assert_eq!(
+            parse_token_limit_error_with_estimate(400, raw_no_parens, Some(1_060_200)),
+            Some((1048576, 1060200))
+        );
+        let est_res = build_dual_track_error_with_estimate(
+            "claude",
+            400,
+            "gemini-4-hydrogen",
+            raw_no_parens,
+            Some(1_060_200),
+        );
+        assert_eq!(
+            est_res["error"]["message"],
+            "prompt is too long: 1060200 tokens > 1048576 maximum"
+        );
     }
 }

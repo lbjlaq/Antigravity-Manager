@@ -199,6 +199,10 @@ pub struct AutoHealFlags {
     pub retried_with_image_omitted: bool,
     /// 已因 400 "Thinking level is unsupported" 把扩展思考档钳制为 HIGH
     pub retried_with_thinking_level_clamped: bool,
+    /// 已因 400 "exceeds the maximum number of tokens" 对当前会话 sessionId 升代重试过一次 (Fixes #4024)
+    pub retried_session_token_limit_bump: bool,
+    /// 已因 `/compact` 摘要请求逼近/撞上 1M 上限而做过响应历史裁剪重试 (Fixes #4024)
+    pub retried_compaction_trimmed: bool,
 }
 
 fn demote_response_schema_in_payload(body: &mut Value) -> bool {

@@ -251,6 +251,28 @@ pub fn should_trigger_cowork_auto_compact(
     }
 }
 
+/// 检查最近若干条消息中是否包含原生压缩总结指令（覆盖多 text block 混排 `<system-reminder>` 的情况）
+pub(crate) fn has_compaction_message_in_request(request: &ClaudeRequest) -> bool {
+    request
+        .messages
+        .iter()
+        .rev()
+        .take(5)
+        .any(|m| match &m.content {
+            crate::proxy::mappers::claude::models::MessageContent::String(s) => {
+                crate::proxy::mappers::common_utils::is_compaction_request_text(s)
+            }
+            crate::proxy::mappers::claude::models::MessageContent::Array(blocks) => {
+                blocks.iter().any(|b| match b {
+                    crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
+                        crate::proxy::mappers::common_utils::is_compaction_request_text(text)
+                    }
+                    _ => false,
+                })
+            }
+        })
+}
+
 /// 判定请求是否为用户在 Cowork 客户端输入的手动 ./compact 指令
 fn is_manual_compact_command(request: &ClaudeRequest) -> bool {
     let mut text_opt = None;
@@ -1130,22 +1152,7 @@ pub async fn handle_messages(
         .map_or(false, |v| v.contains("compaction"));
 
     // 检查是否有任何消息或 System Prompt 命中摘要特征
-    let has_compaction_message = request.messages.iter().rev().take(5).any(|m| {
-        let text = match &m.content {
-            crate::proxy::mappers::claude::models::MessageContent::String(s) => s.as_str(),
-            crate::proxy::mappers::claude::models::MessageContent::Array(blocks) => blocks
-                .iter()
-                .rev()
-                .find_map(|b| match b {
-                    crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
-                        Some(text.as_str())
-                    }
-                    _ => None,
-                })
-                .unwrap_or(""),
-        };
-        crate::proxy::mappers::common_utils::is_compaction_request_text(text)
-    });
+    let has_compaction_message = has_compaction_message_in_request(&request);
 
     let has_compaction_system = request.system.as_ref().map_or(false, |sys| match sys {
         crate::proxy::mappers::claude::models::SystemPrompt::String(s) => {
@@ -1160,8 +1167,22 @@ pub async fn handle_messages(
         is_compaction_header || has_compaction_message || has_compaction_system;
 
     if is_compaction_request {
-        // [Compaction Lifecycle] 彻底作废当前会话预压缩历史签名与思考缓存
+        // [Compaction Lifecycle] 彻底作废当前会话预压缩历史签名与思考缓存（同时覆盖带 tenant 前缀的 store_key）
         crate::proxy::thinking_store::clear_session_for_compaction(&session_key);
+        let compaction_anchor =
+            crate::proxy::session_manager::SessionManager::extract_session_id(&request);
+        let compaction_scope = crate::proxy::thinking_store::SessionScope::resolve(
+            &headers,
+            Some(&original_body),
+            None,
+            compaction_anchor,
+            user_identity
+                .as_ref()
+                .map(|identity| identity.token_id.as_str()),
+        );
+        if compaction_scope.store_key != session_key {
+            crate::proxy::thinking_store::clear_session_for_compaction(&compaction_scope.store_key);
+        }
 
         // [Compaction Immunity Lease] 为该会话发放免死租约，支持并发接续与重试
         let now = std::time::Instant::now();
@@ -1664,6 +1685,7 @@ pub async fn handle_messages(
     let mut degraded_gemini_body: Option<serde_json::Value> = None;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
+    let mut last_estimated_input: Option<u64> = None;
     let mut failure_statuses = super::common::FailureStatusTracker::default();
     // [Grace Policy] 有状态重试裁决：同一账号在一次请求内最多 GraceRetry 一次。
     // 历史上 Claude 使用无状态裁决 + 调度模式 allow_grace，会在单账号/缓存优先场景
@@ -1977,6 +1999,29 @@ pub async fn handle_messages(
             &mut gemini_body,
         );
         crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut gemini_body);
+
+        // [Compaction-Guard / #4024] `/compact` 压缩摘要请求逼近上游上下文硬上限时，
+        // 主动按渐进式策略剥离历史思考块、多余媒体与最旧对话前缀，避免 `/compact` 自身 400 死锁。
+        if is_compaction_request && !heal_flags.retried_compaction_trimmed {
+            let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(
+                &request_with_mapped.model,
+            );
+            let proactive_trigger = ((context_limit as f64) * 0.86).round() as u32;
+            let proactive_budget = ((context_limit as f64) * 0.78).round() as u32;
+            if crate::proxy::pipeline::estimate_tokens(&gemini_body) > proactive_trigger
+                && crate::proxy::pipeline::InboundThinkingPipeline::compact_gemini_payload_to_budget(
+                    &mut gemini_body,
+                    proactive_budget,
+                )
+            {
+                tracing::warn!(
+                    "[{}] [Compaction-Guard] Proactively trimmed compaction payload below {} tokens (model={})",
+                    trace_id,
+                    proactive_budget,
+                    request_with_mapped.model
+                );
+            }
+        }
 
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let tf_micros = transform_timing.think_fill_micros;
@@ -2970,16 +3015,72 @@ pub async fn handle_messages(
             }
         }
 
-        // [FIX session-1M] 上游按 sessionId 在服务端累计会话输入，长工具循环会把累计推过 1M，
+        // [FIX session-1M / #4024] 上游按 sessionId 在服务端累计会话输入，长工具循环会把累计推过 1M，
         // 之后该 sessionId 的所有请求都 400 "input token count exceeds ... 1048576"。
-        // 给 (账号, 对话) 的 sessionId 升代并立即重试:新 sessionId = 上游全新会话,对话无感恢复。
-        if status_code == 400 && error_text.contains("exceeds the maximum number of tokens") {
-            let generation = crate::proxy::common::session::bump_session(&account_id, &store_key);
+        // 1. 优先仅对 sessionId 升代并在同账号重试 1 次，化解假性会话累计超限；
+        // 2. 若仍 400 且当前是 `/compact` 压缩摘要请求，按报错实际超限比例渐进裁剪历史（保住 `/compact` 逃生通道）；
+        // 3. 非压缩请求直接落入 400 终态返回 Anthropic 标准 "prompt is too long" 错误，触发客户端自动压缩。
+        if crate::proxy::pipeline::UpstreamClassification::is_input_token_limit_exceeded(
+            status_code,
+            &error_text,
+        ) {
+            let current_est = crate::proxy::pipeline::estimate_tokens(&gemini_body);
+            last_estimated_input = Some(current_est as u64);
+            if !heal_flags.retried_session_token_limit_bump {
+                heal_flags.retried_session_token_limit_bump = true;
+                let generation =
+                    crate::proxy::common::session::bump_session(&account_id, &store_key);
+                tracing::warn!(
+                    "[Claude] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying once on same account.",
+                    email, generation
+                );
+                force_rotate = false;
+                retry_credentials = Some((
+                    access_token.clone(),
+                    project_id.clone(),
+                    email.clone(),
+                    account_id.clone(),
+                    0,
+                ));
+                continue;
+            } else if is_compaction_request && !heal_flags.retried_compaction_trimmed {
+                heal_flags.retried_compaction_trimmed = true;
+                let parsed_limit = crate::proxy::handlers::common::parse_token_limit_error(
+                    status_code,
+                    &error_text,
+                );
+                let target_budget =
+                    crate::proxy::pipeline::InboundThinkingPipeline::compute_reactive_compaction_budget(
+                        current_est,
+                        parsed_limit,
+                    );
+                if crate::proxy::pipeline::InboundThinkingPipeline::compact_gemini_payload_to_budget(
+                    &mut gemini_body,
+                    target_budget,
+                ) {
+                    tracing::warn!(
+                        "[{}] [Claude-Compaction] Trimmed compaction payload from ~{} tokens toward {} budget after upstream 400 token limit; retrying once on same account.",
+                        trace_id,
+                        current_est,
+                        target_budget
+                    );
+                    degraded_gemini_body = Some(gemini_body);
+                    force_rotate = false;
+                    retry_credentials = Some((
+                        access_token.clone(),
+                        project_id.clone(),
+                        email.clone(),
+                        account_id.clone(),
+                        0,
+                    ));
+                    continue;
+                }
+            }
             tracing::warn!(
-                "[Claude] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying with a fresh upstream session.",
-                email, generation
+                "[{}] [Claude] Single-request token limit exceeded persisted after session bump (is_compaction={}); returning normalized prompt_too_long 400.",
+                trace_id,
+                is_compaction_request
             );
-            continue; // 重试:下一轮 transform 时读取新代数,派生全新 sessionId
         }
 
         let sticky_cfg = token_manager.get_sticky_config().await;
@@ -3064,11 +3165,12 @@ pub async fn handle_messages(
                 Some(email.as_str()),
                 &error_text,
             );
-            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error_with_estimate(
                 "claude",
                 response_status.as_u16(),
                 &request_with_mapped.model,
                 &error_text,
+                last_estimated_input,
             );
             return (response_status, headers, Json(dual_err)).into_response();
         }
@@ -3084,11 +3186,12 @@ pub async fn handle_messages(
         &last_error,
     );
     let model_str = last_mapped_model.as_deref().unwrap_or("unknown");
-    let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+    let dual_err = crate::proxy::handlers::common::build_dual_track_error_with_estimate(
         "claude",
         response_status.as_u16(),
         model_str,
         &last_error,
+        last_estimated_input,
     );
 
     (response_status, headers, Json(dual_err)).into_response()
@@ -3208,11 +3311,91 @@ pub async fn handle_retrieve_model(
     }
 }
 
+/// 计算考虑 ThinkingStore 历史回填体积后的 Claude `/v1/messages/count_tokens` 估算结果（纯内存计算，零上游 I/O）。
+pub(crate) fn estimate_claude_count_tokens_with_store(
+    headers: &HeaderMap,
+    body: &Value,
+    tenant_id: Option<&str>,
+    store: &crate::proxy::thinking_store::ThinkingStore,
+) -> u32 {
+    let base_tokens = crate::proxy::pipeline::estimate_tokens(body);
+    let anchor =
+        crate::proxy::session_manager::SessionManager::extract_claude_session_id_from_value(body);
+    let session_scope = crate::proxy::thinking_store::SessionScope::resolve(
+        headers,
+        Some(body),
+        None,
+        anchor,
+        tenant_id,
+    );
+    let store_thinking_tokens = store.estimate_session_thinking_tokens(&session_scope.store_key);
+    if store_thinking_tokens == 0 {
+        return base_tokens;
+    }
+
+    let mut client_thinking_tokens = 0u32;
+    if let Some(messages) = body.get("messages").and_then(Value::as_array) {
+        for msg in messages {
+            if let Some(blocks) = msg.get("content").and_then(Value::as_array) {
+                for block in blocks {
+                    match block.get("type").and_then(Value::as_str) {
+                        Some("thinking") => {
+                            if let Some(t) = block.get("thinking").and_then(Value::as_str) {
+                                client_thinking_tokens = client_thinking_tokens.saturating_add(
+                                    crate::proxy::pipeline::estimator::estimate_tokens_from_str(t),
+                                );
+                            }
+                            if let Some(sig) = block
+                                .get("signature")
+                                .or_else(|| block.get("thoughtSignature"))
+                                .or_else(|| block.get("thought_signature"))
+                                .and_then(Value::as_str)
+                            {
+                                client_thinking_tokens = client_thinking_tokens.saturating_add(
+                                    crate::proxy::pipeline::estimator::estimate_tokens_from_str(
+                                        sig,
+                                    ),
+                                );
+                            }
+                            client_thinking_tokens = client_thinking_tokens.saturating_add(100);
+                        }
+                        Some("redacted_thinking") => {
+                            if let Some(d) = block.get("data").and_then(Value::as_str) {
+                                client_thinking_tokens = client_thinking_tokens.saturating_add(
+                                    crate::proxy::pipeline::estimator::estimate_tokens_from_str(d),
+                                );
+                            }
+                            client_thinking_tokens = client_thinking_tokens.saturating_add(100);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    base_tokens.saturating_add(store_thinking_tokens.saturating_sub(client_thinking_tokens))
+}
+
 /// 计算 tokens (Anthropic 官方 Messages Count Tokens API)
 /// 接入 Pipeline 协议无关通用估算引擎与全局高并发内容哈希缓存，
+/// 并计入 ThinkingStore 中当前会话将要回填的历史思考/签名开销 (Fixes #4024)。
 /// 严格遵循官方 Schema 仅返回 input_tokens，彻底移除非标冗余 output_tokens 字段。
-pub async fn handle_count_tokens(_headers: HeaderMap, Json(body): Json<Value>) -> Response {
-    let input_tokens = crate::proxy::pipeline::estimate_tokens(&body);
+pub async fn handle_count_tokens(
+    headers: HeaderMap,
+    user_identity: Option<
+        axum::extract::Extension<crate::proxy::middleware::auth::UserTokenIdentity>,
+    >,
+    Json(body): Json<Value>,
+) -> Response {
+    let input_tokens = estimate_claude_count_tokens_with_store(
+        &headers,
+        &body,
+        user_identity
+            .as_ref()
+            .map(|identity| identity.token_id.as_str()),
+        crate::proxy::thinking_store::ThinkingStore::global(),
+    );
 
     Json(json!({
         "input_tokens": input_tokens
@@ -5214,5 +5397,73 @@ mod warmup_tests {
             false
         )
         .is_none());
+    }
+
+    #[test]
+    fn test_issue_4024_compaction_detection_and_count_tokens_with_thinking_store() {
+        use crate::proxy::mappers::claude::models::{ContentBlock, Message, Tool};
+        use crate::proxy::session_manager::SessionManager;
+        use crate::proxy::thinking_store::{SessionScope, ThinkingStore, TurnAccumulator};
+
+        // 1. Trailing <system-reminder> text block must NOT mask an earlier compaction prompt block
+        let req_with_trailing_reminder = ClaudeRequest {
+            model: "claude-opus-4-6-thinking".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Array(vec![
+                    ContentBlock::Text {
+                        text:
+                            "Your task is to create a detailed summary of the conversation so far."
+                                .to_string(),
+                    },
+                    ContentBlock::Text {
+                        text: "<system-reminder>Today is Thursday.</system-reminder>".to_string(),
+                    },
+                ]),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("Read".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(has_compaction_message_in_request(
+            &req_with_trailing_reminder
+        ));
+
+        // 2. extract_claude_session_id_from_value matches SessionManager::extract_session_id bit-for-bit
+        let raw_body = serde_json::to_value(&req_with_trailing_reminder).unwrap();
+        assert_eq!(
+            SessionManager::extract_claude_session_id_from_value(&raw_body),
+            SessionManager::extract_session_id(&req_with_trailing_reminder)
+        );
+
+        // 3. estimate_claude_count_tokens_with_store includes cached ThinkingStore overhead
+        let mut headers = HeaderMap::new();
+        let sid = format!("count-tokens-{}", uuid::Uuid::new_v4());
+        headers.insert("x-session-id", sid.parse().unwrap());
+        let anchor = SessionManager::extract_claude_session_id_from_value(&raw_body);
+        let scope =
+            SessionScope::resolve(&headers, Some(&raw_body), None, anchor, Some("tenant-a"));
+
+        let store = ThinkingStore::new();
+        let base =
+            estimate_claude_count_tokens_with_store(&headers, &raw_body, Some("tenant-a"), &store);
+
+        let mut acc = TurnAccumulator::new();
+        acc.ingest_part(&json!({ "thought": true, "text": "t".repeat(4_000) }));
+        acc.ingest_part(&json!({
+            "text": "ok",
+            "thoughtSignature": format!("ErQD{}", "s".repeat(96))
+        }));
+        store.record(&scope.store_key, acc.into_record());
+
+        let with_store =
+            estimate_claude_count_tokens_with_store(&headers, &raw_body, Some("tenant-a"), &store);
+        assert_eq!(with_store, base + 1_125);
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&scope.store_key);
     }
 }

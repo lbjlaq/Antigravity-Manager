@@ -275,6 +275,148 @@ impl SessionManager {
         sid
     }
 
+    /// 直接从 Claude 原始 JSON Payload 提取与 `extract_session_id` 完全一致的会话指纹（零全量反序列化），
+    /// 供 `/v1/messages/count_tokens` 对齐 ThinkingStore 会话隔离键 (Fixes #4024)。
+    pub fn extract_claude_session_id_from_value(body: &Value) -> String {
+        fn summarize_message_content(content: &Value) -> String {
+            if let Some(s) = content.as_str() {
+                return s.to_string();
+            }
+            let Some(blocks) = content.as_array() else {
+                return String::new();
+            };
+            let mut parts = Vec::new();
+            for block in blocks {
+                let kind = block.get("type").and_then(Value::as_str);
+                match kind {
+                    Some("text") => {
+                        if let Some(text) = block.get("text").and_then(Value::as_str) {
+                            parts.push(text.to_string());
+                        }
+                    }
+                    Some("image") => {
+                        let source = block.get("source");
+                        let mime = source
+                            .and_then(|s| s.get("media_type"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("image");
+                        let len = source
+                            .and_then(|s| s.get("data"))
+                            .and_then(Value::as_str)
+                            .map(|d| d.len())
+                            .unwrap_or(0);
+                        parts.push(format!("[image:{}:{}]", mime, len));
+                    }
+                    Some("document") => {
+                        let source = block.get("source");
+                        let mime = source
+                            .and_then(|s| s.get("media_type"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("document");
+                        let len = source
+                            .and_then(|s| s.get("data"))
+                            .and_then(Value::as_str)
+                            .map(|d| d.len())
+                            .unwrap_or(0);
+                        parts.push(format!("[document:{}:{}]", mime, len));
+                    }
+                    Some("tool_result") => {
+                        let tool_use_id = block
+                            .get("tool_use_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let is_error = block
+                            .get("is_error")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        parts.push(format!("[tool_result:{}:{}]", tool_use_id, is_error));
+                    }
+                    _ => {}
+                }
+            }
+            parts.join(" ")
+        }
+
+        let mut hasher = Sha256::new();
+        let messages = body.get("messages").and_then(Value::as_array);
+        let mut content_found = false;
+
+        if let Some(msgs) = messages {
+            for msg in msgs {
+                if msg.get("role").and_then(Value::as_str) != Some("user") {
+                    continue;
+                }
+                let text = msg
+                    .get("content")
+                    .map(summarize_message_content)
+                    .unwrap_or_default();
+                let clean_text = sanitize_user_text_for_fingerprint(&text);
+                if !clean_text.trim().is_empty() {
+                    hasher.update(clean_text.as_bytes());
+                    content_found = true;
+                    break;
+                }
+            }
+
+            if !content_found {
+                for msg in msgs {
+                    if msg.get("role").and_then(Value::as_str) == Some("user") {
+                        let summary = msg
+                            .get("content")
+                            .map(summarize_message_content)
+                            .unwrap_or_default();
+                        if !summary.trim().is_empty() {
+                            hasher.update(summary.trim().as_bytes());
+                            content_found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if !content_found {
+                if let Some(last_msg) = msgs.last() {
+                    let summary = last_msg
+                        .get("content")
+                        .map(summarize_message_content)
+                        .unwrap_or_default();
+                    hasher.update(summary.as_bytes());
+                }
+            }
+        }
+
+        hasher.update([0xff]);
+        if let Some(sys) = body.get("system") {
+            let sys_text = if let Some(s) = sys.as_str() {
+                s.to_string()
+            } else if let Some(arr) = sys.as_array() {
+                arr.iter()
+                    .filter_map(|b| b.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                String::new()
+            };
+            let clean_sys = sanitize_user_text_for_fingerprint(&sys_text);
+            if !clean_sys.is_empty() {
+                hasher.update(clean_sys.as_bytes());
+            }
+        }
+
+        hasher.update([0xfe]);
+        if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+            for tool in tools {
+                if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                    hasher.update(name.as_bytes());
+                    hasher.update([0xfd]);
+                }
+            }
+        }
+
+        let hash = format!("{:x}", hasher.finalize());
+        format!("sid-{}", &hash[..16])
+    }
+
     /// 根据 OpenAI 请求生成稳定的会话指纹
     pub fn extract_openai_session_id(request: &OpenAIRequest) -> String {
         if let Some(explicit) = request.session_id.as_ref() {

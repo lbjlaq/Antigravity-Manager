@@ -1061,13 +1061,26 @@ pub async fn handle_generate(
 
         // [FIX session-1M] 上游按 sessionId 在服务端累计会话输入，长工具循环会把累计推过 1M，
         // 之后该 sessionId 的所有请求都 400 "input token count exceeds ... 1048576"。
-        // 给 (账号, 对话) 的 sessionId 升代并立即重试:新 sessionId = 上游全新会话,对话无感恢复。
-        if status_code == 400 && error_text.contains("exceeds the maximum number of tokens") {
+        // 给 (账号, 对话) 的 sessionId 升代并在同账号立即重试 1 次：若仍 400 说明单包物理超限，直接退出。
+        if crate::proxy::pipeline::UpstreamClassification::is_input_token_limit_exceeded(
+            status_code,
+            &error_text,
+        ) && !heal_flags.retried_session_token_limit_bump
+        {
+            heal_flags.retried_session_token_limit_bump = true;
             let generation = crate::proxy::common::session::bump_session(&account_id, &session_id);
             tracing::warn!(
-                "[Gemini] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying with a fresh upstream session.",
+                "[Gemini] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying once on same account.",
                 email, generation
             );
+            force_rotate = false;
+            retry_credentials = Some((
+                access_token.clone(),
+                project_id.clone(),
+                email.clone(),
+                account_id.clone(),
+                0,
+            ));
             continue; // 重试:下一轮读取新代数,派生全新 sessionId
         }
 
