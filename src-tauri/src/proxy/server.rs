@@ -963,6 +963,7 @@ impl AxumServer {
             .route("/debug/logs", get(admin_get_debug_console_logs))
             .route("/debug/logs/clear", post(admin_clear_debug_console_logs))
             .route("/stats/token/clear", post(admin_clear_token_stats))
+            .route("/stats/token/minute", get(admin_get_token_stats_minute))
             .route("/stats/token/hourly", get(admin_get_token_stats_hourly))
             .route("/stats/token/daily", get(admin_get_token_stats_daily))
             .route("/stats/token/weekly", get(admin_get_token_stats_weekly))
@@ -973,12 +974,20 @@ impl AxumServer {
             .route("/stats/token/summary", get(admin_get_token_stats_summary))
             .route("/stats/token/by-model", get(admin_get_token_stats_by_model))
             .route(
+                "/stats/token/model-trend/minute",
+                get(admin_get_token_stats_model_trend_minute),
+            )
+            .route(
                 "/stats/token/model-trend/hourly",
                 get(admin_get_token_stats_model_trend_hourly),
             )
             .route(
                 "/stats/token/model-trend/daily",
                 get(admin_get_token_stats_model_trend_daily),
+            )
+            .route(
+                "/stats/token/account-trend/minute",
+                get(admin_get_token_stats_account_trend_minute),
             )
             .route(
                 "/stats/token/account-trend/hourly",
@@ -1000,6 +1009,10 @@ impl AxumServer {
             .route(
                 "/accounts/:accountId/clear-forbidden",
                 post(admin_clear_account_forbidden),
+            )
+            .route(
+                "/accounts/:accountId/remove-forbidden-model",
+                post(admin_remove_account_forbidden_model),
             )
             .route("/accounts/warmup", post(admin_warm_up_all_accounts))
             .route("/accounts/:accountId/warmup", post(admin_warm_up_account))
@@ -3086,10 +3099,62 @@ async fn admin_clear_log_cache() -> Result<impl IntoResponse, (StatusCode, Json<
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct StatsPeriodQuery {
+    minutes: Option<i64>,
+    #[serde(alias = "step_minutes")]
+    step_minutes: Option<i64>,
     hours: Option<i64>,
     days: Option<i64>,
     weeks: Option<i64>,
+    #[serde(alias = "view_mode")]
     view_mode: Option<String>,
+}
+
+async fn run_blocking_json<T, F>(f: F) -> Result<Json<T>, (StatusCode, Json<ErrorResponse>)>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(f).await {
+        Ok(Ok(val)) => Ok(Json(val)),
+        Ok(Err(e)) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )),
+    }
+}
+
+async fn admin_get_token_stats_minute(
+    Query(p): Query<StatsPeriodQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let minutes = p.minutes.unwrap_or(60);
+    let step_minutes = p.step_minutes.unwrap_or(1);
+    run_blocking_json(move || token_stats::get_minute_stats(minutes, step_minutes)).await
+}
+
+async fn admin_get_token_stats_model_trend_minute(
+    Query(p): Query<StatsPeriodQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let minutes = p.minutes.unwrap_or(60);
+    let step_minutes = p.step_minutes.unwrap_or(1);
+    let view_mode = p.view_mode;
+    run_blocking_json(move || {
+        token_stats::get_model_trend_minute(minutes, step_minutes, view_mode.as_deref())
+    })
+    .await
+}
+
+async fn admin_get_token_stats_account_trend_minute(
+    Query(p): Query<StatsPeriodQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let minutes = p.minutes.unwrap_or(60);
+    let step_minutes = p.step_minutes.unwrap_or(1);
+    run_blocking_json(move || token_stats::get_account_trend_minute(minutes, step_minutes)).await
 }
 
 async fn admin_get_token_stats_hourly(
@@ -3776,6 +3841,26 @@ async fn admin_clear_account_forbidden(
     let _ = state.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+struct RemoveForbiddenModelRequest {
+    model: Option<String>,
+}
+
+async fn admin_remove_account_forbidden_model(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+    Json(payload): Json<RemoveForbiddenModelRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let removed = crate::modules::account::remove_account_forbidden_model(
+        &account_id,
+        payload.model.as_deref(),
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
+
+    let _ = state.token_manager.reload_account(&account_id).await;
+    Ok(Json(removed))
 }
 
 async fn admin_warm_up_all_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
@@ -5452,7 +5537,7 @@ async fn admin_execute_droid_sync(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::proxy::droid_sync::execute_droid_sync(payload.custom_models)
         .await
-        .map(|count| Json(serde_json::json!({ "added": count })))
+        .map(Json)
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -5986,5 +6071,33 @@ mod oauth_callback_tests {
         let html = oauth_failure_html("Missing authorization code in callback.");
         assert!(html.contains("<p>Missing authorization code in callback.</p>"));
         assert!(html.contains("Authorization Failed"));
+    }
+}
+
+#[cfg(test)]
+mod admin_parity_tests {
+    use super::StatsPeriodQuery;
+
+    #[test]
+    fn stats_period_query_accepts_camel_and_snake_case_params() {
+        let camel: StatsPeriodQuery = serde_json::from_value(serde_json::json!({
+            "minutes": 60,
+            "stepMinutes": 5,
+            "viewMode": "canonical"
+        }))
+        .unwrap();
+        assert_eq!(camel.minutes, Some(60));
+        assert_eq!(camel.step_minutes, Some(5));
+        assert_eq!(camel.view_mode.as_deref(), Some("canonical"));
+
+        let snake: StatsPeriodQuery = serde_json::from_value(serde_json::json!({
+            "minutes": 1440,
+            "step_minutes": 15,
+            "view_mode": "raw"
+        }))
+        .unwrap();
+        assert_eq!(snake.minutes, Some(1440));
+        assert_eq!(snake.step_minutes, Some(15));
+        assert_eq!(snake.view_mode.as_deref(), Some("raw"));
     }
 }
