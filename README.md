@@ -16,6 +16,9 @@
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
     <img src="https://img.shields.io/badge/Frontend-React-61DAFB?style=flat-square" alt="React">
+    <a href="https://github.com/sponsors/lbjlaq">
+      <img src="https://img.shields.io/github/sponsors/lbjlaq?style=flat-square&logo=githubsponsors&logoColor=white&color=ea4aaa&label=Sponsor" alt="GitHub Sponsors">
+    </a>
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA--4.0-lightgrey?style=flat-square" alt="License">
   </p>
 
@@ -54,9 +57,17 @@ By leveraging this app, you can transform common Web Sessions (Google/Anthropic)
 
 ### ☕ Support
 
-If you find this project helpful, feel free to buy me a coffee!
+If you find this project helpful, feel free to support ongoing development via [GitHub Sponsors](https://github.com/sponsors/lbjlaq) or Buy Me a Coffee! Want your GitHub avatar or logo featured in this README? Choose the **README Backer ($25/mo)** or **Silver Sponsor ($150/mo)** tier on GitHub Sponsors.
 
-<a href="https://www.buymeacoffee.com/Ctrler" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="Buy Me A Coffee" style="height: 60px !important; width: 217px !important;"></a>
+<p align="center">
+  <a href="https://github.com/sponsors/lbjlaq" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors" height="48" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://www.buymeacoffee.com/Ctrler" target="_blank" rel="noopener noreferrer">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="Buy Me A Coffee" height="48" />
+  </a>
+</p>
 
 | Alipay | WeChat Pay | Buy Me a Coffee |
 | :---: | :---: | :---: |
