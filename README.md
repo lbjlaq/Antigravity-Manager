@@ -46,6 +46,18 @@
 
 By leveraging this app, you can transform common Web Sessions (Google/Anthropic) into standardized API interfaces, completely eliminating the protocol gap between different providers.
 
+## 📦 Editions & Quick Download
+
+Choose the channel that best fits your workflow (both editions share `~/.antigravity_tools/` seamlessly and can run side-by-side):
+
+| Edition / Channel | Positioning | Best For | Direct Download / Homebrew |
+| :--- | :--- | :--- | :--- |
+| **🚀 Antigravity Tools (Stable)** | Full AI protocol proxy &amp; relay gateway (`main`) | Local OpenAI / Anthropic Claude / Gemini API conversion, Docker &amp; headless deployment | **[Download Latest](https://github.com/lbjlaq/Antigravity-Manager/releases/latest)** · `brew install --cask antigravity-tools` |
+| **🧪 Antigravity Tools (Beta Preview)** | Early-access preview builds (`beta`) | Testing upcoming model routing &amp; protocol adaptations | **[Download Preview](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/preview)** |
+| **⚡ Antigravity Manager (Zero-Proxy)** | Lightweight native 4-host switcher, dual-pool quota monitor, local SQLite telemetry &amp; `am` CLI ([`antigravity-manager`](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager)) | Seamless account switching &amp; quota monitoring without running a local proxy | **[Download Manager](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)** · `brew install --cask antigravity-manager` |
+
+> First time using Homebrew? Run `brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manager` once, then install either cask above.
+
 ## 💖 Sponsors
 
 | Sponsor | Description |
