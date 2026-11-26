@@ -46,11 +46,13 @@ export default function ProxyPoolSettings({ config, onChange }: ProxyPoolSetting
     // Only updates volatile status (is_healthy, latency) from latest configRef to avoid clobbering concurrent edits
     useEffect(() => {
         if (!config.enabled) return;
+        let cancelled = false;
 
         const pollStatus = async () => {
-            if (document.visibilityState === 'hidden') return;
+            if (cancelled || document.visibilityState === 'hidden') return;
             try {
                 const liveConfig = await request<ProxyPoolConfig>('get_proxy_pool_config');
+                if (cancelled) return;
                 if (liveConfig && liveConfig.proxies) {
                     const latestConfig = configRef.current;
                     const liveMap = new Map(liveConfig.proxies.map(p => [p.id, p]));
@@ -70,12 +72,17 @@ export default function ProxyPoolSettings({ config, onChange }: ProxyPoolSetting
                     }
                 }
             } catch (e) {
-                console.error('Failed to poll proxy pool config:', e);
+                if (!cancelled) {
+                    console.error('Failed to poll proxy pool config:', e);
+                }
             }
         };
 
         const interval = setInterval(pollStatus, 5000);
-        return () => clearInterval(interval);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
     }, [config.enabled]);
 
     const fetchBindings = async () => {

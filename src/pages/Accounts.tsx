@@ -79,23 +79,18 @@ function Accounts() {
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
-    const unlistenPromise = import('@tauri-apps/api/event')
-      .then(({ listen }) =>
-        listen<{ current: number; total: number; success: number; failed: number; current_email?: string }>(
-          'accounts://import-progress',
-          (event) => {
-            if (disposed) return;
-            setImportProgress(event.payload);
-          }
-        )
+    const unlistenPromise = import('@tauri-apps/api/event').then(({ listen }) =>
+      listen<{ current: number; total: number; success: number; failed: number; current_email?: string }>(
+        'accounts://import-progress',
+        (event) => {
+          if (disposed) return;
+          setImportProgress(event.payload);
+        }
       )
-      .then((fn) => {
-        if (disposed) fn();
-        return fn;
-      });
+    );
     return () => {
       disposed = true;
-      void unlistenPromise.then((fn) => fn());
+      void unlistenPromise.then((fn) => fn()).catch(() => {});
     };
   }, []);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);

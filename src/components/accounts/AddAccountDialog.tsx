@@ -66,14 +66,11 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             if (disposed) return;
             setOauthUrl(event.payload as string);
             // 自动复制到剪贴板? 可选，这里只设置状态让用户手动复制
-        }).then((fn) => {
-            if (disposed) fn();
-            return fn;
         });
 
         return () => {
             disposed = true;
-            void unlistenPromise.then((fn) => fn());
+            void unlistenPromise.then((fn) => fn()).catch(() => {});
         };
     }, []);
 
@@ -102,6 +99,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                     resetState();
                 }, 1500);
             } catch (error) {
+                if (disposed) return;
                 setStatus('error');
                 let errorMsg = String(error);
                 if (errorMsg.includes('Refresh Token') || errorMsg.includes('refresh_token')) {
@@ -112,14 +110,11 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                     setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.error')}: ${errorMsg}`);
                 }
             }
-        }).then((fn) => {
-            if (disposed) fn();
-            return fn;
         });
 
         return () => {
             disposed = true;
-            void unlistenPromise.then((fn) => fn());
+            void unlistenPromise.then((fn) => fn()).catch(() => {});
         };
     }, [completeOAuthLogin, t]);
 
