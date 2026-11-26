@@ -29,7 +29,12 @@ fn load_warmup_history() -> HashMap<String, i64> {
 fn save_warmup_history(history: &HashMap<String, i64>) {
     if let Ok(path) = get_warmup_history_path() {
         if let Ok(content) = serde_json::to_string_pretty(history) {
-            let _ = std::fs::write(&path, content);
+            if let Err(e) = crate::utils::fs::write_atomic(&path, content.as_bytes()) {
+                logger::log_warn(&format!(
+                    "[Scheduler] Failed to persist warmup history atomically: {}",
+                    e
+                ));
+            }
         }
     }
 }
@@ -50,18 +55,54 @@ pub fn check_cooldown(key: &str, cooldown_seconds: i64) -> bool {
     }
 }
 
-/// Helper to parse ISO8601 / RFC3339 string to timestamp
+/// Helper to parse ISO8601 / RFC3339 or common slash/dash quota reset timestamps to UTC seconds
 fn parse_reset_time_ts(s: &str) -> Option<i64> {
-    if s.is_empty() {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
         return None;
     }
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
         return Some(dt.timestamp());
     }
-    if let Ok(dt) = DateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S") {
-        return Some(dt.timestamp());
+    for fmt in [
+        "%Y/%m/%d %H:%M:%S %z",
+        "%Y-%m-%d %H:%M:%S %z",
+        "%Y/%m/%d %H:%M:%S%:z",
+        "%Y-%m-%d %H:%M:%S%:z",
+    ] {
+        if let Ok(dt) = DateTime::parse_from_str(trimmed, fmt) {
+            return Some(dt.timestamp());
+        }
+    }
+    for fmt in [
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y-%m-%d %H:%M",
+    ] {
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(trimmed, fmt) {
+            return Some(ndt.and_utc().timestamp());
+        }
     }
     None
+}
+
+/// Determine the weekly warmup cycle identifier for a full (`remaining_fraction >= 0.999`) bucket.
+///
+/// - Empty `reset_time`: returns `Some("initial")` to activate an uninitialized weekly timer.
+/// - Valid timestamp with `now_ts >= reset_ts - 60`: returns `Some(reset_ts.to_string())`.
+/// - Future or unparseable non-empty `reset_time`: returns `None` so an unparsed format never
+///   triggers a premature cold-start warmup before reset.
+fn weekly_warmup_cycle_id(reset_time: &str, now_ts: i64) -> Option<String> {
+    if reset_time.trim().is_empty() {
+        return Some("initial".to_string());
+    }
+    let reset_ts = parse_reset_time_ts(reset_time)?;
+    if now_ts >= reset_ts - 60 {
+        Some(reset_ts.to_string())
+    } else {
+        None
+    }
 }
 
 /// Select a real upstream model from `pool_models` to ping for a given group, honoring
@@ -210,30 +251,13 @@ pub fn start_scheduler(
 
                             // If fraction is 1.0 (100% full)
                             if bucket.remaining_fraction >= 0.999 {
-                                let reset_ts_opt = parse_reset_time_ts(&bucket.reset_time);
-                                let should_warmup = match reset_ts_opt {
-                                    Some(reset_ts) => {
-                                        // Periodic reset: current time has passed reset_time (with 1 min buffer)
-                                        now_ts >= reset_ts - 60
-                                    }
-                                    None => {
-                                        // Cold start: reset_time is empty (e.g. Gemini weekly bucket not yet activated this week)
-                                        // Triggering a warmup activates the 7-day timer upstream.
-                                        true
-                                    }
-                                };
-
-                                if should_warmup {
-                                    let history_key = match reset_ts_opt {
-                                        Some(reset_ts) => format!(
-                                            "{}:{}:weekly:{}",
-                                            acc.email, bucket.bucket_id, reset_ts
-                                        ),
-                                        None => format!(
-                                            "{}:{}:weekly:initial",
-                                            acc.email, bucket.bucket_id
-                                        ),
-                                    };
+                                if let Some(cycle_id) =
+                                    weekly_warmup_cycle_id(&bucket.reset_time, now_ts)
+                                {
+                                    let history_key = format!(
+                                        "{}:{}:weekly:{}",
+                                        acc.email, bucket.bucket_id, cycle_id
+                                    );
 
                                     // 6-day cooldown for the same cycle
                                     if !check_cooldown(&history_key, 6 * 86400) {
@@ -396,24 +420,9 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                 }
 
                 if bucket.remaining_fraction >= 0.999 {
-                    let reset_ts_opt = parse_reset_time_ts(&bucket.reset_time);
-                    let should_warmup = match reset_ts_opt {
-                        Some(reset_ts) => now_ts >= reset_ts - 60,
-                        None => true, // Cold-start for uninitialized weekly timer (Gemini)
-                    };
-
-                    if should_warmup {
-                        let history_key = match reset_ts_opt {
-                            Some(reset_ts) => {
-                                format!(
-                                    "{}:{}:weekly:{}",
-                                    account.email, bucket.bucket_id, reset_ts
-                                )
-                            }
-                            None => {
-                                format!("{}:{}:weekly:initial", account.email, bucket.bucket_id)
-                            }
-                        };
+                    if let Some(cycle_id) = weekly_warmup_cycle_id(&bucket.reset_time, now_ts) {
+                        let history_key =
+                            format!("{}:{}:weekly:{}", account.email, bucket.bucket_id, cycle_id);
 
                         if !check_cooldown(&history_key, 6 * 86400) {
                             let pool_models: Vec<String> =
@@ -499,5 +508,90 @@ mod tests {
             &pool,
         );
         assert_eq!(fallback_gemini, "gemini-4-neon-high");
+    }
+
+    #[test]
+    fn parse_reset_time_ts_supports_rfc3339_and_slash_or_dash_utc_formats() {
+        let expected_ts = DateTime::parse_from_rfc3339("2026-04-20T12:30:45Z")
+            .unwrap()
+            .timestamp();
+
+        assert_eq!(
+            parse_reset_time_ts("2026-04-20T12:30:45Z"),
+            Some(expected_ts)
+        );
+        assert_eq!(
+            parse_reset_time_ts("  2026-04-20T20:30:45+08:00 "),
+            Some(expected_ts)
+        );
+        assert_eq!(
+            parse_reset_time_ts("2026/04/20 12:30:45"),
+            Some(expected_ts)
+        );
+        assert_eq!(
+            parse_reset_time_ts("2026-04-20 12:30:45"),
+            Some(expected_ts)
+        );
+        assert_eq!(
+            parse_reset_time_ts("2026/04/20 12:30:45 +0000"),
+            Some(expected_ts)
+        );
+
+        let expected_hm_ts = DateTime::parse_from_rfc3339("2026-04-20T12:30:00Z")
+            .unwrap()
+            .timestamp();
+        assert_eq!(
+            parse_reset_time_ts("2026/04/20 12:30"),
+            Some(expected_hm_ts)
+        );
+        assert_eq!(
+            parse_reset_time_ts("2026-04-20 12:30"),
+            Some(expected_hm_ts)
+        );
+
+        assert_eq!(parse_reset_time_ts(""), None);
+        assert_eq!(parse_reset_time_ts("   "), None);
+        assert_eq!(parse_reset_time_ts("TBD"), None);
+    }
+
+    #[test]
+    fn weekly_warmup_cycle_id_distinguishes_cold_start_elapsed_future_and_unparseable() {
+        let reset_ts = DateTime::parse_from_rfc3339("2026-04-20T12:30:45Z")
+            .unwrap()
+            .timestamp();
+
+        // Legitimate empty cold start
+        assert_eq!(
+            weekly_warmup_cycle_id("", reset_ts - 10_000),
+            Some("initial".to_string())
+        );
+        assert_eq!(
+            weekly_warmup_cycle_id("   ", reset_ts - 10_000),
+            Some("initial".to_string())
+        );
+
+        // Future timestamp (both RFC3339 and slash UTC format) stays gated
+        assert_eq!(
+            weekly_warmup_cycle_id("2026/04/20 12:30:45", reset_ts - 61),
+            None
+        );
+        assert_eq!(
+            weekly_warmup_cycle_id("2026-04-20T12:30:45Z", reset_ts - 61),
+            None
+        );
+
+        // Within 60s buffer or elapsed triggers with cycle timestamp
+        assert_eq!(
+            weekly_warmup_cycle_id("2026/04/20 12:30:45", reset_ts - 60),
+            Some(reset_ts.to_string())
+        );
+        assert_eq!(
+            weekly_warmup_cycle_id("2026-04-20T12:30:45Z", reset_ts + 5),
+            Some(reset_ts.to_string())
+        );
+
+        // Non-empty malformed strings must never trigger premature cold-start warmups
+        assert_eq!(weekly_warmup_cycle_id("2026/99/99 invalid", reset_ts), None);
+        assert_eq!(weekly_warmup_cycle_id("pending", reset_ts), None);
     }
 }
