@@ -60,6 +60,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   // Logs & Monitoring
   'get_proxy_logs_filtered': { url: '/api/logs', method: 'GET' },
   'get_proxy_logs_paginated': { url: '/api/logs', method: 'GET' },
+  'get_proxy_logs_count': { url: '/api/logs/count', method: 'GET' },
   'get_proxy_logs_count_filtered': { url: '/api/logs/count', method: 'GET' },
   'get_proxy_db_disk_size': { url: '/api/logs/disk-size', method: 'GET' },
   'clear_proxy_logs': { url: '/api/logs/clear', method: 'POST' },

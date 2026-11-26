@@ -325,6 +325,16 @@ pub async fn ensure_admin_server(
     // [NEW] 加载账号数据，否则管理界面统计为 0
     let _ = token_manager.load_accounts().await;
 
+    // 恢复持久化的固定账号模式设置，确保管理界面在代理未启动时也能读到一致状态
+    if let Some(ref account_id) = config.preferred_account_id {
+        let trimmed = account_id.trim();
+        if !trimmed.is_empty() {
+            token_manager
+                .set_preferred_account(Some(trimmed.to_string()))
+                .await;
+        }
+    }
+
     let (axum_server, server_handle) = match crate::proxy::AxumServer::start(
         config.get_bind_address().to_string(),
         config.port,

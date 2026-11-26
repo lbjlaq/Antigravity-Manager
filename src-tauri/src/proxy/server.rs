@@ -2022,7 +2022,7 @@ struct LogsRequest {
     offset: usize,
     #[serde(default)]
     filter: String,
-    #[serde(default)]
+    #[serde(default, alias = "errors_only")]
     errors_only: bool,
 }
 
@@ -2418,6 +2418,7 @@ async fn admin_get_preferred_account(State(state): State<AppState>) -> impl Into
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SetPreferredAccountRequest {
+    #[serde(alias = "account_id")]
     account_id: Option<String>,
 }
 
@@ -2428,13 +2429,7 @@ async fn admin_set_preferred_account(
     // 过滤空字符串为 None，与桌面端 set_preferred_account 命令保持一致
     let cleaned_id = payload.account_id.filter(|s| !s.trim().is_empty());
 
-    // 1. 更新内存状态
-    state
-        .token_manager
-        .set_preferred_account(cleaned_id.clone())
-        .await;
-
-    // 2. 持久化到配置文件，避免重启后丢失固定账号设置
+    // 1. 先持久化到配置文件，避免写盘失败导致内存状态与磁盘不一致
     let mut app_config = config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2448,6 +2443,9 @@ async fn admin_set_preferred_account(
             Json(ErrorResponse { error: e }),
         )
     })?;
+
+    // 2. 更新内存状态
+    state.token_manager.set_preferred_account(cleaned_id).await;
 
     Ok(StatusCode::OK)
 }
@@ -2663,14 +2661,18 @@ async fn admin_get_proxy_log_detail(
     }
 }
 
+fn default_logs_limit() -> usize {
+    20
+}
+
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct LogsFilterQuery {
     #[serde(default)]
     filter: String,
-    #[serde(default)]
+    #[serde(default, alias = "errors_only")]
     errors_only: bool,
-    #[serde(default)]
+    #[serde(default = "default_logs_limit")]
     limit: usize,
     #[serde(default)]
     offset: usize,
@@ -3338,47 +3340,17 @@ async fn admin_get_token_stats_model_trend_daily(
 }
 
 async fn admin_get_token_stats_account_trend_hourly(
+    Query(p): Query<StatsPeriodQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(|| {
-        token_stats::get_account_trend_hourly(24) // Default 24 hours
-    })
-    .await;
-
-    match res {
-        Ok(Ok(stats)) => Ok(Json(stats)),
-        Ok(Err(e)) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
-    }
+    let hours = p.hours.unwrap_or(24);
+    run_blocking_json(move || token_stats::get_account_trend_hourly(hours)).await
 }
 
 async fn admin_get_token_stats_account_trend_daily(
+    Query(p): Query<StatsPeriodQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(|| {
-        token_stats::get_account_trend_daily(7) // Default 7 days
-    })
-    .await;
-
-    match res {
-        Ok(Ok(stats)) => Ok(Json(stats)),
-        Ok(Err(e)) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
-    }
+    let days = p.days.unwrap_or(7);
+    run_blocking_json(move || token_stats::get_account_trend_daily(days)).await
 }
 
 async fn admin_clear_token_stats() -> impl IntoResponse {
@@ -3845,6 +3817,7 @@ async fn admin_clear_account_forbidden(
 
 #[derive(Deserialize)]
 struct RemoveForbiddenModelRequest {
+    #[serde(default)]
     model: Option<String>,
 }
 
@@ -5509,6 +5482,7 @@ async fn admin_get_openclaw_config_content(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DroidSyncStatusRequest {
+    #[serde(alias = "proxy_url")]
     proxy_url: String,
 }
 
@@ -5529,6 +5503,7 @@ async fn admin_get_droid_sync_status(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DroidSyncRequest {
+    #[serde(alias = "custom_models")]
     custom_models: Vec<serde_json::Value>,
 }
 
@@ -6076,7 +6051,10 @@ mod oauth_callback_tests {
 
 #[cfg(test)]
 mod admin_parity_tests {
-    use super::StatsPeriodQuery;
+    use super::{
+        DroidSyncRequest, DroidSyncStatusRequest, LogsFilterQuery, SetPreferredAccountRequest,
+        StatsPeriodQuery,
+    };
 
     #[test]
     fn stats_period_query_accepts_camel_and_snake_case_params() {
@@ -6099,5 +6077,37 @@ mod admin_parity_tests {
         assert_eq!(snake.minutes, Some(1440));
         assert_eq!(snake.step_minutes, Some(15));
         assert_eq!(snake.view_mode.as_deref(), Some("raw"));
+    }
+
+    #[test]
+    fn preferred_account_logs_filter_and_droid_requests_accept_defaults_and_aliases() {
+        let camel_pref: SetPreferredAccountRequest =
+            serde_json::from_value(serde_json::json!({ "accountId": "acc-1" })).unwrap();
+        assert_eq!(camel_pref.account_id.as_deref(), Some("acc-1"));
+
+        let snake_pref: SetPreferredAccountRequest =
+            serde_json::from_value(serde_json::json!({ "account_id": "acc-9" })).unwrap();
+        assert_eq!(snake_pref.account_id.as_deref(), Some("acc-9"));
+
+        let query: LogsFilterQuery = serde_json::from_value(serde_json::json!({
+            "errors_only": true,
+            "filter": "api"
+        }))
+        .unwrap();
+        assert_eq!(query.limit, 20);
+        assert!(query.errors_only);
+        assert_eq!(query.filter, "api");
+
+        let droid_status: DroidSyncStatusRequest = serde_json::from_value(serde_json::json!({
+            "proxy_url": "http://127.0.0.1:8045"
+        }))
+        .unwrap();
+        assert_eq!(droid_status.proxy_url, "http://127.0.0.1:8045");
+
+        let droid_sync: DroidSyncRequest = serde_json::from_value(serde_json::json!({
+            "custom_models": [{ "id": "gemini-2.5-pro" }]
+        }))
+        .unwrap();
+        assert_eq!(droid_sync.custom_models.len(), 1);
     }
 }
