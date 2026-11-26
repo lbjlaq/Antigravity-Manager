@@ -5,6 +5,24 @@
 
 ---
 
+## v0.0.2 (2026-11-26)
+
+### English
+
+- **Cross-Platform Active Host Account Detection (`macOS` · `Windows` · `Linux`)**: Fixed an issue where **Antigravity Desktop App (≥ 2.0.0)** showed as unbound (`not_configured` / `Not Linked`) after switching **Antigravity IDE** or signing in natively. Now combines OS Keyring (`macOS Keychain` / `Windows Credential Manager` / `Linux Secret Service`), `~/.gemini/jetski-standalone-oauth-token`, host-exclusive `app_storage.json`, SQLite `state.vscdb` (`authStateWithContextSentinelKey` + `id_token` JWT email fallback), and custom Settings paths while keeping App / IDE / ACP / CLI isolated.
+- **ACP Plugin & Native `agy` CLI Credential Parity**: Unified cross-platform Keyring fallback (`gemini:antigravity-acp`) for ACP Plugin and Keyring / `oauth_creds.json` detection for native `agy` CLI installs without an exclusive `antigravity-oauth-token` file.
+- **Windows & Linux Host Discovery Hardening**: Added Windows `ProgramFiles` / `ProgramFiles(x86)` install discovery, `%APPDATA%` / `%LOCALAPPDATA%` fallbacks, Linux case-sensitive folder variants (`antigravity-ide` / `antigravity_ide` / `antigravity`), and fixed Linux static version resolution when target roots are directories.
+- **CLI & Dashboard Status Polish**: Added an `Active Account` column to `am current` for CLI/headless parity, and replaced the raw `'not_configured'` fallback string on the Dashboard switcher card with localized unbound labels.
+
+### 中文
+
+- **三端跨平台当前账号检测修复（`macOS` · `Windows` · `Linux`）**：修复切换 **Antigravity IDE** 或原生登录后 **Antigravity 桌面端（≥ 2.0.0）** 显示 `not_configured` / `未绑定账号` 的问题；统一整合三端系统凭据库（macOS Keychain / Windows 凭据管理器 / Linux Secret Service）、`~/.gemini/jetski-standalone-oauth-token`、宿主专属 `app_storage.json`、`state.vscdb`（含 `authStateWithContextSentinelKey` 与 `id_token` JWT 邮箱回退）以及设置页自定义路径，同时保持 App / IDE / ACP / CLI 四端隔离不串号。
+- **ACP 插件与原生 `agy` CLI 凭据读取补齐**：为 ACP 插件补充跨平台系统凭据库（`gemini:antigravity-acp`）回退，支持原生未生成独立 `antigravity-oauth-token` 文件的 `agy` CLI 自动读取系统凭据库与 `oauth_creds.json` / `google_accounts.json`。
+- **Windows / Linux 宿主路径与版本探测加固**：补齐 Windows `ProgramFiles` / `ProgramFiles(x86)` 全局安装目录与 `%APPDATA%` / `%LOCALAPPDATA%` 探测、Linux 大小写目录变体（`antigravity-ide` / `antigravity_ide` / `antigravity`），并修复 Linux 下目录型安装路径无法静态读取版本号的问题。
+- **CLI 与仪表盘展示优化**：`am current` 新增 `Active Account` 列实现终端诊断对齐，仪表盘切号卡片未绑定时改为国际化文案显示。
+
+---
+
 ## v0.0.1 (2026-11-25)
 
 ### English
