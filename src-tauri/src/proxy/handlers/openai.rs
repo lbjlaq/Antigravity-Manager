@@ -3024,7 +3024,7 @@ pub async fn handle_chat_completions(
                             false,
                             config.request_type == "image_gen",
                             is_thinking,
-                            None,
+                            crate::proxy::pipeline::budget::estimated_tokens(),
                         ),
                     );
                     match crate::proxy::pipeline::stream_peek::peek_first_data(

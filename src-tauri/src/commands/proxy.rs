@@ -1084,6 +1084,10 @@ pub fn get_effective_timeout_config() -> EffectiveTimeoutConfig {
         ("ANTIGRAVITY_TIMEOUT_TTFT_SECS", "initial_ttft_secs"),
         ("ANTIGRAVITY_TIMEOUT_TRANSITION_SECS", "transition_secs"),
         (
+            "ANTIGRAVITY_TIMEOUT_STREAMING_SECS",
+            "streaming_sliding_secs",
+        ),
+        (
             "ANTIGRAVITY_TIMEOUT_STREAMING_SLIDING_SECS",
             "streaming_sliding_secs",
         ),
@@ -1097,6 +1101,22 @@ pub fn get_effective_timeout_config() -> EffectiveTimeoutConfig {
         .filter(|(key, _)| std::env::var(*key).is_ok())
         .map(|(_, field)| (*field).to_string())
         .collect();
+    env_overridden.dedup();
+    if [
+        "ABV_ALLOW_EXTENDED_TTFT_BUDGET",
+        "ANTIGRAVITY_ALLOW_EXTENDED_TTFT_BUDGET",
+    ]
+    .iter()
+    .any(|key| {
+        std::env::var(key).ok().is_some_and(|raw| {
+            matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "0" | "false" | "no" | "off"
+            )
+        })
+    }) {
+        env_overridden.push("allow_extended_ttft_budget".to_string());
+    }
     if ["ABV_HTTP2_KEEPALIVE", "ANTIGRAVITY_HTTP2_KEEPALIVE"]
         .iter()
         .any(|key| {
@@ -1157,12 +1177,18 @@ pub fn get_effective_first_byte_timeouts() -> FirstByteTimeouts {
         UpstreamClient::calculate_first_byte_wait_secs(kind, 0, &upload_cfg, &stream_cfg, 0, false)
     };
 
+    let cap = crate::proxy::pipeline::budget::effective_first_byte_caps_for(
+        &stream_cfg,
+        crate::proxy::pipeline::budget::env_gateway_request_budget_secs(),
+    )
+    .1;
+
     FirstByteTimeouts {
         text: calc(PayloadMediaKind::TextChat),
         image: calc(PayloadMediaKind::Image),
         video: calc(PayloadMediaKind::Video),
         aux: calc(PayloadMediaKind::Other),
-        cap: crate::proxy::upstream::client::MAX_FIRST_BYTE_BUDGET_SECS,
+        cap,
     }
 }
 

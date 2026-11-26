@@ -219,14 +219,33 @@ pub fn get_stream_timeout_config() -> StreamTimeoutConfig {
         .unwrap_or(base.transition_secs);
 
     let streaming_sliding_secs = std::env::var("ANTIGRAVITY_TIMEOUT_STREAMING_SECS")
+        .or_else(|_| std::env::var("ANTIGRAVITY_TIMEOUT_STREAMING_SLIDING_SECS"))
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(base.streaming_sliding_secs);
+
+    let gateway_request_budget_secs = std::env::var("ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|v| *v >= crate::proxy::pipeline::budget::MIN_ATTEMPT_BUDGET_SECS)
+        .map(|v| v.min(crate::proxy::pipeline::budget::MAX_EXTENDED_GATEWAY_REQUEST_BUDGET_SECS))
+        .unwrap_or_else(|| {
+            base.gateway_request_budget_secs.clamp(
+                60,
+                crate::proxy::pipeline::budget::MAX_EXTENDED_GATEWAY_REQUEST_BUDGET_SECS,
+            )
+        });
+
+    let allow_extended_ttft_budget = parse_env_bool("ABV_ALLOW_EXTENDED_TTFT_BUDGET")
+        .or_else(|| parse_env_bool("ANTIGRAVITY_ALLOW_EXTENDED_TTFT_BUDGET"))
+        .unwrap_or(base.allow_extended_ttft_budget);
 
     StreamTimeoutConfig {
         initial_ttft_secs,
         transition_secs,
         streaming_sliding_secs,
+        gateway_request_budget_secs,
+        allow_extended_ttft_budget,
     }
 }
 
@@ -237,20 +256,24 @@ pub fn update_stream_timeout_config(config: StreamTimeoutConfig) {
             if *cfg != config {
                 *cfg = config.clone();
                 tracing::info!(
-                    "[Stream-Timeouts] Global config updated: ttft={}s, transition={}s, sliding={}s",
+                    "[Stream-Timeouts] Global config updated: ttft={}s, transition={}s, sliding={}s, gateway_budget={}s, allow_extended={}",
                     config.initial_ttft_secs,
                     config.transition_secs,
-                    config.streaming_sliding_secs
+                    config.streaming_sliding_secs,
+                    config.gateway_request_budget_secs,
+                    config.allow_extended_ttft_budget
                 );
             }
         }
     } else {
         let _ = GLOBAL_STREAM_TIMEOUT_CONFIG.set(RwLock::new(config.clone()));
         tracing::info!(
-            "[Stream-Timeouts] Global config initialized: ttft={}s, transition={}s, sliding={}s",
+            "[Stream-Timeouts] Global config initialized: ttft={}s, transition={}s, sliding={}s, gateway_budget={}s, allow_extended={}",
             config.initial_ttft_secs,
             config.transition_secs,
-            config.streaming_sliding_secs
+            config.streaming_sliding_secs,
+            config.gateway_request_budget_secs,
+            config.allow_extended_ttft_budget
         );
     }
 }
@@ -1213,6 +1236,14 @@ pub struct StreamTimeoutConfig {
     /// 稳态推流相邻 Token 滑动窗口超时（秒，默认 120s）
     #[serde(default = "default_streaming_sliding_secs")]
     pub streaming_sliding_secs: u64,
+
+    /// 全链路请求总预算（秒，默认 270s）
+    #[serde(default = "default_gateway_request_budget_secs")]
+    pub gateway_request_budget_secs: u64,
+
+    /// 显式允许突破默认 180s/270s 首字看门狗上限（需下游支持 SSE 保活或长超时，默认关闭）
+    #[serde(default)]
+    pub allow_extended_ttft_budget: bool,
 }
 
 pub fn default_initial_ttft_secs() -> u64 {
@@ -1227,12 +1258,18 @@ pub fn default_streaming_sliding_secs() -> u64 {
     120
 }
 
+pub fn default_gateway_request_budget_secs() -> u64 {
+    crate::proxy::pipeline::budget::DEFAULT_GATEWAY_REQUEST_BUDGET_SECS
+}
+
 impl Default for StreamTimeoutConfig {
     fn default() -> Self {
         Self {
             initial_ttft_secs: default_initial_ttft_secs(),
             transition_secs: default_transition_secs(),
             streaming_sliding_secs: default_streaming_sliding_secs(),
+            gateway_request_budget_secs: default_gateway_request_budget_secs(),
+            allow_extended_ttft_budget: false,
         }
     }
 }

@@ -66,28 +66,51 @@ pub fn adaptive_ttft_secs(estimated_tokens: u32) -> u64 {
 ///
 /// 优先级：压缩摘要 > 生图 > 思考模型 > 常规会话；最终由调用方再经
 /// [`super::budget::clamp_secs`] 夹到本请求剩余全局预算内。
+pub fn peek_budget_secs_with_config(
+    is_compaction: bool,
+    is_image_gen: bool,
+    is_thinking: bool,
+    estimated_tokens: Option<u32>,
+    stream_cfg: &crate::proxy::config::StreamTimeoutConfig,
+) -> u64 {
+    let floor = if is_compaction {
+        180
+    } else if is_image_gen {
+        90
+    } else {
+        let tokens = estimated_tokens.unwrap_or(0);
+        if is_thinking {
+            // 深度思考模型预热耗时长，设置 60s 宽限底线，防止过早误杀
+            match tokens {
+                t if t >= 100_000 => 120,
+                t if t >= 50_000 => 90,
+                _ => 60,
+            }
+        } else {
+            adaptive_ttft_secs(tokens)
+        }
+    };
+
+    if stream_cfg.allow_extended_ttft_budget {
+        floor.max(stream_cfg.initial_ttft_secs)
+    } else {
+        floor
+    }
+}
+
 pub fn peek_budget_secs(
     is_compaction: bool,
     is_image_gen: bool,
     is_thinking: bool,
     estimated_tokens: Option<u32>,
 ) -> u64 {
-    if is_compaction {
-        return 180;
-    }
-    if is_image_gen {
-        return 90;
-    }
-    let tokens = estimated_tokens.unwrap_or(0);
-    if is_thinking {
-        // 深度思考模型预热耗时长，设置 60s 宽限底线，防止过早误杀
-        return match tokens {
-            t if t >= 100_000 => 120,
-            t if t >= 50_000 => 90,
-            _ => 60,
-        };
-    }
-    adaptive_ttft_secs(tokens)
+    peek_budget_secs_with_config(
+        is_compaction,
+        is_image_gen,
+        is_thinking,
+        estimated_tokens,
+        &crate::proxy::config::get_stream_timeout_config(),
+    )
 }
 
 /// 在给定截止时间前等待首个真实数据块
@@ -483,5 +506,20 @@ mod tests {
         assert_eq!(peek_budget_secs(false, false, true, Some(120_000)), 120);
         assert_eq!(peek_budget_secs(false, false, false, Some(210_000)), 150);
         assert_eq!(peek_budget_secs(false, false, false, None), 30);
+
+        let extended = crate::proxy::config::StreamTimeoutConfig {
+            initial_ttft_secs: 600,
+            gateway_request_budget_secs: 900,
+            allow_extended_ttft_budget: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            peek_budget_secs_with_config(false, false, false, None, &extended),
+            600
+        );
+        assert_eq!(
+            peek_budget_secs_with_config(false, false, true, Some(120_000), &extended),
+            600
+        );
     }
 }

@@ -16,8 +16,8 @@
 //! 3. **规模提示**：handler 把真实估算 token 数写进来，供首字节预算按真实 prefill
 //!    规模选取，而不是只靠 `body_len / 3.5` 猜（工具 schema 大或含 base64 图片时会低估）。
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::task_local;
 
@@ -26,6 +26,9 @@ use tokio::task_local;
 /// 取 270s：比 Claude Code 的 300s 首包看门狗留 30s 余量，仍能在客户端放弃前
 /// 返回结构化 504；同时比原来的 240s 多 30s，给超大上下文 prefill 与大体积上传留空间。
 pub const DEFAULT_GATEWAY_REQUEST_BUDGET_SECS: u64 = 270;
+
+/// 显式放宽模式下允许的全局请求预算硬上限（秒）
+pub const MAX_EXTENDED_GATEWAY_REQUEST_BUDGET_SECS: u64 = 3600;
 
 /// 单个上游尝试允许的最小剩余预算（秒）：低于它就不再发起新尝试
 pub const MIN_ATTEMPT_BUDGET_SECS: u64 = 5;
@@ -89,25 +92,70 @@ impl RequestContext {
     }
 }
 
-/// 读取生效的全局预算（支持 `ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS` 覆盖，进程内缓存）
+/// 读取环境变量 `ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS`（未设置或非法则返回 `None`）。
+pub fn env_gateway_request_budget_secs() -> Option<u64> {
+    std::env::var("ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v >= MIN_ATTEMPT_BUDGET_SECS)
+}
+
+/// 纯函数：根据 `StreamTimeoutConfig` 与显式环境变量计算生效的全局请求预算（秒）。
+pub fn effective_gateway_budget_secs_for(
+    stream_cfg: &crate::proxy::config::StreamTimeoutConfig,
+    env_override: Option<u64>,
+) -> u64 {
+    if let Some(env_secs) = env_override {
+        return env_secs.min(MAX_EXTENDED_GATEWAY_REQUEST_BUDGET_SECS);
+    }
+    let configured = stream_cfg.gateway_request_budget_secs.clamp(
+        MIN_ATTEMPT_BUDGET_SECS,
+        MAX_EXTENDED_GATEWAY_REQUEST_BUDGET_SECS,
+    );
+    if stream_cfg.allow_extended_ttft_budget {
+        configured
+    } else {
+        configured.min(DEFAULT_GATEWAY_REQUEST_BUDGET_SECS)
+    }
+}
+
+/// 纯函数：返回当前生效的 `(text_base_cap, ceiling_cap)`（秒）。
+///
+/// 默认维持 `(180, 270)` 客户端安全上限；当开启 `allow_extended_ttft_budget`
+/// 或显式通过环境变量将全局预算提升到 `> 270s` 时，按生效全局预算放宽。
+pub fn effective_first_byte_caps_for(
+    stream_cfg: &crate::proxy::config::StreamTimeoutConfig,
+    env_override: Option<u64>,
+) -> (u64, u64) {
+    let extended = stream_cfg.allow_extended_ttft_budget
+        || env_override.is_some_and(|s| s > DEFAULT_GATEWAY_REQUEST_BUDGET_SECS);
+    let ceiling = effective_gateway_budget_secs_for(stream_cfg, env_override).max(15);
+    if extended {
+        (ceiling, ceiling)
+    } else {
+        (
+            crate::proxy::upstream::client::MAX_FIRST_BYTE_BUDGET_SECS.min(ceiling),
+            crate::proxy::upstream::client::MAX_FIRST_BYTE_CEILING_SECS.min(ceiling),
+        )
+    }
+}
+
+/// 读取生效的全局预算（优先级：环境变量 > 运行时热配置 > 默认 270s）
 pub fn gateway_request_budget_secs() -> u64 {
-    static EFFECTIVE: OnceLock<u64> = OnceLock::new();
-    *EFFECTIVE.get_or_init(|| {
-        let secs = std::env::var("ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS")
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .filter(|v| *v >= MIN_ATTEMPT_BUDGET_SECS)
-            .unwrap_or(DEFAULT_GATEWAY_REQUEST_BUDGET_SECS);
-        if secs > 300 {
-            tracing::warn!(
-                budget_secs = secs,
-                "全局请求预算 {}s 已超过常见客户端首包看门狗（jeikcode 180s / Claude Code 300s）：\
-                 超时场景会由客户端先断开，网关侧只能以 [Stage] outcome=canceled 留痕，无法返回结构化 504",
-                secs
-            );
-        }
-        secs
-    })
+    static WARNED_EXTENDED_BUDGET: AtomicBool = AtomicBool::new(false);
+    let secs = effective_gateway_budget_secs_for(
+        &crate::proxy::config::get_stream_timeout_config(),
+        env_gateway_request_budget_secs(),
+    );
+    if secs > 300 && !WARNED_EXTENDED_BUDGET.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            budget_secs = secs,
+            "全局请求预算 {}s 已超过常见客户端首包看门狗（jeikcode 180s / Claude Code 300s）：\
+             超时场景会由客户端先断开，网关侧只能以 [Stage] outcome=canceled 留痕，无法返回结构化 504",
+            secs
+        );
+    }
+    secs
 }
 
 /// 新建一个“从现在开始”的截止时刻
@@ -324,5 +372,32 @@ mod tests {
             assert_eq!(estimated_tokens(), Some(150_000));
         })
         .await;
+    }
+
+    #[test]
+    fn extended_budget_requires_opt_in_unless_env_overridden() {
+        let mut cfg = crate::proxy::config::StreamTimeoutConfig {
+            gateway_request_budget_secs: 900,
+            allow_extended_ttft_budget: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            effective_gateway_budget_secs_for(&cfg, None),
+            DEFAULT_GATEWAY_REQUEST_BUDGET_SECS
+        );
+        assert_eq!(effective_first_byte_caps_for(&cfg, None), (180, 270));
+
+        cfg.allow_extended_ttft_budget = true;
+        assert_eq!(effective_gateway_budget_secs_for(&cfg, None), 900);
+        assert_eq!(effective_first_byte_caps_for(&cfg, None), (900, 900));
+
+        // Explicit env override lifts caps even if allow_extended_ttft_budget is false.
+        cfg.allow_extended_ttft_budget = false;
+        assert_eq!(effective_gateway_budget_secs_for(&cfg, Some(1200)), 1200);
+        assert_eq!(
+            effective_first_byte_caps_for(&cfg, Some(1200)),
+            (1200, 1200)
+        );
     }
 }
