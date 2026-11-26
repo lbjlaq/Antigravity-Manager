@@ -149,12 +149,20 @@ pub async fn add_account(
     app: tauri::AppHandle,
     _email: String,
     refresh_token: String,
+    proxy_id: Option<String>,
+    strict_proxy: Option<bool>,
 ) -> Result<Account, String> {
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app.clone()),
     );
 
-    let account = service.add_account(&refresh_token).await?;
+    let proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id,
+        strict_proxy: strict_proxy.unwrap_or(false),
+    };
+    let account = service
+        .add_account_with_options(&refresh_token, proxy_options)
+        .await?;
 
     // 配额刷新（含封号探针）已由 AccountService 内部统一走 fetch_quota_with_retry，
     // 这里只同步托盘与反代账号池，避免重复探针/重复拉取配额。
@@ -706,13 +714,21 @@ pub async fn save_config(
 pub async fn start_oauth_login(
     app_handle: tauri::AppHandle,
     oauth_client_key: Option<String>,
+    proxy_id: Option<String>,
+    strict_proxy: Option<bool>,
 ) -> Result<Account, String> {
     modules::logger::log_info("开始 OAuth 授权流程...");
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
     );
 
-    let mut account = service.start_oauth_login(oauth_client_key).await?;
+    let proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id,
+        strict_proxy: strict_proxy.unwrap_or(false),
+    };
+    let mut account = service
+        .start_oauth_login_with_options(oauth_client_key, proxy_options)
+        .await?;
 
     // 自动触发刷新额度
     let _ = internal_refresh_account_quota(&app_handle, &mut account).await;
@@ -753,11 +769,19 @@ pub async fn complete_oauth_login(app_handle: tauri::AppHandle) -> Result<Accoun
 pub async fn prepare_oauth_url(
     app_handle: tauri::AppHandle,
     oauth_client_key: Option<String>,
+    proxy_id: Option<String>,
+    strict_proxy: Option<bool>,
 ) -> Result<String, String> {
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
     );
-    service.prepare_oauth_url(oauth_client_key).await
+    let proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id,
+        strict_proxy: strict_proxy.unwrap_or(false),
+    };
+    service
+        .prepare_oauth_url_with_options(oauth_client_key, proxy_options)
+        .await
 }
 
 #[tauri::command]
@@ -772,12 +796,24 @@ pub async fn submit_oauth_code(
     app_handle: tauri::AppHandle,
     code: String,
     state: Option<String>,
+    proxy_id: Option<String>,
+    strict_proxy: Option<bool>,
 ) -> Result<crate::models::Account, String> {
     modules::logger::log_info("收到手动提交 OAuth Code 请求");
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle),
     );
-    service.submit_oauth_code(code, state).await
+    let override_opts = if proxy_id.is_some() || strict_proxy.is_some() {
+        Some(crate::proxy::proxy_pool::AddAccountProxyOptions {
+            proxy_id,
+            strict_proxy: strict_proxy.unwrap_or(false),
+        })
+    } else {
+        None
+    };
+    service
+        .submit_oauth_code_with_options(code, state, override_opts)
+        .await
 }
 
 #[tauri::command]

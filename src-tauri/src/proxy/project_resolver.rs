@@ -1,3 +1,4 @@
+use crate::proxy::proxy_pool::AddAccountProxyOptions;
 use serde_json::Value;
 
 // loadCodeAssist 端点（fallback order: Daily → Sandbox → Prod）
@@ -12,19 +13,20 @@ const LOAD_PROJECT_ENDPOINTS: [&str; 3] = [
 /// 使用 Antigravity 的 loadCodeAssist API 获取 project_id
 /// 这是获取 cloudaicompanionProject 的正确方式
 pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
-    fetch_project_id_with_client_internal(access_token, None).await
+    fetch_project_id_with_options(access_token, None, None).await
 }
 
 pub async fn fetch_project_id_for_account(
     access_token: &str,
     account_id: Option<&str>,
 ) -> Result<String, String> {
-    fetch_project_id_with_client_internal(access_token, account_id).await
+    fetch_project_id_with_options(access_token, account_id, None).await
 }
 
-async fn fetch_project_id_with_client_internal(
+pub async fn fetch_project_id_with_options(
     access_token: &str,
     account_id: Option<&str>,
+    proxy_options: Option<&AddAccountProxyOptions>,
 ) -> Result<String, String> {
     let request_body = serde_json::json!({
         "metadata": {
@@ -32,10 +34,25 @@ async fn fetch_project_id_with_client_internal(
         }
     });
 
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 15).await
+    let (client, strict_proxy_label) = if let Some(opts) = proxy_options {
+        let resolved =
+            crate::proxy::proxy_pool::resolve_client_for_add_account(opts, false, 15).await?;
+        (
+            resolved.client,
+            if resolved.strict {
+                resolved.proxy_label
+            } else {
+                None
+            },
+        )
+    } else if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        (
+            pool.try_get_effective_standard_client(account_id, 15)
+                .await?,
+            None,
+        )
     } else {
-        crate::utils::http::get_standard_client()
+        (crate::utils::http::get_standard_client(), None)
     };
     let health_tracker = crate::proxy::upstream::client::get_global_endpoint_health();
     let ordered_endpoints = health_tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
@@ -91,7 +108,14 @@ async fn fetch_project_id_with_client_internal(
             }
             Err(e) => {
                 health_tracker.mark_failure(url);
-                last_error = format!("loadCodeAssist [{}] 请求失败: {}", url, e);
+                if let Some(ref label) = strict_proxy_label {
+                    last_error = format!(
+                        "[Strict Proxy] 通过代理节点 '{}' 请求 loadCodeAssist [{}] 失败: {}（严格模式已禁止回退其他出口）",
+                        label, url, e
+                    );
+                } else {
+                    last_error = format!("loadCodeAssist [{}] 请求失败: {}", url, e);
+                }
                 continue;
             }
         }

@@ -1,7 +1,10 @@
-use crate::proxy::config::{ProxyEntry, ProxyPoolConfig, ProxySelectionStrategy};
+use crate::proxy::config::{
+    effective_proxy_pool_strict_mode, ProxyEntry, ProxyPoolConfig, ProxySelectionStrategy,
+};
 use dashmap::DashMap;
 use futures::{stream, StreamExt};
 use rquest::Client;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +26,472 @@ pub fn init_global_proxy_pool(config: Arc<RwLock<ProxyPoolConfig>>) -> Arc<Proxy
     let manager = Arc::new(ProxyPoolManager::new(config));
     let _ = GLOBAL_PROXY_POOL.set(manager.clone());
     manager
+}
+
+/// 新增账号 / OAuth 流程可选预选代理及严格模式配置
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddAccountProxyOptions {
+    #[serde(default, alias = "proxy_id")]
+    pub proxy_id: Option<String>,
+    #[serde(default, alias = "strict_proxy")]
+    pub strict_proxy: bool,
+}
+
+impl AddAccountProxyOptions {
+    pub fn normalized(mut self) -> Self {
+        self.proxy_id = self
+            .proxy_id
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty());
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.proxy_id.is_none() && !self.strict_proxy
+    }
+}
+
+/// 已解析的 HTTP 客户端及其代理来源描述（供严格模式日志与显式报错）
+pub struct ResolvedClient {
+    pub client: Client,
+    pub proxy_label: Option<String>,
+    pub strict: bool,
+}
+
+fn describe_entry_label(entry: &ProxyEntry) -> String {
+    if entry.name.trim().is_empty() {
+        entry.id.clone()
+    } else {
+        format!("{} ({})", entry.name.trim(), entry.id)
+    }
+}
+
+fn build_rquest_client_builder(emulated: bool, timeout_secs: u64) -> rquest::ClientBuilder {
+    let builder = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .pool_idle_timeout(Duration::from_secs(45))
+        .timeout(Duration::from_secs(timeout_secs));
+    if emulated {
+        builder.emulation(Emulation::Chrome123)
+    } else {
+        builder
+    }
+}
+
+async fn load_effective_proxy_pool_config() -> ProxyPoolConfig {
+    if let Some(pool) = get_global_proxy_pool() {
+        return pool.config.read().await.clone();
+    }
+    crate::modules::config::load_app_config()
+        .map(|cfg| cfg.proxy.proxy_pool)
+        .unwrap_or_default()
+}
+
+/// 静态构建 rquest::Proxy 配置，供 ProxyPoolManager 与桌面离线场景复用
+pub fn build_proxy_config_from_entry(entry: &ProxyEntry) -> Result<PoolProxyConfig, String> {
+    let raw_url = crate::proxy::config::normalize_proxy_url(&entry.url);
+    if raw_url.trim().is_empty() {
+        return Err("Proxy URL is empty".to_string());
+    }
+    let (clean_url, parsed_auth) = ProxyPoolManager::parse_and_clean_proxy_url(&raw_url);
+
+    let mut proxy = rquest::Proxy::all(&clean_url)
+        .or_else(|_| rquest::Proxy::all(&raw_url))
+        .map_err(|e| format!("Invalid proxy URL: {}", e))?;
+
+    if let Some(auth) = &entry.auth {
+        if !auth.username.is_empty() {
+            if auth.password.starts_with("ag_enc_") {
+                if let Some((user, pass)) = &parsed_auth {
+                    tracing::warn!(
+                        "[ProxyPool] Proxy password decryption failed (retains ag_enc_ prefix); falling back to credentials embedded in URL"
+                    );
+                    proxy = proxy.basic_auth(user, pass);
+                } else {
+                    tracing::warn!(
+                        "[ProxyPool] Proxy password decryption failed (retains ag_enc_ prefix) and no URL credentials available; refusing to send encrypted ciphertext as password"
+                    );
+                }
+            } else {
+                proxy = proxy.basic_auth(&auth.username, &auth.password);
+            }
+        } else if let Some((user, pass)) = parsed_auth {
+            proxy = proxy.basic_auth(&user, &pass);
+        }
+    } else if let Some((user, pass)) = parsed_auth {
+        proxy = proxy.basic_auth(&user, &pass);
+    }
+
+    Ok(PoolProxyConfig {
+        proxy,
+        entry_id: entry.id.clone(),
+    })
+}
+
+fn validate_add_account_proxy_options_with_config(
+    options: &AddAccountProxyOptions,
+    pool_cfg: &ProxyPoolConfig,
+    upstream_proxy: Option<&crate::proxy::config::UpstreamProxyConfig>,
+) -> Result<Option<String>, String> {
+    let normalized = options.clone().normalized();
+    let strict = normalized.strict_proxy || effective_proxy_pool_strict_mode(pool_cfg);
+
+    if let Some(ref id) = normalized.proxy_id {
+        let Some(entry) = pool_cfg.proxies.iter().find(|p| p.id == *id) else {
+            if strict {
+                return Err(format!(
+                    "[Strict Proxy] 指定的代理节点 '{}' 不存在或已被删除",
+                    id
+                ));
+            }
+            tracing::warn!(
+                "[ProxyPool] Pre-selected proxy '{}' not found; falling back to default routing",
+                id
+            );
+            return Ok(None);
+        };
+
+        if !entry.enabled {
+            if strict {
+                return Err(format!(
+                    "[Strict Proxy] 指定的代理节点 '{}' 已禁用",
+                    describe_entry_label(entry)
+                ));
+            }
+            tracing::warn!(
+                "[ProxyPool] Pre-selected proxy '{}' is disabled; falling back to default routing",
+                describe_entry_label(entry)
+            );
+            return Ok(None);
+        }
+
+        if let Err(e) = build_proxy_config_from_entry(entry) {
+            if strict {
+                return Err(format!(
+                    "[Strict Proxy] 指定的代理节点 '{}' 配置无效: {}",
+                    describe_entry_label(entry),
+                    e
+                ));
+            }
+            tracing::warn!(
+                "[ProxyPool] Pre-selected proxy '{}' has invalid config ({}); falling back to default routing",
+                describe_entry_label(entry),
+                e
+            );
+            return Ok(None);
+        }
+
+        return Ok(Some(entry.id.clone()));
+    }
+
+    if strict {
+        let has_pool_proxy = pool_cfg.enabled && pool_cfg.proxies.iter().any(|p| p.enabled);
+        let has_upstream_proxy =
+            upstream_proxy.is_some_and(|up| up.enabled && !up.url.trim().is_empty());
+        if !has_pool_proxy && !has_upstream_proxy {
+            return Err(
+                "[Strict Proxy] 严格代理模式已开启，但未选择代理节点且未配置可用的代理池或全局上游代理，已禁止直连回退".to_string(),
+            );
+        }
+    }
+
+    Ok(None)
+}
+
+/// 预校验添加账号时的代理选择与严格模式约束，返回最终可用作绑定的 `proxy_id`
+pub async fn validate_add_account_proxy_options(
+    options: &AddAccountProxyOptions,
+) -> Result<Option<String>, String> {
+    let pool_cfg = load_effective_proxy_pool_config().await;
+    let upstream_proxy = crate::modules::config::load_app_config()
+        .ok()
+        .map(|c| c.proxy.upstream_proxy);
+    validate_add_account_proxy_options_with_config(options, &pool_cfg, upstream_proxy.as_ref())
+}
+
+fn check_max_accounts_limit(
+    entry: &ProxyEntry,
+    account_id: &str,
+    bindings_iter: impl Iterator<Item = (String, String)>,
+) -> Result<(), String> {
+    if let Some(max) = entry.max_accounts {
+        if max > 0 {
+            let current_count = bindings_iter
+                .filter(|(acc_id, pid)| *pid == entry.id && acc_id != account_id)
+                .count();
+            if current_count >= max {
+                return Err(format!(
+                    "Proxy {} has reached max accounts limit ({}/{})",
+                    describe_entry_label(entry),
+                    current_count,
+                    max
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 为账号绑定代理并持久化（同时兼容反代已启动的全局池与桌面未启动反代的离线配置）
+pub async fn bind_account_proxy_persistent(
+    account_id: String,
+    proxy_id: String,
+) -> Result<(), String> {
+    if let Some(pool) = get_global_proxy_pool() {
+        return pool.bind_account_to_proxy(account_id, proxy_id).await;
+    }
+
+    let mut app_config = crate::modules::config::load_app_config()
+        .map_err(|e| format!("Failed to load config for proxy binding: {}", e))?;
+    let entry = app_config
+        .proxy
+        .proxy_pool
+        .proxies
+        .iter()
+        .find(|p| p.id == proxy_id)
+        .ok_or_else(|| format!("Proxy {} not found", proxy_id))?
+        .clone();
+
+    check_max_accounts_limit(
+        &entry,
+        &account_id,
+        app_config
+            .proxy
+            .proxy_pool
+            .account_bindings
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone())),
+    )?;
+
+    app_config
+        .proxy
+        .proxy_pool
+        .account_bindings
+        .insert(account_id.clone(), proxy_id.clone());
+    crate::modules::config::save_app_config(&app_config)?;
+    tracing::info!(
+        "[ProxyPool] Bound account {} to proxy {} (offline config persisted)",
+        account_id,
+        proxy_id
+    );
+    Ok(())
+}
+
+/// 根据添加账号时的预选代理与严格模式解析最终用于请求的 HTTP Client
+pub async fn resolve_client_for_add_account(
+    options: &AddAccountProxyOptions,
+    emulated: bool,
+    timeout_secs: u64,
+) -> Result<ResolvedClient, String> {
+    let normalized = options.clone().normalized();
+    let global_pool = get_global_proxy_pool();
+    let pool_cfg = match &global_pool {
+        Some(pool) => pool.config.read().await.clone(),
+        None => crate::modules::config::load_app_config()
+            .map(|cfg| cfg.proxy.proxy_pool)
+            .unwrap_or_default(),
+    };
+    let app_upstream = crate::modules::config::load_app_config()
+        .ok()
+        .map(|cfg| cfg.proxy.upstream_proxy);
+
+    resolve_client_for_add_account_with_config(
+        &normalized,
+        &pool_cfg,
+        global_pool.as_deref(),
+        app_upstream.as_ref(),
+        emulated,
+        timeout_secs,
+    )
+    .await
+}
+
+async fn resolve_client_for_add_account_with_config(
+    options: &AddAccountProxyOptions,
+    pool_cfg: &ProxyPoolConfig,
+    global_pool: Option<&ProxyPoolManager>,
+    upstream_proxy: Option<&crate::proxy::config::UpstreamProxyConfig>,
+    emulated: bool,
+    timeout_secs: u64,
+) -> Result<ResolvedClient, String> {
+    let strict = options.strict_proxy || effective_proxy_pool_strict_mode(pool_cfg);
+
+    if let Some(ref proxy_id) = options.proxy_id {
+        let matched = pool_cfg.proxies.iter().find(|p| p.id == *proxy_id);
+        match matched {
+            Some(entry) if entry.enabled => {
+                // 非严格模式下，若预选节点不健康且启用了自动故障转移且代理池开启，保留现有故障转移习惯
+                if !strict && !entry.is_healthy && pool_cfg.auto_failover && pool_cfg.enabled {
+                    if let Some(pool) = global_pool {
+                        if let Ok(Some(fallback_cfg)) = pool.select_proxy_from_pool(pool_cfg).await
+                        {
+                            let mut builder = build_rquest_client_builder(emulated, timeout_secs);
+                            builder = builder.proxy(fallback_cfg.proxy);
+                            let client = builder.build().map_err(|e| {
+                                format!("Failed to build fallback proxy client: {}", e)
+                            })?;
+                            tracing::warn!(
+                                "[Proxy] AddAccount pre-selected proxy '{}' is unhealthy; failover to pool proxy {}",
+                                describe_entry_label(entry),
+                                fallback_cfg.entry_id
+                            );
+                            return Ok(ResolvedClient {
+                                client,
+                                proxy_label: Some(fallback_cfg.entry_id),
+                                strict,
+                            });
+                        }
+                    }
+                }
+
+                let proxy_cfg = build_proxy_config_from_entry(entry).map_err(|e| {
+                    format!(
+                        "[Strict Proxy] 代理节点 '{}' 配置无效: {}",
+                        describe_entry_label(entry),
+                        e
+                    )
+                });
+                match proxy_cfg {
+                    Ok(cfg) => {
+                        let label = describe_entry_label(entry);
+                        let builder =
+                            build_rquest_client_builder(emulated, timeout_secs).proxy(cfg.proxy);
+                        let client = builder.build().map_err(|e| {
+                            format!("[Strict Proxy] 构建代理节点 '{}' 客户端失败: {}", label, e)
+                        })?;
+                        tracing::info!(
+                            "[Proxy] Route: AddAccount (strict={}) -> Pre-selected Proxy {}",
+                            strict,
+                            label
+                        );
+                        return Ok(ResolvedClient {
+                            client,
+                            proxy_label: Some(label),
+                            strict,
+                        });
+                    }
+                    Err(err_msg) => {
+                        if strict {
+                            return Err(err_msg);
+                        }
+                        tracing::warn!(
+                            "[Proxy] AddAccount proxy build error ({}); falling back to default routing",
+                            err_msg
+                        );
+                    }
+                }
+            }
+            Some(entry) => {
+                if strict {
+                    return Err(format!(
+                        "[Strict Proxy] 指定的代理节点 '{}' 已禁用",
+                        describe_entry_label(entry)
+                    ));
+                }
+                tracing::warn!(
+                    "[Proxy] Pre-selected proxy '{}' is disabled; falling back to default routing",
+                    describe_entry_label(entry)
+                );
+            }
+            None => {
+                if strict {
+                    return Err(format!(
+                        "[Strict Proxy] 指定的代理节点 '{}' 不存在或已被删除",
+                        proxy_id
+                    ));
+                }
+                tracing::warn!(
+                    "[Proxy] Pre-selected proxy '{}' not found; falling back to default routing",
+                    proxy_id
+                );
+            }
+        }
+    }
+
+    // 未指定节点或非严格模式下回退到常规策略
+    if let Some(pool) = global_pool {
+        if strict {
+            let client = pool
+                .resolve_effective_client_inner(None, emulated, timeout_secs, true)
+                .await?;
+            return Ok(ResolvedClient {
+                client,
+                proxy_label: None,
+                strict: true,
+            });
+        }
+        let client = pool
+            .resolve_effective_client_inner(None, emulated, timeout_secs, false)
+            .await?;
+        return Ok(ResolvedClient {
+            client,
+            proxy_label: None,
+            strict: false,
+        });
+    }
+
+    // 代理服务未启动时，使用静态配置（先查代理池默认节点，再查全局上游代理）
+    if pool_cfg.enabled && !pool_cfg.proxies.is_empty() {
+        let manager = ProxyPoolManager::new(Arc::new(RwLock::new(pool_cfg.clone())));
+        if let Ok(Some(cfg)) = manager.select_proxy_from_pool(pool_cfg).await {
+            let builder = build_rquest_client_builder(emulated, timeout_secs).proxy(cfg.proxy);
+            let client = builder
+                .build()
+                .map_err(|e| format!("Failed to build pool proxy client: {}", e))?;
+            return Ok(ResolvedClient {
+                client,
+                proxy_label: Some(cfg.entry_id),
+                strict,
+            });
+        }
+    }
+
+    if let Some(up) = upstream_proxy {
+        if up.enabled && !up.url.trim().is_empty() {
+            match rquest::Proxy::all(&up.url) {
+                Ok(p) => {
+                    let builder = build_rquest_client_builder(emulated, timeout_secs).proxy(p);
+                    let client = builder.build().map_err(|e| {
+                        format!("Failed to build upstream proxy client '{}': {}", up.url, e)
+                    })?;
+                    return Ok(ResolvedClient {
+                        client,
+                        proxy_label: Some(up.url.clone()),
+                        strict,
+                    });
+                }
+                Err(e) if strict => {
+                    return Err(format!(
+                        "[Strict Proxy] 全局上游代理 '{}' 无效: {}",
+                        up.url, e
+                    ));
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    if strict {
+        return Err(
+            "[Strict Proxy] 严格代理模式已开启，但当前无可用代理节点或全局上游代理，已禁止直连回退"
+                .to_string(),
+        );
+    }
+
+    let client = match (emulated, timeout_secs) {
+        (true, 15) => crate::utils::http::get_client(),
+        (false, 60) => crate::utils::http::get_long_standard_client(),
+        (false, 15) => crate::utils::http::get_standard_client(),
+        _ => build_rquest_client_builder(emulated, timeout_secs)
+            .build()
+            .unwrap_or_else(|_| Client::new()),
+    };
+    Ok(ResolvedClient {
+        client,
+        proxy_label: None,
+        strict: false,
+    })
 }
 
 /// 代理配置 (用于构建 reqwest Client)
@@ -74,72 +543,152 @@ impl ProxyPoolManager {
         }
     }
 
+    /// 当前代理池是否处于严格模式（受配置字段与环境变量共同控制）
+    pub async fn is_strict_mode(&self) -> bool {
+        let config = self.config.read().await;
+        effective_proxy_pool_strict_mode(&config)
+    }
+
+    async fn resolve_effective_client_inner(
+        &self,
+        account_id: Option<&str>,
+        emulated: bool,
+        timeout_secs: u64,
+        force_strict: bool,
+    ) -> Result<Client, String> {
+        let mut builder = build_rquest_client_builder(emulated, timeout_secs);
+        let (strict, proxy_opt) = {
+            let config = self.config.read().await;
+            let strict = force_strict || effective_proxy_pool_strict_mode(&config);
+            drop(config);
+
+            let res = if let Some(acc_id) = account_id {
+                self.get_proxy_for_account(acc_id).await
+            } else {
+                let config = self.config.read().await;
+                if config.enabled {
+                    let sel = self.select_proxy_from_pool(&config).await;
+                    if let Ok(Some(ref p)) = sel {
+                        tracing::info!(
+                            "[Proxy] Route: Generic Request (emulated={}) -> Proxy {} (Pool)",
+                            emulated,
+                            p.entry_id
+                        );
+                    } else if sel.is_ok() {
+                        tracing::warn!(
+                            "[Proxy] Route: Generic Request -> No available proxy in pool"
+                        );
+                    }
+                    sel
+                } else {
+                    tracing::debug!("[Proxy] Route: Generic Request -> Proxy pool disabled");
+                    Ok(None)
+                }
+            };
+            (strict, res?)
+        };
+
+        if let Some(proxy_cfg) = proxy_opt {
+            builder = builder.proxy(proxy_cfg.proxy);
+            return builder.build().map_err(|e| {
+                format!(
+                    "Failed to build HTTP client for proxy {}: {}",
+                    proxy_cfg.entry_id, e
+                )
+            });
+        }
+
+        // 未命中代理池节点时：先检查单上游代理，严格模式下禁止静默直连回退
+        if let Ok(app_cfg) = crate::modules::config::load_app_config() {
+            let up = app_cfg.proxy.upstream_proxy;
+            if up.enabled && !up.url.trim().is_empty() {
+                match rquest::Proxy::all(&up.url) {
+                    Ok(p) => {
+                        tracing::info!(
+                            "[Proxy] Route: {:?} (emulated={}) -> Upstream: {} (AppConfig)",
+                            account_id.unwrap_or("Generic"),
+                            emulated,
+                            up.url
+                        );
+                        builder = builder.proxy(p);
+                        return builder.build().map_err(|e| {
+                            format!("Failed to build upstream proxy client '{}': {}", up.url, e)
+                        });
+                    }
+                    Err(e) if strict => {
+                        return Err(format!(
+                            "[Strict Proxy] 全局上游代理 '{}' 无效: {}",
+                            up.url, e
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::error!("invalid upstream proxy url '{}': {}", up.url, e);
+                    }
+                }
+            }
+        }
+
+        if strict {
+            return Err(format!(
+                "[Strict Proxy] 严格代理模式已开启，但 {:?} 未解析到可用代理节点或全局上游代理，已禁止直连回退",
+                account_id.unwrap_or("Generic")
+            ));
+        }
+
+        tracing::info!(
+            "[Proxy] Route: {:?} (emulated={}) -> Direct",
+            account_id.unwrap_or("Generic"),
+            emulated
+        );
+        Ok(builder.build().unwrap_or_else(|_| Client::new()))
+    }
+
+    /// [NEW] 为指定账号获取“最终生效”的 HttpClient（可失败，严格模式下禁止静默回退）
+    pub async fn try_get_effective_client(
+        &self,
+        account_id: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<Client, String> {
+        self.resolve_effective_client_inner(account_id, true, timeout_secs, false)
+            .await
+    }
+
     /// [NEW] 为指定账号获取“最终生效”的 HttpClient
     /// 逻辑：
     /// 1. 账号显式绑定代理优先 (Account-Proxy Binding)
-    /// 2. 如果无绑定，且开启了“自动全局”，取池中第一个节点
-    /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy) [由调用方 fallback]
+    /// 2. 如果无绑定，且开启了“自动全局”，取池中节点
+    /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy)
     pub async fn get_effective_client(
         &self,
         account_id: Option<&str>,
         timeout_secs: u64,
     ) -> Client {
-        let mut builder = Client::builder()
-            .emulation(Emulation::Chrome123)
-            .connect_timeout(Duration::from_secs(5))
-            .pool_idle_timeout(Duration::from_secs(45))
-            .timeout(Duration::from_secs(timeout_secs));
-
-        // 尝试获取代理配置
-        let proxy_opt = if let Some(acc_id) = account_id {
-            self.get_proxy_for_account(acc_id).await.ok().flatten()
-        } else {
-            // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
-            let config = self.config.read().await;
-            if config.enabled {
-                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
-                if let Some(ref p) = res {
-                    tracing::info!(
-                        "[Proxy] Route: Generic Request -> Proxy {} (Pool)",
-                        p.entry_id
-                    );
-                } else {
-                    // [FIX #1583] 明确记录池中无可用代理的情况
-                    tracing::warn!("[Proxy] Route: Generic Request -> No available proxy in pool, falling back to upstream or direct");
-                }
-                res
-            } else {
-                tracing::debug!("[Proxy] Route: Generic Request -> Proxy pool disabled");
-                None
-            }
-        };
-
-        if let Some(proxy_cfg) = proxy_opt {
-            builder = builder.proxy(proxy_cfg.proxy);
-            // Already logged more detail in get_proxy_for_account or pool selection
-        } else {
-            // Fallback 到应用配置的单上游代理
-            if let Ok(app_cfg) = crate::modules::config::load_app_config() {
-                let up = app_cfg.proxy.upstream_proxy;
-                if up.enabled && !up.url.is_empty() {
-                    if let Ok(p) = rquest::Proxy::all(&up.url) {
-                        tracing::info!(
-                            "[Proxy] Route: {:?} -> Upstream: {} (AppConfig)",
-                            account_id.unwrap_or("Generic"),
-                            up.url
-                        );
-                        builder = builder.proxy(p);
-                    }
-                } else {
-                    tracing::info!(
-                        "[Proxy] Route: {:?} -> Direct",
-                        account_id.unwrap_or("Generic")
-                    );
-                }
+        match self
+            .try_get_effective_client(account_id, timeout_secs)
+            .await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::error!(
+                    "[Proxy] Fallback triggered on infallible get_effective_client({:?}): {}",
+                    account_id,
+                    e
+                );
+                build_rquest_client_builder(true, timeout_secs)
+                    .build()
+                    .unwrap_or_else(|_| Client::new())
             }
         }
+    }
 
-        builder.build().unwrap_or_else(|_| Client::new())
+    /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient（可失败，严格模式下禁止静默回退）
+    pub async fn try_get_effective_standard_client(
+        &self,
+        account_id: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<Client, String> {
+        self.resolve_effective_client_inner(account_id, false, timeout_secs, false)
+            .await
     }
 
     /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
@@ -148,62 +697,22 @@ impl ProxyPoolManager {
         account_id: Option<&str>,
         timeout_secs: u64,
     ) -> Client {
-        let mut builder = Client::builder()
-            // 无 Emulation 设置，走纯正的基础 TLS 指纹
-            .connect_timeout(Duration::from_secs(5))
-            .pool_idle_timeout(Duration::from_secs(45))
-            .timeout(Duration::from_secs(timeout_secs));
-
-        // 尝试获取代理配置
-        let proxy_opt = if let Some(acc_id) = account_id {
-            self.get_proxy_for_account(acc_id).await.ok().flatten()
-        } else {
-            // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
-            let config = self.config.read().await;
-            if config.enabled {
-                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
-                if let Some(ref p) = res {
-                    tracing::info!(
-                        "[Proxy] Route: Generic Request (Standard Client) -> Proxy {} (Pool)",
-                        p.entry_id
-                    );
-                } else {
-                    tracing::warn!("[Proxy] Route: Generic Request (Standard Client) -> No available proxy in pool, falling back to upstream or direct");
-                }
-                res
-            } else {
-                tracing::debug!(
-                    "[Proxy] Route: Generic Request (Standard Client) -> Proxy pool disabled"
+        match self
+            .try_get_effective_standard_client(account_id, timeout_secs)
+            .await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::error!(
+                    "[Proxy] Fallback triggered on infallible get_effective_standard_client({:?}): {}",
+                    account_id,
+                    e
                 );
-                None
-            }
-        };
-
-        if let Some(proxy_cfg) = proxy_opt {
-            builder = builder.proxy(proxy_cfg.proxy);
-        } else {
-            // Fallback 到应用配置的单上游代理
-            if let Ok(app_cfg) = crate::modules::config::load_app_config() {
-                let up = app_cfg.proxy.upstream_proxy;
-                if up.enabled && !up.url.is_empty() {
-                    if let Ok(p) = rquest::Proxy::all(&up.url) {
-                        tracing::info!(
-                            "[Proxy] Route: {:?} (Standard Client) -> Upstream: {} (AppConfig)",
-                            account_id.unwrap_or("Generic"),
-                            up.url
-                        );
-                        builder = builder.proxy(p);
-                    }
-                } else {
-                    tracing::info!(
-                        "[Proxy] Route: {:?} (Standard Client) -> Direct",
-                        account_id.unwrap_or("Generic")
-                    );
-                }
+                build_rquest_client_builder(false, timeout_secs)
+                    .build()
+                    .unwrap_or_else(|_| Client::new())
             }
         }
-
-        builder.build().unwrap_or_else(|_| Client::new())
     }
 
     /// 为账号获取代理
@@ -245,16 +754,18 @@ impl ProxyPoolManager {
         account_id: &str,
         config: &ProxyPoolConfig,
     ) -> Result<Option<PoolProxyConfig>, String> {
+        let strict = effective_proxy_pool_strict_mode(config);
         if let Some(proxy_id) = self.account_bindings.get(account_id) {
-            if let Some(entry) = config.proxies.iter().find(|p| p.id == *proxy_id.value()) {
+            let bound_id = proxy_id.value().clone();
+            if let Some(entry) = config.proxies.iter().find(|p| p.id == bound_id) {
                 if entry.enabled {
                     // 1. 若代理健康，直接使用专属绑定代理
                     if entry.is_healthy {
                         return Ok(Some(self.build_proxy_config(entry)?));
                     }
 
-                    // 2. 若代理不健康且启用了自动故障转移，优先从公用池选择其他可用代理
-                    if config.auto_failover {
+                    // 2. 非严格模式下，若代理不健康且启用了自动故障转移，优先从公用池选择其他可用代理
+                    if !strict && config.auto_failover {
                         if let Ok(Some(fallback_proxy)) = self.select_proxy_from_pool(config).await
                         {
                             tracing::warn!(
@@ -267,14 +778,28 @@ impl ProxyPoolManager {
                         }
                     }
 
-                    // 3. 兜底防御：若无其他可用代理，继续使用绑定代理，杜绝回退 Direct 直连泄露服务器源站 IP
+                    // 3. 严格模式或不回退兜底：保持使用绑定代理，杜绝切到其他节点或 Direct 直连泄露源站 IP
                     tracing::warn!(
-                        "[Proxy] Bound proxy {} for account {} is marked unhealthy, but routing through it to prevent Direct IP leak",
+                        "[Proxy] Bound proxy {} for account {} is marked unhealthy (strict={}); keeping bound proxy",
                         entry.id,
-                        account_id
+                        account_id,
+                        strict
                     );
                     return Ok(Some(self.build_proxy_config(entry)?));
                 }
+
+                if strict {
+                    return Err(format!(
+                        "[Strict Proxy] 账号 {} 绑定的代理节点 '{}' 已禁用，严格模式已禁止回退其他出口",
+                        account_id,
+                        describe_entry_label(entry)
+                    ));
+                }
+            } else if strict {
+                return Err(format!(
+                    "[Strict Proxy] 账号 {} 绑定的代理节点 '{}' 不存在，严格模式已禁止回退其他出口",
+                    account_id, bound_id
+                ));
             }
         }
         Ok(None)
@@ -398,41 +923,7 @@ impl ProxyPoolManager {
 
     /// 构建 rquest::Proxy 配置
     fn build_proxy_config(&self, entry: &ProxyEntry) -> Result<PoolProxyConfig, String> {
-        let raw_url = crate::proxy::config::normalize_proxy_url(&entry.url);
-        let (clean_url, parsed_auth) = Self::parse_and_clean_proxy_url(&raw_url);
-
-        let mut proxy = rquest::Proxy::all(&clean_url)
-            .or_else(|_| rquest::Proxy::all(&raw_url))
-            .map_err(|e| format!("Invalid proxy URL: {}", e))?;
-
-        // 优先使用结构化 auth，兜底使用从 URL 内嵌解析出的 auth
-        if let Some(auth) = &entry.auth {
-            if !auth.username.is_empty() {
-                if auth.password.starts_with("ag_enc_") {
-                    if let Some((user, pass)) = &parsed_auth {
-                        tracing::warn!(
-                            "[ProxyPool] Proxy password decryption failed (retains ag_enc_ prefix); falling back to credentials embedded in URL"
-                        );
-                        proxy = proxy.basic_auth(user, pass);
-                    } else {
-                        tracing::warn!(
-                            "[ProxyPool] Proxy password decryption failed (retains ag_enc_ prefix) and no URL credentials available; refusing to send encrypted ciphertext as password"
-                        );
-                    }
-                } else {
-                    proxy = proxy.basic_auth(&auth.username, &auth.password);
-                }
-            } else if let Some((user, pass)) = parsed_auth {
-                proxy = proxy.basic_auth(&user, &pass);
-            }
-        } else if let Some((user, pass)) = parsed_auth {
-            proxy = proxy.basic_auth(&user, &pass);
-        }
-
-        Ok(PoolProxyConfig {
-            proxy,
-            entry_id: entry.id.clone(),
-        })
+        build_proxy_config_from_entry(entry)
     }
 
     /// 绑定账号到代理
@@ -444,28 +935,20 @@ impl ProxyPoolManager {
         // 检查代理是否存在
         {
             let config = self.config.read().await;
-            if !config.proxies.iter().any(|p| p.id == proxy_id) {
-                return Err(format!("Proxy {} not found", proxy_id));
-            }
+            let entry = config
+                .proxies
+                .iter()
+                .find(|p| p.id == proxy_id)
+                .ok_or_else(|| format!("Proxy {} not found", proxy_id))?;
 
-            // 检查代理最大账号数限制
-            if let Some(entry) = config.proxies.iter().find(|p| p.id == proxy_id) {
-                if let Some(max) = entry.max_accounts {
-                    if max > 0 {
-                        let current_count = self
-                            .account_bindings
-                            .iter()
-                            .filter(|kv| *kv.value() == proxy_id)
-                            .count();
-                        if current_count >= max {
-                            return Err(format!(
-                                "Proxy {} has reached max accounts limit",
-                                proxy_id
-                            ));
-                        }
-                    }
-                }
-            }
+            // 检查代理最大账号数限制（同一账号重复绑定不计入占用增量）
+            check_max_accounts_limit(
+                entry,
+                &account_id,
+                self.account_bindings
+                    .iter()
+                    .map(|kv| (kv.key().clone(), kv.value().clone())),
+            )?;
         }
 
         // 更新内存中的绑定
@@ -898,5 +1381,177 @@ mod tests {
         let proxy_opt = res.unwrap();
         assert!(proxy_opt.is_some());
         assert_eq!(proxy_opt.unwrap().entry_id, "pool_p2");
+    }
+
+    fn make_test_proxy_entry(id: &str, url: &str, enabled: bool, is_healthy: bool) -> ProxyEntry {
+        ProxyEntry {
+            id: id.to_string(),
+            name: format!("node-{}", id),
+            url: url.to_string(),
+            auth: None,
+            enabled,
+            priority: 1,
+            tags: vec![],
+            max_accounts: None,
+            health_check_url: None,
+            last_check_time: None,
+            is_healthy,
+            latency: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_strict_mode_prevents_failover_and_rejects_disabled_or_missing_bound_proxy() {
+        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
+            enabled: true,
+            auto_failover: true,
+            strict_mode: true,
+            proxies: vec![
+                make_test_proxy_entry("bound_unhealthy", "http://127.0.0.1:18080", true, false),
+                make_test_proxy_entry("pool_healthy", "http://127.0.0.1:18081", true, true),
+                make_test_proxy_entry("bound_disabled", "http://127.0.0.1:18082", false, true),
+            ],
+            ..Default::default()
+        })));
+
+        // 1. Unhealthy bound proxy must remain pinned under strict_mode even when auto_failover is true
+        pool.bind_account_to_proxy("acc_strict_1".to_string(), "bound_unhealthy".to_string())
+            .await
+            .unwrap();
+        let pinned = pool
+            .get_proxy_for_account("acc_strict_1")
+            .await
+            .expect("should stay pinned cleanly without failover");
+        assert_eq!(pinned.unwrap().entry_id, "bound_unhealthy");
+
+        // 2. Disabled bound proxy must return explicit error under strict_mode
+        pool.bind_account_to_proxy("acc_strict_2".to_string(), "bound_disabled".to_string())
+            .await
+            .unwrap();
+        let disabled_err = pool
+            .get_proxy_for_account("acc_strict_2")
+            .await
+            .unwrap_err();
+        assert!(disabled_err.contains("Strict Proxy"));
+
+        // 3. Missing bound proxy must return explicit error under strict_mode
+        pool.account_bindings
+            .insert("acc_strict_missing".to_string(), "deleted_node".to_string());
+        let missing_err = pool
+            .get_proxy_for_account("acc_strict_missing")
+            .await
+            .unwrap_err();
+        assert!(missing_err.contains("Strict Proxy"));
+    }
+
+    #[tokio::test]
+    async fn test_bind_account_allows_rebinding_same_account_at_max_accounts() {
+        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut entry = make_test_proxy_entry("capped_node", "http://127.0.0.1:18083", true, true);
+        entry.max_accounts = Some(1);
+
+        let pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
+            enabled: true,
+            proxies: vec![entry],
+            ..Default::default()
+        })));
+
+        pool.bind_account_to_proxy("acc_a".to_string(), "capped_node".to_string())
+            .await
+            .expect("first account bind within cap should succeed");
+
+        // Re-binding same account must still succeed
+        pool.bind_account_to_proxy("acc_a".to_string(), "capped_node".to_string())
+            .await
+            .expect("re-binding same account should not fail max_accounts check");
+
+        // Second distinct account must still be rejected
+        let second_err = pool
+            .bind_account_to_proxy("acc_b".to_string(), "capped_node".to_string())
+            .await
+            .unwrap_err();
+        assert!(second_err.contains("max accounts limit"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_client_for_add_account_respects_strict_vs_fallback() {
+        let pool_cfg = ProxyPoolConfig {
+            enabled: true,
+            auto_failover: true,
+            strict_mode: false,
+            proxies: vec![
+                make_test_proxy_entry("p_ok", "http://127.0.0.1:19001", true, true),
+                make_test_proxy_entry("p_disabled", "http://127.0.0.1:19002", false, true),
+            ],
+            ..Default::default()
+        };
+
+        // Strict mode + missing proxy -> explicit error
+        let strict_missing = resolve_client_for_add_account_with_config(
+            &AddAccountProxyOptions {
+                proxy_id: Some("non_existent".to_string()),
+                strict_proxy: true,
+            },
+            &pool_cfg,
+            None,
+            None,
+            false,
+            15,
+        )
+        .await;
+        assert!(strict_missing.is_err());
+
+        // Strict mode + disabled proxy -> explicit error
+        let strict_disabled = resolve_client_for_add_account_with_config(
+            &AddAccountProxyOptions {
+                proxy_id: Some("p_disabled".to_string()),
+                strict_proxy: true,
+            },
+            &pool_cfg,
+            None,
+            None,
+            false,
+            15,
+        )
+        .await;
+        assert!(strict_disabled.is_err());
+
+        // Non-strict mode + missing proxy -> falls back cleanly
+        let non_strict = resolve_client_for_add_account_with_config(
+            &AddAccountProxyOptions {
+                proxy_id: Some("non_existent".to_string()),
+                strict_proxy: false,
+            },
+            &pool_cfg,
+            None,
+            None,
+            false,
+            15,
+        )
+        .await
+        .expect("non-strict missing proxy should fall back cleanly");
+        assert!(!non_strict.strict);
+
+        // Strict mode + valid enabled proxy -> resolved with proxy label
+        let strict_ok = resolve_client_for_add_account_with_config(
+            &AddAccountProxyOptions {
+                proxy_id: Some("p_ok".to_string()),
+                strict_proxy: true,
+            },
+            &pool_cfg,
+            None,
+            None,
+            false,
+            15,
+        )
+        .await
+        .expect("valid enabled proxy under strict mode should succeed");
+        assert!(strict_ok.strict);
+        assert!(strict_ok.proxy_label.as_deref().unwrap().contains("p_ok"));
     }
 }

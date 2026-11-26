@@ -529,6 +529,18 @@
             "oauth_error": "OAuth failed: {{error}}",
             "status": {
                 "error_token": "Please enter Refresh Token"
+            },
+            "proxy": {
+                "label": "Proxy Node (Optional)",
+                "default_option": "Default (Follow Proxy Pool / Global Proxy)",
+                "disabled_tag": "Disabled",
+                "unhealthy_tag": "Unhealthy",
+                "strict_label": "Strict Proxy Mode",
+                "strict_on": "On (No fallback)",
+                "strict_off": "Off (Allow fallback)",
+                "strict_hint": "When enabled, unavailable, disabled, or failing proxies fail explicitly instead of silently falling back to another exit or direct connection. Binding is saved automatically on success.",
+                "scope_server": "Server proxy scope: OAuth token exchange, userinfo fetch, project resolution, initial quota fetch, and Refresh Token import; account-proxy binding is saved automatically on success.",
+                "scope_browser": "Browser-initiated scope: opening the Google OAuth consent page runs directly in your browser and is not routed through the server proxy pool."
             }
         },
         "table": {
@@ -776,6 +788,8 @@
             "add_tag_placeholder": "Add tag...",
             "seconds": "Sec",
             "interval_tooltip": "Health check interval (seconds)",
+            "strict_mode": "Strict Mode",
+            "strict_mode_desc": "When enabled, unavailable or unbound proxies fail explicitly instead of falling back silently (env: ABV_PROXY_POOL_STRICT_MODE=1).",
             "test_completed": "Health check completed",
             "test_failed": "Health check failed",
             "confirm_delete": "Are you sure you want to delete this proxy?",

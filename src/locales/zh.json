@@ -527,6 +527,18 @@
             "oauth_error": "OAuth 授权失败: {{error}}",
             "status": {
                 "error_token": "请填写 Refresh Token"
+            },
+            "proxy": {
+                "label": "代理节点（可选）",
+                "default_option": "默认（跟随代理池策略 / 全局代理）",
+                "disabled_tag": "已禁用",
+                "unhealthy_tag": "异常",
+                "strict_label": "严格代理模式",
+                "strict_on": "已开启（禁止回退直连）",
+                "strict_off": "未开启（允许按配置回退）",
+                "strict_hint": "开启后：所选代理不可用、已禁用或连接失败时直接提示网络错误，绝不静默回退到其他代理或直连；添加成功后将自动绑定该代理。",
+                "scope_server": "服务端代理覆盖范围：OAuth 回调后的 Token 交换、用户信息获取、项目解析、初始配额拉取，以及 Refresh Token 导入请求；添加成功后自动保存账号与代理节点绑定。",
+                "scope_browser": "浏览器独立发起：OAuth 点击跳转打开 Google 登录授权页由您本地浏览器直接发起，不经过服务端代理节点或代理池。"
             }
         },
         "table": {
@@ -774,6 +786,8 @@
             "add_tag_placeholder": "添加标签...",
             "seconds": "秒",
             "interval_tooltip": "健康检查间隔 (秒)",
+            "strict_mode": "严格模式",
+            "strict_mode_desc": "开启后，已绑定或指定的代理节点不可用时直接返回显式网络错误，禁止静默回退到其他节点或直连（支持环境变量 ABV_PROXY_POOL_STRICT_MODE=1）。",
             "test_completed": "健康检查已完成",
             "test_failed": "健康检查失败",
             "confirm_delete": "确定要删除此代理吗？",

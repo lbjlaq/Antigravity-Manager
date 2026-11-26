@@ -17,7 +17,7 @@ interface AccountState {
     fetchAccounts: (silent?: boolean) => Promise<void>;
     fetchCurrentAccount: () => Promise<void>;
     fetchActiveClients: () => Promise<void>;
-    addAccount: (email: string, refreshToken: string) => Promise<void>;
+    addAccount: (email: string, refreshToken: string, proxyOptions?: accountService.AddAccountProxyOptions) => Promise<void>;
     deleteAccount: (accountId: string) => Promise<void>;
     deleteAccounts: (accountIds: string[]) => Promise<void>;
     switchAccount: (accountId: string, targetIde?: string) => Promise<void>;
@@ -26,7 +26,7 @@ interface AccountState {
     reorderAccounts: (accountIds: string[]) => Promise<void>;
 
     // 新增 actions
-    startOAuthLogin: (oauthClientKey?: string) => Promise<void>;
+    startOAuthLogin: (oauthClientKey?: string, proxyOptions?: accountService.AddAccountProxyOptions) => Promise<void>;
     completeOAuthLogin: () => Promise<void>;
     cancelOAuthLogin: () => Promise<void>;
     importV1Accounts: () => Promise<void>;
@@ -163,10 +163,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    addAccount: async (email: string, refreshToken: string) => {
+    addAccount: async (email: string, refreshToken: string, proxyOptions?: accountService.AddAccountProxyOptions) => {
         set({ loading: true, error: null });
         try {
-            await accountService.addAccount(email, refreshToken);
+            await accountService.addAccount(email, refreshToken, proxyOptions);
             await get().fetchAccounts();
             set({ loading: false });
         } catch (error) {
@@ -277,10 +277,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    startOAuthLogin: async (oauthClientKey?: string) => {
+    startOAuthLogin: async (oauthClientKey?: string, proxyOptions?: accountService.AddAccountProxyOptions) => {
         set({ loading: true, error: null });
         try {
-            await accountService.startOAuthLogin(oauthClientKey);
+            await accountService.startOAuthLogin(oauthClientKey, proxyOptions);
             await get().fetchAccounts();
             set({ loading: false });
         } catch (error) {

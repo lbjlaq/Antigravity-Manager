@@ -62,8 +62,32 @@ export async function getActiveClientsStatus(): Promise<ActiveClientsStatus> {
     return res || {};
 }
 
-export async function addAccount(email: string, refreshToken: string): Promise<Account> {
-    return await invoke('add_account', { email, refreshToken });
+export interface AddAccountProxyOptions {
+    proxyId?: string;
+    strictProxy?: boolean;
+}
+
+function buildProxyInvokeArgs(proxyOptions?: AddAccountProxyOptions): Record<string, any> {
+    const args: Record<string, any> = {};
+    if (proxyOptions?.proxyId) {
+        args.proxyId = proxyOptions.proxyId;
+    }
+    if (proxyOptions?.strictProxy !== undefined) {
+        args.strictProxy = proxyOptions.strictProxy;
+    }
+    return args;
+}
+
+export async function addAccount(
+    email: string,
+    refreshToken: string,
+    proxyOptions?: AddAccountProxyOptions
+): Promise<Account> {
+    return await invoke('add_account', {
+        email,
+        refreshToken,
+        ...buildProxyInvokeArgs(proxyOptions),
+    });
 }
 
 export async function deleteAccount(accountId: string): Promise<void> {
@@ -98,11 +122,18 @@ export async function refreshAllQuotas(): Promise<RefreshStats> {
 }
 
 // OAuth
-export async function startOAuthLogin(oauthClientKey?: string): Promise<Account> {
+export async function startOAuthLogin(
+    oauthClientKey?: string,
+    proxyOptions?: AddAccountProxyOptions
+): Promise<Account> {
     ensureTauriEnvironment();
 
     try {
-        return await invoke('start_oauth_login', oauthClientKey ? { oauthClientKey } : undefined);
+        const args = {
+            ...(oauthClientKey ? { oauthClientKey } : {}),
+            ...buildProxyInvokeArgs(proxyOptions),
+        };
+        return await invoke('start_oauth_login', Object.keys(args).length > 0 ? args : undefined);
     } catch (error) {
         // 增强错误信息
         if (typeof error === 'string') {
@@ -146,8 +177,15 @@ export interface OAuthClientInfo {
     is_gcp_tos?: boolean;
 }
 
-export async function prepareOAuthUrl(oauthClientKey?: string): Promise<string> {
-    const res = await invoke<any>('prepare_oauth_url', oauthClientKey ? { oauthClientKey } : undefined);
+export async function prepareOAuthUrl(
+    oauthClientKey?: string,
+    proxyOptions?: AddAccountProxyOptions
+): Promise<string> {
+    const args = {
+        ...(oauthClientKey ? { oauthClientKey } : {}),
+        ...buildProxyInvokeArgs(proxyOptions),
+    };
+    const res = await invoke<any>('prepare_oauth_url', Object.keys(args).length > 0 ? args : undefined);
     const url = typeof res === 'string' ? res : res?.url;
     return url || '';
 }

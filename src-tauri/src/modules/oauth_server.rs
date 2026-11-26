@@ -1,4 +1,5 @@
 use crate::modules::oauth;
+use crate::proxy::proxy_pool::AddAccountProxyOptions;
 use std::sync::{Mutex, OnceLock};
 use tauri::Url;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -12,9 +13,18 @@ struct OAuthFlowState {
     redirect_uri: String,
     state: String,
     client_key: String,
+    proxy_options: AddAccountProxyOptions,
     cancel_tx: watch::Sender<bool>,
     code_tx: mpsc::Sender<Result<String, String>>,
     code_rx: Option<mpsc::Receiver<Result<String, String>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuthFlowContext {
+    pub redirect_uri: String,
+    pub state: String,
+    pub client_key: String,
+    pub proxy_options: AddAccountProxyOptions,
 }
 
 static OAUTH_FLOW_STATE: OnceLock<Mutex<Option<OAuthFlowState>>> = OnceLock::new();
@@ -47,7 +57,13 @@ fn oauth_fail_html() -> &'static str {
 async fn ensure_oauth_flow_prepared(
     app_handle: Option<tauri::AppHandle>,
     requested_client_key: Option<String>,
+    proxy_options: AddAccountProxyOptions,
 ) -> Result<String, String> {
+    let mut normalized_options = proxy_options.normalized();
+    let validated_proxy_id =
+        crate::proxy::proxy_pool::validate_add_account_proxy_options(&normalized_options).await?;
+    normalized_options.proxy_id = validated_proxy_id;
+
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.as_mut() {
             if let Some(requested_key) = requested_client_key.as_ref() {
@@ -59,10 +75,12 @@ async fn ensure_oauth_flow_prepared(
         }
     }
 
-    // Return URL if flow already exists and is still "fresh" (receiver hasn't been taken)
+    // Return URL if flow already exists and is still "fresh" (receiver hasn't been taken),
+    // updating proxy_options in place so user proxy changes take effect on reuse.
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.as_mut() {
             if s.code_rx.is_some() {
+                s.proxy_options = normalized_options;
                 return Ok(s.auth_url.clone());
             } else {
                 // Flow is already "in progress" (rx taken), but user requested a NEW one.
@@ -351,6 +369,7 @@ async fn ensure_oauth_flow_prepared(
             redirect_uri,
             state: state_str,
             client_key: resolved_client_key,
+            proxy_options: normalized_options,
             cancel_tx,
             code_tx,
             code_rx: Some(code_rx),
@@ -371,7 +390,21 @@ pub async fn prepare_oauth_url(
     app_handle: Option<tauri::AppHandle>,
     oauth_client_key: Option<String>,
 ) -> Result<String, String> {
-    ensure_oauth_flow_prepared(app_handle, oauth_client_key).await
+    prepare_oauth_url_with_options(
+        app_handle,
+        oauth_client_key,
+        AddAccountProxyOptions::default(),
+    )
+    .await
+}
+
+/// Pre-generate OAuth URL with pre-selected proxy & strict mode options
+pub async fn prepare_oauth_url_with_options(
+    app_handle: Option<tauri::AppHandle>,
+    oauth_client_key: Option<String>,
+    proxy_options: AddAccountProxyOptions,
+) -> Result<String, String> {
+    ensure_oauth_flow_prepared(app_handle, oauth_client_key, proxy_options).await
 }
 
 /// Cancel current OAuth flow
@@ -389,8 +422,24 @@ pub async fn start_oauth_flow(
     app_handle: Option<tauri::AppHandle>,
     oauth_client_key: Option<String>,
 ) -> Result<oauth::TokenResponse, String> {
-    // Ensure URL + listener are ready (this way if the user authorizes first, it won't get stuck)
-    let auth_url = ensure_oauth_flow_prepared(app_handle.clone(), oauth_client_key).await?;
+    start_oauth_flow_with_options(
+        app_handle,
+        oauth_client_key,
+        AddAccountProxyOptions::default(),
+    )
+    .await
+    .map(|(token, _)| token)
+}
+
+/// Start OAuth flow with proxy options and return `(TokenResponse, AddAccountProxyOptions)`
+pub async fn start_oauth_flow_with_options(
+    app_handle: Option<tauri::AppHandle>,
+    oauth_client_key: Option<String>,
+    proxy_options: AddAccountProxyOptions,
+) -> Result<(oauth::TokenResponse, AddAccountProxyOptions), String> {
+    // Ensure URL + listener are ready (also validates strict proxy options upfront)
+    let auth_url =
+        ensure_oauth_flow_prepared(app_handle.clone(), oauth_client_key, proxy_options).await?;
 
     if let Some(h) = app_handle {
         // Open default browser
@@ -401,7 +450,7 @@ pub async fn start_oauth_flow(
     }
 
     // Take code_rx to wait for it
-    let (mut code_rx, redirect_uri, client_key) = {
+    let (mut code_rx, redirect_uri, client_key, effective_proxy_options) = {
         let mut lock = get_oauth_flow_state()
             .lock()
             .map_err(|_| "OAuth state lock corrupted".to_string())?;
@@ -412,7 +461,12 @@ pub async fn start_oauth_flow(
             .code_rx
             .take()
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone(), state.client_key.clone())
+        (
+            rx,
+            state.redirect_uri.clone(),
+            state.client_key.clone(),
+            state.proxy_options.clone(),
+        )
     };
 
     // Wait for code (if user has already authorized, this returns immediately)
@@ -428,20 +482,38 @@ pub async fn start_oauth_flow(
         *lock = None;
     }
 
-    oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await
+    let token = oauth::exchange_code_with_options(
+        &code,
+        &redirect_uri,
+        Some(&client_key),
+        Some(&effective_proxy_options),
+    )
+    .await?;
+    Ok((token, effective_proxy_options))
 }
 
-/// Завершить OAuth flow без открытия браузера.
-/// Предполагается, что пользователь открыл ссылку вручную (или ранее была открыта),
-/// а мы только ждём callback и обмениваем code на token.
+/// Complete OAuth flow without opening browser
 pub async fn complete_oauth_flow(
     app_handle: Option<tauri::AppHandle>,
 ) -> Result<oauth::TokenResponse, String> {
-    // Ensure URL + listeners exist
-    let _ = ensure_oauth_flow_prepared(app_handle, None).await?;
+    complete_oauth_flow_with_options(app_handle)
+        .await
+        .map(|(token, _)| token)
+}
+
+/// Complete OAuth flow without opening browser, returning the active flow proxy options
+pub async fn complete_oauth_flow_with_options(
+    app_handle: Option<tauri::AppHandle>,
+) -> Result<(oauth::TokenResponse, AddAccountProxyOptions), String> {
+    let existing_options = get_active_oauth_flow_full_context()
+        .map(|ctx| ctx.proxy_options)
+        .unwrap_or_default();
+
+    // Ensure URL + listeners exist (preserving existing flow proxy options)
+    let _ = ensure_oauth_flow_prepared(app_handle, None, existing_options).await?;
 
     // Take receiver to wait for code
-    let (mut code_rx, redirect_uri, client_key) = {
+    let (mut code_rx, redirect_uri, client_key, effective_proxy_options) = {
         let mut lock = get_oauth_flow_state()
             .lock()
             .map_err(|_| "OAuth state lock corrupted".to_string())?;
@@ -452,7 +524,12 @@ pub async fn complete_oauth_flow(
             .code_rx
             .take()
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone(), state.client_key.clone())
+        (
+            rx,
+            state.redirect_uri.clone(),
+            state.client_key.clone(),
+            state.proxy_options.clone(),
+        )
     };
 
     let code = match code_rx.recv().await {
@@ -465,18 +542,31 @@ pub async fn complete_oauth_flow(
         *lock = None;
     }
 
-    oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await
+    let token = oauth::exchange_code_with_options(
+        &code,
+        &redirect_uri,
+        Some(&client_key),
+        Some(&effective_proxy_options),
+    )
+    .await?;
+    Ok((token, effective_proxy_options))
 }
 
 /// Snapshot active OAuth flow context `(redirect_uri, state, client_key)` if present.
 pub fn get_active_oauth_flow_context() -> Option<(String, String, String)> {
+    get_active_oauth_flow_full_context().map(|ctx| (ctx.redirect_uri, ctx.state, ctx.client_key))
+}
+
+/// Snapshot full active OAuth flow context including proxy selection & strict mode.
+pub fn get_active_oauth_flow_full_context() -> Option<OAuthFlowContext> {
     let lock = get_oauth_flow_state().lock().ok()?;
     let state = lock.as_ref()?;
-    Some((
-        state.redirect_uri.clone(),
-        state.state.clone(),
-        state.client_key.clone(),
-    ))
+    Some(OAuthFlowContext {
+        redirect_uri: state.redirect_uri.clone(),
+        state: state.state.clone(),
+        client_key: state.client_key.clone(),
+        proxy_options: state.proxy_options.clone(),
+    })
 }
 
 /// Parse manual OAuth input (full callback URL, schemeless callback URL, query string, or raw code).
@@ -560,12 +650,23 @@ pub async fn submit_oauth_code(
     code_input: String,
     state_input: Option<String>,
 ) -> Result<oauth::TokenResponse, String> {
+    submit_oauth_code_with_options(code_input, state_input, None)
+        .await
+        .map(|(token, _)| token)
+}
+
+/// Manually submit an OAuth code with optional proxy options override.
+pub async fn submit_oauth_code_with_options(
+    code_input: String,
+    state_input: Option<String>,
+    proxy_options_override: Option<AddAccountProxyOptions>,
+) -> Result<(oauth::TokenResponse, AddAccountProxyOptions), String> {
     let (code, extracted_state) = parse_manual_oauth_input(&code_input)?;
     let effective_state = state_input
         .filter(|s| !s.trim().is_empty())
         .or(extracted_state);
 
-    let (redirect_uri, client_key, code_tx) = {
+    let (redirect_uri, client_key, flow_proxy_options, code_tx) = {
         let lock = get_oauth_flow_state().lock().map_err(|e| e.to_string())?;
         if let Some(state) = lock.as_ref() {
             if let Some(ref provided_state) = effective_state {
@@ -576,6 +677,7 @@ pub async fn submit_oauth_code(
             (
                 state.redirect_uri.clone(),
                 state.client_key.clone(),
+                state.proxy_options.clone(),
                 state.code_tx.clone(),
             )
         } else {
@@ -585,25 +687,42 @@ pub async fn submit_oauth_code(
         }
     };
 
+    let mut effective_proxy_options = proxy_options_override
+        .unwrap_or(flow_proxy_options)
+        .normalized();
+    let validated_proxy_id =
+        crate::proxy::proxy_pool::validate_add_account_proxy_options(&effective_proxy_options)
+            .await?;
+    effective_proxy_options.proxy_id = validated_proxy_id;
+
     crate::modules::logger::log_info(&format!(
-        "Exchanging manual OAuth code with redirect_uri: {}, client_key: {}",
-        redirect_uri, client_key
+        "Exchanging manual OAuth code with redirect_uri: {}, client_key: {}, proxy_id: {:?}, strict: {}",
+        redirect_uri,
+        client_key,
+        effective_proxy_options.proxy_id,
+        effective_proxy_options.strict_proxy
     ));
 
-    // Exchange with the exact redirect_uri and client_key stored in the flow.
+    // Exchange with the exact redirect_uri, client_key, and resolved proxy options.
     // If exchange fails, cancel flow to ensure corrupted/expired state is not reused.
-    let token_res =
-        match oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await {
-            Ok(res) => res,
-            Err(e) => {
-                crate::modules::logger::log_warn(&format!(
-                    "OAuth exchange failed during manual submission, cleaning up flow state: {}",
-                    e
-                ));
-                cancel_oauth_flow();
-                return Err(e);
-            }
-        };
+    let token_res = match oauth::exchange_code_with_options(
+        &code,
+        &redirect_uri,
+        Some(&client_key),
+        Some(&effective_proxy_options),
+    )
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            crate::modules::logger::log_warn(&format!(
+                "OAuth exchange failed during manual submission, cleaning up flow state: {}",
+                e
+            ));
+            cancel_oauth_flow();
+            return Err(e);
+        }
+    };
 
     // Also notify code_tx in case a background listener (e.g. Desktop flow) is awaiting code_rx
     let _ = code_tx.try_send(Ok(code));
@@ -611,7 +730,7 @@ pub async fn submit_oauth_code(
     // Clean up flow state
     cancel_oauth_flow();
 
-    Ok(token_res)
+    Ok((token_res, effective_proxy_options))
 }
 
 /// Get the active flow's client_key for callback matching
@@ -636,14 +755,30 @@ pub fn prepare_oauth_flow_manually(
     redirect_uri: String,
     oauth_client_key: Option<String>,
 ) -> Result<String, String> {
-    // 1. Check if we can reuse existing flow state
-    if let Ok(lock) = get_oauth_flow_state().lock() {
-        if let Some(s) = lock.as_ref() {
+    prepare_oauth_flow_manually_with_options(
+        redirect_uri,
+        oauth_client_key,
+        AddAccountProxyOptions::default(),
+    )
+}
+
+/// Manually prepare an OAuth flow with pre-selected proxy options without starting listeners.
+pub fn prepare_oauth_flow_manually_with_options(
+    redirect_uri: String,
+    oauth_client_key: Option<String>,
+    proxy_options: AddAccountProxyOptions,
+) -> Result<String, String> {
+    let normalized_options = proxy_options.normalized();
+
+    // 1. Check if we can reuse existing flow state (updating proxy_options in place)
+    if let Ok(mut lock) = get_oauth_flow_state().lock() {
+        if let Some(s) = lock.as_mut() {
             let same_client = match oauth_client_key.as_ref() {
                 Some(key) => s.client_key == key.to_ascii_lowercase(),
                 None => true,
             };
             if same_client && s.redirect_uri == redirect_uri {
+                s.proxy_options = normalized_options;
                 return Ok(s.auth_url.clone());
             }
         }
@@ -670,6 +805,7 @@ pub fn prepare_oauth_flow_manually(
             redirect_uri,
             state: state_str,
             client_key: resolved_client_key,
+            proxy_options: normalized_options,
             cancel_tx,
             code_tx,
             code_rx: Some(code_rx),
@@ -725,8 +861,12 @@ mod tests {
         assert!(parse_manual_oauth_input("   ").is_err());
     }
 
+    static OAUTH_FLOW_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[test]
     fn test_prepare_oauth_flow_manually_reuse() {
+        let _guard = OAUTH_FLOW_TEST_LOCK.blocking_lock();
+        cancel_oauth_flow();
         let redirect_uri = "http://localhost:8045/auth/callback".to_string();
         let url1 = prepare_oauth_flow_manually(redirect_uri.clone(), None)
             .expect("First prepare should succeed");
@@ -737,10 +877,13 @@ mod tests {
             url1, url2,
             "Subsequent calls with same parameters should reuse the active flow URL"
         );
+        cancel_oauth_flow();
     }
 
     #[tokio::test]
     async fn test_submit_oauth_code_state_mismatch_and_cleanup() {
+        let _guard = OAUTH_FLOW_TEST_LOCK.lock().await;
+        cancel_oauth_flow();
         let redirect_uri = "http://localhost:8045/auth/callback".to_string();
         let _ = prepare_oauth_flow_manually(redirect_uri.clone(), None)
             .expect("prepare should succeed");
@@ -754,5 +897,33 @@ mod tests {
         // Clean up
         cancel_oauth_flow();
         assert!(get_active_oauth_flow_context().is_none());
+    }
+
+    #[test]
+    fn test_prepare_oauth_flow_manually_persists_and_updates_proxy_options() {
+        let _guard = OAUTH_FLOW_TEST_LOCK.blocking_lock();
+        cancel_oauth_flow();
+        let redirect_uri = "http://localhost:8045/auth/callback".to_string();
+        let opts1 = AddAccountProxyOptions {
+            proxy_id: Some("proxy_a".to_string()),
+            strict_proxy: false,
+        };
+        let url1 =
+            prepare_oauth_flow_manually_with_options(redirect_uri.clone(), None, opts1.clone())
+                .expect("initial manual prepare should succeed");
+        let ctx1 = get_active_oauth_flow_full_context().expect("flow context should exist");
+        assert_eq!(ctx1.proxy_options, opts1);
+
+        let opts2 = AddAccountProxyOptions {
+            proxy_id: Some("proxy_b".to_string()),
+            strict_proxy: true,
+        };
+        let url2 = prepare_oauth_flow_manually_with_options(redirect_uri, None, opts2.clone())
+            .expect("reused prepare should succeed");
+        assert_eq!(url1, url2);
+        let ctx2 = get_active_oauth_flow_full_context().expect("flow context should exist");
+        assert_eq!(ctx2.proxy_options, opts2);
+
+        cancel_oauth_flow();
     }
 }

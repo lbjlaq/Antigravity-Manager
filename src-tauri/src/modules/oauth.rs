@@ -1,3 +1,4 @@
+use crate::proxy::proxy_pool::AddAccountProxyOptions;
 use serde::{Deserialize, Serialize};
 
 // Google OAuth configuration
@@ -426,16 +427,43 @@ pub fn is_transient_exchange_error(status: Option<reqwest::StatusCode>) -> bool 
     }
 }
 
+fn format_strict_proxy_network_error(
+    action: &str,
+    proxy_label: Option<&str>,
+    err: impl std::fmt::Display,
+) -> String {
+    match proxy_label {
+        Some(label) => format!(
+            "[Strict Proxy] 通过代理节点 '{}' 执行 {} 失败: {}（严格代理模式已禁止回退到其他出口或直连）",
+            label, action, err
+        ),
+        None => format!(
+            "[Strict Proxy] 严格代理模式下执行 {} 失败: {}（已禁止回退直连）",
+            action, err
+        ),
+    }
+}
+
 async fn exchange_code_once(
     code: &str,
     redirect_uri: &str,
     client_cfg: &OAuthClientConfig,
+    proxy_options: Option<&AddAccountProxyOptions>,
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
-    // [PHASE 2] 对于登录行为，尚未有 account_id，使用全局池阶梯逻辑
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(None, 60).await
+    let (client, strict_mode, proxy_label) = if let Some(opts) = proxy_options {
+        let resolved = crate::proxy::proxy_pool::resolve_client_for_add_account(opts, false, 60)
+            .await
+            .map_err(|e| (None, e))?;
+        (resolved.client, resolved.strict, resolved.proxy_label)
+    } else if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        let strict = pool.is_strict_mode().await;
+        let client = pool
+            .try_get_effective_standard_client(None, 60)
+            .await
+            .map_err(|e| (None, e))?;
+        (client, strict, None)
     } else {
-        crate::utils::http::get_long_standard_client()
+        (crate::utils::http::get_long_standard_client(), false, None)
     };
 
     let params = [
@@ -482,10 +510,14 @@ async fn exchange_code_once(
             Ok(resp) => resp,
             Err(e) => {
                 last_status = None;
-                last_err_msg = format!(
-                    "Token exchange request failed: {}. 浏览器已成功完成授权，但客户端连接 Google 授权端点失败。桌面客户端网络不自动沿用浏览器专用代理，请在设置中配置代理（或检查网络连通性）后重试。",
-                    e
-                );
+                last_err_msg = if strict_mode {
+                    format_strict_proxy_network_error("OAuth Token 交换", proxy_label.as_deref(), e)
+                } else {
+                    format!(
+                        "Token exchange request failed: {}. 浏览器已成功完成授权，但客户端连接 Google 授权端点失败。桌面客户端网络不自动沿用浏览器专用代理，请在设置中配置代理（或检查网络连通性）后重试。",
+                        e
+                    )
+                };
                 // 传输层失败未到达 Google，授权码未消耗，继续瞬态退避重试
                 continue;
             }
@@ -538,12 +570,12 @@ async fn exchange_code_once(
     Err((last_status, last_err_msg))
 }
 
-/// Exchange authorization code for token using optional preferred client.
-/// When preferred/active client mismatches, fallback to other configured clients.
-pub async fn exchange_code_with_client(
+/// Exchange authorization code for token using optional preferred client and proxy options.
+pub async fn exchange_code_with_options(
     code: &str,
     redirect_uri: &str,
     preferred_client_key: Option<&str>,
+    proxy_options: Option<&AddAccountProxyOptions>,
 ) -> Result<TokenResponse, String> {
     let candidates = get_candidate_clients(preferred_client_key);
     if candidates.is_empty() {
@@ -553,7 +585,7 @@ pub async fn exchange_code_with_client(
     let mut attempt_errors: Vec<String> = Vec::new();
 
     for (idx, client_cfg) in candidates.iter().enumerate() {
-        match exchange_code_once(code, redirect_uri, client_cfg).await {
+        match exchange_code_once(code, redirect_uri, client_cfg, proxy_options).await {
             Ok(token_res) => {
                 if idx > 0 {
                     crate::modules::logger::log_info(&format!(
@@ -592,6 +624,16 @@ pub async fn exchange_code_with_client(
     ))
 }
 
+/// Exchange authorization code for token using optional preferred client.
+/// When preferred/active client mismatches, fallback to other configured clients.
+pub async fn exchange_code_with_client(
+    code: &str,
+    redirect_uri: &str,
+    preferred_client_key: Option<&str>,
+) -> Result<TokenResponse, String> {
+    exchange_code_with_options(code, redirect_uri, preferred_client_key, None).await
+}
+
 /// Exchange authorization code for token
 pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenResponse, String> {
     exchange_code_with_client(code, redirect_uri, None).await
@@ -601,12 +643,22 @@ async fn refresh_access_token_once(
     refresh_token: &str,
     account_id: Option<&str>,
     client_cfg: &OAuthClientConfig,
+    proxy_options: Option<&AddAccountProxyOptions>,
 ) -> Result<TokenResponse, (Option<reqwest::StatusCode>, String)> {
-    // [PHASE 2] 根据 account_id 使用对应的代理
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_standard_client(account_id, 60).await
+    let (client, strict_mode, proxy_label) = if let Some(opts) = proxy_options {
+        let resolved = crate::proxy::proxy_pool::resolve_client_for_add_account(opts, false, 60)
+            .await
+            .map_err(|e| (None, e))?;
+        (resolved.client, resolved.strict, resolved.proxy_label)
+    } else if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        let strict = pool.is_strict_mode().await;
+        let client = pool
+            .try_get_effective_standard_client(account_id, 60)
+            .await
+            .map_err(|e| (None, e))?;
+        (client, strict, None)
     } else {
-        crate::utils::http::get_long_standard_client()
+        (crate::utils::http::get_long_standard_client(), false, None)
     };
 
     let params = [
@@ -638,7 +690,16 @@ async fn refresh_access_token_once(
         .send()
         .await
         .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
+            if strict_mode {
+                (
+                    None,
+                    format_strict_proxy_network_error(
+                        "Refresh Token 校验/刷新",
+                        proxy_label.as_deref(),
+                        e,
+                    ),
+                )
+            } else if e.is_connect() || e.is_timeout() {
                 (
                     None,
                     format!(
@@ -670,12 +731,12 @@ async fn refresh_access_token_once(
     }
 }
 
-/// Refresh access_token using refresh_token with optional preferred OAuth client key.
-/// If client mismatch occurs, it retries with other configured clients.
-pub async fn refresh_access_token_with_client(
+/// Refresh access_token using refresh_token with optional preferred OAuth client key and proxy options.
+pub async fn refresh_access_token_with_options(
     refresh_token: &str,
     account_id: Option<&str>,
     preferred_client_key: Option<&str>,
+    proxy_options: Option<&AddAccountProxyOptions>,
 ) -> Result<TokenResponse, String> {
     let candidates = get_candidate_clients(preferred_client_key);
     if candidates.is_empty() {
@@ -693,7 +754,9 @@ pub async fn refresh_access_token_with_client(
             if retry_count > 0 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
-            match refresh_access_token_once(refresh_token, account_id, client_cfg).await {
+            match refresh_access_token_once(refresh_token, account_id, client_cfg, proxy_options)
+                .await
+            {
                 Ok(token_res) => {
                     recovered_token = Some(token_res);
                     break;
@@ -752,6 +815,16 @@ pub async fn refresh_access_token_with_client(
     ))
 }
 
+/// Refresh access_token using refresh_token with optional preferred OAuth client key.
+/// If client mismatch occurs, it retries with other configured clients.
+pub async fn refresh_access_token_with_client(
+    refresh_token: &str,
+    account_id: Option<&str>,
+    preferred_client_key: Option<&str>,
+) -> Result<TokenResponse, String> {
+    refresh_access_token_with_options(refresh_token, account_id, preferred_client_key, None).await
+}
+
 /// Refresh access_token using refresh_token
 pub async fn refresh_access_token(
     refresh_token: &str,
@@ -760,15 +833,22 @@ pub async fn refresh_access_token(
     refresh_access_token_with_client(refresh_token, account_id, None).await
 }
 
-/// Get user info
-pub async fn get_user_info(
+/// Get user info with optional pre-selected proxy options
+pub async fn get_user_info_with_options(
     access_token: &str,
     account_id: Option<&str>,
+    proxy_options: Option<&AddAccountProxyOptions>,
 ) -> Result<UserInfo, String> {
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 15).await
+    let (client, strict_mode, proxy_label) = if let Some(opts) = proxy_options {
+        let resolved =
+            crate::proxy::proxy_pool::resolve_client_for_add_account(opts, true, 15).await?;
+        (resolved.client, resolved.strict, resolved.proxy_label)
+    } else if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        let strict = pool.is_strict_mode().await;
+        let client = pool.try_get_effective_client(account_id, 15).await?;
+        (client, strict, None)
     } else {
-        crate::utils::http::get_client()
+        (crate::utils::http::get_client(), false, None)
     };
 
     let response = client
@@ -776,7 +856,13 @@ pub async fn get_user_info(
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("User info request failed: {}", e))?;
+        .map_err(|e| {
+            if strict_mode {
+                format_strict_proxy_network_error("获取 Google 用户信息", proxy_label.as_deref(), e)
+            } else {
+                format!("User info request failed: {}", e)
+            }
+        })?;
 
     if response.status().is_success() {
         response
@@ -787,6 +873,14 @@ pub async fn get_user_info(
         let error_text = response.text().await.unwrap_or_default();
         Err(format!("Failed to get user info: {}", error_text))
     }
+}
+
+/// Get user info
+pub async fn get_user_info(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<UserInfo, String> {
+    get_user_info_with_options(access_token, account_id, None).await
 }
 
 /// Check and refresh Token if needed

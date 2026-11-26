@@ -420,6 +420,7 @@ export interface ProxyPoolConfig {
     health_check_interval: number;
     auto_failover: boolean;
     strategy: ProxySelectionStrategy;
+    strict_mode?: boolean;
     account_bindings?: Record<string, string>;
 }
 

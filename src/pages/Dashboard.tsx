@@ -321,8 +321,12 @@ function Dashboard() {
         }
     };
 
-    const handleAddAccount = async (email: string, refreshToken: string) => {
-        await addAccount(email, refreshToken);
+    const handleAddAccount = async (
+        email: string,
+        refreshToken: string,
+        proxyOptions?: { proxyId?: string; strictProxy?: boolean }
+    ) => {
+        await addAccount(email, refreshToken, proxyOptions);
         await fetchAccounts(); // 刷新列表
     };
 

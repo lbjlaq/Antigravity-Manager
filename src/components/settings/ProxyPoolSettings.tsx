@@ -92,6 +92,7 @@ export default function ProxyPoolSettings({ config, onChange }: ProxyPoolSetting
         health_check_interval: config?.health_check_interval ?? 300,
         auto_failover: config?.auto_failover ?? true,
         strategy: config?.strategy ?? 'priority',
+        strict_mode: config?.strict_mode ?? false,
         account_bindings: config?.account_bindings ?? {},
     };
 
@@ -226,6 +227,28 @@ export default function ProxyPoolSettings({ config, onChange }: ProxyPoolSetting
                                 />
                                 <span className="text-[9px] text-gray-400 font-black uppercase tracking-tighter">{t('settings.proxy_pool.seconds', 'Sec')}</span>
                             </div>
+                        </div>
+
+                        <div className="flex items-center border-l border-gray-100 dark:border-gray-800 pl-4">
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={Boolean(safeConfig.strict_mode)}
+                                onClick={() => onChange({ ...safeConfig, strict_mode: !safeConfig.strict_mode })}
+                                title={t('settings.proxy_pool.strict_mode_desc', 'When enabled, unavailable or unbound proxies fail explicitly instead of falling back to direct connection (env: ABV_PROXY_POOL_STRICT_MODE).')}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
+                                    safeConfig.strict_mode
+                                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                                        : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-200/70 dark:hover:bg-gray-700'
+                                }`}
+                            >
+                                <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                        safeConfig.strict_mode ? 'bg-amber-500' : 'bg-gray-400 dark:bg-gray-500'
+                                    }`}
+                                />
+                                {t('settings.proxy_pool.strict_mode', 'Strict Mode')}
+                            </button>
                         </div>
                     </div>
                 </div>

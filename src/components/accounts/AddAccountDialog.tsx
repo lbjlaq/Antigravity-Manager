@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Database, Globe, Loader2, CheckCircle2, XCircle, Copy, Check, Info, Link2 } from 'lucide-react';
+import { Plus, Database, Globe, Loader2, CheckCircle2, XCircle, Copy, Check, Info, Link2, Network } from 'lucide-react';
 import { useAccountStore } from '../../stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
@@ -9,9 +9,10 @@ import { request as invoke } from '../../utils/request';
 import { isTauri } from '../../utils/env';
 import { copyToClipboard } from '../../utils/clipboard';
 import * as accountService from '../../services/accountService';
+import type { ProxyEntry, ProxyPoolConfig } from '../../types/config';
 
 interface AddAccountDialogProps {
-    onAdd: (email: string, refreshToken: string) => Promise<void>;
+    onAdd: (email: string, refreshToken: string, proxyOptions?: accountService.AddAccountProxyOptions) => Promise<void>;
     showText?: boolean;
 }
 
@@ -27,6 +28,9 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     const [oauthUrl, setOauthUrl] = useState('');
     const [oauthUrlCopied, setOauthUrlCopied] = useState(false);
     const [manualCode, setManualCode] = useState('');
+    const [proxyNodes, setProxyNodes] = useState<ProxyEntry[]>([]);
+    const [selectedProxyId, setSelectedProxyId] = useState('');
+    const [strictProxy, setStrictProxy] = useState(false);
 
     // UI State
     const [status, setStatus] = useState<Status>('idle');
@@ -117,21 +121,65 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         };
     }, [completeOAuthLogin, t]);
 
+    // Load proxy pool nodes & default strict mode when dialog opens
+    useEffect(() => {
+        if (!isOpen) {
+            setSelectedProxyId('');
+            setStrictProxy(false);
+            return;
+        }
+        let cancelled = false;
+        invoke<ProxyPoolConfig>('get_proxy_pool_config')
+            .then((cfg) => {
+                if (cancelled) return;
+                setProxyNodes(Array.isArray(cfg?.proxies) ? cfg.proxies : []);
+                setStrictProxy(Boolean(cfg?.strict_mode));
+            })
+            .catch(() => {
+                // 静默兜底：未能读取代理池时保持默认直连/全局代理选项
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen]);
+
+    const currentProxyOptions = (): accountService.AddAccountProxyOptions => ({
+        ...(selectedProxyId ? { proxyId: selectedProxyId } : {}),
+        strictProxy,
+    });
+
     // Pre-generate OAuth URL when dialog opens on OAuth tab (so URL is shown BEFORE "Start OAuth")
     useEffect(() => {
         if (!isOpen) return;
         if (activeTab !== 'oauth') return;
 
+        let cancelled = false;
         const clientKey = accountType === 'enterprise' ? 'antigravity_gcp' : 'antigravity_enterprise';
 
-        accountService.prepareOAuthUrl(clientKey)
+        accountService.prepareOAuthUrl(clientKey, {
+            ...(selectedProxyId ? { proxyId: selectedProxyId } : {}),
+            strictProxy,
+        })
             .then((url) => {
+                if (cancelled) return;
                 if (url && url.length > 0) setOauthUrl(url);
+                if (statusRef.current === 'error') {
+                    setStatus('idle');
+                    setMessage('');
+                }
             })
             .catch((e) => {
+                if (cancelled) return;
                 console.error('Failed to prepare OAuth URL:', e);
+                setOauthUrl('');
+                setStatus('error');
+                setMessage(String(e));
             });
-    }, [isOpen, activeTab, accountType]);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, activeTab, accountType, selectedProxyId, strictProxy]);
 
     // If user navigates away from OAuth tab, cancel prepared flow to release the port.
     useEffect(() => {
@@ -240,16 +288,19 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         // 3. 批量添加
         let successCount = 0;
         let failCount = 0;
+        let lastError = '';
+        const proxyOptions = currentProxyOptions();
 
         for (let i = 0; i < tokens.length; i++) {
             const currentToken = tokens[i];
             setMessage(t('accounts.add.token.batch_progress', { current: i + 1, total: tokens.length }));
 
             try {
-                await onAdd("", currentToken);
+                await onAdd("", currentToken, proxyOptions);
                 successCount++;
             } catch (error) {
                 console.error(`Failed to add token ${i + 1}:`, error);
+                lastError = String(error);
                 failCount++;
             }
             // 稍微延迟一下,避免太快
@@ -267,12 +318,16 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         } else if (successCount > 0) {
             // 部分成功
             setStatus('success'); // 还是用绿色,但提示部分失败
-            setMessage(t('accounts.add.token.batch_partial', { success: successCount, fail: failCount }));
+            setMessage(
+                lastError
+                    ? `${t('accounts.add.token.batch_partial', { success: successCount, fail: failCount })} (${lastError})`
+                    : t('accounts.add.token.batch_partial', { success: successCount, fail: failCount })
+            );
             // 不自动关闭,让用户看到结果
         } else {
             // 全部失败
             setStatus('error');
-            setMessage(t('accounts.add.token.batch_fail'));
+            setMessage(lastError || t('accounts.add.token.batch_fail'));
         }
     };
 
@@ -286,7 +341,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             // 1. 获取 URL (复用已有 URL，避免重复触发 prepare_oauth_url 导致后端 Flow 状态被覆盖重置)
             let url = oauthUrl;
             if (!url) {
-                url = await accountService.prepareOAuthUrl(clientKey);
+                url = await accountService.prepareOAuthUrl(clientKey, currentProxyOptions());
 
                 if (!url) {
                     throw new Error(t('accounts.add.oauth.error_no_url', 'OAuth URLを取得できませんでした'));
@@ -355,7 +410,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         const clientKey = accountType === 'enterprise' ? 'antigravity_gcp' : 'antigravity_enterprise';
         // Default flow: opens the default browser and completes automatically.
         // (If user opened the URL manually, completion is also triggered by oauth-callback-received.)
-        handleAction(t('accounts.add.tabs.oauth'), () => startOAuthLogin(clientKey), { clearOauthUrl: false });
+        handleAction(t('accounts.add.tabs.oauth'), () => startOAuthLogin(clientKey, currentProxyOptions()), { clearOauthUrl: false });
     };
 
     const handleCompleteOAuth = () => {
@@ -391,7 +446,11 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                 }
             }
 
-            await invoke('submit_oauth_code', { code: manualCode.trim(), state: fallbackState });
+            await invoke('submit_oauth_code', {
+                code: manualCode.trim(),
+                state: fallbackState,
+                ...currentProxyOptions(),
+            });
 
             // 兑换并保存成功后，先刷新账号列表，再提示成功并关闭弹窗
             await fetchAccounts();
@@ -564,6 +623,100 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                                 {t('accounts.type.enterprise', '企业 / GCP (Vertex AI)')}
                             </button>
                         </div>
+
+                        {/* 预选代理节点与严格代理模式（OAuth 与 Refresh Token 导入均支持） */}
+                        {(activeTab === 'oauth' || activeTab === 'token') && (
+                            <div className="mb-4 p-3 rounded-xl bg-gray-50 dark:bg-base-200/70 border border-gray-200/80 dark:border-base-300 space-y-2.5">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <label
+                                        htmlFor="add-account-proxy-select"
+                                        className="text-xs font-semibold text-gray-700 dark:text-gray-200 flex items-center gap-1.5"
+                                    >
+                                        <Network className="w-3.5 h-3.5 text-blue-500" />
+                                        {t('accounts.add.proxy.label', '代理节点（可选）')}
+                                    </label>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={strictProxy}
+                                        disabled={status === 'loading' || status === 'success'}
+                                        onClick={() => {
+                                            setStrictProxy(prev => !prev);
+                                            if (status === 'error') {
+                                                setStatus('idle');
+                                                setMessage('');
+                                            }
+                                        }}
+                                        title={t('accounts.add.proxy.strict_hint')}
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer border disabled:opacity-50 ${
+                                            strictProxy
+                                                ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                                                : 'bg-white dark:bg-base-100 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-base-300 hover:bg-gray-100 dark:hover:bg-base-300/60'
+                                        }`}
+                                    >
+                                        <span
+                                            className={`w-1.5 h-1.5 rounded-full ${
+                                                strictProxy ? 'bg-amber-500' : 'bg-gray-400 dark:bg-gray-500'
+                                            }`}
+                                        />
+                                        {t('accounts.add.proxy.strict_label', '严格代理模式')}
+                                        <span className="opacity-75">
+                                            · {strictProxy
+                                                ? t('accounts.add.proxy.strict_on', '已开启（禁止回退直连）')
+                                                : t('accounts.add.proxy.strict_off', '未开启（允许按配置回退）')}
+                                        </span>
+                                    </button>
+                                </div>
+
+                                <select
+                                    id="add-account-proxy-select"
+                                    value={selectedProxyId}
+                                    disabled={status === 'loading' || status === 'success'}
+                                    onChange={(e) => {
+                                        setSelectedProxyId(e.target.value);
+                                        if (status === 'error') {
+                                            setStatus('idle');
+                                            setMessage('');
+                                        }
+                                    }}
+                                    className="w-full px-3 py-1.5 rounded-lg text-xs bg-white dark:bg-base-100 border border-gray-200 dark:border-base-300 text-gray-800 dark:text-base-content focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 disabled:opacity-60"
+                                >
+                                    <option value="">
+                                        {t('accounts.add.proxy.default_option', '默认（跟随代理池策略 / 全局代理）')}
+                                    </option>
+                                    {proxyNodes.map((proxy) => {
+                                        const tags: string[] = [];
+                                        if (!proxy.enabled) {
+                                            tags.push(t('accounts.add.proxy.disabled_tag', '已禁用'));
+                                        } else if (!proxy.is_healthy) {
+                                            tags.push(t('accounts.add.proxy.unhealthy_tag', '异常'));
+                                        } else if (typeof proxy.latency === 'number') {
+                                            tags.push(`${proxy.latency}ms`);
+                                        }
+                                        const suffix = tags.length > 0 ? ` [${tags.join(' · ')}]` : '';
+                                        const displayName = proxy.name?.trim() ? `${proxy.name} (${proxy.url})` : proxy.url;
+                                        return (
+                                            <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled && !strictProxy}>
+                                                {displayName}{suffix}
+                                            </option>
+                                        );
+                                    })}
+                                </select>
+
+                                {strictProxy && (
+                                    <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">
+                                        {t('accounts.add.proxy.strict_hint')}
+                                    </p>
+                                )}
+
+                                <div className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed space-y-1 pt-0.5">
+                                    <div>• {t('accounts.add.proxy.scope_server')}</div>
+                                    {activeTab === 'oauth' && (
+                                        <div>• {t('accounts.add.proxy.scope_browser')}</div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         {/* 添加 Web 模式提示 */}
                         {!isTauri() && (

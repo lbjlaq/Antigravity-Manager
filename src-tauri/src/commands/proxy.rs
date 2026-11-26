@@ -893,7 +893,7 @@ pub async fn check_proxy_health(
     }
 }
 
-/// 获取当前内存中的代理池状态
+/// 获取当前内存中的代理池状态（若反代未运行，回退读取已保存的磁盘配置）
 #[tauri::command]
 pub async fn get_proxy_pool_config(
     state: State<'_, ProxyServiceState>,
@@ -902,7 +902,9 @@ pub async fn get_proxy_pool_config(
         let config = server.proxy_pool_state.read().await;
         Ok(config.clone())
     } else {
-        Err("服务未运行".to_string())
+        crate::modules::config::load_app_config()
+            .map(|c| c.proxy.proxy_pool)
+            .map_err(|e| format!("加载代理池配置失败: {}", e))
     }
 }
 

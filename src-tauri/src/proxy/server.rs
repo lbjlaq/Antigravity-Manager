@@ -1679,15 +1679,23 @@ async fn admin_get_current_account(
 #[serde(rename_all = "camelCase")]
 struct AddAccountRequest {
     refresh_token: String,
+    #[serde(default, alias = "proxy_id")]
+    proxy_id: Option<String>,
+    #[serde(default, alias = "strict_proxy")]
+    strict_proxy: bool,
 }
 
 async fn admin_add_account(
     State(state): State<AppState>,
     Json(payload): Json<AddAccountRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id: payload.proxy_id,
+        strict_proxy: payload.strict_proxy,
+    };
     let account = state
         .account_service
-        .add_account(&payload.refresh_token)
+        .add_account_with_options(&payload.refresh_token, proxy_options)
         .await
         .map_err(|e| {
             (
@@ -1850,16 +1858,24 @@ struct AdminOAuthRequest {
         alias = "oauthClientKey"
     )]
     oauth_client_key: Option<String>,
+    #[serde(default, alias = "proxyId", alias = "proxy_id")]
+    proxy_id: Option<String>,
+    #[serde(default, alias = "strictProxy", alias = "strict_proxy")]
+    strict_proxy: bool,
 }
 
 async fn admin_prepare_oauth_url(
     State(state): State<AppState>,
     body: Option<Json<AdminOAuthRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let client_key = body.and_then(|b| b.0.oauth_client_key);
+    let req = body.map(|b| b.0).unwrap_or_default();
+    let proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id: req.proxy_id,
+        strict_proxy: req.strict_proxy,
+    };
     let url = state
         .account_service
-        .prepare_oauth_url(client_key)
+        .prepare_oauth_url_with_options(req.oauth_client_key, proxy_options)
         .await
         .map_err(|e| {
             (
@@ -1874,10 +1890,14 @@ async fn admin_start_oauth_login(
     State(state): State<AppState>,
     body: Option<Json<AdminOAuthRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let client_key = body.and_then(|b| b.0.oauth_client_key);
+    let req = body.map(|b| b.0).unwrap_or_default();
+    let proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id: req.proxy_id,
+        strict_proxy: req.strict_proxy,
+    };
     let account = state
         .account_service
-        .start_oauth_login(client_key)
+        .start_oauth_login_with_options(req.oauth_client_key, proxy_options)
         .await
         .map_err(|e| {
             (
@@ -1927,15 +1947,27 @@ async fn admin_cancel_oauth_login(
 struct SubmitCodeRequest {
     code: String,
     state: Option<String>,
+    #[serde(default, alias = "proxyId", alias = "proxy_id")]
+    proxy_id: Option<String>,
+    #[serde(default, alias = "strictProxy", alias = "strict_proxy")]
+    strict_proxy: Option<bool>,
 }
 
 async fn admin_submit_oauth_code(
     State(state): State<AppState>,
     Json(payload): Json<SubmitCodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let override_opts = if payload.proxy_id.is_some() || payload.strict_proxy.is_some() {
+        Some(crate::proxy::proxy_pool::AddAccountProxyOptions {
+            proxy_id: payload.proxy_id,
+            strict_proxy: payload.strict_proxy.unwrap_or(false),
+        })
+    } else {
+        None
+    };
     let account = state
         .account_service
-        .submit_oauth_code(payload.code, payload.state)
+        .submit_oauth_code_with_options(payload.code, payload.state, override_opts)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
 
@@ -4499,9 +4531,9 @@ async fn handle_oauth_callback(
     // the web login entry point (both store `state` in the shared flow registry).
     // Validate against it before any side effect (cancel / code exchange), which
     // prevents login CSRF, account injection and unauthenticated flow cancellation.
-    let flow_context = crate::modules::oauth_server::get_active_oauth_flow_context();
+    let flow_context = crate::modules::oauth_server::get_active_oauth_flow_full_context();
     let code =
-        match precheck_oauth_callback(flow_context.as_ref().map(|(_, s, _)| s.as_str()), &params) {
+        match precheck_oauth_callback(flow_context.as_ref().map(|c| c.state.as_str()), &params) {
             OAuthCallbackPrecheck::Proceed { code } => code,
             OAuthCallbackPrecheck::ProviderError { description } => {
                 error!(
@@ -4532,22 +4564,26 @@ async fn handle_oauth_callback(
                 )));
             }
         };
-    let Some((redirect_uri, _, flow_client_key)) = flow_context else {
+    let Some(flow_ctx) = flow_context else {
         return Ok(Html(oauth_failure_html(
             "No active OAuth login flow. Please start the login again from the app.",
         )));
     };
-    let preferred_client_key = Some(flow_client_key);
 
-    match crate::modules::oauth::exchange_code_with_client(
+    match crate::modules::oauth::exchange_code_with_options(
         &code,
-        &redirect_uri,
-        preferred_client_key.as_deref(),
+        &flow_ctx.redirect_uri,
+        Some(&flow_ctx.client_key),
+        Some(&flow_ctx.proxy_options),
     )
     .await
     {
         Ok(token_resp) => {
-            if let Err(e) = state.account_service.process_oauth_token(token_resp).await {
+            if let Err(e) = state
+                .account_service
+                .process_oauth_token_with_options(token_resp, flow_ctx.proxy_options)
+                .await
+            {
                 error!("Failed to save account in OAuth callback: {}", e);
                 return Ok(Html(oauth_failure_html(&format!(
                     "Failed to save account: {}",
@@ -4638,6 +4674,10 @@ struct WebOAuthClientQuery {
         alias = "oauthClientKey"
     )]
     oauth_client_key: Option<String>,
+    #[serde(default, alias = "proxyId", alias = "proxy_id")]
+    proxy_id: Option<String>,
+    #[serde(default, alias = "strictProxy", alias = "strict_proxy")]
+    strict_proxy: bool,
 }
 
 async fn admin_prepare_oauth_url_web(
@@ -4645,6 +4685,17 @@ async fn admin_prepare_oauth_url_web(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let mut proxy_options = crate::proxy::proxy_pool::AddAccountProxyOptions {
+        proxy_id: client_query.proxy_id,
+        strict_proxy: client_query.strict_proxy,
+    }
+    .normalized();
+    let validated_proxy_id =
+        crate::proxy::proxy_pool::validate_add_account_proxy_options(&proxy_options)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
+    proxy_options.proxy_id = validated_proxy_id;
+
     let port = state.security.read().await.port;
     let host = headers.get("host").and_then(|h| h.to_str().ok());
     let proto = headers
@@ -4653,9 +4704,10 @@ async fn admin_prepare_oauth_url_web(
     let redirect_uri =
         get_oauth_redirect_uri(port, host, proto, client_query.oauth_client_key.as_deref());
 
-    let auth_url = crate::modules::oauth_server::prepare_oauth_flow_manually(
+    let auth_url = crate::modules::oauth_server::prepare_oauth_flow_manually_with_options(
         redirect_uri,
         client_query.oauth_client_key,
+        proxy_options,
     )
     .map_err(|e| {
         (

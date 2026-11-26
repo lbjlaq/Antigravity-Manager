@@ -347,6 +347,13 @@ fn parse_env_bool(key: &str) -> Option<bool> {
     }
 }
 
+/// 读取生效的代理池严格模式（支持 `ABV_PROXY_POOL_STRICT_MODE` / `ANTIGRAVITY_PROXY_POOL_STRICT_MODE` 覆写）
+pub fn effective_proxy_pool_strict_mode(pool_cfg: &ProxyPoolConfig) -> bool {
+    parse_env_bool("ABV_PROXY_POOL_STRICT_MODE")
+        .or_else(|| parse_env_bool("ANTIGRAVITY_PROXY_POOL_STRICT_MODE"))
+        .unwrap_or(pool_cfg.strict_mode)
+}
+
 /// 更新全局上传阶段超时配置
 pub fn update_upload_timeout_config(config: UploadTimeoutConfig) {
     let config = config.normalized();
@@ -1749,6 +1756,9 @@ pub struct ProxyPoolConfig {
     pub health_check_interval: u64,       // 健康检查间隔 (秒)
     pub auto_failover: bool,              // 自动故障转移
     pub strategy: ProxySelectionStrategy, // 代理选择策略
+    /// 严格代理模式：禁用自动回退到其他池节点/全局上游代理/直连，节点不可用时直接返回显式错误
+    #[serde(default)]
+    pub strict_mode: bool,
     /// 账号到代理的绑定关系 (account_id -> proxy_id)，持久化存储
     #[serde(default)]
     pub account_bindings: HashMap<String, String>,
@@ -1763,6 +1773,7 @@ impl Default for ProxyPoolConfig {
             health_check_interval: 300,
             auto_failover: true,
             strategy: ProxySelectionStrategy::Priority,
+            strict_mode: false,
             account_bindings: HashMap::new(),
         }
     }
