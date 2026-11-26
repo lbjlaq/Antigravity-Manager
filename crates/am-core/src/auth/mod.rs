@@ -24,6 +24,7 @@ struct GoogleTokenResponse {
     refresh_token: Option<String>,
     expires_in: Option<i64>,
     token_type: Option<String>,
+    id_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +40,23 @@ pub struct OAuthClient {
 impl OAuthClient {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::runtime::shared_http_client().clone(),
+        }
+    }
+
+    /// 从用户粘贴的完整回调 URL 或裸授权码中提取并解码 code 参数
+    pub fn extract_code_from_input(input: &str) -> String {
+        let trimmed = input.trim();
+        if trimmed.contains("code=") {
+            trimmed
+                .split("code=")
+                .nth(1)
+                .and_then(|s| s.split('&').next())
+                .and_then(|s| s.split('#').next())
+                .and_then(|c| urlencoding::decode(c).ok().map(|cow| cow.into_owned()))
+                .unwrap_or_else(|| trimmed.to_string())
+        } else {
+            trimmed.to_string()
         }
     }
 
@@ -96,6 +113,9 @@ impl OAuthClient {
             token_type: token_resp.token_type,
             expiry_timestamp: Some(now + expires_in),
             project_id: None,
+            id_token: token_resp.id_token,
+            oauth_client_key: Some("antigravity".to_string()),
+            is_gcp_tos: Some(false),
         })
     }
 
@@ -138,6 +158,9 @@ impl OAuthClient {
             token_type: token_resp.token_type,
             expiry_timestamp: Some(now + expires_in),
             project_id: None,
+            id_token: token_resp.id_token,
+            oauth_client_key: Some("antigravity".to_string()),
+            is_gcp_tos: Some(false),
         })
     }
 

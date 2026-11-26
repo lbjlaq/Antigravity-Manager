@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -10,21 +10,39 @@ import {
   Tag,
   BookCopy,
   CheckCircle2,
-  Lock,
   ArrowUpDown,
-  AppWindow,
-  Code2,
-  Puzzle,
-  Terminal,
   Fingerprint,
   ChevronDown,
   Check,
   X,
-  Filter
+  ExternalLink,
+  GripVertical,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { api, HostTarget, BackendAccount, ActiveHostStatus } from '../api';
+import { tUi } from '../i18n/ui';
+import {
+  readStoredAccountsSortMode,
+  readStoredAccountsViewMode,
+  saveAccountsSortMode,
+  saveAccountsViewMode,
+  hydrateUiStateFromConfig,
+} from '../utils/uiState';
+import {
+  extractAccountPoolQuota,
+  formatBucketReset,
+  PoolWindowQuota,
+} from '../utils/quota';
+import {
+  QuotaMatrixBar,
+  QuotaWindowBadge,
+  quotaPctTextClass,
+} from '../components/common/QuotaMatrixBar';
 
-export type HostTarget = 'app' | 'ide' | 'plugin' | 'cli';
+export type SortMode = 'health_default' | 'name_asc' | 'tier_desc' | 'custom';
+export type ViewMode = 'table' | 'card';
 
 export interface QuotaPeriod {
   percentage: number;
@@ -40,126 +58,460 @@ export interface AccountItem {
   id: string;
   email: string;
   alias: string;
-  tier: 'PRO' | 'FREE';
+  tier: 'PRO' | 'FREE' | 'ULTRA' | 'ENTERPRISE';
   tags: string[];
   activeHosts: HostTarget[];
   geminiQuota?: ModelGroupQuota;
   claudeQuota?: ModelGroupQuota;
   argonQuota?: ModelGroupQuota;
   isForbidden?: boolean;
+  isTokenExpired?: boolean;
+  statusReason?: string;
+  banAppealUrl?: string;
+  rawError?: string;
+  refreshToken?: string;
   fingerprint?: string;
 }
 
+interface AccountCheckboxProps {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  title?: string;
+}
+
+const AccountCheckbox: React.FC<AccountCheckboxProps> = ({
+  checked,
+  indeterminate = false,
+  onChange,
+  title,
+}) => {
+  const active = checked || indeterminate;
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={indeterminate ? 'mixed' : checked}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange();
+      }}
+      title={title}
+      className={`w-3.5 h-3.5 rounded-[4px] flex items-center justify-center shrink-0 transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
+        active
+          ? 'bg-blue-600 dark:bg-blue-500 border border-blue-600 dark:border-blue-500 text-white shadow-2xs'
+          : 'bg-white dark:bg-[#1a1b22] border border-slate-300 dark:border-zinc-600 hover:border-blue-400 dark:hover:border-blue-400'
+      }`}
+    >
+      {checked ? (
+        <Check className="w-2.5 h-2.5 stroke-[3]" />
+      ) : indeterminate ? (
+        <span className="w-2 h-[1.6px] rounded-full bg-white" />
+      ) : null}
+    </button>
+  );
+};
+
+interface QuotaPoolDisplayProps {
+  pool: 'gemini' | 'claude';
+  quota?: ModelGroupQuota;
+  lang: string;
+}
+
+const QuotaPoolDisplay: React.FC<QuotaPoolDisplayProps> = React.memo(({
+  pool,
+  quota,
+  lang,
+}) => {
+  const isGemini = pool === 'gemini';
+  const rows: PoolWindowQuota[] = [];
+  if (quota?.fiveHour) {
+    rows.push({
+      window: '5h',
+      percentage: Math.max(0, Math.min(100, quota.fiveHour.percentage)),
+      resetText: quota.fiveHour.resetText || '4h 59m',
+    });
+  }
+  if (quota?.sevenDay) {
+    rows.push({
+      window: '7d',
+      percentage: Math.max(0, Math.min(100, quota.sevenDay.percentage)),
+      resetText: quota.sevenDay.resetText || '6d 23h',
+    });
+  }
+
+  return (
+    <div className="flex flex-col justify-center gap-2 px-3 py-2 min-h-[48px] h-full rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.06] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      {rows.length === 0 ? (
+        <div className="flex items-center gap-2.5">
+          <div className="w-[72px] shrink-0 flex items-center gap-1.5 leading-none">
+            <span className="text-[11px] font-bold text-slate-800 dark:text-zinc-100">
+              {isGemini ? 'Gemini' : 'Claude'}
+            </span>
+            <QuotaWindowBadge window="7d" className="text-[9px] px-1 py-[0.5px] opacity-40" />
+          </div>
+          <QuotaMatrixBar pool={pool} window="7d" percentage={0} empty className="min-w-[84px] h-[12px]" />
+          <div className="flex items-center justify-end font-mono tabular-nums shrink-0 leading-none">
+            <span className="text-[10.5px] font-bold w-[34px] text-right text-slate-400 dark:text-zinc-500">
+              --
+            </span>
+            <span className="text-[9px] text-slate-400 dark:text-zinc-500 w-[44px] text-right">
+              --
+            </span>
+          </div>
+        </div>
+      ) : (
+        rows.map((item) => {
+          const baseTip =
+            item.window === '5h'
+              ? tUi(lang, 'quota_5h_tooltip', { pct: item.percentage })
+              : tUi(lang, 'quota_7d_tooltip', { pct: item.percentage });
+          const paceTip =
+            item.timeRemainingPct !== undefined && item.paceStatus
+              ? ` · ${tUi(lang, 'quota_time_left', { pct: item.timeRemainingPct })} · ${tUi(
+                  lang,
+                  item.paceStatus === 'safe'
+                    ? 'quota_pace_safe'
+                    : item.paceStatus === 'warn'
+                    ? 'quota_pace_warn'
+                    : 'quota_pace_fast'
+                )}`
+              : '';
+          const tooltip = `${baseTip}${paceTip}`;
+
+          return (
+            <div key={item.window} title={tooltip} className="flex items-center gap-2.5">
+              {/* 模型名 + 窗口高对比度胶囊层级 */}
+              <div className="w-[72px] shrink-0 flex items-center gap-1.5 leading-none">
+                <span className="text-[11px] font-bold text-slate-800 dark:text-zinc-100">
+                  {isGemini ? 'Gemini' : 'Claude'}
+                </span>
+                <QuotaWindowBadge window={item.window} className="text-[9px] px-1 py-[0.5px]" />
+              </div>
+
+              {/* 精密 2×20 晶格微方块矩阵进度条 + 1px 官方时间节奏标尺 */}
+              <QuotaMatrixBar
+                pool={pool}
+                window={item.window}
+                percentage={item.percentage}
+                className="min-w-[84px] h-[12px]"
+              />
+
+              {/* 纯净右对齐数值与倒计时 */}
+              <div className="flex items-center justify-end font-mono tabular-nums shrink-0 leading-none">
+                <span className={`text-[10.5px] font-bold w-[34px] text-right ${quotaPctTextClass(item.percentage)}`}>
+                  {item.percentage}%
+                </span>
+                <span className="text-[9px] w-[44px] text-right whitespace-nowrap truncate text-slate-400 dark:text-zinc-500">
+                  {item.resetText}
+                </span>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+});
+
 interface AccountsProps {
-  lang: 'zh' | 'en';
+  lang: string;
 }
 
 export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
-  const isZh = lang === 'zh';
-
   // 1. 检索与分类状态
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterTab, setFilterTab] = useState<'all' | 'ultra' | 'pro' | 'free' | 'warning'>('all');
   const [selectedTag, setSelectedTag] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // 弹窗状态 (指纹、标签管理、JSON导入导出)
+  // 视图模式切换：列表风格 (table) vs 卡片风格 (card)，localStorage + config.json 双写记忆
+  const initialStoredViewRef = useRef<ViewMode | null>(readStoredAccountsViewMode());
+  const initialStoredSortRef = useRef<SortMode | null>(readStoredAccountsSortMode());
+  const uiTouchedRef = useRef({ view: false, sort: false });
+
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    () => initialStoredViewRef.current ?? 'table'
+  );
+
+  const handleToggleViewMode = useCallback((mode: ViewMode) => {
+    uiTouchedRef.current.view = true;
+    setViewMode(mode);
+    saveAccountsViewMode(mode);
+  }, []);
+
+  // 排序与自由拖拽状态（双写持久化 sortMode，卡片/列表双视图通用）
+  const [sortMode, setSortMode] = useState<SortMode>(
+    () => initialStoredSortRef.current ?? 'health_default'
+  );
+  const handleChangeSortMode = useCallback((mode: SortMode) => {
+    uiTouchedRef.current.sort = true;
+    setSortMode(mode);
+    saveAccountsSortMode(mode);
+  }, []);
+
+  useEffect(() => {
+    void hydrateUiStateFromConfig().then((hydrated) => {
+      if (!hydrated) return;
+      if (!initialStoredViewRef.current && !uiTouchedRef.current.view && hydrated.accountsViewMode) {
+        setViewMode(hydrated.accountsViewMode);
+      }
+      if (!initialStoredSortRef.current && !uiTouchedRef.current.sort && hydrated.accountsSortMode) {
+        setSortMode(hydrated.accountsSortMode);
+      }
+    });
+  }, []);
+
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dragGhostPos, setDragGhostPos] = useState<{ x: number; y: number } | null>(null);
+  const pointerDragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    return () => {
+      pointerDragCleanupRef.current?.();
+    };
+  }, []);
+  const pointerDragRef = useRef<{
+    sourceId: string;
+    startX: number;
+    startY: number;
+    active: boolean;
+    currentOverId: string | null;
+  } | null>(null);
+
+  // 弹窗状态 (指纹、标签管理、JSON导入导出、OAuth登录、异常详情/申诉、删除确认)
   const [activeModal, setActiveModal] = useState<{
-    type: 'fingerprint' | 'tags' | 'export';
+    type: 'fingerprint' | 'tags' | 'export' | 'import' | 'oauth' | 'error' | 'deleteConfirm';
     account?: AccountItem;
   } | null>(null);
   const [tempTagInput, setTempTagInput] = useState('');
+  const [importJsonInput, setImportJsonInput] = useState('');
+  const [isOAuthWaiting, setIsOAuthWaiting] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
-  // 2. 账号 Mock 数据
-  const [accounts, setAccounts] = useState<AccountItem[]>([
-    {
-      id: '1',
-      email: 'ctrler@868666.best',
-      alias: '开发主力机 (Master)',
-      tier: 'PRO',
-      tags: ['🌟 主力', 'VIP', 'Claude池'],
-      activeHosts: ['app', 'ide'],
-      fingerprint: 'fp_mac_a8f93e2b_sonoma',
-      geminiQuota: {
-        fiveHour: { percentage: 100, resetText: '4h 54m' },
-        sevenDay: { percentage: 100, resetText: '6d 23h' },
-      },
-      claudeQuota: {
-        // 场景 A：5h 为 0% 耗尽，周额度还剩 50%
-        fiveHour: { percentage: 0, resetText: '3h 15m' },
-        sevenDay: { percentage: 50, resetText: '5d 13h' },
-      },
-      argonQuota: {
-        sevenDay: { percentage: 100, resetText: '6d 18h' },
-      },
-    },
-    {
-      id: '2',
-      email: 'developer.pro@gmail.com',
-      alias: 'Cloud Copilot',
-      tier: 'PRO',
-      tags: ['🌟 主力', 'Team Pro'],
-      activeHosts: ['cli'],
-      fingerprint: 'fp_win_e3c109df_rtx4090',
-      geminiQuota: {
-        fiveHour: { percentage: 100, resetText: '3h 12m' },
-        sevenDay: { percentage: 95, resetText: '4d 08h' },
-      },
-      claudeQuota: {
-        // 场景 B：5h 为 85%，周额度为 40% (5h 比 7d 长，40% 短轨在上方)
-        fiveHour: { percentage: 85, resetText: '2h 10m' },
-        sevenDay: { percentage: 40, resetText: '4d 20h' },
-      },
-    },
-    {
-      id: '3',
-      email: 'research.pool1@gmail.com',
-      alias: '科研备用池 01',
-      tier: 'FREE',
-      tags: ['Claude池', '备用'],
-      activeHosts: ['plugin'],
-      fingerprint: 'fp_linux_89ab32ff_debian',
-      geminiQuota: {
-        fiveHour: { percentage: 100, resetText: '5h 00m' },
-        sevenDay: { percentage: 100, resetText: '7d 00h' },
-      },
-      claudeQuota: {
-        fiveHour: { percentage: 40, resetText: '1h 15m' },
-        sevenDay: { percentage: 30, resetText: '2d 04h' },
-      },
-    },
-    {
-      id: '4',
-      email: 'tester.heavy@gmail.com',
-      alias: '压力测试用号',
-      tier: 'FREE',
-      tags: ['压力测试'],
-      activeHosts: [],
-      fingerprint: 'fp_sandbox_0012ea77',
-      isForbidden: true,
-      geminiQuota: {
-        fiveHour: { percentage: 0, resetText: '已受限' },
-        sevenDay: { percentage: 0, resetText: '需解封' },
-      },
-    },
-    {
-      id: '5',
-      email: 'sprint.dev@corp.internal',
-      alias: '敏捷研发 05',
-      tier: 'PRO',
-      tags: ['VIP', 'Argon池'],
-      activeHosts: [],
-      fingerprint: 'fp_mac_7721cc89_m3max',
-      geminiQuota: {
-        fiveHour: { percentage: 100, resetText: '4h 30m' },
-        sevenDay: { percentage: 100, resetText: '6d 12h' },
-      },
-      argonQuota: {
-        sevenDay: { percentage: 90, resetText: '5d 08h' },
-      },
-    },
-  ]);
+  useEffect(() => {
+    if (!activeModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveModal(null);
+        setIsOAuthWaiting(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [activeModal]);
+
+  // 2. 账号状态 (真实对接磁盘/Tauri后端数据)
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [activeHostsStatus, setActiveHostsStatus] = useState<ActiveHostStatus | null>(null);
+
+  // 从后端加载真实账号与多宿主激活状态
+  const loadAccountsData = useCallback(async () => {
+    try {
+      const [backendAccounts, hosts] = await Promise.all([
+        api.getAccounts(),
+        api.getActiveHosts(),
+      ]);
+      setActiveHostsStatus(hosts || null);
+
+      if (backendAccounts && backendAccounts.length > 0) {
+        const mapped: AccountItem[] = backendAccounts.map((acc: BackendAccount) => {
+          // 判定当前绑定的宿主
+          const activeHostsList: HostTarget[] = [];
+          const matches = (targetAccount?: string | null) =>
+            Boolean(targetAccount && (targetAccount === acc.id || targetAccount.toLowerCase() === acc.email.toLowerCase()));
+
+          if (matches(hosts?.app_account)) activeHostsList.push('app');
+          if (matches(hosts?.ide_account)) activeHostsList.push('ide');
+          if (matches(hosts?.plugin_account)) activeHostsList.push('plugin');
+          if (matches(hosts?.agy_account)) activeHostsList.push('cli');
+
+          // 真实订阅等级判定：严格依准 quota.subscription_tier / raw_tier
+          let tier: 'PRO' | 'FREE' | 'ULTRA' | 'ENTERPRISE' = 'FREE';
+          const subTier = (acc.quota?.subscription_tier || '').toUpperCase();
+          if (subTier.includes('ULTRA') || subTier.includes('HELIUM')) {
+            tier = 'ULTRA';
+          } else if (subTier.includes('PRO') || subTier.includes('PREMIUM')) {
+            tier = 'PRO';
+          } else if (subTier.includes('ENTERPRISE')) {
+            tier = 'ENTERPRISE';
+          } else if (subTier === 'FREE' || subTier.includes('STARTER')) {
+            tier = 'FREE';
+          } else if (acc.tags?.some((t) => t.toUpperCase().includes('PRO'))) {
+            tier = 'PRO';
+          }
+
+          // 真实封禁/停用/风控状态判定 (proxy_disabled 仅为网关代理调度设置，不视为账号本身异常)
+          const isBanned = Boolean(acc.banned);
+          const isDisabled = Boolean(acc.disabled);
+          const isQuotaForbidden = Boolean(acc.quota?.is_forbidden);
+          const isValidationBlocked = Boolean(acc.validation_blocked);
+          const rawReason =
+            acc.banned_reason ||
+            acc.disabled_reason ||
+            acc.quota?.forbidden_reason ||
+            (acc.proxy_disabled_reason?.toLowerCase().includes('403') ? acc.proxy_disabled_reason : '');
+
+          let isForbidden = false;
+          let isTokenExpired = false;
+          let statusReason: string | undefined = undefined;
+          let banAppealUrl: string | undefined = (acc as any).ban_appeal_url || undefined;
+
+          // 1. 优先提取申诉 URL (优先匹配显式 http(s) 链接)
+          if (rawReason) {
+            const urlMatch = rawReason.match(/https?:\/\/[^\s"',}]+/i);
+            if (urlMatch && !banAppealUrl) {
+              banAppealUrl = urlMatch[0];
+            }
+          }
+
+          // 2. 封禁/403权限受限/服务条款违规判定 (必须优先于普通的 Token 失效)
+          if (
+            isQuotaForbidden ||
+            isBanned ||
+            isValidationBlocked ||
+            rawReason.includes('PERMISSION_DENIED') ||
+            rawReason.includes('403') ||
+            rawReason.includes('UNSUPPORTED_LOCATION') ||
+            rawReason.includes('SUBSCRIPTION_REQUIRED') ||
+            rawReason.includes('violation of Terms of Service') ||
+            rawReason.includes('TOS')
+          ) {
+            isForbidden = true;
+            if (isBanned || rawReason.includes('violation of Terms of Service') || rawReason.includes('TOS')) {
+              statusReason = tUi(lang, 'status_tos_violation');
+            } else if (rawReason.includes('UNSUPPORTED_LOCATION')) {
+              statusReason = tUi(lang, 'status_location_unsupported');
+            } else {
+              statusReason = tUi(lang, 'status_forbidden_403');
+            }
+            if (!banAppealUrl) {
+              banAppealUrl = 'https://forms.gle/hGzM9MEUv2azZsrb9';
+            }
+          } else if (
+            rawReason.includes('invalid_grant') ||
+            rawReason.includes('token expired') ||
+            rawReason.includes('revoked') ||
+            (isDisabled && !rawReason.includes('403'))
+          ) {
+            // 3. 授权凭据失效：不是 403 / 封禁
+            isTokenExpired = true;
+            statusReason = tUi(lang, 'status_token_expired');
+          } else if (isDisabled) {
+            isTokenExpired = true;
+            statusReason = tUi(lang, 'status_token_expired');
+          }
+
+          // 配额解析：复用单一数据源 extractAccountPoolQuota (与托盘小窗 100% 同步)
+          const parsedGemini = extractAccountPoolQuota(acc, 'gemini');
+          const parsedClaude = extractAccountPoolQuota(acc, 'claude');
+
+          const geminiQuota: ModelGroupQuota | undefined = parsedGemini.hasData
+            ? {
+                fiveHour: parsedGemini.fiveHour
+                  ? {
+                      percentage: parsedGemini.fiveHour.percentage,
+                      resetText: parsedGemini.fiveHour.resetText,
+                    }
+                  : undefined,
+                sevenDay: parsedGemini.sevenDay
+                  ? {
+                      percentage: parsedGemini.sevenDay.percentage,
+                      resetText: parsedGemini.sevenDay.resetText,
+                    }
+                  : undefined,
+              }
+            : undefined;
+
+          const claudeQuota: ModelGroupQuota | undefined = parsedClaude.hasData
+            ? {
+                fiveHour: parsedClaude.fiveHour
+                  ? {
+                      percentage: parsedClaude.fiveHour.percentage,
+                      resetText: parsedClaude.fiveHour.resetText,
+                    }
+                  : undefined,
+                sevenDay: parsedClaude.sevenDay
+                  ? {
+                      percentage: parsedClaude.sevenDay.percentage,
+                      resetText: parsedClaude.sevenDay.resetText,
+                    }
+                  : undefined,
+              }
+            : undefined;
+
+          let argonQuota: ModelGroupQuota | undefined = undefined;
+          const ag = acc.quota?.quota_groups?.find((g) =>
+            (g.display_name || '').toLowerCase().includes('argon')
+          );
+          if (ag) {
+            const bw = ag.buckets?.find((b) => b.window === 'weekly');
+            if (bw) {
+              const pw = Math.round((bw.remaining_fraction ?? 1) * 100);
+              argonQuota = {
+                sevenDay: {
+                  percentage: pw,
+                  resetText: formatBucketReset(bw.reset_time, bw.description, pw, false),
+                },
+              };
+            }
+          }
+
+          return {
+            id: acc.id,
+            email: acc.email,
+            alias: acc.name && acc.name.trim() ? acc.name : acc.email.split('@')[0],
+            tier,
+            tags: acc.tags || [],
+            activeHosts: activeHostsList,
+            fingerprint:
+              acc.device_profile?.dev_device_id ||
+              acc.device_profile?.machine_id ||
+              'fp_isolated_default',
+            isForbidden,
+            isTokenExpired,
+            statusReason,
+            banAppealUrl,
+            rawError: rawReason || undefined,
+            refreshToken: acc.token?.refresh_token || undefined,
+            geminiQuota,
+            claudeQuota,
+            argonQuota,
+          };
+        });
+
+        setAccounts(mapped);
+      } else if (backendAccounts) {
+        setAccounts([]);
+      }
+    } catch (e) {
+      console.warn('Accounts load fallback:', e);
+    }
+  }, [lang]);
+
+  useEffect(() => {
+    loadAccountsData();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      import('@tauri-apps/api/event').then(async ({ listen }) => {
+        const off = await listen('tray://accounts-changed', () => {
+          loadAccountsData();
+        });
+        if (disposed) {
+          off();
+          return;
+        }
+        unlisten = off;
+      });
+    }
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [loadAccountsData]);
 
   // 所有 Tag 列表
   const allTags = useMemo(() => {
@@ -168,20 +520,228 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     return Array.from(set);
   }, [accounts]);
 
-  // 筛选计算
-  const filteredAccounts = accounts.filter((acc) => {
-    const matchText =
-      acc.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      acc.alias.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      acc.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
+  // 统计各 Tab 数量（拆分 ULTRA 与 PRO，异常涵盖受限与凭据失效）
+  const tabCounts = useMemo(() => {
+    return {
+      all: accounts.length,
+      ultra: accounts.filter((a) => a.tier === 'ULTRA' || a.tier === 'ENTERPRISE').length,
+      pro: accounts.filter((a) => a.tier === 'PRO').length,
+      free: accounts.filter((a) => a.tier === 'FREE').length,
+      warning: accounts.filter((a) => a.isForbidden || a.isTokenExpired).length,
+    };
+  }, [accounts]);
 
-    if (!matchText) return false;
+  // 筛选与多维排序计算 (无论何种排序，非正常账号始终沉底，保持极致专业)
+  const filteredAccounts = useMemo(() => {
+    const list = accounts.filter((acc) => {
+      const matchText =
+        acc.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        acc.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    if (selectedTag === 'all') return true;
-    if (selectedTag === '__pro') return acc.tier === 'PRO';
-    if (selectedTag === '__warning') return acc.isForbidden || acc.claudeQuota?.fiveHour?.percentage === 0;
-    return acc.tags.includes(selectedTag);
-  });
+      if (!matchText) return false;
+
+      // Tab 过滤
+      if (filterTab === 'ultra' && acc.tier !== 'ULTRA' && acc.tier !== 'ENTERPRISE') return false;
+      if (filterTab === 'pro' && acc.tier !== 'PRO') return false;
+      if (filterTab === 'free' && acc.tier !== 'FREE') return false;
+      if (filterTab === 'warning' && !acc.isForbidden && !acc.isTokenExpired) return false;
+
+      // Tag 下拉过滤
+      if (selectedTag === 'all') return true;
+      return acc.tags.includes(selectedTag);
+    });
+
+    // 复制数组用于排序
+    const sorted = [...list];
+
+    // 订阅等级权重辅助函数 (ENTERPRISE > ULTRA > PRO > FREE)
+    const tierWeight = (t: string) => {
+      if (t === 'ENTERPRISE') return 4;
+      if (t === 'ULTRA') return 3;
+      if (t === 'PRO') return 2;
+      return 1;
+    };
+
+    // custom 模式：完全忠实保留用户自由拖拽后的自定义顺序，不强行重排
+    if (sortMode === 'custom') {
+      return sorted;
+    }
+
+    sorted.sort((a, b) => {
+      // 核心专业规则：非自定义模式下，异常账号（403 受限或 Token 失效）默认沉底排在健康账号后面
+      const aBroken = Boolean(a.isForbidden || a.isTokenExpired);
+      const bBroken = Boolean(b.isForbidden || b.isTokenExpired);
+      if (aBroken !== bBroken) {
+        return aBroken ? 1 : -1;
+      }
+
+      // 如果健康状态相同，则根据当前选中的排序模式深入比较：
+      if (sortMode === 'name_asc') {
+        return a.email.localeCompare(b.email);
+      }
+      if (sortMode === 'tier_desc') {
+        const diff = tierWeight(b.tier) - tierWeight(a.tier);
+        if (diff !== 0) return diff;
+        return a.email.localeCompare(b.email);
+      }
+
+      // health_default: 保持既定相对自然序列
+      return 0;
+    });
+
+    return sorted;
+  }, [accounts, searchQuery, filterTab, selectedTag, sortMode]);
+
+  // 持有最新列表引用，确保全局 pointerup 回调内读取到最新状态（避免闭包陈旧）
+  const filteredAccountsRef = useRef(filteredAccounts);
+  filteredAccountsRef.current = filteredAccounts;
+  const accountsRef = useRef(accounts);
+  accountsRef.current = accounts;
+
+  // 提交重排并持久化到后端 accounts.json
+  const commitReorder = useCallback(
+    async (sourceId: string, targetId: string) => {
+      if (!sourceId || !targetId || sourceId === targetId) return;
+
+      const currentList = [...filteredAccountsRef.current];
+      const fromIndex = currentList.findIndex((a) => a.id === sourceId);
+      const toIndex = currentList.findIndex((a) => a.id === targetId);
+      if (fromIndex === -1 || toIndex === -1) return;
+
+      const [moved] = currentList.splice(fromIndex, 1);
+      currentList.splice(toIndex, 0, moved);
+
+      // 同步合并至全局 accounts 列表（保持未筛选出来的项在末尾）
+      const movedIds = new Set(currentList.map((a) => a.id));
+      const restAccounts = accountsRef.current.filter((a) => !movedIds.has(a.id));
+      const fullNewOrder = [...currentList, ...restAccounts];
+
+      // 拖拽后自动切换为自定义自由排序模式，以便忠实反应用户调整
+      handleChangeSortMode('custom');
+      setAccounts(fullNewOrder);
+
+      try {
+        const orderedIds = fullNewOrder.map((a) => a.id);
+        await api.reorderAccounts(orderedIds);
+        setSwitchToast({
+          message: tUi(lang, 'toast_order_saved'),
+          type: 'success',
+        });
+        setTimeout(() => setSwitchToast(null), 2200);
+      } catch (err: any) {
+        console.error('Failed to save account order:', err);
+      }
+    },
+    [handleChangeSortMode, lang]
+  );
+
+  // Pointer-Events 跨平台拖拽排序引擎（绕过 macOS WKWebView 原生 HTML5 DnD 失效问题，卡片/列表双视图统一丝滑支持）
+  const handlePointerDragStart = useCallback(
+    (e: React.PointerEvent, id: string, fromHandle = false) => {
+      if (e.button !== 0) return;
+      if (!fromHandle) {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('button, input, a, [role="checkbox"], [role="menuitem"]')) {
+          return;
+        }
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      pointerDragCleanupRef.current?.();
+
+      pointerDragRef.current = {
+        sourceId: id,
+        startX: e.clientX,
+        startY: e.clientY,
+        active: false,
+        currentOverId: null,
+      };
+
+      const cleanup = () => {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerCancel);
+        window.removeEventListener('keydown', onKeyDown);
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        pointerDragRef.current = null;
+        pointerDragCleanupRef.current = null;
+        setDraggedId(null);
+        setDragOverId(null);
+        setDragGhostPos(null);
+      };
+      pointerDragCleanupRef.current = cleanup;
+
+      const onPointerMove = (ev: PointerEvent) => {
+        const st = pointerDragRef.current;
+        if (!st) return;
+
+        if (!st.active) {
+          if (Math.hypot(ev.clientX - st.startX, ev.clientY - st.startY) < 5) {
+            return;
+          }
+          st.active = true;
+          setDraggedId(st.sourceId);
+          document.body.style.userSelect = 'none';
+          document.body.style.cursor = 'grabbing';
+        }
+
+        setDragGhostPos({ x: ev.clientX, y: ev.clientY });
+
+        // 靠近视口上下边缘时自动平滑滚动
+        const edgeZone = 68;
+        if (ev.clientY < edgeZone) {
+          window.scrollBy(0, -10);
+        } else if (ev.clientY > window.innerHeight - edgeZone) {
+          window.scrollBy(0, 10);
+        }
+
+        const els = document.elementsFromPoint(ev.clientX, ev.clientY);
+        let hitId: string | null = null;
+        for (const el of els) {
+          const itemEl = (el as HTMLElement).closest?.('[data-account-item-id]') as HTMLElement | null;
+          if (itemEl?.dataset.accountItemId) {
+            hitId = itemEl.dataset.accountItemId;
+            break;
+          }
+        }
+
+        if (hitId !== st.currentOverId) {
+          st.currentOverId = hitId;
+          setDragOverId(hitId && hitId !== st.sourceId ? hitId : null);
+        }
+      };
+
+      const onPointerUp = () => {
+        const st = pointerDragRef.current;
+        const shouldCommit = Boolean(st?.active && st.currentOverId && st.currentOverId !== st.sourceId);
+        const src = st?.sourceId;
+        const dst = st?.currentOverId;
+        cleanup();
+        if (shouldCommit && src && dst) {
+          void commitReorder(src, dst);
+        }
+      };
+
+      const onPointerCancel = () => {
+        cleanup();
+      };
+
+      const onKeyDown = (ev: KeyboardEvent) => {
+        if (ev.key === 'Escape') {
+          cleanup();
+        }
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerCancel);
+      window.addEventListener('keydown', onKeyDown);
+    },
+    [commitReorder]
+  );
 
   const handleToggleSelect = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
@@ -195,681 +755,1441 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     }
   };
 
-  const handleToggleHost = (accountId: string, host: HostTarget) => {
-    setAccounts((prev) =>
-      prev.map((acc) => {
-        if (acc.id === accountId) {
-          const exists = acc.activeHosts.includes(host);
-          return {
-            ...acc,
-            activeHosts: exists ? acc.activeHosts.filter((h) => h !== host) : [...acc.activeHosts, host],
-          };
-        }
-        return {
+  // 切换宿主加载与通知状态
+  const [switchingHost, setSwitchingHost] = useState<{ id: string; host: HostTarget } | null>(null);
+  const [switchToast, setSwitchToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // 确定性切换宿主 (修复反转 Bug + 级联同步真实状态 + Toast 反馈)
+  const handleToggleHost = async (accountId: string, host: HostTarget) => {
+    if (switchingHost) return;
+    setSwitchingHost({ id: accountId, host });
+
+    try {
+      // 1. 确定性乐观更新：当前账号必然拥有此 host，其他账号必然移除此 host
+      setAccounts((prev) =>
+        prev.map((acc) => ({
           ...acc,
-          activeHosts: acc.activeHosts.filter((h) => h !== host),
-        };
-      })
-    );
+          activeHosts:
+            acc.id === accountId
+              ? acc.activeHosts.includes(host)
+                ? acc.activeHosts
+                : [...acc.activeHosts, host]
+              : acc.activeHosts.filter((h) => h !== host),
+        }))
+      );
+
+      // 2. 调用底层切换接口
+      await api.switchAccount(accountId, host, false);
+
+      // 3. 重新向后端拉取最新的真实宿主状态 (对齐 active_account.json 与 accounts.json)
+      await loadAccountsData();
+
+      const targetAcc = accounts.find((a) => a.id === accountId);
+      const emailName = targetAcc?.email.split('@')[0] || accountId.slice(0, 8);
+      const hostLabel = host.toUpperCase();
+
+      const verStr =
+        host === 'app' && activeHostsStatus?.app_version
+          ? ` (v${activeHostsStatus.app_version})`
+          : host === 'ide' && activeHostsStatus?.ide_version
+          ? ` (v${activeHostsStatus.ide_version})`
+          : '';
+
+      const successMsg = tUi(lang, 'toast_switched_host', { host: hostLabel, version: verStr, account: emailName });
+
+      setSwitchToast({
+        message: successMsg,
+        type: 'success',
+      });
+    } catch (e: any) {
+      console.error('Failed to switch host account:', e);
+      // 发生真实错误时重新同步回当前真实状态
+      await loadAccountsData();
+      setSwitchToast({
+        message: tUi(lang, 'toast_switch_failed') + (e?.message || String(e)),
+        type: 'error',
+      });
+    } finally {
+      setSwitchingHost(null);
+      setTimeout(() => setSwitchToast(null), 2500);
+    }
   };
 
-  const handleCopyCredentials = (id: string) => {
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1500);
+  // 复制账号 Refresh Token (RT)
+  const handleCopyRefreshToken = (id: string) => {
+    const target = accounts.find((a) => a.id === id);
+    if (target?.refreshToken) {
+      navigator.clipboard?.writeText(target.refreshToken);
+      setCopiedId(id);
+      setSwitchToast({
+        message: tUi(lang, 'toast_copied_rt'),
+        type: 'success',
+      });
+      setTimeout(() => setCopiedId(null), 2000);
+      setTimeout(() => setSwitchToast(null), 2000);
+    } else {
+      setSwitchToast({
+        message: tUi(lang, 'toast_no_rt'),
+        type: 'error',
+      });
+      setTimeout(() => setSwitchToast(null), 2000);
+    }
   };
 
-  const handleRefreshAll = () => {
+  // 下载单个账号凭据 JSON 文件 (对齐主分支格式 {"accounts": [{"email": "...", "refresh_token": "..."}]})
+  const handleDownloadCredentialsJson = (id: string) => {
+    const target = accounts.find((a) => a.id === id);
+    if (!target) return;
+    try {
+      const fileName = `${target.email.replace(/[@.]/g, '_')}_account.json`;
+      const exportPayload = {
+        accounts: [
+          {
+            email: target.email,
+            refresh_token: target.refreshToken || '',
+          },
+        ],
+      };
+      const jsonContent = JSON.stringify(exportPayload, null, 2);
+      const blob = new Blob([jsonContent], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setSwitchToast({
+        message: tUi(lang, 'toast_exported_cred'),
+        type: 'success',
+      });
+      setTimeout(() => setSwitchToast(null), 2000);
+    } catch (e: any) {
+      setSwitchToast({
+        message: tUi(lang, 'toast_export_failed') + (e?.message || String(e)),
+        type: 'error',
+      });
+      setTimeout(() => setSwitchToast(null), 2500);
+    }
+  };
+
+  // 确认并执行删除账号 (通过内嵌自定义模态窗口，杜绝系统 window.confirm 在 Tauri 中的卡滞问题)
+  const handleExecuteDelete = async (id: string) => {
+    const target = accounts.find((a) => a.id === id);
+    const email = target?.email || id;
+    try {
+      await api.deleteAccount(id);
+      setAccounts((prev) => prev.filter((a) => a.id !== id));
+      setSelectedIds((prev) => prev.filter((i) => i !== id));
+      setActiveModal(null);
+      await loadAccountsData();
+      setSwitchToast({
+        message: tUi(lang, 'toast_deleted_acc', { email }),
+        type: 'success',
+      });
+    } catch (e: any) {
+      console.error('Failed to delete account:', e);
+      setAccounts((prev) => prev.filter((a) => a.id !== id));
+      setActiveModal(null);
+      await loadAccountsData();
+      setSwitchToast({
+        message: tUi(lang, 'toast_delete_failed') + (e?.message || String(e)),
+        type: 'error',
+      });
+    } finally {
+      setTimeout(() => setSwitchToast(null), 2500);
+    }
+  };
+
+  // 手动解除 403 锁定与风控校验
+  const handleClearForbidden = async (accountId: string) => {
+    try {
+      await api.clearAccountForbidden(accountId);
+      await loadAccountsData();
+      setSwitchToast({
+        message: tUi(lang, 'toast_cleared_403'),
+        type: 'success',
+      });
+      if (activeModal?.type === 'error') {
+        setActiveModal(null);
+      }
+    } catch (e: any) {
+      setSwitchToast({
+        message: tUi(lang, 'toast_clear_403_failed') + (e?.message || String(e)),
+        type: 'error',
+      });
+    } finally {
+      setTimeout(() => setSwitchToast(null), 2500);
+    }
+  };
+
+  // 刷新全量账号配额
+  const handleRefreshAll = async () => {
     setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 1200);
+    setSwitchToast({
+      message: tUi(lang, 'toast_refreshing_all'),
+      type: 'success',
+    });
+    try {
+      await api.refreshAllQuotas();
+      await loadAccountsData();
+      setSwitchToast({
+        message: tUi(lang, 'toast_all_refreshed'),
+        type: 'success',
+      });
+    } catch (e) {
+      console.warn('Batch refresh error:', e);
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 800);
+      setTimeout(() => setSwitchToast(null), 2000);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setAccounts((prev) => prev.filter((a) => a.id !== id));
+  // 刷新单账号配额
+  const handleRefreshOne = async (id: string) => {
+    const target = accounts.find((a) => a.id === id);
+    const emailName = target?.email.split('@')[0] || id.slice(0, 8);
+    try {
+      setSwitchToast({
+        message: tUi(lang, 'toast_refreshing_acc', { account: emailName }),
+        type: 'success',
+      });
+      await api.refreshAccountQuota(id);
+      await loadAccountsData();
+      setSwitchToast({
+        message: tUi(lang, 'toast_acc_refreshed', { account: emailName }),
+        type: 'success',
+      });
+    } catch (e: any) {
+      console.warn('Single refresh error:', e);
+      setSwitchToast({
+        message: tUi(lang, 'toast_refresh_failed') + (e?.message || String(e)),
+        type: 'error',
+      });
+    } finally {
+      setTimeout(() => setSwitchToast(null), 2000);
+    }
   };
 
-  const handleAddTagToAccount = (accountId: string, tag: string) => {
-    if (!tag.trim()) return;
-    setAccounts((prev) =>
-      prev.map((acc) => (acc.id === accountId && !acc.tags.includes(tag.trim()) ? { ...acc, tags: [...acc.tags, tag.trim()] } : acc))
-    );
+  // 批量删除
+  const handleBatchDelete = async () => {
+    if (!confirm(tUi(lang, 'prompt_batch_delete', { count: selectedIds.length }))) {
+      return;
+    }
+    try {
+      await api.deleteAccounts(selectedIds);
+      setAccounts((prev) => prev.filter((a) => !selectedIds.includes(a.id)));
+      setSelectedIds([]);
+      await loadAccountsData();
+    } catch (e) {
+      console.error('Failed to batch delete:', e);
+      setAccounts((prev) => prev.filter((a) => !selectedIds.includes(a.id)));
+      setSelectedIds([]);
+      await loadAccountsData();
+    }
+  };
+
+  // 添加标签
+  const handleAddTagToAccount = async (accountId: string, tag: string) => {
+    const clean = tag.trim();
+    if (!clean) return;
+    const target = accounts.find((a) => a.id === accountId);
+    if (!target || target.tags.includes(clean)) return;
+
+    const newTags = [...target.tags, clean];
+    try {
+      await api.setAccountTags(accountId, newTags);
+      setAccounts((prev) =>
+        prev.map((acc) => (acc.id === accountId ? { ...acc, tags: newTags } : acc))
+      );
+    } catch (e) {
+      console.error('Failed to set tags:', e);
+      setAccounts((prev) =>
+        prev.map((acc) => (acc.id === accountId ? { ...acc, tags: newTags } : acc))
+      );
+    }
     setTempTagInput('');
   };
 
-  const handleRemoveTagFromAccount = (accountId: string, tag: string) => {
-    setAccounts((prev) =>
-      prev.map((acc) => (acc.id === accountId ? { ...acc, tags: acc.tags.filter((t) => t !== tag) } : acc))
-    );
+  // 移除标签
+  const handleRemoveTagFromAccount = async (accountId: string, tag: string) => {
+    const target = accounts.find((a) => a.id === accountId);
+    if (!target) return;
+    const newTags = target.tags.filter((t) => t !== tag);
+    try {
+      await api.setAccountTags(accountId, newTags);
+      setAccounts((prev) =>
+        prev.map((acc) => (acc.id === accountId ? { ...acc, tags: newTags } : acc))
+      );
+    } catch (e) {
+      console.error('Failed to remove tag:', e);
+      setAccounts((prev) =>
+        prev.map((acc) => (acc.id === accountId ? { ...acc, tags: newTags } : acc))
+      );
+    }
   };
 
-  /**
-   * Apple 级高精度“双时间智能对齐”进度条算法：
-   * 1. 5h（实心圆点 ●）与 7d（空心圆环 ⊚）指标各配置明确标定。
-   * 2. 当 5h 为 0%（耗尽）时：
-   *    - 顶部文字呈现精致的微闪红光胶囊，标定恢复时间。
-   *    - 进度槽呈现精致的红色斜向虚线斑马纹（Hatched Pattern），极富科技感且警示性强。
-   * 3. 当 5h 比 7d 额度长（如 5h=85%、7d=40%）或 7d 比 5h 长时：
-   *    - 核心法则【短轨浮于上层】：较短的轨放置在顶层 (z-10)，带纯色饱和度与边界微阴影；
-   *    - 较长的轨作为基底铺设 (z-0)，带柔和半透对比；
-   *    - 如此无论谁长谁短，0% -> 短端点 -> 长端点 -> 100% 的阶梯边界全部一目了然！
-   */
-  const renderQuotaBar = (name: string, key: 'gemini' | 'claude' | 'argon', quota?: ModelGroupQuota) => {
-    if (!quota) return null;
-    const { fiveHour, sevenDay } = quota;
-    const isClaude = key === 'claude';
-    const isArgon = key === 'argon';
+  // 批量打标签
+  const handleBatchTag = async () => {
+    const tag = prompt(tUi(lang, 'prompt_batch_tag'));
+    if (!tag || !tag.trim()) return;
+    const clean = tag.trim();
 
-    const p5h = fiveHour?.percentage;
-    const p7d = sevenDay?.percentage;
+    for (const id of selectedIds) {
+      const acc = accounts.find((a) => a.id === id);
+      if (acc && !acc.tags.includes(clean)) {
+        const nextTags = [...acc.tags, clean];
+        try {
+          await api.setAccountTags(id, nextTags);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    await loadAccountsData();
+  };
 
-    const has5h = p5h !== undefined;
-    const has7d = p7d !== undefined;
+  // 重新生成独立设备指纹
+  const handleRegenerateFingerprint = async (accountId: string) => {
+    try {
+      const updated = await api.regenerateDeviceProfile(accountId);
+      const newFp =
+        updated.device_profile?.dev_device_id ||
+        updated.device_profile?.machine_id ||
+        `fp_regen_${Math.random().toString(36).substring(2, 10)}`;
 
-    const is5hZero = has5h && p5h === 0;
-    const is7dZero = has7d && p7d === 0;
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === accountId ? { ...a, fingerprint: newFp } : a))
+      );
+    } catch {
+      const newFp = `fp_regen_${Math.random().toString(36).substring(2, 10)}`;
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === accountId ? { ...a, fingerprint: newFp } : a))
+      );
+    }
+    setActiveModal(null);
+  };
 
-    // 基础色彩阶 (5h 饱和色)
-    const color5h = is5hZero
-      ? 'bg-rose-500'
-      : (p5h ?? 100) < 30
-      ? 'bg-rose-500'
-      : (p5h ?? 100) < 60
-      ? 'bg-amber-500'
-      : isClaude
-      ? 'bg-purple-600 dark:bg-purple-500'
-      : isArgon
-      ? 'bg-amber-500'
-      : 'bg-blue-600 dark:bg-blue-500';
+  // 启动 Google OAuth 授权登录
+  const handleStartOAuthLogin = async () => {
+    setIsOAuthWaiting(true);
+    setOauthError(null);
+    try {
+      await api.startOAuthLogin();
+      setIsOAuthWaiting(false);
+      setActiveModal(null);
+      await loadAccountsData();
+    } catch (e: any) {
+      setIsOAuthWaiting(false);
+      setOauthError(typeof e === 'string' ? e : e.message || 'OAuth authorization failed');
+    }
+  };
 
-    // 基础色彩阶 (7d 宏观色 - 略浅但清晰)
-    const color7d = is7dZero
-      ? 'bg-rose-400'
-      : (p7d ?? 100) < 30
-      ? 'bg-rose-400'
-      : (p7d ?? 100) < 60
-      ? 'bg-amber-400'
-      : isClaude
-      ? 'bg-indigo-400 dark:bg-indigo-400'
-      : isArgon
-      ? 'bg-orange-400 dark:bg-orange-400'
-      : 'bg-cyan-500 dark:bg-cyan-400';
+  // 导入备份包
+  const handleImportBackup = async () => {
+    if (!importJsonInput.trim()) return;
+    try {
+      const report = await api.importAccountsBackup(importJsonInput, true);
+      alert(tUi(lang, 'toast_import_report', { imported: report.imported, overwritten: report.overwritten, skipped: report.skipped }));
+      setActiveModal(null);
+      setImportJsonInput('');
+      await loadAccountsData();
+    } catch (e: any) {
+      alert(tUi(lang, 'toast_import_failed') + (e.message || String(e)));
+    }
+  };
 
-    // 智能层叠决策：短的在顶层（确保两者边界均清晰可见）
-    const len5h = p5h ?? 0;
-    const len7d = p7d ?? 0;
-    const is5hShorter = len5h <= len7d;
-
-    return (
-      <div className="flex flex-col gap-0.5 w-full group/bar">
-        {/* 顶部指标文字行与色点标定 (微调至与菜单栏极其和谐的 10px / 9.5px) */}
-        <div className="flex items-center justify-between text-[10px] leading-tight">
-          <span className="font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1">
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                is5hZero ? 'bg-rose-500 animate-pulse' : isClaude ? 'bg-purple-500' : isArgon ? 'bg-amber-500' : 'bg-blue-500'
-              }`}
-            />
-            <span className="truncate">{name}</span>
-          </span>
-
-          <div className="flex items-center gap-1.5 text-[9.5px] text-gray-500 dark:text-zinc-400 font-mono">
-            {/* 5h 指标 + 实心圆点 (●) */}
-            {fiveHour && (
-              <span
-                className={`inline-flex items-center gap-1 px-1 py-0.2 rounded transition-all ${
-                  is5hZero
-                    ? 'text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40'
-                    : 'bg-gray-100/70 dark:bg-white/[0.04]'
-                }`}
-                title={`5小时短时窗口: ${p5h}% (重置倒计时: ${fiveHour.resetText})`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${is5hZero ? 'bg-rose-500 animate-ping' : color5h}`} />
-                <span className="opacity-70">5h:</span>
-                <span className="font-semibold">{p5h}%</span>
-                <span className="opacity-55 text-[8.5px]">({fiveHour.resetText})</span>
-              </span>
-            )}
-
-            {/* 7d 指标 + 空心圆环 (⊚) */}
-            {sevenDay && (
-              <span
-                className={`inline-flex items-center gap-1 px-1 py-0.2 rounded transition-all ${
-                  is7dZero
-                    ? 'text-rose-600 dark:text-rose-400 font-semibold bg-rose-50 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40'
-                    : 'bg-gray-100/70 dark:bg-white/[0.04]'
-                }`}
-                title={`7天宏观周期额度: ${p7d}% (重置倒计时: ${sevenDay.resetText})`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 border border-current ${color7d}`} />
-                <span className="opacity-70">7d:</span>
-                <span className="font-semibold">{p7d}%</span>
-                <span className="opacity-55 text-[8.5px]">({sevenDay.resetText})</span>
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* 智能双层条带轨道 (Apple HIG 级细腻 5px 极简微槽) */}
-        <div className="relative w-full h-[5px] rounded-full overflow-hidden bg-gray-100 dark:bg-white/[0.08] shadow-inner">
-          {/* 1. 若 5h 为 0%，展示细腻警示虚线斑马纹 */}
-          {is5hZero && (
-            <div
-              className="absolute inset-y-0 left-0 w-full opacity-60 z-20 pointer-events-none"
-              style={{
-                backgroundImage:
-                  'repeating-linear-gradient(-45deg, rgba(239,68,68,0.35) 0, rgba(239,68,68,0.35) 4px, transparent 4px, transparent 8px)',
-              }}
-              title="5小时窗口已彻底耗尽 (0%)"
-            />
-          )}
-
-          {/* 2. 较长者先铺设为底层 (基底槽，宽度较大，柔和半透对比) */}
-          {!is5hShorter && has5h && !is5hZero && (
-            <div
-              style={{ width: `${len5h}%` }}
-              className={`absolute inset-y-0 left-0 rounded-full opacity-45 transition-all duration-300 ${color5h}`}
-              title={`5h 额度: ${len5h}%`}
-            />
-          )}
-          {is5hShorter && has7d && !is7dZero && (
-            <div
-              style={{ width: `${len7d}%` }}
-              className={`absolute inset-y-0 left-0 rounded-full opacity-45 transition-all duration-300 ${color7d}`}
-              title={`7d 额度: ${len7d}%`}
-            />
-          )}
-
-          {/* 3. 较短者覆盖在顶层 (纯色饱和 + 锐利右边框，确保两层切点绝对清晰) */}
-          {is5hShorter && has5h && !is5hZero && (
-            <div
-              style={{ width: `${len5h}%` }}
-              className={`absolute inset-y-0 left-0 rounded-full shadow-xs transition-all duration-300 z-10 border-r border-white dark:border-[#121316] ${color5h}`}
-              title={`5h 额度: ${len5h}%`}
-            />
-          )}
-          {!is5hShorter && has7d && !is7dZero && (
-            <div
-              style={{ width: `${len7d}%` }}
-              className={`absolute inset-y-0 left-0 rounded-full shadow-xs transition-all duration-300 z-10 border-r border-white dark:border-[#121316] ${color7d}`}
-              title={`7d 额度: ${len7d}%`}
-            />
-          )}
-        </div>
-      </div>
-    );
+  // 导出全量账号备份包 (对齐主分支 antigravity_accounts_YYYY-MM-DD.json 命名与 {"accounts": [...]} 格式)
+  const handleExportBackup = async () => {
+    try {
+      const json = await api.exportAccountsBackup();
+      const fileName = `antigravity_accounts_${new Date().toISOString().split('T')[0]}.json`;
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setSwitchToast({
+        message: tUi(lang, 'toast_exported_backup'),
+        type: 'success',
+      });
+      setActiveModal(null);
+    } catch (e: any) {
+      alert(tUi(lang, 'toast_export_failed') + (e?.message || String(e)));
+      setActiveModal(null);
+    }
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 py-2 flex flex-col gap-3 select-none animate-in fade-in-50 duration-300">
-      
-      {/* ============================================================== */}
-      {/* 优化后的顶部自适应工具栏 (紧凑精致，与顶部菜单栏比例完全对称)    */}
-      {/* ============================================================== */}
-      <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2.5 px-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
-        {/* 左侧：搜索框 + 简约 Tag 筛选下拉框 */}
+    <div className="w-full max-w-[1400px] mx-auto px-4 py-2 flex flex-col gap-3 animate-in fade-in-50 duration-300 relative">
+      {/* 悬浮状态轻量通知胶囊 (Apple Dynamic Island 风格：置于底部中央，杜绝遮挡顶部导航与操作栏) */}
+      {switchToast && (
+        <div
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full text-xs font-medium shadow-2xl backdrop-blur-xl flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-3 duration-250 pointer-events-none transition-all ${
+            switchToast.type === 'success'
+              ? 'bg-zinc-900/90 text-white dark:bg-white/95 dark:text-zinc-900 border border-white/10 dark:border-zinc-200/50 shadow-black/20'
+              : 'bg-rose-600/95 text-white border border-rose-400/30 shadow-rose-950/30'
+          }`}
+        >
+          <div
+            className={`w-2 h-2 rounded-full shrink-0 ${
+              switchToast.type === 'success' ? 'bg-emerald-400 dark:bg-emerald-600 animate-pulse' : 'bg-white'
+            }`}
+          />
+          <span className="tracking-wide">{switchToast.message}</span>
+        </div>
+      )}
+
+      {/* 顶部自适应工具栏 */}
+      <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] rounded-xl p-2.5 px-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+        {/* 左侧：搜索框 + 订阅分类胶囊 (全部/Pro/Free/异常) + 标签下拉 */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* 即时搜索框 */}
-          <div className="relative w-48">
+          <div className="relative w-44">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={isZh ? '搜索邮箱、备注或标签...' : 'Search accounts...'}
+              placeholder={tUi(lang, 'search_placeholder')}
               className="w-full pl-8 pr-2.5 py-1 text-[11px] rounded-lg bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/50 dark:focus:border-blue-400/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500 outline-none transition-all duration-150"
             />
           </div>
 
-          {/* 优雅紧凑的 Tag 筛选下拉选择器 (Radix Dropdown) */}
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors shadow-2xs outline-none">
-                <Filter className="w-3 h-3 text-blue-500" />
-                <span>
-                  {selectedTag === 'all'
-                    ? isZh
-                      ? `全部标签 (${accounts.length})`
-                      : 'All Tags'
-                    : selectedTag === '__pro'
-                    ? 'PRO 订阅'
-                    : selectedTag === '__warning'
-                    ? '⚠️ 额度告警'
-                    : `🏷️ ${selectedTag}`}
-                </span>
-                <ChevronDown className="w-3 h-3 opacity-60 ml-0.5" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="start"
-                sideOffset={6}
-                className="w-44 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
+          {/* 分类快捷药丸 Tab 切换 */}
+          <div className="flex items-center p-0.5 bg-gray-100/80 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5 text-[11px]">
+            <button
+              onClick={() => setFilterTab('all')}
+              className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                filterTab === 'all'
+                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
+                  : 'text-gray-500 hover:text-gray-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+              }`}
+            >
+              {tUi(lang, 'all')} <span className="opacity-60 text-[9.5px]">({tabCounts.all})</span>
+            </button>
+            {tabCounts.ultra > 0 && (
+              <button
+                onClick={() => setFilterTab('ultra')}
+                className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                  filterTab === 'ultra'
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-2xs font-semibold'
+                    : 'text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
+                }`}
               >
-                <DropdownMenu.Item
-                  onClick={() => setSelectedTag('all')}
-                  className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
-                    selectedTag === 'all'
-                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
-                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
-                  }`}
+                ULTRA <span className="opacity-85 text-[9.5px]">({tabCounts.ultra})</span>
+              </button>
+            )}
+            <button
+              onClick={() => setFilterTab('pro')}
+              className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                filterTab === 'pro'
+                  ? 'bg-blue-600 text-white shadow-2xs font-semibold'
+                  : 'text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400'
+              }`}
+            >
+              PRO <span className="opacity-80 text-[9.5px]">({tabCounts.pro})</span>
+            </button>
+            <button
+              onClick={() => setFilterTab('free')}
+              className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                filterTab === 'free'
+                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
+                  : 'text-gray-500 hover:text-gray-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+              }`}
+            >
+              FREE <span className="opacity-60 text-[9.5px]">({tabCounts.free})</span>
+            </button>
+            {tabCounts.warning > 0 && (
+              <button
+                onClick={() => setFilterTab('warning')}
+                className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                  filterTab === 'warning'
+                    ? 'bg-rose-500 text-white shadow-2xs font-semibold'
+                    : 'text-rose-500 hover:text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {tUi(lang, 'errors')} <span className="opacity-80 text-[9.5px]">({tabCounts.warning})</span>
+              </button>
+            )}
+          </div>
+
+          {/* 标签微型过滤 */}
+          {allTags.length > 0 && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button className="px-2 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1 transition-colors shadow-2xs outline-none cursor-pointer">
+                  <Tag className="w-3 h-3 text-purple-500" />
+                  <span>{selectedTag === 'all' ? tUi(lang, 'tag') : selectedTag}</span>
+                  <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="start"
+                  sideOffset={6}
+                  className="w-36 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
                 >
-                  <span>{isZh ? '全部账号' : 'All Accounts'}</span>
-                  {selectedTag === 'all' && <Check className="w-3.5 h-3.5 text-blue-600" />}
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onClick={() => setSelectedTag('__pro')}
-                  className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
-                    selectedTag === '__pro'
-                      ? 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 font-semibold'
-                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
-                  }`}
-                >
-                  <span>PRO 订阅账号</span>
-                  {selectedTag === '__pro' && <Check className="w-3.5 h-3.5 text-amber-600" />}
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onClick={() => setSelectedTag('__warning')}
-                  className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
-                    selectedTag === '__warning'
-                      ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400 font-semibold'
-                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
-                  }`}
-                >
-                  <span>⚠️ 额度告警/受限</span>
-                  {selectedTag === '__warning' && <Check className="w-3.5 h-3.5 text-rose-600" />}
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className="h-px bg-gray-100 dark:bg-zinc-800 my-1" />
-                {allTags.map((t) => (
                   <DropdownMenu.Item
-                    key={t}
-                    onClick={() => setSelectedTag(t)}
-                    className={`px-2 py-1.2 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
-                      selectedTag === t
+                    onClick={() => setSelectedTag('all')}
+                    className={`px-2 py-1 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                      selectedTag === 'all'
                         ? 'bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-semibold'
                         : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
                     }`}
                   >
-                    <span>🏷️ {t}</span>
-                    {selectedTag === t && <Check className="w-3.5 h-3.5 text-purple-600" />}
+                    <span>{tUi(lang, 'all_tags')}</span>
+                    {selectedTag === 'all' && <Check className="w-3 h-3 text-purple-600" />}
                   </DropdownMenu.Item>
-                ))}
+                  <DropdownMenu.Separator className="h-px bg-gray-100 dark:bg-zinc-800 my-1" />
+                  {allTags.map((t) => (
+                    <DropdownMenu.Item
+                      key={t}
+                      onClick={() => setSelectedTag(t)}
+                      className={`px-2 py-1 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                        selectedTag === t
+                          ? 'bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-semibold'
+                          : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                      }`}
+                    >
+                      <span className="truncate">{t}</span>
+                      {selectedTag === t && <Check className="w-3 h-3 text-purple-600" />}
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          )}
+        </div>
+
+        {/* 右侧：排序切换 + 列表/卡片视图切换器 + 操作按钮组 */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* 全局排序下拉胶囊（列表视图与卡片视图统一可用） */}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                className="px-2 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1 transition-colors shadow-2xs outline-none cursor-pointer"
+                title={tUi(lang, 'acc_drag_reorder')}
+              >
+                <ArrowUpDown className="w-3 h-3 text-blue-500" />
+                <span>
+                  {sortMode === 'health_default'
+                    ? tUi(lang, 'sort_health')
+                    : sortMode === 'name_asc'
+                    ? 'A-Z'
+                    : sortMode === 'tier_desc'
+                    ? tUi(lang, 'sort_tier')
+                    : tUi(lang, 'sort_custom')}
+                </span>
+                <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={6}
+                className="w-48 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
+              >
+                <DropdownMenu.Item
+                  onClick={() => handleChangeSortMode('health_default')}
+                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                    sortMode === 'health_default'
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    <span>{tUi(lang, 'sort_health_full')}</span>
+                    <span className="text-[9.5px] opacity-60 font-normal">{tUi(lang, 'sort_health')}</span>
+                  </div>
+                  {sortMode === 'health_default' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  onClick={() => handleChangeSortMode('tier_desc')}
+                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                    sortMode === 'tier_desc'
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    <span>{tUi(lang, 'sort_tier')}</span>
+                    <span className="text-[9.5px] opacity-60 font-normal">ULTRA / PRO &gt; FREE</span>
+                  </div>
+                  {sortMode === 'tier_desc' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  onClick={() => handleChangeSortMode('name_asc')}
+                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                    sortMode === 'name_asc'
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    <span>{tUi(lang, 'sort_alpha')}</span>
+                    <span className="text-[9.5px] opacity-60 font-normal">A → Z</span>
+                  </div>
+                  {sortMode === 'name_asc' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Separator className="h-px bg-gray-100 dark:bg-zinc-800 my-1" />
+
+                <DropdownMenu.Item
+                  onClick={() => handleChangeSortMode('custom')}
+                  className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                    sortMode === 'custom'
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                      : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    <span>{tUi(lang, 'sort_custom')}</span>
+                    <span className="text-[9.5px] opacity-60 font-normal">{tUi(lang, 'acc_drag_reorder')}</span>
+                  </div>
+                  {sortMode === 'custom' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
-        </div>
 
-        {/* 右侧：紧凑微型工具按钮组 */}
-        <div className="flex flex-wrap items-center gap-1.5">
+          {/* 列表 / 卡片 风格切换胶囊 */}
+          <div className="flex items-center p-0.5 bg-gray-100/80 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5 mr-0.5">
+            <button
+              onClick={() => handleToggleViewMode('table')}
+              className={`p-1 rounded-md transition-all cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
+                  : 'text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200'
+              }`}
+              title={tUi(lang, 'table_view')}
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleToggleViewMode('card')}
+              className={`p-1 rounded-md transition-all cursor-pointer ${
+                viewMode === 'card'
+                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
+                  : 'text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200'
+              }`}
+              title={tUi(lang, 'card_view')}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           <button
             onClick={handleRefreshAll}
             disabled={isRefreshing}
-            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs"
-            title={isZh ? '刷新全量账号配额' : 'Refresh All'}
+            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs cursor-pointer"
+            title={tUi(lang, 'refresh_quotas')}
           >
             <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
-            <span>{isZh ? '刷新' : 'Refresh'}</span>
+            <span>{tUi(lang, 'refresh_quotas')}</span>
           </button>
 
           <button
             onClick={() => setActiveModal({ type: 'export' })}
-            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs"
-            title={isZh ? '导出账号数据备份 (JSON)' : 'Export Backup'}
+            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs cursor-pointer"
+            title={tUi(lang, 'export')}
           >
             <Download className="w-3 h-3" />
-            <span>{isZh ? '导出' : 'Export'}</span>
+            <span>{tUi(lang, 'export')}</span>
           </button>
 
           <button
-            onClick={() => alert(isZh ? '支持批量导入 JSON 文件或粘贴 Token' : 'Import JSON')}
-            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs"
-            title={isZh ? '从备份导入账号' : 'Import Backup'}
+            onClick={() => setActiveModal({ type: 'import' })}
+            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs cursor-pointer"
+            title={tUi(lang, 'import')}
           >
             <Upload className="w-3 h-3" />
-            <span>{isZh ? '导入' : 'Import'}</span>
+            <span>{tUi(lang, 'import')}</span>
           </button>
 
           <button
-            onClick={() => alert(isZh ? '呼起浏览器进行 Google 官方 OAuth 授权' : 'OAuth Login')}
-            className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold flex items-center gap-1.2 shadow-xs shadow-blue-500/20 transition-all"
+            onClick={() => setActiveModal({ type: 'oauth' })}
+            className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold flex items-center gap-1.2 shadow-xs shadow-blue-500/20 transition-all cursor-pointer"
           >
             <Plus className="w-3 h-3" />
-            <span>{isZh ? '授权登录' : 'Add Account'}</span>
+            <span>{tUi(lang, 'add_account')}</span>
           </button>
         </div>
       </div>
 
-      {/* ============================================================== */}
-      {/* 核心 4 栏黄金表格：自适应无水平滚动条排版，全分辨率自洽适配       */}
-      {/* [账号/标签] | [模型额度池 (流体自适应)] | [四宫格] | [快捷工具]  */}
-      {/* ============================================================== */}
-      <div className="bg-white/80 dark:bg-[#121316]/80 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl overflow-hidden shadow-2xs relative w-full">
-        <table className="w-full text-left border-collapse table-fixed select-none">
-          {/* 黄金列宽约束：彻底杜绝横向滚动条，各分辨率自然舒展 */}
-          <colgroup>
-            <col className="w-8" />
-            <col className="w-[23%]" />
-            <col className="w-auto" />
-            <col className="w-[112px]" />
-            <col className="w-[88px]" />
-          </colgroup>
+      {/* 视图内容区：支持列表风格 (table) 与 4 轨胶囊卡片风格 (card) */}
+      {viewMode === 'table' ? (
+        <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] rounded-xl overflow-hidden shadow-2xs relative w-full">
+          <table className="w-full text-left border-collapse table-fixed">
+            <colgroup>
+              <col className="w-[54px]" />
+              <col className="w-[224px]" />
+              <col className="w-auto" />
+              <col className="w-[180px]" />
+            </colgroup>
 
-          <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400">
-            <tr>
-              <th className="pl-3 py-2 w-8">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.length === filteredAccounts.length && filteredAccounts.length > 0}
-                  onChange={handleSelectAll}
-                  className="rounded border-gray-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500/30 cursor-pointer w-3.5 h-3.5"
-                />
-              </th>
-              {/* 栏 1：账号与标签 */}
-              <th className="px-2.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px]">
-                <div className="flex items-center gap-1">
-                  <span>{isZh ? '账号 / 标签' : 'Account & Tags'}</span>
-                  <ArrowUpDown className="w-2.5 h-2.5 opacity-40" />
-                </div>
-              </th>
-              {/* 栏 2：Gemini / Claude / Argon 统一双轨进度 */}
-              <th className="px-2.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px]">
-                <div className="flex items-center justify-between">
-                  <span>{isZh ? '模型额度池' : 'Model Quota Pools'}</span>
-                  <span className="text-[9px] text-gray-400 font-normal">● 5h 实时流速 / ⊚ 7d 水库 (短轨在上)</span>
-                </div>
-              </th>
-              {/* 栏 3：四宫格快捷切换区 */}
-              <th className="px-1.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
-                <span>{isZh ? '四宫格多端切号' : 'Host Matrix'}</span>
-              </th>
-              {/* 栏 4：操作工具区 (3 2 优雅换行，对称对齐) */}
-              <th className="px-1 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center">
-                {isZh ? '快捷工具' : 'Actions'}
-              </th>
-            </tr>
-          </thead>
-
-          <tbody className="divide-y divide-gray-100 dark:divide-white/5 font-sans">
-            {filteredAccounts.map((acc) => {
-              const isSelected = selectedIds.includes(acc.id);
-
-              return (
-                <tr
-                  key={acc.id}
-                  className={`hover:bg-gray-50/60 dark:hover:bg-zinc-800/30 transition-colors group ${
-                    isSelected
-                      ? 'bg-blue-50/50 dark:bg-blue-500/5'
-                      : acc.isForbidden
-                      ? 'bg-rose-50/30 dark:bg-rose-950/20'
-                      : ''
-                  }`}
-                >
-                  {/* 复选框 */}
-                  <td className="pl-3 py-2 align-middle">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => handleToggleSelect(acc.id)}
-                      className="rounded border-gray-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500/30 cursor-pointer w-3.5 h-3.5"
+            <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400">
+              <tr>
+                <th className="pl-[30px] pr-1.5 py-2.5 align-middle">
+                  <div className="flex items-center">
+                    <AccountCheckbox
+                      checked={selectedIds.length === filteredAccounts.length && filteredAccounts.length > 0}
+                      indeterminate={selectedIds.length > 0 && selectedIds.length < filteredAccounts.length}
+                      onChange={handleSelectAll}
                     />
-                  </td>
-
-                  {/* 栏 1：账号与标签 */}
-                  <td className="px-2.5 py-2 align-middle">
-                    <div className="flex flex-col gap-1 min-w-0 pr-1">
-                      {/* 邮箱 + PRO 徽章 + 复制 */}
-                      <div className="flex items-center gap-1 min-w-0">
-                        <span
-                          className="font-medium text-gray-900 dark:text-zinc-100 truncate text-[11px]"
-                          title={acc.email}
-                        >
-                          {acc.email}
+                  </div>
+                </th>
+                <th className="px-2.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px]">
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer group outline-none">
+                        <span>{tUi(lang, 'account_tags')}</span>
+                        <ArrowUpDown className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100" />
+                        <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-normal">
+                          ({sortMode === 'health_default' ? tUi(lang, 'sort_health') : sortMode === 'name_asc' ? 'A-Z' : sortMode === 'tier_desc' ? 'Tier' : tUi(lang, 'sort_custom')})
                         </span>
-                        <span
-                          className={`px-1 py-0 text-[8.5px] font-bold rounded shrink-0 ${
-                            acc.tier === 'PRO'
-                              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-2xs'
-                              : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        align="start"
+                        sideOffset={6}
+                        className="w-44 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
+                      >
+                        <DropdownMenu.Item
+                          onClick={() => handleChangeSortMode('health_default')}
+                          className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                            sortMode === 'health_default'
+                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                              : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
                           }`}
                         >
-                          {acc.tier}
-                        </span>
-                        <button
-                          onClick={() => handleCopyCredentials(acc.id)}
-                          className="p-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0"
-                          title={isZh ? '复制账号凭据 (JSON)' : 'Copy Credentials'}
+                          <div className="flex flex-col">
+                            <span>{tUi(lang, 'sort_health_full')}</span>
+                            <span className="text-[9.5px] opacity-60 font-normal">{tUi(lang, 'sort_health_full')}</span>
+                          </div>
+                          {sortMode === 'health_default' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                        </DropdownMenu.Item>
+
+                        <DropdownMenu.Item
+                          onClick={() => handleChangeSortMode('tier_desc')}
+                          className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                            sortMode === 'tier_desc'
+                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                              : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                          }`}
                         >
-                          {copiedId === acc.id ? (
-                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                          ) : (
-                            <BookCopy className="w-3 h-3" />
-                          )}
-                        </button>
+                          <div className="flex flex-col">
+                            <span>{tUi(lang, 'sort_tier')}</span>
+                            <span className="text-[9.5px] opacity-60 font-normal">ULTRA / PRO &gt; FREE</span>
+                          </div>
+                          {sortMode === 'tier_desc' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                        </DropdownMenu.Item>
+
+                        <DropdownMenu.Item
+                          onClick={() => handleChangeSortMode('name_asc')}
+                          className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                            sortMode === 'name_asc'
+                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                              : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <span>{tUi(lang, 'sort_alpha')}</span>
+                            <span className="text-[9.5px] opacity-60 font-normal">{tUi(lang, 'sort_alpha')}</span>
+                          </div>
+                          {sortMode === 'name_asc' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                        </DropdownMenu.Item>
+
+                        <DropdownMenu.Separator className="h-px bg-gray-100 dark:bg-zinc-800 my-1" />
+
+                        <DropdownMenu.Item
+                          onClick={() => handleChangeSortMode('custom')}
+                          className={`px-2.5 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                            sortMode === 'custom'
+                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-semibold'
+                              : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <span>{tUi(lang, 'sort_custom')}</span>
+                            <span className="text-[9.5px] opacity-60 font-normal">{tUi(lang, 'sort_custom')}</span>
+                          </div>
+                          {sortMode === 'custom' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                </th>
+                <th className="px-2.5 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px]">
+                  <div className="flex items-center justify-between">
+                    <span>{tUi(lang, 'quota_pools')}</span>
+                    <span className="text-[9px] text-gray-400 font-normal">{tUi(lang, 'quota_hint_stream_reservoir')}</span>
+                  </div>
+                </th>
+                <th className="px-2 py-2 font-medium text-gray-600 dark:text-zinc-300 text-[10.5px] text-center w-[164px]">
+                  <span>{tUi(lang, 'control_actions')}</span>
+                </th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-gray-100 dark:divide-white/5 font-sans">
+              {filteredAccounts.map((acc) => {
+                const isSelected = selectedIds.includes(acc.id);
+                const isDragged = draggedId === acc.id;
+                const isDragOver = dragOverId === acc.id;
+                const isUltra = acc.tier === 'ULTRA' || acc.tier === 'ENTERPRISE';
+                const isPro = acc.tier === 'PRO';
+
+                const tierRowClass = isSelected
+                  ? 'bg-blue-50/75 dark:bg-blue-500/15'
+                  : isUltra
+                  ? 'bg-amber-50/65 hover:bg-amber-100/55 dark:bg-amber-500/[0.06] dark:hover:bg-amber-500/[0.10]'
+                  : isPro
+                  ? 'bg-sky-50/65 hover:bg-sky-100/55 dark:bg-sky-500/[0.06] dark:hover:bg-sky-500/[0.10]'
+                  : 'hover:bg-gray-50/90 dark:hover:bg-white/[0.03]';
+
+                return (
+                  <tr
+                    key={acc.id}
+                    data-account-item-id={acc.id}
+                    onPointerDown={(e) => handlePointerDragStart(e, acc.id, false)}
+                    className={`transition-colors group select-none ${tierRowClass} ${
+                      isDragged ? 'opacity-40 bg-blue-50 dark:bg-blue-900/20' : ''
+                    } ${isDragOver ? 'border-t-2 border-t-blue-500 dark:border-t-blue-400 bg-blue-50/40 dark:bg-blue-500/10' : ''}`}
+                    style={{
+                      userSelect: 'none',
+                      WebkitUserSelect: 'none',
+                    } as React.CSSProperties}
+                  >
+                    {/* 自由拖动手柄 + 垂直对齐表头的圆角复选框 */}
+                    <td className="pl-2.5 pr-1.5 py-2.5 align-middle">
+                      <div className="flex items-center gap-1.5">
+                        <div
+                          onPointerDown={(e) => handlePointerDragStart(e, acc.id, true)}
+                          className="cursor-grab active:cursor-grabbing text-gray-300 opacity-50 group-hover:opacity-100 hover:text-gray-600 dark:text-zinc-600 dark:hover:text-zinc-300 transition-all shrink-0 touch-none"
+                          title={tUi(lang, 'acc_drag_reorder')}
+                        >
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </div>
+                        <AccountCheckbox
+                          checked={isSelected}
+                          onChange={() => handleToggleSelect(acc.id)}
+                        />
                       </div>
+                    </td>
 
-                      {/* 备注名称 */}
-                      <span className="text-[10px] text-gray-500 dark:text-zinc-400 truncate">
-                        {acc.alias}
-                      </span>
-
-                      {/* 标签栏 */}
-                      <div className="flex flex-wrap items-center gap-1">
-                        {acc.tags.map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setSelectedTag(t)}
-                            className="px-1 py-0 text-[8.5px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5 hover:border-purple-400 transition-colors"
-                            title={`过滤标签 [${t}]`}
+                    {/* 栏 1：账号与标签 */}
+                    <td className="px-2.5 py-2 align-middle">
+                      <div className="flex flex-col gap-1 min-w-0 pr-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className="font-semibold truncate text-[11px] text-gray-900 dark:text-zinc-100"
+                            title={acc.email}
                           >
-                            {t}
-                          </button>
-                        ))}
-                        <button
-                          onClick={() => setActiveModal({ type: 'tags', account: acc })}
-                          className="px-0.5 py-0 text-[8.5px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
-                          title={isZh ? '管理标签' : 'Manage Tags'}
-                        >
-                          + {isZh ? '标签' : 'Tag'}
-                        </button>
-                      </div>
+                            {acc.email}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0 text-[8.5px] font-extrabold tracking-wide rounded shrink-0 ${
+                              acc.tier === 'PRO'
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white shadow-xs ring-1 ring-blue-400/25'
+                                : acc.tier === 'ULTRA' || acc.tier === 'ENTERPRISE'
+                                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-xs ring-1 ring-amber-400/30'
+                                : 'bg-gray-200/80 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'
+                            }`}
+                          >
+                            {acc.tier}
+                          </span>
 
-                      {/* 403 受限提示 */}
-                      {acc.isForbidden && (
-                        <div className="inline-flex items-center gap-1 text-[9px] font-semibold text-rose-600 dark:text-rose-400">
-                          <Lock className="w-2.5 h-2.5" />
-                          <span>{isZh ? '账号受限 (403)' : 'Forbidden'}</span>
+                          {/* 复制账号 Refresh Token (RT) */}
+                          <button
+                            onClick={() => handleCopyRefreshToken(acc.id)}
+                            className="p-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0 cursor-pointer ml-auto"
+                            title={tUi(lang, 'acc_copy_rt')}
+                          >
+                            {copiedId === acc.id ? (
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            ) : (
+                              <BookCopy className="w-3 h-3" />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* 第二行：应用激活状态标签 (放于此使第一行邮箱纯粹整齐) + 用户自定义标签 */}
+                        <div className="flex flex-wrap items-center gap-1 min-w-0">
+                          {/* 活跃宿主指示胶囊标签 */}
+                          {acc.activeHosts.map((h) => (
+                            <span
+                              key={h}
+                              className="px-1.5 py-0 text-[8.5px] font-extrabold rounded bg-emerald-500 text-white flex items-center gap-0.5 shadow-2xs shrink-0 animate-in fade-in duration-150"
+                              title={tUi(lang, 'tag_active_host_tooltip', { host: h === 'app' ? 'Antigravity' : h === 'ide' ? 'Antigravity IDE' : h === 'plugin' ? 'ACP' : 'CLI' })}
+                            >
+                              <span className="w-1 h-1 rounded-full bg-white animate-ping" />
+                              <span>
+                                {h === 'app' ? tUi(lang, 'tag_host_app') : h === 'ide' ? tUi(lang, 'tag_host_ide') : h === 'plugin' ? tUi(lang, 'tag_host_plugin') : tUi(lang, 'tag_host_cli')}
+                              </span>
+                            </span>
+                          ))}
+
+                          {/* 自定义标签列表 */}
+                          {acc.tags.map((t) => (
+                            <button
+                              key={t}
+                              onClick={() => setSelectedTag(t)}
+                              className="px-1 py-0 text-[8.5px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5 hover:border-purple-400 transition-colors cursor-pointer"
+                              title={tUi(lang, 'filter_by_tag', { tag: t })}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                          <button
+                            onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                            className="px-0.5 py-0 text-[8.5px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors cursor-pointer"
+                            title={tUi(lang, 'acc_manage_tags')}
+                          >
+                            + {tUi(lang, 'tag')}
+                          </button>
+                        </div>
+
+                        {/* 异常状态微型胶囊指示器 (点击唤起详情与申诉弹窗) */}
+                        {(acc.isForbidden || acc.isTokenExpired) && (
+                          <button
+                            onClick={() => setActiveModal({ type: 'error', account: acc })}
+                            className={`inline-flex items-center gap-1 text-[9.5px] font-medium hover:underline max-w-[220px] truncate text-left cursor-pointer ${
+                              acc.isTokenExpired
+                                ? 'text-amber-500 hover:text-amber-600 dark:text-amber-400'
+                                : 'text-rose-500 hover:text-rose-600 dark:text-rose-400'
+                            }`}
+                            title={tUi(lang, 'acc_view_detail_hint')}
+                          >
+                            <AlertCircle className="w-2.5 h-2.5 shrink-0" />
+                            <span className="truncate">{acc.statusReason || tUi(lang, 'acc_status_error_fallback')}</span>
+                            {acc.banAppealUrl && (
+                              <ExternalLink className="w-2 h-2 shrink-0 opacity-70" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* 栏 2：Gemini / Claude / Argon 额度条 (受限/失效账号不显示额度，直接显示优雅的异常通告与申诉/解除通道) */}
+                    <td className="px-2.5 py-2 align-middle">
+                      {acc.isForbidden ? (
+                        <div className="flex flex-col gap-1 pr-2">
+                          <div className="p-2 px-3 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between gap-2.5 text-[11px] shadow-2xs">
+                            <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 min-w-0">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              <span className="font-semibold truncate">
+                                {acc.statusReason || tUi(lang, 'status_forbidden_403')}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {/* 解除 403 锁定按钮：仅对 403 受限账号显示 */}
+                              <button
+                                onClick={() => handleClearForbidden(acc.id)}
+                                className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                title={tUi(lang, 'unlock_403')}
+                              >
+                                <RefreshCw className="w-2.5 h-2.5" />
+                                <span>{tUi(lang, 'unlock_403')}</span>
+                              </button>
+
+                              {/* 官方申诉链接：调用底层原生浏览器安全拉起 */}
+                              {acc.banAppealUrl && (
+                                <button
+                                  onClick={() => api.openExternalUrl(acc.banAppealUrl!)}
+                                  className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-rose-600 text-white hover:bg-rose-700 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                >
+                                  <span>{tUi(lang, 'appeal')}</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => setActiveModal({ type: 'error', account: acc })}
+                                className="px-1.5 py-1 rounded-lg text-[10px] text-zinc-500 dark:text-zinc-400 hover:bg-rose-500/10 hover:text-rose-600 transition-colors cursor-pointer"
+                              >
+                                {tUi(lang, 'details')}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : acc.isTokenExpired ? (
+                        <div className="flex flex-col gap-1 pr-2">
+                          <div className="p-2 px-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2.5 text-[11px] shadow-2xs">
+                            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 min-w-0">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              <span className="font-semibold truncate">
+                                {acc.statusReason || tUi(lang, 'status_token_expired')}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {/* 凭据失效快捷重新授权 */}
+                              <button
+                                onClick={() => setActiveModal({ type: 'oauth', account: acc })}
+                                className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-zinc-800 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-900/40 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                title={tUi(lang, 're_login')}
+                              >
+                                <ExternalLink className="w-2.5 h-2.5" />
+                                <span>{tUi(lang, 're_login')}</span>
+                              </button>
+
+                              <button
+                                onClick={() => setActiveModal({ type: 'error', account: acc })}
+                                className="px-1.5 py-1 rounded-lg text-[10px] text-zinc-500 dark:text-zinc-400 hover:bg-amber-500/10 hover:text-amber-600 transition-colors cursor-pointer"
+                              >
+                                {tUi(lang, 'details')}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2.5 w-full pr-2 items-stretch">
+                          <QuotaPoolDisplay pool="gemini" quota={acc.geminiQuota} lang={lang} />
+                          <QuotaPoolDisplay pool="claude" quota={acc.claudeQuota} lang={lang} />
                         </div>
                       )}
+                    </td>
+
+                    {/* 栏 3：快捷控制台 (首行纯文字多端切号 + 次行操作工具) */}
+                    <td className="px-2 py-2 align-middle text-center whitespace-nowrap">
+                      <div className="p-1 rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.06] w-[164px] mx-auto shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col gap-1 items-center justify-center">
+                        {/* 第一行：4 个端纯文本切换按钮 (Apple HIG 分段选择器风格，去除突兀蓝底，高雅内敛) */}
+                        <div className="grid grid-cols-4 gap-0.5 w-full bg-gray-200/60 dark:bg-black/40 p-0.5 rounded-lg border border-black/5 dark:border-white/5">
+                          {[
+                            { id: 'app' as HostTarget, label: tUi(lang, 'host_app') },
+                            { id: 'ide' as HostTarget, label: tUi(lang, 'host_ide') },
+                            { id: 'plugin' as HostTarget, label: tUi(lang, 'host_plugin') },
+                            { id: 'cli' as HostTarget, label: tUi(lang, 'host_cli') },
+                          ].map((host) => {
+                            const isActive = acc.activeHosts.includes(host.id);
+                            const isSwitching = switchingHost?.id === acc.id && switchingHost?.host === host.id;
+
+                            return (
+                              <button
+                                key={host.id}
+                                disabled={Boolean(switchingHost)}
+                                onClick={() => handleToggleHost(acc.id, host.id)}
+                                className={`relative h-[20px] rounded-[5px] text-[9.5px] flex items-center justify-center transition-all cursor-pointer select-none ${
+                                  isSwitching
+                                    ? 'bg-blue-500 text-white opacity-85 cursor-wait'
+                                    : isActive
+                                    ? 'bg-white dark:bg-[#2c2d33] text-gray-900 dark:text-zinc-50 font-bold shadow-xs shadow-black/5 ring-1 ring-black/5 dark:ring-white/10'
+                                    : 'text-gray-500 dark:text-zinc-400 font-medium hover:text-gray-900 dark:hover:text-zinc-100 hover:bg-white/40 dark:hover:bg-white/5'
+                                }`}
+                                title={
+                                  isSwitching
+                                    ? tUi(lang, 'host_switching_to', { host: host.label })
+                                    : isActive
+                                    ? tUi(lang, 'host_bound_to', { host: host.label })
+                                    : tUi(lang, 'host_switch_to', { host: host.label })
+                                }
+                              >
+                                {isSwitching ? (
+                                  <RefreshCw className="w-2.5 h-2.5 animate-spin text-blue-500" />
+                                ) : (
+                                  <span className="flex items-center gap-0.5">
+                                    {isActive && (
+                                      <span className="w-1 h-1 rounded-full bg-emerald-500 dark:bg-emerald-400 shrink-0" />
+                                    )}
+                                    <span>{host.label}</span>
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* 第二行：操作工具条 (横向 5 个图标按钮并排平铺) */}
+                        <div className="flex items-center justify-between w-full px-0.5 pt-0.5 border-t border-gray-200/40 dark:border-white/5">
+                          <button
+                            onClick={() => handleRefreshOne(acc.id)}
+                            className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center cursor-pointer"
+                            title={tUi(lang, 'refresh_quotas')}
+                          >
+                            <RefreshCw className="w-2.5 h-2.5" />
+                          </button>
+
+                          <button
+                            onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
+                            className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center cursor-pointer"
+                            title={tUi(lang, 'acc_device_profile')}
+                          >
+                            <Fingerprint className="w-2.5 h-2.5" />
+                          </button>
+
+                          <button
+                            onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                            className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center cursor-pointer"
+                            title={tUi(lang, 'acc_manage_tags')}
+                          >
+                            <Tag className="w-2.5 h-2.5" />
+                          </button>
+
+                          {/* 下载单账号凭据 JSON 文件 */}
+                          <button
+                            onClick={() => handleDownloadCredentialsJson(acc.id)}
+                            className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center cursor-pointer"
+                            title={tUi(lang, 'acc_download_json')}
+                          >
+                            <Download className="w-2.5 h-2.5" />
+                          </button>
+
+                          {/* 删除账号按钮：唤起无损内嵌模态确认框 */}
+                          <button
+                            onClick={() => setActiveModal({ type: 'deleteConfirm', account: acc })}
+                            className="w-5 h-5 rounded hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center cursor-pointer"
+                            title={tUi(lang, 'acc_delete')}
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* 4 轨胶囊卡片视图 (紧凑精炼，每行固定 3 列，对齐列表快捷控制台设计) */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 w-full">
+          {filteredAccounts.map((acc) => {
+            const isSelected = selectedIds.includes(acc.id);
+            const isDragged = draggedId === acc.id;
+            const isDragOver = dragOverId === acc.id;
+            const isUltra = acc.tier === 'ULTRA' || acc.tier === 'ENTERPRISE';
+            const isPro = acc.tier === 'PRO';
+
+            const cardTierBg = isUltra
+              ? 'bg-amber-50/75 dark:bg-[#1e1a13]'
+              : isPro
+              ? 'bg-sky-50/75 dark:bg-[#141a24]'
+              : 'bg-white/85 dark:bg-[#16171b]';
+
+            const cardBorderClass = isSelected
+              ? 'border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400'
+              : isUltra
+              ? 'border-amber-200/80 dark:border-amber-500/20 hover:border-amber-300 dark:hover:border-amber-500/35'
+              : isPro
+              ? 'border-sky-200/80 dark:border-sky-500/20 hover:border-sky-300 dark:hover:border-sky-500/35'
+              : 'border-gray-200/80 dark:border-white/5 hover:border-gray-300 dark:hover:border-zinc-700';
+
+            return (
+              <div
+                key={acc.id}
+                data-account-item-id={acc.id}
+                onPointerDown={(e) => handlePointerDragStart(e, acc.id, false)}
+                className={`${cardTierBg} border rounded-xl p-3 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-2.5 relative overflow-hidden group select-none ${cardBorderClass} ${
+                  isDragged ? 'opacity-40 scale-[0.98]' : ''
+                } ${isDragOver ? 'ring-2 ring-blue-500 border-blue-500 scale-[1.01]' : ''}`}
+                style={{
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                } as React.CSSProperties}
+              >
+                {/* 卡片头部：拖拽手柄 + 复选框 + 邮箱 + 活跃宿主指示 + 订阅等级胶囊 + 复制 RT */}
+                <div className="flex flex-col gap-1.5 min-w-0">
+                  <div className="flex items-center justify-between gap-1.5 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div
+                        onPointerDown={(e) => handlePointerDragStart(e, acc.id, true)}
+                        className="cursor-grab active:cursor-grabbing text-gray-300 opacity-50 group-hover:opacity-100 hover:text-gray-600 dark:text-zinc-600 dark:hover:text-zinc-300 transition-all shrink-0 touch-none"
+                        title={tUi(lang, 'acc_drag_reorder')}
+                      >
+                        <GripVertical className="w-3.5 h-3.5" />
+                      </div>
+                      <AccountCheckbox
+                        checked={isSelected}
+                        onChange={() => handleToggleSelect(acc.id)}
+                      />
+                      <span
+                        className="font-bold text-[11.5px] truncate text-gray-900 dark:text-zinc-100"
+                        title={acc.email}
+                      >
+                        {acc.email}
+                      </span>
                     </div>
-                  </td>
 
-                  {/* 栏 2：Gemini / Claude / Argon 额度条 (5h 为 0 与 5h>7d 均优雅呈现) */}
-                  <td className="px-2.5 py-2 align-middle">
-                    {acc.isForbidden ? (
-                      <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/30 flex items-center gap-1.5 text-[10.5px] text-rose-700 dark:text-rose-400">
-                        <AlertCircle className="w-3 h-3 shrink-0" />
-                        <span>{isZh ? '账号存在风控拦截或订阅失效，请重登或设置网络' : 'Account rate limited or token invalid'}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {/* 活跃宿主指示胶囊标签 */}
+                      {acc.activeHosts.map((h) => (
+                        <span
+                          key={h}
+                          className="px-1 py-0 text-[8px] font-extrabold rounded bg-emerald-500 text-white flex items-center gap-0.5 shadow-2xs shrink-0"
+                          title={tUi(lang, 'tag_active_host_tooltip', { host: h === 'app' ? 'App' : h === 'ide' ? 'IDE' : h === 'plugin' ? 'Plug' : 'CLI' })}
+                        >
+                          <span className="w-1 h-1 rounded-full bg-white animate-ping" />
+                          <span>{h === 'app' ? tUi(lang, 'tag_host_app_short') : h === 'ide' ? tUi(lang, 'tag_host_ide') : h === 'plugin' ? tUi(lang, 'tag_host_plugin') : tUi(lang, 'tag_host_cli')}</span>
+                        </span>
+                      ))}
+
+                      <span
+                        className={`px-1.5 py-0 text-[9px] font-extrabold tracking-wide rounded shadow-xs ${
+                          acc.tier === 'PRO'
+                            ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white ring-1 ring-blue-400/25'
+                            : acc.tier === 'ULTRA' || acc.tier === 'ENTERPRISE'
+                            ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white ring-1 ring-amber-400/30'
+                            : 'bg-gray-200/80 text-gray-700 dark:bg-zinc-800 dark:text-zinc-300'
+                        }`}
+                      >
+                        {acc.tier}
+                      </span>
+
+                      {/* 快捷复制 RT */}
+                      <button
+                        onClick={() => handleCopyRefreshToken(acc.id)}
+                        className="p-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                        title={tUi(lang, 'acc_copy_rt')}
+                      >
+                        {copiedId === acc.id ? (
+                          <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                        ) : (
+                          <BookCopy className="w-3 h-3" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 卡片第二行：自定义 Tag 标签展示区 */}
+                  <div className="flex flex-wrap items-center gap-1 pl-6 min-w-0">
+                    {acc.tags.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setSelectedTag(t)}
+                        className="px-1 py-0 text-[8px] font-medium rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-gray-200/50 dark:border-white/5 hover:border-purple-400 transition-colors cursor-pointer"
+                        title={tUi(lang, 'filter_by_tag', { tag: t })}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                      className="px-0.5 py-0 text-[8px] rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors cursor-pointer"
+                      title={tUi(lang, 'acc_manage_tags')}
+                    >
+                      + {tUi(lang, 'tag')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 卡片中部：数码像素晶格胶囊配额池 或 异常告警 */}
+                <div className="flex flex-col gap-1 py-0.5">
+                  {acc.isForbidden ? (
+                    <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 flex flex-col gap-1.5">
+                      <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-[11px] font-semibold">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {acc.statusReason || tUi(lang, 'status_forbidden_403')}
+                        </span>
                       </div>
-                    ) : (
-                      <div className="flex flex-col gap-1.5 w-full pr-2">
-                        {/* 1. Gemini 额度 */}
-                        {renderQuotaBar('Gemini', 'gemini', acc.geminiQuota)}
-
-                        {/* 2. Claude 额度 */}
-                        {renderQuotaBar('Claude / GPT', 'claude', acc.claudeQuota)}
-
-                        {/* 3. Argon 额度 (如有) */}
-                        {acc.argonQuota && renderQuotaBar('Gemini 4 Argon', 'argon', acc.argonQuota)}
+                      <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-rose-500/10">
+                        <button
+                          onClick={() => handleClearForbidden(acc.id)}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                          <span>{tUi(lang, 'unlock_403')}</span>
+                        </button>
+                        {acc.banAppealUrl && (
+                          <button
+                            onClick={() => api.openExternalUrl(acc.banAppealUrl!)}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-rose-600 text-white hover:bg-rose-700 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <span>{tUi(lang, 'appeal')}</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                        )}
                       </div>
-                    )}
-                  </td>
+                    </div>
+                  ) : acc.isTokenExpired ? (
+                    <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col gap-1.5">
+                      <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-[11px] font-semibold">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {acc.statusReason || tUi(lang, 'status_token_expired')}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-amber-500/10">
+                        <button
+                          onClick={() => setActiveModal({ type: 'oauth', account: acc })}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          <span>{tUi(lang, 're_login')}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      <QuotaPoolDisplay pool="gemini" quota={acc.geminiQuota} lang={lang} />
+                      <QuotaPoolDisplay pool="claude" quota={acc.claudeQuota} lang={lang} />
+                    </div>
+                  )}
+                </div>
 
-                  {/* 栏 3：四宫格快捷切换区 (精致紧凑微型卡片，角标绿点绝对定位，永不截断) */}
-                  <td className="px-1.5 py-2 align-middle text-center">
-                    <div className="p-1 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[106px] mx-auto shadow-2xs">
-                      <div className="grid grid-cols-2 gap-1">
-                        {[
-                          { id: 'app' as HostTarget, label: 'App', icon: AppWindow },
-                          { id: 'ide' as HostTarget, label: 'IDE', icon: Code2 },
-                          { id: 'plugin' as HostTarget, label: isZh ? '插件' : 'Plugin', icon: Puzzle },
-                          { id: 'cli' as HostTarget, label: 'CLI', icon: Terminal },
-                        ].map((host) => {
-                          const Icon = host.icon;
-                          const isActive = acc.activeHosts.includes(host.id);
+                {/* 卡片底栏：100% 结构对齐列表控制台 (首行纯文字 4 端切号分段器 + 次行操作工具条) */}
+                <div className="p-1 rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.06] w-full shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col gap-1 items-center justify-center">
+                  {/* 第一行：4 端切号分段器 (完全对齐列表样式) */}
+                  <div className="grid grid-cols-4 gap-0.5 w-full bg-gray-200/60 dark:bg-black/40 p-0.5 rounded-lg border border-black/5 dark:border-white/5">
+                    {[
+                      { id: 'app' as HostTarget, label: tUi(lang, 'host_app') },
+                      { id: 'ide' as HostTarget, label: tUi(lang, 'host_ide') },
+                      { id: 'plugin' as HostTarget, label: tUi(lang, 'host_plugin') },
+                      { id: 'cli' as HostTarget, label: tUi(lang, 'host_cli') },
+                    ].map((host) => {
+                      const isActive = acc.activeHosts.includes(host.id);
+                      const isSwitching = switchingHost?.id === acc.id && switchingHost?.host === host.id;
 
-                          return (
-                            <button
-                              key={host.id}
-                              onClick={() => handleToggleHost(acc.id, host.id)}
-                              className={`relative h-[21px] px-1 rounded-md text-[9.5px] font-medium flex items-center justify-center gap-1 transition-all ${
-                                isActive
-                                  ? 'bg-blue-600 text-white shadow-2xs font-semibold ring-1 ring-blue-500/50'
-                                  : 'bg-white hover:bg-gray-100 dark:bg-[#202126] dark:hover:bg-[#282930] text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 border border-gray-200/50 dark:border-white/5'
-                              }`}
-                              title={
-                                isActive
-                                  ? isZh
-                                    ? `已在此【${host.label}】运行 (点击解除)`
-                                    : `Active in ${host.label}`
-                                  : isZh
-                                  ? `推送到【${host.label}】`
-                                  : `Switch to ${host.label}`
-                              }
-                            >
-                              <Icon className="w-2.5 h-2.5 shrink-0" />
-                              <span className="truncate">{host.label}</span>
-                              {/* 解决绿点挤压文字截断问题：绿点以微型右上角标呈现，文字宽度 100% 完整保留 */}
+                      return (
+                        <button
+                          key={host.id}
+                          disabled={Boolean(switchingHost)}
+                          onClick={() => handleToggleHost(acc.id, host.id)}
+                          className={`relative h-[20px] rounded-[5px] text-[9.5px] flex items-center justify-center transition-all cursor-pointer select-none ${
+                            isSwitching
+                              ? 'bg-blue-500 text-white opacity-85 cursor-wait'
+                              : isActive
+                              ? 'bg-white dark:bg-[#2c2d33] text-gray-900 dark:text-zinc-50 font-bold shadow-xs shadow-black/5 ring-1 ring-black/5 dark:ring-white/10'
+                              : 'text-gray-500 dark:text-zinc-400 font-medium hover:text-gray-900 dark:hover:text-zinc-100 hover:bg-white/40 dark:hover:bg-white/5'
+                          }`}
+                          title={
+                            isSwitching
+                              ? tUi(lang, 'host_switching_to', { host: host.label })
+                              : isActive
+                              ? tUi(lang, 'host_bound_to', { host: host.label })
+                              : tUi(lang, 'host_switch_to', { host: host.label })
+                          }
+                        >
+                          {isSwitching ? (
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-blue-500" />
+                          ) : (
+                            <span className="flex items-center gap-0.5">
                               {isActive && (
-                                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 border border-white dark:border-[#121316]"></span>
-                                </span>
+                                <span className="w-1 h-1 rounded-full bg-emerald-500 dark:bg-emerald-400 shrink-0" />
                               )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* 栏 4：操作工具区 (3 2 优雅换行，视觉高度与四宫格完全平衡) */}
-                  <td className="px-1 py-2 align-middle text-center whitespace-nowrap">
-                    <div className="p-1 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/5 w-[82px] mx-auto shadow-2xs flex flex-col gap-1 items-center justify-center">
-                      {/* 上排 3 键：刷新 / 指纹 / 标签 */}
-                      <div className="flex items-center justify-center gap-1">
-                        {/* 1. 单账号刷新 */}
-                        <button
-                          onClick={handleRefreshAll}
-                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '刷新配额' : 'Refresh'}
-                        >
-                          <RefreshCw className="w-3 h-3" />
+                              <span>{host.label}</span>
+                            </span>
+                          )}
                         </button>
+                      );
+                    })}
+                  </div>
 
-                        {/* 2. 独立设备指纹查看/重置 */}
-                        <button
-                          onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
-                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '设备指纹' : 'Fingerprint'}
-                        >
-                          <Fingerprint className="w-3 h-3" />
-                        </button>
+                  {/* 第二行：操作工具条 (横向 5 个图标按钮并排平铺，100% 对齐列表快捷控制台) */}
+                  <div className="flex items-center justify-between w-full px-1 pt-0.5 border-t border-gray-200/40 dark:border-white/5">
+                    <button
+                      onClick={() => handleRefreshOne(acc.id)}
+                      className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition-colors flex items-center justify-center cursor-pointer"
+                      title={tUi(lang, 'refresh_quotas')}
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                    </button>
 
-                        {/* 3. 标签管理 */}
-                        <button
-                          onClick={() => setActiveModal({ type: 'tags', account: acc })}
-                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '标签管理' : 'Tags'}
-                        >
-                          <Tag className="w-3 h-3" />
-                        </button>
-                      </div>
+                    <button
+                      onClick={() => setActiveModal({ type: 'fingerprint', account: acc })}
+                      className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors flex items-center justify-center cursor-pointer"
+                      title={tUi(lang, 'acc_device_profile')}
+                    >
+                      <Fingerprint className="w-2.5 h-2.5" />
+                    </button>
 
-                      {/* 下排 2 键居中：导出 / 删除 */}
-                      <div className="flex items-center justify-center gap-1">
-                        {/* 4. 单账号导出 */}
-                        <button
-                          onClick={() => handleCopyCredentials(acc.id)}
-                          className="w-5.5 h-5.5 rounded-md hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '导出凭据' : 'Export'}
-                        >
-                          <Download className="w-3 h-3" />
-                        </button>
+                    <button
+                      onClick={() => setActiveModal({ type: 'tags', account: acc })}
+                      className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-purple-600 dark:text-zinc-400 dark:hover:text-purple-400 transition-colors flex items-center justify-center cursor-pointer"
+                      title={tUi(lang, 'acc_manage_tags')}
+                    >
+                      <Tag className="w-2.5 h-2.5" />
+                    </button>
 
-                        {/* 5. 删除账号 */}
-                        <button
-                          onClick={() => handleDelete(acc.id)}
-                          className="w-5.5 h-5.5 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center shadow-2xs"
-                          title={isZh ? '删除账号' : 'Delete'}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    <button
+                      onClick={() => handleDownloadCredentialsJson(acc.id)}
+                      className="w-5 h-5 rounded hover:bg-white dark:hover:bg-[#202126] text-gray-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 transition-colors flex items-center justify-center cursor-pointer"
+                      title={tUi(lang, 'acc_download_json')}
+                    >
+                      <Download className="w-2.5 h-2.5" />
+                    </button>
+
+                    <button
+                      onClick={() => setActiveModal({ type: 'deleteConfirm', account: acc })}
+                      className="w-5 h-5 rounded hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-500 hover:text-rose-600 dark:text-rose-400 transition-colors flex items-center justify-center cursor-pointer"
+                      title={tUi(lang, 'acc_delete')}
+                    >
+                      <Trash2 className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* 底部批量操作悬浮岛 */}
       {selectedIds.length > 0 && (
         <div className="sticky bottom-4 z-30 bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 backdrop-blur-2xl rounded-2xl p-3 px-6 shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-bottom-2 duration-200">
           <div className="flex items-center gap-3 text-xs font-semibold">
-            <span>{isZh ? `已选中 ${selectedIds.length} 个账号` : `Selected ${selectedIds.length}`}</span>
+            <span>{tUi(lang, 'batch_selected_count', { count: selectedIds.length })}</span>
             <button
               onClick={() => setSelectedIds([])}
-              className="text-xs opacity-60 hover:opacity-100 underline ml-2"
+              className="text-xs opacity-60 hover:opacity-100 underline ml-2 cursor-pointer"
             >
-              {isZh ? '取消选择' : 'Deselect'}
+              {tUi(lang, 'batch_deselect')}
             </button>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={handleRefreshAll}
-              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 dark:bg-black/10 dark:hover:bg-black/20 text-xs font-medium transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 dark:bg-black/10 dark:hover:bg-black/20 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>{isZh ? '批量刷新配额' : 'Batch Refresh'}</span>
+              <span>{tUi(lang, 'batch_refresh')}</span>
             </button>
             <button
-              onClick={() => {
-                const tag = prompt(isZh ? '请输入为选中账号批量添加的标签名称:' : 'Tag name:');
-                if (tag && tag.trim()) {
-                  setAccounts((prev) =>
-                    prev.map((acc) => (selectedIds.includes(acc.id) && !acc.tags.includes(tag.trim()) ? { ...acc, tags: [...acc.tags, tag.trim()] } : acc))
-                  );
-                }
-              }}
-              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 dark:bg-black/10 dark:hover:bg-black/20 text-xs font-medium transition-colors flex items-center gap-1.5"
+              onClick={handleBatchTag}
+              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 dark:bg-black/10 dark:hover:bg-black/20 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Tag className="w-3.5 h-3.5" />
-              <span>{isZh ? '批量打标签' : 'Batch Tag'}</span>
+              <span>{tUi(lang, 'batch_tag')}</span>
             </button>
             <button
-              onClick={() => {
-                if (confirm(isZh ? `确定删除选中的 ${selectedIds.length} 个账号吗？` : 'Delete selected?')) {
-                  setAccounts((prev) => prev.filter((a) => !selectedIds.includes(a.id)));
-                  setSelectedIds([]);
-                }
-              }}
-              className="px-3 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium transition-colors flex items-center gap-1.5"
+              onClick={handleBatchDelete}
+              className="px-3 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>{isZh ? '批量删除' : 'Batch Delete'}</span>
+              <span>{tUi(lang, 'batch_delete')}</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* 模态浮层：设备指纹 / 标签管理 / 导出备份 */}
+      {/* 模态浮层：设备指纹 / 标签管理 / 导出备份 / 导入备份 / OAuth 登录 */}
       {activeModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in-0 duration-150">
-          <div className="w-full max-w-md bg-white dark:bg-[#16171b] border border-gray-200 dark:border-zinc-800 rounded-2xl p-6 shadow-2xl relative">
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in-0 duration-150"
+          onClick={() => {
+            setActiveModal(null);
+            setIsOAuthWaiting(false);
+          }}
+        >
+          <div
+            className="w-full max-w-md bg-white dark:bg-[#16171b] border border-gray-200 dark:border-zinc-800 rounded-2xl p-6 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
-              onClick={() => setActiveModal(null)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
+              onClick={() => {
+                setActiveModal(null);
+                setIsOAuthWaiting(false);
+              }}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -883,7 +2203,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
-                      {isZh ? '独立硬件指纹隔离' : 'Device Fingerprint Isolation'}
+                      {tUi(lang, 'acc_device_title')}
                     </h3>
                     <p className="text-xs text-gray-400">{activeModal.account.email}</p>
                   </div>
@@ -891,32 +2211,26 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
 
                 <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-zinc-900/60 border border-gray-200/60 dark:border-zinc-800 text-xs space-y-2">
                   <div className="flex justify-between items-center text-gray-500">
-                    <span>{isZh ? '机器指纹散列:' : 'Fingerprint Hash:'}</span>
-                    <span className="font-mono text-gray-900 dark:text-zinc-100 font-semibold">
+                    <span>{tUi(lang, 'acc_device_hash')}</span>
+                    <span className="font-mono text-gray-900 dark:text-zinc-100 font-semibold truncate max-w-[200px]" title={activeModal.account.fingerprint}>
                       {activeModal.account.fingerprint || 'DEFAULT_ISOLATED_MAC_SONOMA'}
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-gray-500">
-                    <span>{isZh ? '风控隔离状态:' : 'Status:'}</span>
+                    <span>{tUi(lang, 'acc_device_status')}</span>
                     <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      {isZh ? '已完全物理隔离 · 防关联' : 'Isolated'}
+                      {tUi(lang, 'acc_device_isolated_ok')}
                     </span>
                   </div>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button
-                    onClick={() => {
-                      const newFp = `fp_regen_${Math.random().toString(36).substring(2, 10)}`;
-                      setAccounts((prev) =>
-                        prev.map((a) => (a.id === activeModal.account?.id ? { ...a, fingerprint: newFp } : a))
-                      );
-                      setActiveModal(null);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
+                    onClick={() => handleRegenerateFingerprint(activeModal.account!.id)}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
-                    {isZh ? '重新生成随机设备指纹' : 'Regenerate Fingerprint'}
+                    {tUi(lang, 'acc_device_regen')}
                   </button>
                 </div>
               </div>
@@ -931,7 +2245,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
-                      {isZh ? '标签管理' : 'Manage Tags'}
+                      {tUi(lang, 'acc_manage_tags')}
                     </h3>
                     <p className="text-xs text-gray-400">{activeModal.account.email}</p>
                   </div>
@@ -946,14 +2260,14 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       <span>{t}</span>
                       <button
                         onClick={() => handleRemoveTagFromAccount(activeModal.account!.id, t)}
-                        className="text-gray-400 hover:text-rose-500"
+                        className="text-gray-400 hover:text-rose-500 cursor-pointer"
                       >
                         <X className="w-3 h-3" />
                       </button>
                     </span>
                   ))}
                   {activeModal.account.tags.length === 0 && (
-                    <span className="text-xs text-gray-400 self-center">{isZh ? '暂无标签，在下方添加' : 'No tags'}</span>
+                    <span className="text-xs text-gray-400 self-center">{tUi(lang, 'acc_tags_empty')}</span>
                   )}
                 </div>
 
@@ -965,14 +2279,14 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleAddTagToAccount(activeModal.account!.id, tempTagInput);
                     }}
-                    placeholder={isZh ? '输入新标签按回车添加...' : 'Add new tag...'}
+                    placeholder={tUi(lang, 'acc_tags_placeholder')}
                     className="flex-1 px-3 py-2 text-xs rounded-xl bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-purple-500 text-gray-900 dark:text-zinc-100 outline-none"
                   />
                   <button
                     onClick={() => handleAddTagToAccount(activeModal.account!.id, tempTagInput)}
-                    className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-colors"
+                    className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
-                    {isZh ? '添加' : 'Add'}
+                    {tUi(lang, 'acc_add_btn')}
                   </button>
                 </div>
               </div>
@@ -987,26 +2301,243 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
-                      {isZh ? '全量账号数据安全导出' : 'Export Accounts Backup'}
+                      {tUi(lang, 'acc_export_title')}
                     </h3>
-                    <p className="text-xs text-gray-400">{isZh ? `已收录共 ${accounts.length} 个账号` : `${accounts.length} accounts ready`}</p>
+                    <p className="text-xs text-gray-400">{tUi(lang, 'acc_export_ready_count', { count: accounts.length })}</p>
                   </div>
                 </div>
 
                 <div className="p-3 bg-gray-50 dark:bg-zinc-900 rounded-xl text-xs font-mono text-gray-600 dark:text-zinc-400 max-h-40 overflow-y-auto">
-                  {JSON.stringify(accounts.map((a) => ({ email: a.email, alias: a.alias, tier: a.tier, tags: a.tags })), null, 2)}
+                  {JSON.stringify(accounts.map((a) => ({ id: a.id, email: a.email, alias: a.alias, tier: a.tier, tags: a.tags })), null, 2)}
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(JSON.stringify(accounts, null, 2));
-                      alert(isZh ? '已复制全量备份 JSON 到剪贴板！' : 'Copied to clipboard!');
-                      setActiveModal(null);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                    onClick={handleExportBackup}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
-                    {isZh ? '复制备份 JSON' : 'Copy JSON'}
+                    {tUi(lang, 'acc_export_copy_json')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 4. 导入备份模态 */}
+            {activeModal.type === 'import' && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                    <Upload className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {tUi(lang, 'acc_import_title')}
+                    </h3>
+                    <p className="text-xs text-gray-400">{tUi(lang, 'acc_import_desc')}</p>
+                  </div>
+                </div>
+
+                <textarea
+                  rows={6}
+                  value={importJsonInput}
+                  onChange={(e) => setImportJsonInput(e.target.value)}
+                  placeholder={tUi(lang, 'acc_import_desc')}
+                  className="w-full p-2.5 text-xs font-mono rounded-xl bg-gray-50 dark:bg-zinc-900/80 border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100 outline-none focus:border-blue-500"
+                />
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={handleImportBackup}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    {tUi(lang, 'acc_import_start')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 5. 官方 OAuth 授权登录模态 (支持新授权与特定账号重新授权) */}
+            {activeModal.type === 'oauth' && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                    {activeModal.account ? <RefreshCw className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {activeModal.account
+                        ? tUi(lang, 'oauth_reauth_title', { email: activeModal.account.email })
+                        : tUi(lang, 'oauth_login_title')}
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      {activeModal.account
+                        ? tUi(lang, 'oauth_reauth_desc')
+                        : tUi(lang, 'oauth_login_desc')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-gray-50 dark:bg-zinc-900/60 border border-gray-200/60 dark:border-zinc-800 text-xs space-y-2 text-gray-600 dark:text-zinc-300">
+                  <p>
+                    {tUi(lang, 'oauth_browser_guide')}
+                  </p>
+                  {isOAuthWaiting && (
+                    <div className="p-2.5 rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200/50 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2 animate-pulse">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>{tUi(lang, 'acc_oauth_waiting')}</span>
+                    </div>
+                  )}
+                  {oauthError && (
+                    <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200/50 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 font-medium">
+                      {oauthError}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    disabled={isOAuthWaiting}
+                    onClick={handleStartOAuthLogin}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>
+                      {isOAuthWaiting
+                        ? tUi(lang, 'oauth_btn_waiting')
+                        : activeModal.account
+                        ? tUi(lang, 'oauth_btn_reauth')
+                        : tUi(lang, 'oauth_btn_auth')}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 6. 异常诊断与官方申诉模态 */}
+            {activeModal.type === 'error' && activeModal.account && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {tUi(lang, 'acc_diag_title')}
+                    </h3>
+                    <p className="text-xs text-gray-400">{activeModal.account.email}</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500 dark:text-zinc-400">{tUi(lang, 'acc_diag_category')}</span>
+                    <span className="font-semibold text-rose-600 dark:text-rose-400">
+                      {activeModal.account.statusReason || tUi(lang, 'acc_status_unknown_error')}
+                    </span>
+                  </div>
+
+                  {activeModal.account.banAppealUrl && (
+                    <div className="p-2.5 rounded-lg bg-white/60 dark:bg-black/30 border border-rose-500/30 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                          {tUi(lang, 'acc_diag_appeal_title')}
+                        </p>
+                        <p className="text-[9.5px] text-gray-500 truncate">
+                          {activeModal.account.banAppealUrl}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => api.openExternalUrl(activeModal.account!.banAppealUrl!)}
+                        className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shrink-0 transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>{tUi(lang, 'appeal')}</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+
+                  {activeModal.account.rawError && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-mono">{tUi(lang, 'acc_diag_raw')}</span>
+                      <pre className="p-2.5 rounded-lg bg-gray-900 text-gray-200 text-[10px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                        {activeModal.account.rawError}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  {activeModal.account.isForbidden && (
+                    <button
+                      onClick={() => handleClearForbidden(activeModal.account!.id)}
+                      className="px-3.5 py-2 rounded-xl bg-white dark:bg-zinc-800 border border-rose-300 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>{tUi(lang, 'unlock_403')}</span>
+                    </button>
+                  )}
+                  {activeModal.account.isTokenExpired && (
+                    <button
+                      onClick={() => {
+                        const target = activeModal.account;
+                        setActiveModal(null);
+                        if (target) {
+                          setTimeout(() => setActiveModal({ type: 'oauth', account: target }), 100);
+                        }
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>{tUi(lang, 're_login')}</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setActiveModal(null)}
+                    className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-zinc-200 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    {tUi(lang, 'settings_close')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 7. 删除确认模态 (取代系统原生 window.confirm，丝滑无阻塞) */}
+            {activeModal.type === 'deleteConfirm' && activeModal.account && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
+                    <Trash2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
+                      {tUi(lang, 'acc_delete_confirm_title')}
+                    </h3>
+                    <p className="text-xs text-rose-500 font-medium">{activeModal.account.email}</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-gray-600 dark:text-zinc-300 space-y-1.5">
+                  <p>
+                    {tUi(lang, 'acc_delete_warning')}
+                  </p>
+                  <p className="text-[11px] text-gray-400">
+                    {tUi(lang, 'acc_delete_confirm_tip')}
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setActiveModal(null)}
+                    className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-zinc-200 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    {tUi(lang, 'acc_cancel')}
+                  </button>
+                  <button
+                    onClick={() => handleExecuteDelete(activeModal.account!.id)}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{tUi(lang, 'acc_confirm_delete')}</span>
                   </button>
                 </div>
               </div>
@@ -1014,6 +2545,34 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
           </div>
         </div>
       )}
+      {/* 自由拖拽排序时的实时跟随浮标（跨平台 WKWebView 丝滑触觉反馈） */}
+      {draggedId && dragGhostPos && (() => {
+        const draggedAcc = accounts.find((a) => a.id === draggedId);
+        if (!draggedAcc) return null;
+        return (
+          <div
+            style={{
+              left: dragGhostPos.x + 14,
+              top: dragGhostPos.y + 14,
+            }}
+            className="fixed z-[9999] pointer-events-none flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/95 dark:bg-[#1a1b22]/95 backdrop-blur-md border border-blue-500/60 shadow-xl shadow-blue-500/15 text-[11.5px] font-semibold text-gray-900 dark:text-zinc-100"
+          >
+            <GripVertical className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <span className="max-w-[200px] truncate">{draggedAcc.email}</span>
+            <span
+              className={`px-1.5 py-0 text-[8.5px] font-extrabold rounded shrink-0 ${
+                draggedAcc.tier === 'PRO'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white'
+                  : draggedAcc.tier === 'ULTRA' || draggedAcc.tier === 'ENTERPRISE'
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
+                  : 'bg-gray-200 text-gray-700 dark:bg-zinc-800 dark:text-zinc-300'
+              }`}
+            >
+              {draggedAcc.tier}
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 };

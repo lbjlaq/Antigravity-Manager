@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 pub enum SwitchStrategy {
     /// 剩余配额最高优先 (默认推荐)
     MaxQuota,
+    /// 临近重置优先 (有可用余量且重置时间最近的优先，最大化利用快刷新的额度)
+    ExpiringSoon,
+    /// 订阅等级优先 (ULTRA > PRO > ENTERPRISE > FREE，同等级按余量优先)
+    TierFirst,
     /// 轮询/最久未被使用优先 (保障负载均衡与24h额度恢复)
     LeastUsed,
     /// 优先级权重最高优先
@@ -19,12 +23,18 @@ impl std::str::FromStr for SwitchStrategy {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "max-quota" | "quota" | "max" => Ok(SwitchStrategy::MaxQuota),
-            "least-used" | "rr" | "round-robin" | "idle" => Ok(SwitchStrategy::LeastUsed),
+            "max-quota" | "max_quota" | "quota" | "max" => Ok(SwitchStrategy::MaxQuota),
+            "expiring-soon" | "expiring_soon" | "expiring" | "reset-soon" => {
+                Ok(SwitchStrategy::ExpiringSoon)
+            }
+            "tier-first" | "tier_first" | "tier" => Ok(SwitchStrategy::TierFirst),
+            "least-used" | "least_used" | "balanced" | "rr" | "round-robin" | "idle" | "lru" => {
+                Ok(SwitchStrategy::LeastUsed)
+            }
             "priority" | "prio" => Ok(SwitchStrategy::Priority),
             "random" | "rand" => Ok(SwitchStrategy::Random),
             _ => Err(format!(
-                "Unknown strategy: '{}'. Available: max-quota, least-used, priority, random",
+                "Unknown strategy: '{}'. Available: max-quota, expiring-soon, tier-first, least-used, priority, random",
                 s
             )),
         }

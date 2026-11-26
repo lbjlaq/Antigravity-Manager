@@ -1,38 +1,65 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/2.0/tooling/cli/schema.json",
   "productName": "Antigravity Manager",
-  "version": "4.9.0",
+  "version": "0.0.1",
   "identifier": "com.antigravity.manager",
   "build": {
     "frontendDist": "../ui/dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "Antigravity Manager",
-        "width": 1020,
-        "height": 680,
-        "minWidth": 800,
-        "minHeight": 560,
+        "width": 1200,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
+        "visible": false,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-background-networking --disable-component-update --disable-features=Translate --js-flags=--max-old-space-size=192"
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https:"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/am"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/lbjlaq/Antigravity-Manager/releases/download/antigravity-manager/updater.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJFRjVDRjdCREE1Rjg2NkYKUldSdmhsL2FlOC8xdnJuTzBtaTRhZkk1VWJ1cW5QWGU3ZWEwU20yZHRlZStxMnRWcUIzc3FwT2IK"
+    }
   }
 }

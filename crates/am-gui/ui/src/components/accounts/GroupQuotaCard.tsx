@@ -1,4 +1,5 @@
 import React from 'react';
+import { tUi } from '../../i18n/ui';
 
 export interface QuotaPeriod {
   percentage: number;
@@ -14,9 +15,10 @@ export interface ModelGroupSummary {
 
 interface GroupQuotaCardProps {
   summary: ModelGroupSummary;
+  lang?: string;
 }
 
-export const GroupQuotaCard: React.FC<GroupQuotaCardProps> = ({ summary }) => {
+export const GroupQuotaCard: React.FC<GroupQuotaCardProps> = ({ summary, lang = 'en' }) => {
   const { fiveHour, sevenDay, name, key } = summary;
 
   const isClaude = key === 'claude';
@@ -100,14 +102,14 @@ export const GroupQuotaCard: React.FC<GroupQuotaCardProps> = ({ summary }) => {
           <div
             style={{ width: `${fiveHourPct}%` }}
             className={`h-full rounded-full transition-all duration-300 ${getPrimaryColor(fiveHourPct)}`}
-            title={`5H 短期限额: ${fiveHourPct}%`}
+            title={tUi(lang, 'quota_5h_tooltip', { pct: fiveHourPct })}
           />
         )}
         {sevenDay && (
           <div
             style={{ width: `${sevenDayPct}%` }}
             className={`h-full rounded-full transition-all duration-300 ${getSecondaryColor(sevenDayPct)}`}
-            title={`周配额长期限额: ${sevenDayPct}%`}
+            title={tUi(lang, 'quota_7d_tooltip', { pct: sevenDayPct })}
           />
         )}
       </div>

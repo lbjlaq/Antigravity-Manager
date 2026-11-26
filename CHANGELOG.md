@@ -1,0 +1,28 @@
+# Changelog / 更新日志
+
+> This changelog exclusively tracks **Antigravity Manager** (`antigravity-manager` branch, `am-core` + `am-cli` + `am-gui` workspace).  
+> 本更新日志仅记录 **Antigravity Manager**（`antigravity-manager` 分支，`am-core` + `am-cli` + `am-gui` 架构）的版本演进。
+
+---
+
+## v0.0.1 (2026-11-25)
+
+### English
+
+- **Modular Rust Workspace (`am-core` + `am-cli` + `am-gui`)**: Decoupled core domain engine from desktop GUI (Tauri v2 + React 18) and standalone cross-platform CLI (`am` / `am.exe`) sharing one SQLite store.
+- **Zero-Proxy 4-Host Account Switching**: Direct SQLite & system Keyring (macOS Keychain / Windows Credential Manager / Linux Secret Service) credential injection for **Antigravity Desktop App**, **Antigravity IDE**, **ACP Plugin (VS Code / Cursor)**, and **Antigravity CLI (`agy`)**, with per-account hardware fingerprint isolation.
+- **Dual-Pool `5h` / `7d` Quota Monitor & Smart-Pick Engine**: Real-time Gemini & Claude quota tracking with `Max Quota`, `Expiring Soon`, `Tier First`, and `Balanced LRU` smart-pick strategies.
+- **Zero-MITM Local Telemetry Studio & Share Posters**: Purely local read-only SQLite analytics for token throughput, cache hit rate, TTFT/TPS, workspace leaderboards, and one-click `1280×720` (`16:9`) HD shareable posters in 4 themes.
+- **Menu Bar / System Tray Mini Popover & Lightweight Mode**: Dual-mode tray popover (`Quick Switch` / `Today Stats`), quiet login autostart, and WebView renderer release in background lightweight mode.
+- **Cross-Platform CLI Packaging & Setup (`macOS` · `Windows` · `Linux`)**: Bundled `am` / `am.exe` sidecar inside desktop installers via Tauri `externalBin`, with OS-aware global `am` registration commands in Settings.
+- **12-Language UI Localization**: On-demand i18n packs (`zh`, `zh-TW`, `en`, `ja`, `ko`, `ru`, `es`, `pt`, `tr`, `vi`, `ar`, `my`).
+
+### 中文
+
+- **模块化 Rust 工作空间（`am-core` + `am-cli` + `am-gui`）**：核心领域引擎与 Tauri v2 + React 18 桌面端、独立跨平台命令行（`am` / `am.exe`）彻底解耦，共享同一本地 SQLite 凭据库。
+- **零反代四宿主无感热切**：原生直写 SQLite 与三端系统凭据库（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），覆盖 **Antigravity 原生桌面端**、**Antigravity IDE**、**ACP 插件（VS Code / Cursor）** 与 **Antigravity CLI（`agy`）**，单号独立硬件指纹隔离。
+- **双池 `5h` / `7d` 配额监控与智能选号**：实时监控 Gemini / Claude 双模型池余量与重置窗口，内置「余量优先 / 临近重置 / 等级优先 / 均衡轮换」四种智能选号策略。
+- **零劫持本地遥测大盘与战报海报**：纯本地只读解析 SQLite 流水，呈现 Token 吞吐、缓存命中率、TTFT / TPS 速率与工程排行，支持 4 套暗黑主题一键生成 `1280×720`（`16:9`）高清战报海报。
+- **菜单栏 / 系统托盘双模 Mini 弹窗与轻量模式**：支持「账号切号 / 今日数据」双模秒切、免打扰开机自启以及后台释放 WebView 渲染进程的轻量模式。
+- **全平台 CLI Sidecar 内嵌打包（`macOS` · `Windows` · `Linux`）**：通过 Tauri `externalBin` 将 `am` / `am.exe` 随各端安装包一并分发，设置页按当前系统动态展示对应注册命令。
+- **12 国语言按需国际化**：内置 `zh`、`zh-TW`、`en`、`ja`、`ko`、`ru`、`es`、`pt`、`tr`、`vi`、`ar`、`my` 按需加载语言包。

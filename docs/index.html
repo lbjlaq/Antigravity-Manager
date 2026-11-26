@@ -1,0 +1,2318 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Antigravity Manager — 零反代多宿主账号调度与本地遥测工作台</title>
+  <meta name="description" content="Antigravity 生态的零反代多宿主账号管理、双池配额监控与本地 SQLite 遥测解决方案。" />
+  <link rel="icon" type="image/png" href="./assets/logo.png" />
+  <style>
+    :root {
+      --bg-page: #ffffff;
+      --bg-section: #f6f7f8;
+      --bg-canvas: #f3f4f2;
+      --bg-card: #ffffff;
+      --bg-inset: #f5f6f7;
+      --bg-hover: #efefef;
+      --text-1: #0c0c0c;
+      --text-2: #5f5f5f;
+      --text-3: #8a8a8a;
+      --line: #e8e8e8;
+      --line-subtle: rgba(0, 0, 0, 0.06);
+      --line-strong: #d0d0d0;
+      --btn-fill: #0c0c0c;
+      --btn-ink: #ffffff;
+      --btn-hover: #2c2c2c;
+      --blue: #1677ff;
+      --blue-soft: rgba(219, 232, 244, 0.62);
+      --green: #2ca867;
+      --green-soft: rgba(220, 236, 227, 0.62);
+      --purple: #6f39e4;
+      --purple-soft: rgba(223, 215, 238, 0.62);
+      --orange: #ec8620;
+      --orange-soft: rgba(243, 218, 193, 0.62);
+      --gold: #f5b041;
+      --warn-bg: #fff6e5;
+      --warn-fg: #79551a;
+      --warn-line: #f3d299;
+      --code-bg: #0d0f12;
+      --shadow-soft: 0 12px 34px rgba(0, 0, 0, 0.07);
+      --shadow-lift: 0 22px 48px -12px rgba(15, 23, 42, 0.14);
+      --shadow-up: 0 -16px 52px rgba(0, 0, 0, 0.07);
+      --frame-max: 1480px;
+      --frame-pad: 72px;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    html[data-theme="dark"] {
+      --bg-page: #151719;
+      --bg-section: #1a1d20;
+      --bg-canvas: #202327;
+      --bg-card: #202326;
+      --bg-inset: #191c1f;
+      --bg-hover: #2b3036;
+      --text-1: #f1f2f3;
+      --text-2: #b4bac2;
+      --text-3: #8a929c;
+      --line: #32383e;
+      --line-subtle: rgba(255, 255, 255, 0.08);
+      --line-strong: #4e5660;
+      --btn-fill: #f1f2f3;
+      --btn-ink: #151719;
+      --btn-hover: #dcdedf;
+      --blue: #58a6ff;
+      --blue-soft: rgba(19, 145, 255, 0.15);
+      --green: #4ade80;
+      --green-soft: rgba(44, 168, 103, 0.15);
+      --purple: #a78bfa;
+      --purple-soft: rgba(111, 57, 228, 0.17);
+      --orange: #fb923c;
+      --orange-soft: rgba(236, 134, 32, 0.15);
+      --warn-bg: rgba(236, 134, 32, 0.12);
+      --warn-fg: #f3c46b;
+      --warn-line: rgba(243, 196, 107, 0.28);
+      --code-bg: #0c0e11;
+      --shadow-soft: 0 16px 40px rgba(0, 0, 0, 0.42);
+      --shadow-lift: 0 26px 56px -12px rgba(0, 0, 0, 0.65);
+      --shadow-up: 0 -18px 58px rgba(0, 0, 0, 0.5);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg-page);
+      color: var(--text-1);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background: var(--bg-page);
+      color: var(--text-1);
+      overflow-x: clip;
+      transition: background-color 0.28s ease, color 0.28s ease;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; }
+    code, pre, .mono { font-family: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, monospace; }
+
+    section[id], div[id] { scroll-margin-top: 72px; }
+
+    .siteFrame {
+      width: 100%;
+      max-width: var(--frame-max);
+      margin-inline: auto;
+      padding-inline: var(--frame-pad);
+    }
+
+    @media (max-width: 1024px) { :root { --frame-pad: 36px; } }
+    @media (max-width: 720px)  { :root { --frame-pad: 20px; } }
+
+    .ic {
+      width: 15px; height: 15px;
+      stroke: currentColor; fill: none;
+      stroke-width: 1.85;
+      stroke-linecap: round; stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+
+    /* ==================== TOP BAR ==================== */
+    .topBar {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--line-subtle);
+      transition: background-color 0.28s ease;
+    }
+
+    html[data-theme="dark"] .topBar { background: rgba(21, 23, 25, 0.86); }
+
+    .scrollProgress { position: absolute; left: 0; bottom: 0; width: 100%; height: 2px; pointer-events: none; }
+    .scrollProgress span { display: block; height: 100%; width: 0%; background: var(--blue); transition: width 0.08s linear; }
+
+    .nav { display: flex; align-items: center; justify-content: space-between; min-height: 60px; gap: 18px; }
+
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 750; font-size: 15.5px; letter-spacing: -0.02em; }
+    .brand img { width: 28px; height: 28px; border-radius: 7px; }
+    .brandTag { font-size: 11px; font-weight: 650; padding: 2px 8px; border-radius: 999px; background: var(--bg-inset); color: var(--text-2); border: 1px solid var(--line); }
+
+    .navLinks { display: flex; align-items: center; gap: 26px; font-size: 14px; font-weight: 500; color: var(--text-2); }
+    .navLinks a { transition: color 0.16s ease; }
+    .navLinks a:hover { color: var(--text-1); }
+
+    .navRight { display: flex; align-items: center; gap: 8px; }
+
+    .pillToggleBtn {
+      height: 32px; padding: 0 11px; border-radius: 999px;
+      border: 1px solid var(--line); background: var(--bg-card);
+      color: var(--text-1); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.16s ease;
+    }
+    .pillToggleBtn:hover { background: var(--bg-hover); }
+    .pillToggleBtn.isOff { opacity: 0.5; }
+
+    .themePill {
+      position: relative; width: 64px; height: 32px; padding: 3px;
+      border-radius: 999px; background: var(--bg-inset); border: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+    }
+
+    .themePillThumb {
+      position: absolute; top: 3px; left: 3px;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--bg-card); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+      transition: transform 0.28s var(--ease);
+    }
+
+    html[data-theme="dark"] .themePillThumb { transform: translateX(32px); }
+
+    .themePillIc {
+      position: relative; z-index: 1;
+      width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+      color: var(--text-2);
+    }
+
+    .navCta {
+      height: 34px; padding: 0 16px; border-radius: 999px;
+      background: var(--btn-fill); color: var(--btn-ink);
+      font-size: 13px; font-weight: 650;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: background 0.18s ease, transform 0.18s ease;
+      cursor: pointer; border: none;
+    }
+    .navCta:hover { background: var(--btn-hover); transform: translateY(-1px); }
+
+    /* ==================== UI-DOCKED & SCROLL-CHOREOGRAPHED LOGO IP COMPANION ==================== */
+    .bubbleGuide {
+      --buddy-accent: #f5b041;
+      position: fixed;
+      top: 0; left: 0;
+      z-index: 54;
+      width: 46px; height: 46px;
+      pointer-events: none;
+      will-change: transform, opacity;
+      transition: opacity 0.28s var(--ease);
+    }
+
+    .bubbleGuide.hiddenGuide,
+    .bubbleGuide.habitatDocked { opacity: 0; pointer-events: none !important; }
+    .bubbleGuide.habitatDocked .logoBuddy { pointer-events: none; }
+
+    .logoBuddyPose {
+      width: 46px; height: 46px;
+      will-change: transform;
+      transform-origin: center center;
+    }
+
+    .logoBuddy {
+      position: relative;
+      width: 46px; height: 46px;
+      pointer-events: auto;
+      cursor: pointer;
+      will-change: transform;
+      transform-origin: center bottom;
+      transition: filter 0.22s ease;
+    }
+
+    .logoBuddy:hover { filter: brightness(1.07); }
+    .logoBuddy.hop { animation: buddyHop 0.44s var(--ease); }
+    .logoBuddy.landed { animation: buddyLand 0.30s var(--ease); }
+    .logoBuddy.nod { animation: buddyNod 0.36s var(--ease); }
+
+    .logoBuddyImg {
+      position: relative;
+      z-index: 2;
+      width: 100%; height: 100%;
+      border-radius: 14px;
+      display: block;
+      background: #09090b;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20), 0 0 0 1.5px color-mix(in srgb, var(--buddy-accent) 48%, transparent);
+      transition: box-shadow 0.36s var(--ease), border-radius 0.36s var(--ease);
+    }
+
+    /* Crisp luminous rim when perched on dark UI surfaces (like .codePanel) or dark theme */
+    .bubbleGuide[data-scene="dark"] .logoBuddyImg,
+    html[data-theme="dark"] .logoBuddyImg {
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48), 0 0 0 1.5px rgba(255, 255, 255, 0.24), 0 0 16px color-mix(in srgb, var(--buddy-accent) 28%, transparent);
+    }
+
+    /* Fused into 3D Orbit Ring center core */
+    .bubbleGuide[data-fused="ring"] .logoBuddyImg {
+      border-radius: 13px;
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.24), 0 0 0 2px color-mix(in srgb, var(--buddy-accent) 55%, transparent), 0 0 28px color-mix(in srgb, var(--buddy-accent) 30%, transparent);
+    }
+
+    /* Soft grounded contact shadow when perched on a UI card edge */
+    .buddyShadow {
+      position: absolute;
+      left: 50%; bottom: -6px;
+      width: 30px; height: 7px;
+      border-radius: 50%;
+      background: radial-gradient(ellipse at center, rgba(15, 23, 42, 0.26) 0%, transparent 72%);
+      transform: translateX(-50%) scale(1);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .bubbleGuide[data-in-flight="true"] .buddyShadow,
+    .bubbleGuide[data-fused="ring"] .buddyShadow {
+      opacity: 0;
+      transform: translateX(-50%) scale(0.55);
+    }
+
+    .buddyAntenna {
+      position: absolute;
+      top: -11px;
+      width: 2.5px; height: 13px;
+      border-radius: 99px;
+      background: linear-gradient(180deg, var(--buddy-accent), #38383c);
+      transform-origin: bottom center;
+      z-index: 1;
+      transition: background 0.36s ease;
+    }
+
+    .buddyAntenna.left  { left: 12px; transform: rotate(-16deg); animation: antWiggleL 4.6s ease-in-out infinite; }
+    .buddyAntenna.right { right: 12px; transform: rotate(16deg); animation: antWiggleR 4.6s ease-in-out infinite; }
+
+    .buddyAntenna::after {
+      content: "";
+      position: absolute;
+      top: -4px; left: -2px;
+      width: 6.5px; height: 6.5px;
+      border-radius: 50%;
+      background: var(--buddy-accent);
+      box-shadow: 0 0 8px color-mix(in srgb, var(--buddy-accent) 82%, transparent);
+      transition: background 0.36s ease, box-shadow 0.36s ease;
+    }
+
+    @keyframes antWiggleL {
+      0%, 84%, 100% { transform: rotate(-16deg); }
+      90%           { transform: rotate(-30deg); }
+      95%           { transform: rotate(-9deg); }
+    }
+    @keyframes antWiggleR {
+      0%, 84%, 100% { transform: rotate(16deg); }
+      90%           { transform: rotate(30deg); }
+      95%           { transform: rotate(9deg); }
+    }
+    @keyframes buddyHop {
+      0%   { transform: translateY(0) scale(1); }
+      40%  { transform: translateY(-14px) scale(1.08, 0.94); }
+      76%  { transform: translateY(2px) scale(0.95, 1.05); }
+      100% { transform: translateY(0) scale(1); }
+    }
+    @keyframes buddyLand {
+      0%   { transform: translateY(-3px) scale(0.96, 1.05); }
+      45%  { transform: translateY(2px) scale(1.07, 0.93); }
+      100% { transform: translateY(0) scale(1); }
+    }
+    @keyframes buddyNod {
+      0%   { transform: translateY(0) scale(1); }
+      38%  { transform: translateY(-7px) scale(1.05); }
+      100% { transform: translateY(0) scale(1); }
+    }
+
+    /* Compact absolute-anchored speech pill — never shifts the perched logo! */
+    .guideSpeech {
+      position: absolute;
+      top: 50%;
+      left: calc(100% + 12px);
+      width: max-content;
+      max-width: 224px;
+      padding: 7px 13px;
+      border-radius: 13px;
+      background: var(--bg-card);
+      color: var(--text-1);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.42;
+      white-space: normal;
+      opacity: 0;
+      transform: translateY(-50%) translateX(-6px) scale(0.94);
+      transform-origin: left center;
+      transition: opacity 0.22s var(--ease), transform 0.24s var(--ease);
+    }
+
+    .bubbleGuide.flipLeft .guideSpeech {
+      left: auto;
+      right: calc(100% + 12px);
+      transform: translateY(-50%) translateX(6px) scale(0.94);
+      transform-origin: right center;
+    }
+
+    .bubbleGuide.speaking .guideSpeech {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0) scale(1);
+    }
+
+    .bubbleGuide[data-scene="dark"] .guideSpeech {
+      background: #1b1e23;
+      color: #f1f2f3;
+      border-color: rgba(255, 255, 255, 0.14);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+    }
+
+    .bubbleGuide[data-fused="ring"] .guideSpeech { left: calc(100% + 24px); }
+    .bubbleGuide[data-fused="ring"].flipLeft .guideSpeech { left: auto; right: calc(100% + 24px); }
+
+    /* ==================== HERO + PIXEL BLAST + CAMERA SCROLL ZOOM ==================== */
+    .heroCameraViewport { position: relative; overflow: clip; }
+    #pixelBlastCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+
+    .hero {
+      position: relative; z-index: 2;
+      min-height: calc(100svh - 108px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 72px 0 108px;
+      will-change: transform, opacity;
+      transform-origin: center 42%;
+    }
+
+    .heroSolutionTitle {
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      font-weight: 760; letter-spacing: -0.035em; line-height: 1.12; margin-bottom: 24px;
+    }
+
+    .heroEyebrowLine { font-size: clamp(22px, 2.4vw, 32px); font-weight: 500; color: var(--text-2); }
+    .heroWordStage { display: inline-flex; align-items: center; justify-content: center; min-height: clamp(66px, 8vw, 108px); }
+
+    .heroWordPill {
+      display: inline-flex; align-items: center; gap: 14px;
+      padding: 8px 28px 10px 22px; border-radius: 22px;
+      background: var(--word-bg, var(--blue-soft)); color: var(--word-fg, var(--blue));
+      font-size: clamp(34px, 5.5vw, 72px); font-weight: 820; letter-spacing: -0.04em;
+      cursor: pointer; user-select: none;
+      transition: background-color 0.45s var(--ease), color 0.45s var(--ease), transform 0.25s var(--ease);
+    }
+    .heroWordPill:hover { transform: scale(1.03); }
+
+    .heroWordDot { width: clamp(14px, 1.4vw, 20px); height: clamp(14px, 1.4vw, 20px); border-radius: 50%; background: currentColor; animation: dotBeat 2.4s ease-in-out infinite; }
+    @keyframes dotBeat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
+
+    .heroWordText { display: inline-block; transition: opacity 0.22s ease, transform 0.3s var(--ease), filter 0.22s ease; }
+    .heroWordText.out { opacity: 0; transform: translateY(-10px); filter: blur(4px); }
+
+    .heroConclusionLine { font-size: clamp(32px, 4.4vw, 56px); font-weight: 760; color: var(--text-1); }
+    .heroLead { font-size: clamp(16px, 1.5vw, 19px); color: var(--text-2); max-width: 640px; margin: 0 auto 36px; }
+    .heroActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-bottom: 28px; }
+
+    .heatFlowBtn {
+      position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      height: 52px; padding: 0 30px; border-radius: 999px;
+      background: var(--btn-fill); color: var(--btn-ink);
+      font-size: 15.5px; font-weight: 650;
+      overflow: hidden; cursor: pointer; border: none;
+      box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.22);
+      transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease);
+    }
+    .heatFlowBtn:hover { transform: translateY(-2px); box-shadow: 0 18px 36px -10px rgba(22, 119, 255, 0.36); }
+    .heatFlowCanvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 0.35s var(--ease); pointer-events: none; }
+    .heatFlowBtn:hover .heatFlowCanvas { opacity: 1; }
+    .heatFlowBtn span, .heatFlowBtn svg { position: relative; z-index: 2; }
+
+    .pillSecondary {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      height: 52px; padding: 0 26px; border-radius: 999px;
+      background: var(--bg-card); color: var(--text-1); border: 1px solid var(--line-strong);
+      font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s var(--ease);
+    }
+    .pillSecondary:hover { background: var(--bg-hover); transform: translateY(-1.5px); }
+
+    .branchHint { font-size: 13px; color: var(--text-3); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+    .branchHint a { color: var(--blue); font-weight: 600; }
+
+    /* ==================== 1. SCROLL-DRIVEN 3D ORBITAL HOST RING ==================== */
+    .partnerRingSection {
+      position: relative; height: 150svh;
+      background: var(--bg-section);
+      border-top: 1px solid var(--line-subtle); border-bottom: 1px solid var(--line-subtle);
+    }
+
+    .partnerRingSticky {
+      position: sticky; top: 60px; height: calc(100svh - 60px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      overflow: hidden; padding: 24px;
+    }
+
+    .ringTitleBox { position: relative; z-index: 3; text-align: center; pointer-events: none; }
+    .ringCenterLogo { width: 68px; height: 68px; border-radius: 18px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18); margin-bottom: 14px; transition: opacity 0.28s ease, transform 0.28s ease; }
+    .ringCenterLogo.fusedHidden { opacity: 0; }
+    .ringTitleBox h2 { font-size: clamp(24px, 3vw, 36px); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 6px; }
+    .ringTitleBox p { font-size: 14px; color: var(--text-2); }
+
+    .ringOrbitField { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; perspective: 1100px; pointer-events: none; }
+    .ringTrackLine { position: absolute; width: min(68vw, 620px); height: min(68vw, 620px); border-radius: 50%; border: 1px dashed var(--line-strong); opacity: 0.55; }
+
+    .ringNode {
+      position: absolute; padding: 11px 18px; border-radius: 999px;
+      background: var(--bg-card); border: 1px solid var(--line); box-shadow: var(--shadow-soft);
+      display: inline-flex; align-items: center; gap: 9px;
+      font-size: 13.5px; font-weight: 650; color: var(--text-1); white-space: nowrap;
+      will-change: transform, opacity; pointer-events: auto; cursor: default;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .ringNode:hover { border-color: var(--blue); box-shadow: 0 14px 32px rgba(22, 119, 255, 0.18); }
+    .ringNodeDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ==================== 2. SCROLL-DRIVEN 3D Z-DEPTH PROOF TUNNEL ==================== */
+    .proofTunnelSection { position: relative; height: 210svh; }
+    .proofTunnelSticky {
+      position: sticky; top: 60px; height: calc(100svh - 60px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden;
+    }
+
+    .proofTunnelHead { text-align: center; margin-bottom: 24px; }
+    .proofTunnelHead span { display: inline-block; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; background: var(--bg-inset); color: var(--text-2); border: 1px solid var(--line); margin-bottom: 10px; }
+    .proofTunnelHead h2 { font-size: clamp(22px, 2.6vw, 32px); font-weight: 780; letter-spacing: -0.025em; }
+
+    .proofDepthStage { position: relative; width: 100%; max-width: 820px; height: 310px; perspective: 1000px; display: grid; }
+    .proofDepthCard {
+      grid-area: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 42px 36px; border-radius: 28px;
+      background: var(--bg-card); border: 1px solid var(--line); box-shadow: var(--shadow-soft);
+      will-change: transform, opacity, filter;
+    }
+
+    .proofDepthLabel { font-size: 13.5px; font-weight: 650; color: var(--text-3); margin-bottom: 10px; }
+    .proofDepthNum { font-size: clamp(54px, 7.5vw, 96px); font-weight: 850; letter-spacing: -0.045em; line-height: 1; margin-bottom: 16px; color: var(--text-1); }
+    .proofDepthNum em { font-style: normal; color: var(--blue); }
+    .proofDepthCard p { font-size: 15.5px; color: var(--text-2); max-width: 520px; }
+
+    .proofDots { display: flex; gap: 8px; margin-top: 26px; }
+    .proofDot { width: 28px; height: 4px; border-radius: 99px; background: var(--line-strong); transition: all 0.25s ease; }
+    .proofDot.active { width: 48px; background: var(--blue); }
+
+    /* ==================== 3. STICKY PRODUCT SCROLLYTELLING ==================== */
+    .storyIntro { padding: 84px 0 36px; text-align: center; }
+    .storyIntro h2 { font-size: clamp(30px, 3.8vw, 48px); font-weight: 800; letter-spacing: -0.035em; line-height: 1.15; margin-bottom: 14px; }
+    .storyIntro p { font-size: 17px; color: var(--text-2); max-width: 620px; margin: 0 auto; }
+
+    .productStory {
+      display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+      gap: 56px; align-items: start; padding: 36px 0 96px;
+    }
+
+    .storyCopyCol { display: flex; flex-direction: column; gap: 26px; }
+
+    .storyChapter {
+      padding: 34px 30px; border-radius: 24px; border: 1px solid transparent;
+      cursor: pointer; opacity: 0.45; transition: all 0.34s var(--ease);
+    }
+    .storyChapter:hover { opacity: 0.86; }
+    .storyChapter.active { opacity: 1; background: var(--bg-card); border-color: var(--line); box-shadow: var(--shadow-soft); }
+
+    .storyBadge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-bottom: 14px; }
+    .storyChapter h3 { font-size: clamp(21px, 2.1vw, 27px); font-weight: 780; letter-spacing: -0.025em; margin-bottom: 10px; }
+    .storyChapter p { font-size: 14.5px; color: var(--text-2); line-height: 1.7; margin-bottom: 16px; }
+
+    .storySubPills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .storySubBtn {
+      padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line);
+      background: var(--bg-inset); color: var(--text-2); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.18s ease;
+    }
+    .storySubBtn.active { background: var(--btn-fill); color: var(--btn-ink); border-color: var(--btn-fill); }
+
+    .storyVisualCol { position: sticky; top: 96px; }
+
+    .storyCanvas {
+      position: relative; border-radius: 28px; padding: 22px 22px 18px;
+      background: var(--stage-tint, var(--blue-soft)); border: 1px solid var(--line);
+      transition: background-color 0.55s var(--ease); overflow: hidden;
+    }
+
+    .storyCanvasInner {
+      position: relative; border-radius: 16px; overflow: hidden;
+      box-shadow: 0 24px 56px -14px rgba(15, 23, 42, 0.16);
+      cursor: zoom-in; background: #ffffff;
+    }
+
+    .storyCanvasInner img { display: block; width: 100%; height: auto; transition: opacity 0.24s ease, transform 0.34s var(--ease); }
+    .storyCanvasInner.swap img { opacity: 0.15; transform: scale(0.978); }
+    .storyCanvasInner.portraitMode { max-width: 390px; margin: 0 auto; border-radius: 20px; }
+
+    .stageArrow {
+      position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(255, 255, 255, 0.88);
+      color: #0c0c0c; backdrop-filter: blur(10px);
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+      opacity: 0; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+      transition: opacity 0.2s ease, transform 0.2s var(--ease), background 0.18s ease;
+    }
+    .storyCanvas:hover .stageArrow { opacity: 1; }
+    .stageArrow:hover { background: #ffffff; transform: translateY(-50%) scale(1.08); }
+    .stageArrow.prev { left: 12px; }
+    .stageArrow.next { right: 12px; }
+
+    .stageCaptionBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 0 4px; font-size: 12.5px; color: var(--text-2); }
+
+    .zoomPillHint {
+      display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+      border-radius: 999px; background: var(--bg-card); border: 1px solid var(--line);
+      font-size: 11.5px; font-weight: 600; color: var(--text-1); cursor: pointer;
+    }
+
+    .storyStepNav { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .storyStepBtn { display: inline-flex; align-items: center; gap: 7px; padding: 6px 13px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; }
+    .storyStepDot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.45; transition: all 0.2s ease; }
+    .storyStepBtn.active { background: var(--bg-card); border-color: var(--line); color: var(--text-1); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); }
+    .storyStepBtn.active .storyStepDot { opacity: 1; transform: scale(1.25); }
+
+    /* ==================== NEW: SCROLL-LINKED KINETIC DUAL-TRACK RIBBON ==================== */
+    .kineticScrollBand {
+      padding: 44px 0;
+      border-top: 1px solid var(--line-subtle);
+      border-bottom: 1px solid var(--line-subtle);
+      background: var(--bg-section);
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .kineticRow {
+      display: flex;
+      gap: 28px;
+      white-space: nowrap;
+      will-change: transform;
+      font-size: clamp(26px, 3.6vw, 48px);
+      font-weight: 850;
+      letter-spacing: -0.03em;
+      line-height: 1.25;
+    }
+
+    .kineticRow + .kineticRow { margin-top: 10px; }
+
+    .kStroke {
+      color: transparent;
+      -webkit-text-stroke: 1.2px var(--line-strong);
+    }
+
+    .kSolid { color: var(--text-1); opacity: 0.88; }
+    .kAccent { color: var(--blue); }
+    .kDot { color: var(--gold); }
+
+    /* ==================== 4. SCROLL-SCRUBBED 3D FAN CAPABILITY CARDS ==================== */
+    .capSection { padding: 84px 0 96px; perspective: 1200px; }
+    .capHeader { text-align: center; margin-bottom: 44px; }
+    .capHeader h2 { font-size: clamp(26px, 3vw, 38px); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 8px; }
+    .capHeader p { font-size: 15.5px; color: var(--text-2); }
+
+    .capabilityGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+
+    .capabilityCard {
+      position: relative;
+      padding: 28px;
+      border-radius: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-soft);
+      display: flex; flex-direction: column; justify-content: space-between; gap: 20px;
+      overflow: hidden;
+      will-change: transform, opacity;
+      transition: box-shadow 0.3s var(--ease), border-color 0.24s ease;
+    }
+
+    .capabilityCard.settled {
+      transition: transform 0.28s var(--ease), box-shadow 0.3s var(--ease), border-color 0.24s ease;
+    }
+
+    .capabilityCard::before {
+      content: "";
+      position: absolute; inset: 0;
+      background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.26) 50%, transparent 65%);
+      transform: translateX(-130%); pointer-events: none;
+    }
+
+    .capabilityCard:hover { box-shadow: var(--shadow-lift); border-color: var(--line-strong); }
+    .capabilityCard.settled:hover { transform: translateY(-8px); }
+    .capabilityCard:hover::before { animation: cardSweep 0.85s var(--ease); }
+    @keyframes cardSweep { to { transform: translateX(130%); } }
+
+    .capTag { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 4px 10px; border-radius: 999px; margin-bottom: 14px; }
+    .capabilityCard h3 { font-size: 19px; font-weight: 780; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .capabilityCard p { font-size: 14px; color: var(--text-2); line-height: 1.65; }
+
+    .capWidget { padding: 14px 16px; border-radius: 14px; background: var(--bg-inset); border: 1px solid var(--line); }
+
+    .hostMiniBar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+    .hostMiniBtn {
+      padding: 6px 4px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--bg-card); color: var(--text-2);
+      font-size: 11.5px; font-weight: 700; cursor: pointer; transition: all 0.16s ease;
+    }
+    .hostMiniBtn.active { background: var(--btn-fill); color: var(--btn-ink); border-color: var(--btn-fill); }
+
+    .iosSwitch {
+      position: relative; width: 42px; height: 24px; border-radius: 999px;
+      border: none; background: #cbd5e1; cursor: pointer; transition: background 0.22s ease;
+    }
+    .iosSwitch.on { background: var(--green); }
+    .iosSwitch::after {
+      content: ""; position: absolute; top: 3px; left: 3px;
+      width: 18px; height: 18px; border-radius: 50%; background: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22); transition: transform 0.22s var(--ease);
+    }
+    .iosSwitch.on::after { transform: translateX(18px); }
+
+    /* ==================== DEVELOPERS & CLI (PIXEL-PERFECT EQUAL-HEIGHT ALIGNMENT!) ==================== */
+    .devSection {
+      padding: 96px 0 112px;
+      background: var(--bg-section);
+      border-top: 1px solid var(--line-subtle);
+      border-bottom: 1px solid var(--line-subtle);
+    }
+
+    .devTopHead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+
+    .devTitle { font-size: clamp(28px, 3.2vw, 40px); font-weight: 820; letter-spacing: -0.03em; line-height: 1.15; }
+    .devDesc { font-size: 15px; color: var(--text-2); max-width: 560px; line-height: 1.7; }
+
+    /* Perfectly Aligned Stretch 2-Column Grid (Zero Empty Void!) */
+    .devGrid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    .devLeftCol {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .osDownloadList { display: flex; flex-direction: column; gap: 12px; }
+    .osRow {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 18px 22px; border-radius: 18px;
+      background: var(--bg-card); border: 1px solid var(--line);
+      transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .osRow:hover { border-color: var(--line-strong); transform: translateX(4px); box-shadow: var(--shadow-soft); }
+    .osRow strong { display: block; font-size: 15.5px; font-weight: 750; }
+    .osRow small { display: block; font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
+    .osLinkPill { padding: 7px 16px; border-radius: 999px; background: var(--btn-fill); color: var(--btn-ink); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+
+    .warnCallout {
+      padding: 20px 22px; border-radius: 18px;
+      background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg);
+      margin-top: auto;
+    }
+    .warnCallout strong { display: block; font-size: 13.5px; margin-bottom: 6px; }
+    .warnCallout p { font-size: 12.5px; opacity: 0.92; margin-bottom: 12px; }
+    .warnCmdRow {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px 15px; border-radius: 12px;
+      background: var(--code-bg); color: #f8fafc; font-size: 12px;
+    }
+    .warnCmdRow code { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+
+    /* Stretched Equal-Height Terminal Panel */
+    .codePanel {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      border-radius: 22px;
+      background: var(--code-bg);
+      color: #f1f2f3;
+      overflow: hidden;
+      box-shadow: var(--shadow-soft);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .codeTabs {
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+      padding: 15px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .codeTabGroup { display: flex; flex-wrap: wrap; gap: 6px; }
+    .codeTab {
+      padding: 6px 13px; border-radius: 999px; border: none;
+      background: transparent; color: #9ca3af; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.16s ease;
+    }
+    .codeTab:hover { color: #ffffff; }
+    .codeTab.active { background: rgba(255, 255, 255, 0.14); color: #ffffff; }
+
+    .copySmallBtn {
+      padding: 5px 13px; border-radius: 999px; flex-shrink: 0;
+      border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.07);
+      color: #ffffff; font-size: 11.5px; font-weight: 600; cursor: pointer;
+      transition: background 0.16s ease;
+    }
+    .copySmallBtn:hover { background: rgba(255, 255, 255, 0.18); }
+
+    .codePre {
+      flex: 1;
+      padding: 24px 26px;
+      font-size: 12.8px;
+      line-height: 1.85;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: hidden;
+      color: #e5e7eb;
+    }
+
+    .codeFooterBar {
+      padding: 13px 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.02);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 11.5px;
+      color: #8b949e;
+    }
+
+    .quickCmdChips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .quickChip {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      color: #c9d1d9;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+    .quickChip:hover { background: rgba(88, 166, 255, 0.18); border-color: rgba(88, 166, 255, 0.4); color: #ffffff; }
+
+    .cm { color: #6b7280; }
+    .kw { color: #60a5fa; font-weight: 700; }
+    .fl { color: #c4b5fd; }
+    .st { color: #6ee7b7; }
+
+    /* ==================== 5. METALLIC BEZEL IP HABITAT + SCROLL-LIFTED FOOTER CLOSING CARD ==================== */
+    .closingStage { padding: 64px 24px 0; background: var(--bg-page); }
+    .ipHabitat { max-width: 1140px; margin: 0 auto 28px; }
+
+    .habitatBezel {
+      padding: 10px; border-radius: 20px;
+      background: linear-gradient(180deg, #626262, #3c3c3c 18%, #303030 78%, #414141);
+      border: 1px solid #686868; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+    }
+
+    .habitatScreen {
+      position: relative; height: 132px; border-radius: 12px;
+      background: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px), linear-gradient(180deg, #0d0f13 0%, #15181e 100%);
+      background-size: 16px 16px, 100% 100%; overflow: hidden; cursor: pointer;
+    }
+
+    .habitatGround { position: absolute; left: 0; right: 0; bottom: 26px; height: 1px; background: rgba(255, 255, 255, 0.12); }
+
+    .habitatWalker { position: absolute; bottom: 26px; left: 40px; display: flex; align-items: center; gap: 16px; will-change: transform; }
+    .walkerLogoWrap { position: relative; width: 42px; height: 42px; flex-shrink: 0; transition: opacity 0.22s ease; }
+    .walkerLogoWrap.awaitingDock { opacity: 0; }
+    .walkerLogoWrap.jump { animation: buddyHop 0.48s var(--ease); }
+    .walkerLogoWrap img { position: relative; z-index: 2; width: 100%; height: 100%; border-radius: 12px; display: block; box-shadow: 0 6px 20px rgba(245, 176, 65, 0.28); }
+
+    .walkerLegs { position: absolute; bottom: -6px; left: 11px; right: 11px; display: flex; justify-content: space-between; }
+    .walkerLegs span { width: 4.5px; height: 7px; border-radius: 99px; background: #f5b041; animation: legStep 0.34s ease-in-out infinite alternate; }
+    .walkerLegs span:last-child { animation-delay: 0.17s; }
+    @keyframes legStep { from { transform: translateY(0); } to { transform: translateY(-3px); } }
+
+    .walkerBubble {
+      padding: 7px 15px; border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #f1f2f3; font-size: 12.5px; font-weight: 550; white-space: nowrap; backdrop-filter: blur(8px);
+    }
+
+    .habitatHint { position: absolute; top: 10px; right: 14px; font-size: 10.5px; color: rgba(255, 255, 255, 0.36); }
+
+    .footerClosingCard {
+      max-width: var(--frame-max);
+      margin: 0 auto;
+      padding: 52px var(--frame-pad) 96px;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: 28px 28px 0 0;
+      background: var(--bg-card);
+      box-shadow: var(--shadow-up);
+      will-change: transform;
+      transform-origin: center top;
+    }
+
+    .footerGrid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 40px; padding-bottom: 42px; border-bottom: 1px solid var(--line-subtle); }
+    .footerBrandCol { grid-column: 1 / span 5; display: flex; flex-direction: column; gap: 14px; }
+    .footerBrandCol p { font-size: 14px; color: var(--text-2); max-width: 340px; line-height: 1.7; }
+
+    .footerLinksWrap { grid-column: 6 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+    .footerCol h4 { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
+    .footerCol ul { list-style: none; display: flex; flex-direction: column; gap: 11px; font-size: 13.5px; color: var(--text-2); }
+    .footerCol a:hover, .footerCol button:hover { color: var(--text-1); }
+    .footerCol button { border: none; background: none; color: inherit; font-size: inherit; cursor: pointer; padding: 0; text-align: left; }
+
+    .footerLegal { padding-top: 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text-3); }
+
+    /* Floating Bottom Command Dock */
+    .commandDockWrap { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 48; max-width: calc(100vw - 140px); }
+    .commandDock {
+      display: inline-flex; align-items: center; gap: 11px;
+      padding: 8px 16px 8px 13px; border-radius: 999px;
+      background: rgba(12, 12, 12, 0.92); color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(18px); cursor: pointer;
+      transition: transform 0.22s var(--ease), border-color 0.2s ease;
+    }
+    html[data-theme="dark"] .commandDock { background: rgba(34, 38, 42, 0.94); }
+    .commandDock:hover { transform: translateY(-3px); border-color: rgba(245, 176, 65, 0.45); }
+    .dockCode { font-size: 12.5px; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(50vw, 390px); }
+
+    /* Modal, Lightbox & Toast */
+    .modalMask { position: fixed; inset: 0; z-index: 120; background: rgba(12, 12, 12, 0.56); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 20px; }
+    .modalMask.open { display: flex; }
+    .modalCard { width: 100%; max-width: 540px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 26px; padding: 32px; text-align: center; box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28); }
+    .qr3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0; }
+    .qrBox { padding: 10px; border-radius: 16px; background: var(--bg-inset); border: 1px solid var(--line); transition: border-color 0.18s ease, transform 0.18s ease; }
+    a.qrBox { display: block; color: inherit; text-decoration: none; cursor: pointer; }
+    a.qrBox:hover { border-color: rgba(245, 158, 11, 0.55); transform: translateY(-2px); }
+    .qrBox img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #ffffff; border-radius: 10px; padding: 4px; }
+    .qrBox span { display: block; margin-top: 8px; font-size: 12px; font-weight: 700; }
+    .sponsorCta { height: 40px; padding: 0 22px; border-radius: 999px; background: #ec4899; color: #ffffff; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; transition: background 0.18s ease, transform 0.18s ease; }
+    .sponsorCta:hover { background: #db2777; transform: translateY(-1px); }
+
+    .lightbox { position: fixed; inset: 0; z-index: 140; background: rgba(12, 12, 12, 0.88); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out; }
+    .lightbox.open { display: flex; }
+    .lightbox img { max-width: 94vw; max-height: 90vh; border-radius: 16px; box-shadow: 0 32px 90px rgba(0, 0, 0, 0.65); }
+
+    .toast {
+      position: fixed; top: 76px; left: 50%; transform: translateX(-50%) translateY(-10px);
+      z-index: 160; padding: 9px 18px; border-radius: 999px;
+      background: var(--btn-fill); color: var(--btn-ink);
+      font-size: 13px; font-weight: 650; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+      opacity: 0; pointer-events: none; transition: all 0.24s var(--ease);
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    @media (max-width: 980px) {
+      .navLinks, .bubbleGuide { display: none !important; }
+      .commandDockWrap { max-width: calc(100vw - 24px); }
+      .partnerRingSection { height: 110svh; }
+      .proofTunnelSection { height: auto; padding: 56px 0; }
+      .proofTunnelSticky { position: static; height: auto; }
+      .proofDepthStage { height: auto; gap: 16px; }
+      .proofDepthCard { grid-area: auto; position: static; transform: none !important; opacity: 1 !important; filter: none !important; }
+      .productStory, .capabilityGrid, .devGrid { grid-template-columns: 1fr; }
+      .storyVisualCol { position: static; order: -1; }
+      .storyChapter { opacity: 1; padding: 24px; }
+      .footerBrandCol, .footerLinksWrap { grid-column: span 12; }
+      .footerLinksWrap { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- UI-Docked & Scroll-Choreographed Brand Logo IP Companion -->
+  <div class="bubbleGuide" id="bubbleGuide" data-in-flight="false" data-scene="light">
+    <div class="logoBuddyPose" id="logoBuddyPose">
+      <div class="logoBuddy" id="logoBuddy" onclick="hopGuide()" title="点击与 Antigravity 小助手互动">
+        <span class="buddyAntenna left"></span>
+        <span class="buddyAntenna right"></span>
+        <img class="logoBuddyImg" src="./assets/logo.png" alt="Antigravity Buddy" />
+        <span class="buddyShadow"></span>
+      </div>
+    </div>
+    <div class="guideSpeech" id="guideSpeech">嗨！跟着我一起逛完 Antigravity Manager ✨</div>
+  </div>
+
+  <!-- Top Bar -->
+  <header class="topBar">
+    <div class="siteFrame nav">
+      <a href="#" class="brand" data-guide-zh="Antigravity Manager · 零反代轻量版" data-guide-en="Antigravity Manager · Zero-Proxy Edition">
+        <img src="./assets/logo.png" alt="Antigravity Manager" />
+        <span>Antigravity Manager</span>
+        <span class="brandTag mono">am-core</span>
+      </a>
+
+      <nav class="navLinks">
+        <a href="#ring" data-zh="四端生态" data-en="3D Orbit">四端生态</a>
+        <a href="#proof" data-zh="工程验证" data-en="Proof">工程验证</a>
+        <a href="#products" data-zh="实机导览" data-en="Showcase">实机导览</a>
+        <a href="#capabilities" data-zh="交互演练" data-en="Interactive">交互演练</a>
+        <a href="#developers" data-zh="下载与 CLI" data-en="CLI &amp; Download">下载与 CLI</a>
+      </nav>
+
+      <div class="navRight">
+        <button class="pillToggleBtn mono" id="guideToggleBtn" onclick="toggleGuide()" title="Toggle IP Companion">IP:ON</button>
+        <button class="pillToggleBtn mono" id="langBtn" onclick="toggleLang()">EN</button>
+        <button class="themePill" onclick="toggleTheme()" aria-label="Toggle theme" data-guide-zh="点击平滑切换亮色 / 深炭暗黑模式" data-guide-en="Toggle Light / Charcoal Dark mode">
+          <span class="themePillThumb"></span>
+          <span class="themePillIc"><svg class="ic" style="width:13px;height:13px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></span>
+          <span class="themePillIc"><svg class="ic" style="width:13px;height:13px" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+        </button>
+        <a class="navCta" href="https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager" target="_blank" rel="noopener" data-zh="立即下载" data-en="Download" data-guide-zh="直达 antigravity-manager 专属安装包通道" data-guide-en="Jump straight to antigravity-manager releases">立即下载</a>
+      </div>
+    </div>
+    <div class="scrollProgress"><span id="progressBar"></span></div>
+  </header>
+
+  <main>
+    <!-- ==================== HERO + PIXEL BLAST + CAMERA SCROLL ZOOM ==================== -->
+    <div class="heroCameraViewport" id="heroViewport">
+      <canvas id="pixelBlastCanvas"></canvas>
+      <section class="siteFrame hero" id="heroCameraStage">
+        <h1 class="heroSolutionTitle">
+          <span class="heroEyebrowLine" data-zh="Antigravity 生态的" data-en="For the Antigravity Ecosystem">Antigravity 生态的</span>
+          <span class="heroWordStage">
+            <span class="heroWordPill" id="heroWordPill" onclick="cycleHeroWord()" data-guide-zh="点我切换四大核心能力关键词，点击空白处触发像素波纹！" data-guide-en="Click to cycle core pillars — click Hero background for pixel blast!">
+              <span class="heroWordDot"></span>
+              <span class="heroWordText" id="heroWordText">零反代多端热切</span>
+            </span>
+          </span>
+          <span class="heroConclusionLine" data-zh="一站式工作台" data-en="All-in-One Studio">一站式工作台</span>
+        </h1>
+
+        <p class="heroLead" data-zh="摒弃本地反向代理与中间人劫持，毫秒级直写接管桌面端、定制 IDE、ACP 插件与 CLI，配备双池配额监控与零抓包本地 SQLite 遥测。" data-en="Zero local reverse proxy. Direct millisecond credential injection across Desktop App, IDE, ACP Plugin, and CLI — with 5h/7d quota pools and local SQLite telemetry.">
+          摒弃本地反向代理与中间人劫持，毫秒级直写接管桌面端、定制 IDE、ACP 插件与 CLI，配备双池配额监控与零抓包本地 SQLite 遥测。
+        </p>
+
+        <div class="heroActions">
+          <a class="heatFlowBtn" id="heatBtn" href="https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager" target="_blank" rel="noopener" data-guide-zh="把鼠标滑过按钮感受实时流体热力光效 🔥" data-guide-en="Hover this button to trigger the live thermal heat-flow shader 🔥">
+            <canvas class="heatFlowCanvas" id="heatCanvas"></canvas>
+            <span data-zh="立即获取安装包" data-en="Download Installer">立即获取安装包</span>
+            <svg class="ic" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </a>
+          <a class="pillSecondary" href="#products" data-zh="浏览实机演示" data-en="Explore Product Tour" data-guide-zh="下滑进入吸顶滚动叙事画布，预览全部 16 张真实界面" data-guide-en="Scroll into sticky scrollytelling to preview all 16 real screens">浏览实机演示</a>
+        </div>
+
+        <div class="branchHint">
+          <span data-zh="当前分支：antigravity-manager（零反代纯净版） · 全功能 API 反代网关见" data-en="Branch: antigravity-manager (Zero-Proxy) · Full API Proxy Gateway on">当前分支：antigravity-manager（零反代纯净版） · 全功能 API 反代网关见</span>
+          <a href="https://github.com/lbjlaq/Antigravity-Manager/tree/main" target="_blank" rel="noopener">Antigravity Tools (main) →</a>
+        </div>
+      </section>
+    </div>
+
+    <!-- ==================== 1. SCROLL-DRIVEN 3D ORBITAL HOST RING ==================== -->
+    <section class="partnerRingSection" id="ring">
+      <div class="partnerRingSticky">
+        <div class="ringTitleBox">
+          <img class="ringCenterLogo" id="ringCenterLogo" src="./assets/logo.png" alt="Antigravity Core" />
+          <h2 data-zh="一套内核，环绕驱动全生态宿主" data-en="One Rust Core, Orbiting Every Host">一套内核，环绕驱动全生态宿主</h2>
+          <p data-zh="继续向下滚动，感受 3D 星环轨道随滚动公转" data-en="Scroll down to rotate the 3D host ecosystem orbit">继续向下滚动，感受 3D 星环轨道随滚动公转</p>
+        </div>
+
+        <div class="ringOrbitField" id="ringOrbitField">
+          <div class="ringTrackLine"></div>
+          <div class="ringNode" data-guide-zh="原生桌面端 globalStorage 毫秒直写"><span class="ringNodeDot" style="background:#1677ff"></span>Antigravity App</div>
+          <div class="ringNode" data-guide-zh="Antigravity IDE 定制版无感热切换"><span class="ringNodeDot" style="background:#2ca867"></span>Antigravity IDE</div>
+          <div class="ringNode" data-guide-zh="VS Code / Cursor ACP 插件无缝接管"><span class="ringNodeDot" style="background:#6f39e4"></span>ACP Plugin</div>
+          <div class="ringNode" data-guide-zh="agy 命令行系统密钥链同步写入"><span class="ringNodeDot" style="background:#ec8620"></span>agy CLI</div>
+          <div class="ringNode" data-guide-zh="Gemini & Claude 5h/7d 双窗配额引擎"><span class="ringNodeDot" style="background:#1677ff"></span>5h / 7d Quotas</div>
+          <div class="ringNode" data-guide-zh="单账号独立设备指纹隔离防关联"><span class="ringNodeDot" style="background:#2ca867"></span>Fingerprint Lock</div>
+          <div class="ringNode" data-guide-zh="零抓包本地 SQLite 实时 Token 洞察"><span class="ringNodeDot" style="background:#6f39e4"></span>SQLite Telemetry</div>
+          <div class="ringNode" data-guide-zh="macOS / Windows / Linux 全平台原生支持"><span class="ringNodeDot" style="background:#ec8620"></span>macOS · Win · Linux</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 2. SCROLL-DRIVEN 3D Z-DEPTH PROOF TUNNEL ==================== -->
+    <section class="proofTunnelSection" id="proof">
+      <div class="siteFrame proofTunnelSticky">
+        <div class="proofTunnelHead">
+          <span data-zh="Z 轴景深推拉验证" data-en="3D Z-Depth Proof Stage">Z 轴景深推拉验证</span>
+          <h2 data-zh="为极致纯净与零损耗而生" data-en="Built for Zero Overhead">为极致纯净与零损耗而生</h2>
+        </div>
+
+        <div class="proofDepthStage" id="proofDepthStage">
+          <article class="proofDepthCard" data-depth-idx="0">
+            <div class="proofDepthLabel" data-zh="01 / 本地反代额外转发延迟" data-en="01 / Local Proxy Latency Overhead">01 / 本地反代额外转发延迟</div>
+            <div class="proofDepthNum">0<em> ms</em></div>
+            <p data-zh="不启动本地代理服务器，不劫持 TLS 证书。以 Protobuf Sentinel 编码直写宿主 state.vscdb 与 OS Keyring，流量直达上游。" data-en="No local reverse proxy or TLS interception. Writes Protobuf Sentinel state straight into host storage and OS Keyring.">不启动本地代理服务器，不劫持 TLS 证书。以 Protobuf Sentinel 编码直写宿主 state.vscdb 与 OS Keyring，流量直达上游。</p>
+          </article>
+
+          <article class="proofDepthCard" data-depth-idx="1">
+            <div class="proofDepthLabel" data-zh="02 / 独立并行可控宿主矩阵" data-en="02 / Independent Target Hosts">02 / 独立并行可控宿主矩阵</div>
+            <div class="proofDepthNum">4<em> Hosts</em></div>
+            <p data-zh="原生桌面端、定制 IDE、VS Code / Cursor ACP 插件与 agy CLI 各自独立绑定账号，支持单端派发或四端一键 Smart Pick。" data-en="Desktop App, IDE, ACP Plugin &amp; agy CLI each maintain independent bindings or switch globally in one click.">原生桌面端、定制 IDE、VS Code / Cursor ACP 插件与 agy CLI 各自独立绑定账号，支持单端派发或四端一键 Smart Pick。</p>
+          </article>
+
+          <article class="proofDepthCard" data-depth-idx="2">
+            <div class="proofDepthLabel" data-zh="03 / Lightweight 托盘常驻内存" data-en="03 / Lightweight Tray Daemon RAM">03 / Lightweight 托盘常驻内存</div>
+            <div class="proofDepthNum">14<em> MB</em></div>
+            <p data-zh="关闭窗口隐藏至托盘时自动销毁 WebView 前端渲染进程，仅保留极速 Rust 后台守护静默保鲜配额，唤醒瞬间重建。" data-en="Destroys the WebView renderer when hidden in tray, keeping pure Rust background polling ultra-minimal.">关闭窗口隐藏至托盘时自动销毁 WebView 前端渲染进程，仅保留极速 Rust 后台守护静默保鲜配额，唤醒瞬间重建。</p>
+          </article>
+        </div>
+
+        <div class="proofDots" id="proofDots">
+          <span class="proofDot active"></span>
+          <span class="proofDot"></span>
+          <span class="proofDot"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 3. STICKY SCROLLYTELLING PRODUCT STORY ==================== -->
+    <div class="siteFrame storyIntro">
+      <h2 data-zh="为每一种编码工作流<br />打造顺滑、可控的多账号体验" data-en="Crafted for Every Coding Flow<br />Zero Friction, Full Visibility">为每一种编码工作流<br />打造顺滑、可控的多账号体验</h2>
+      <p data-zh="向下滚动或点击章节，跟随右侧画布检视全部 16 张实机界面" data-en="Scroll through or click chapters to explore all 16 live screens on the sticky canvas">向下滚动或点击章节，跟随右侧画布检视全部 16 张实机界面</p>
+    </div>
+
+    <section class="siteFrame productStory" id="products">
+      <div class="storyCopyCol">
+        <article class="storyChapter active" data-chapter="0" onclick="activateChapter(0)" data-guide-zh="首页仪表盘：四宿主快切矩阵 + 全局配额池 + 实时请求均衡器">
+          <span class="storyBadge" style="background:var(--blue-soft);color:var(--blue)">01 · Quick Switch</span>
+          <h3 data-zh="四宿主毫秒级无感热切" data-en="Sub-Second 4-Host Hot Switching">四宿主毫秒级无感热切</h3>
+          <p data-zh="一眼纵览全池健康度、Claude / Gemini 平均余量与实时请求均衡器。内置 Smart Pick 智能选号，一键为 App / IDE / ACP / CLI 切换最优账号并自动对齐硬件指纹。" data-en="View global pool health, Claude &amp; Gemini averages, and live request equalizer at a glance with 1-click Smart Pick.">一眼纵览全池健康度、Claude / Gemini 平均余量与实时请求均衡器。内置 Smart Pick 智能选号，一键为 App / IDE / ACP / CLI 切换最优账号并自动对齐硬件指纹。</p>
+          <div class="storySubPills">
+            <button class="storySubBtn active" onclick="event.stopPropagation(); setChapterImg(0, 0)" data-zh="仪表盘总览" data-en="Dashboard">仪表盘总览</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(0, 1)" data-zh="通用与宿主路径" data-en="Daemon &amp; Paths">通用与宿主路径</button>
+          </div>
+        </article>
+
+        <article class="storyChapter" data-chapter="1" onclick="activateChapter(1)" data-guide-zh="账号资产池：卡片网格与高密表双视图，5h/7d 双窗口点阵余量">
+          <span class="storyBadge" style="background:var(--green-soft);color:var(--green)">02 · Dual Quota Pools</span>
+          <h3 data-zh="5h 实时流 + 7d 周期双池资产管理" data-en="5h Stream &amp; 7d Reservoir Pools">5h 实时流 + 7d 周期双池资产管理</h3>
+          <p data-zh="Bento 卡片网格与高密度表格双视图自由切换。按 ULTRA / PRO / FREE 等级快速筛选，点阵进度条直观展示重置倒计时，支持批量导入导出与 403 状态解除。" data-en="Switch between Bento Card Grid and High-Density Table views with tier filtering, dot-matrix countdowns &amp; batch backup.">Bento 卡片网格与高密度表格双视图自由切换。按 ULTRA / PRO / FREE 等级快速筛选，点阵进度条直观展示重置倒计时，支持批量导入导出与 403 状态解除。</p>
+          <div class="storySubPills">
+            <button class="storySubBtn active" onclick="event.stopPropagation(); setChapterImg(1, 0)" data-zh="Bento 卡片网格" data-en="Card Grid">Bento 卡片网格</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(1, 1)" data-zh="高密度列表" data-en="Table View">高密度列表</button>
+          </div>
+        </article>
+
+        <article class="storyChapter" data-chapter="2" onclick="activateChapter(2)" data-guide-zh="零抓包本地 SQLite 四维遥测：光谱、项目雷达、模型天梯与请求台账">
+          <span class="storyBadge" style="background:var(--purple-soft);color:var(--purple)">03 · Local SQLite Telemetry</span>
+          <h3 data-zh="零抓包四维 Token 遥测与实时台账" data-en="Zero-MITM 4D Telemetry &amp; Ledger">零抓包四维 Token 遥测与实时台账</h3>
+          <p data-zh="只读解析本地 SQLite，从全局光谱、工作区六轴雷达、模型天梯到逐笔请求流水台账，全方位追踪 Prompt Cache 命中率、Thinking 思考开销、TTFT 与 Agent 工具调用。" data-en="Read-only local SQLite analytics across Global Spectrum, 6-Axis Workspace Radar, Model Leaderboard &amp; Live Request Ledger.">只读解析本地 SQLite，从全局光谱、工作区六轴雷达、模型天梯到逐笔请求流水台账，全方位追踪 Prompt Cache 命中率、Thinking 思考开销、TTFT 与 Agent 工具调用。</p>
+          <div class="storySubPills">
+            <button class="storySubBtn active" onclick="event.stopPropagation(); setChapterImg(2, 0)" data-zh="全局光谱" data-en="Overview">全局光谱</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(2, 1)" data-zh="项目雷达" data-en="Projects">项目雷达</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(2, 2)" data-zh="模型天梯" data-en="Models">模型天梯</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(2, 3)" data-zh="请求台账" data-en="Ledger">请求台账</button>
+          </div>
+        </article>
+
+        <article class="storyChapter" data-chapter="3" onclick="activateChapter(3)" data-guide-zh="菜单栏 Mini 灵动弹窗：不离开发窗即可一键切号与看今日消耗">
+          <span class="storyBadge" style="background:var(--orange-soft);color:var(--orange)">04 · Menu Bar Popover</span>
+          <h3 data-zh="常驻菜单栏的双模灵动悬浮窗" data-en="Dual-Mode Menu Bar Mini Popover">常驻菜单栏的双模灵动悬浮窗</h3>
+          <p data-zh="常驻系统顶部状态栏，无需切出 IDE 或终端窗口，即可在「四宿主极速快切」与「今日实时 Token 节律」之间自由切换。" data-en="Pinned to your menu bar — flip between 4-Host Quick Switch and Today's Live Usage &amp; 24h Rhythm instantly.">常驻系统顶部状态栏，无需切出 IDE 或终端窗口，即可在「四宿主极速快切」与「今日实时 Token 节律」之间自由切换。</p>
+          <div class="storySubPills">
+            <button class="storySubBtn active" onclick="event.stopPropagation(); setChapterImg(3, 0)" data-zh="四宿主快切模式" data-en="Quick Switch">四宿主快切模式</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(3, 1)" data-zh="今日遥测模式" data-en="Live Telemetry">今日遥测模式</button>
+          </div>
+        </article>
+
+        <article class="storyChapter" data-chapter="4" onclick="activateChapter(4)" data-guide-zh="四款 16:9 暗黑高清战报海报 + 内置 CLI 速查与本地 SQLite 备份">
+          <span class="storyBadge" style="background:var(--bg-inset);color:var(--text-1);border:1px solid var(--line)">05 · Share Posters &amp; CLI</span>
+          <h3 data-zh="16:9 高清战报海报与内置 CLI 矩阵" data-en="16:9 HD Posters &amp; CLI Matrix">16:9 高清战报海报与内置 CLI 矩阵</h3>
+          <p data-zh="内置 Polar、Radial、Hex Core、Matrix 四套暗黑战报主题，一键复制 1280×720 高清 PNG；同时提供全功能 CLI 速查面板与 SQLite 便携备份。" data-en="Export 1280×720 HD dark-mode posters in 4 themes, alongside the built-in CLI matrix &amp; SQLite backup manager.">内置 Polar、Radial、Hex Core、Matrix 四套暗黑战报主题，一键复制 1280×720 高清 PNG；同时提供全功能 CLI 速查面板与 SQLite 便携备份。</p>
+          <div class="storySubPills">
+            <button class="storySubBtn active" onclick="event.stopPropagation(); setChapterImg(4, 0)">Polar</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(4, 1)">Radial</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(4, 2)">Hex Core</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(4, 3)">Matrix</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(4, 4)" data-zh="CLI 矩阵" data-en="CLI Matrix">CLI 矩阵</button>
+            <button class="storySubBtn" onclick="event.stopPropagation(); setChapterImg(4, 5)" data-zh="存储备份" data-en="Storage">存储备份</button>
+          </div>
+        </article>
+      </div>
+
+      <div class="storyVisualCol">
+        <div class="storyCanvas" id="storyCanvas">
+          <button class="stageArrow prev" onclick="stepChapterSub(-1)" aria-label="Previous view">
+            <svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button class="stageArrow next" onclick="stepChapterSub(1)" aria-label="Next view">
+            <svg class="ic" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+
+          <div class="storyCanvasInner" id="storyCanvasInner" onclick="openLightbox(document.getElementById('storyImg').src)" data-guide-zh="点击图片放大原图，或点击两侧箭头切换子视图 🔍">
+            <img id="storyImg" src="./assets/img/Screenshot_2026-11-26_13.01.24.png" alt="Antigravity Manager Showcase" />
+          </div>
+
+          <div class="stageCaptionBar">
+            <span id="stageCaptionText" style="font-weight:600">仪表盘总览 · 01 / 02</span>
+            <button class="zoomPillHint" onclick="openLightbox(document.getElementById('storyImg').src)">
+              <svg class="ic" style="width:12px;height:12px" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+              <span data-zh="全屏放大" data-en="Expand">全屏放大</span>
+            </button>
+          </div>
+        </div>
+
+        <nav class="storyStepNav" id="storyStepNav">
+          <button class="storyStepBtn active" onclick="scrollToChapter(0)"><span class="storyStepDot" style="color:var(--blue)"></span><span data-zh="极速切号" data-en="Switch">极速切号</span></button>
+          <button class="storyStepBtn" onclick="scrollToChapter(1)"><span class="storyStepDot" style="color:var(--green)"></span><span data-zh="双池配额" data-en="Quotas">双池配额</span></button>
+          <button class="storyStepBtn" onclick="scrollToChapter(2)"><span class="storyStepDot" style="color:var(--purple)"></span><span data-zh="本地遥测" data-en="Telemetry">本地遥测</span></button>
+          <button class="storyStepBtn" onclick="scrollToChapter(3)"><span class="storyStepDot" style="color:var(--orange)"></span><span data-zh="Mini 弹窗" data-en="Mini">Mini 弹窗</span></button>
+          <button class="storyStepBtn" onclick="scrollToChapter(4)"><span class="storyStepDot" style="color:var(--text-1)"></span><span data-zh="战报与 CLI" data-en="Posters">战报与 CLI</span></button>
+        </nav>
+      </div>
+    </section>
+
+    <!-- ==================== SCROLL-LINKED KINETIC DUAL-TRACK RIBBON ==================== -->
+    <div class="kineticScrollBand" id="kineticBand" aria-hidden="true">
+      <div class="kineticRow" id="kineticRowA">
+        <span class="kSolid">ZERO-PROXY</span><span class="kDot">✦</span>
+        <span class="kStroke">DIRECT SQLITE</span><span class="kDot">✦</span>
+        <span class="kAccent">5H / 7D QUOTAS</span><span class="kDot">✦</span>
+        <span class="kStroke">FINGERPRINT ISOLATION</span><span class="kDot">✦</span>
+        <span class="kSolid">ZERO-PROXY</span><span class="kDot">✦</span>
+        <span class="kStroke">DIRECT SQLITE</span><span class="kDot">✦</span>
+        <span class="kAccent">5H / 7D QUOTAS</span><span class="kDot">✦</span>
+        <span class="kStroke">FINGERPRINT ISOLATION</span><span class="kDot">✦</span>
+        <span class="kSolid">ZERO-PROXY</span><span class="kDot">✦</span>
+        <span class="kStroke">DIRECT SQLITE</span>
+      </div>
+      <div class="kineticRow" id="kineticRowB">
+        <span class="kStroke">ANTIGRAVITY APP</span><span class="kDot">·</span>
+        <span class="kSolid">IDE STUDIO</span><span class="kDot">·</span>
+        <span class="kStroke">ACP PLUGIN</span><span class="kDot">·</span>
+        <span class="kSolid">AGY CLI</span><span class="kDot">·</span>
+        <span class="kAccent">RUST AM-CORE</span><span class="kDot">·</span>
+        <span class="kStroke">ANTIGRAVITY APP</span><span class="kDot">·</span>
+        <span class="kSolid">IDE STUDIO</span><span class="kDot">·</span>
+        <span class="kStroke">ACP PLUGIN</span><span class="kDot">·</span>
+        <span class="kSolid">AGY CLI</span><span class="kDot">·</span>
+        <span class="kAccent">RUST AM-CORE</span><span class="kDot">·</span>
+        <span class="kStroke">ANTIGRAVITY APP</span><span class="kDot">·</span>
+        <span class="kSolid">IDE STUDIO</span>
+      </div>
+    </div>
+
+    <!-- ==================== 4. SCROLL-SCRUBBED 3D FAN CAPABILITY CARDS ==================== -->
+    <section class="siteFrame capSection" id="capabilities">
+      <div class="capHeader">
+        <h2 data-zh="动手试试底层核心机制" data-en="Try Core Mechanisms Live">动手试试底层核心机制</h2>
+        <p data-zh="滚动展开 3D 扇形卡片阵列，点击内置控件实时演练工作原理" data-en="Scroll to unfold the 3D card fan — interact directly with the embedded widgets">滚动展开 3D 扇形卡片阵列，点击内置控件实时演练工作原理</p>
+      </div>
+
+      <div class="capabilityGrid" id="capGrid">
+        <div class="capabilityCard" data-fan="-1" data-guide-zh="点一点四个宿主，看底层对应的原生直写存储路径！">
+          <div>
+            <span class="capTag" style="background:var(--blue-soft);color:var(--blue)">Direct Injection</span>
+            <h3 data-zh="四宿主直写路径演练" data-en="4-Host Direct Path Simulator">四宿主直写路径演练</h3>
+            <p data-zh="零反代直写每个宿主独立的本地存储与系统密钥链，互不抢占覆盖。" data-en="Directly writes each host's isolated local storage or OS Keyring without proxy conflicts.">零反代直写每个宿主独立的本地存储与系统密钥链，互不抢占覆盖。</p>
+          </div>
+          <div class="capWidget mono">
+            <div class="hostMiniBar" id="hostMiniBar">
+              <button class="hostMiniBtn active" onclick="simHost(0)">App</button>
+              <button class="hostMiniBtn" onclick="simHost(1)">IDE</button>
+              <button class="hostMiniBtn" onclick="simHost(2)">ACP</button>
+              <button class="hostMiniBtn" onclick="simHost(3)">CLI</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="simHostPath">Antigravity/globalStorage/state.vscdb · 12ms</div>
+          </div>
+        </div>
+
+        <div class="capabilityCard" data-fan="0" data-guide-zh="点击「重置指纹」触发解码演练，每个账号完全隔离！">
+          <div>
+            <span class="capTag" style="background:var(--orange-soft);color:var(--orange)">Fingerprint Isolation</span>
+            <h3 data-zh="单号独立硬件指纹隔离" data-en="Per-Account Hardware Fingerprint">单号独立硬件指纹隔离</h3>
+            <p data-zh="每个账号持久化独立设备档案，热切换时自动同步宿主特征，严防多号关联。" data-en="Generates and binds an independent hardware profile per account to prevent cross-account correlation.">每个账号持久化独立设备档案，热切换时自动同步宿主特征，严防多号关联。</p>
+          </div>
+          <div class="capWidget mono" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span id="fpVal" style="font-size:12px;font-weight:700;color:var(--orange)">fp_8a9f-4c21-e7d0</span>
+            <button class="storySubBtn active" onclick="scrambleFp()" data-zh="重置指纹" data-en="Rotate">重置指纹</button>
+          </div>
+        </div>
+
+        <div class="capabilityCard" data-fan="1" data-guide-zh="拨动右侧绿色开关，直观对比释放 WebView 前后的内存差异！">
+          <div>
+            <span class="capTag" style="background:var(--green-soft);color:var(--green)">Lightweight Daemon</span>
+            <h3 data-zh="释放 WebView 极致省内存" data-en="WebView-Free Tray Daemon">释放 WebView 极致省内存</h3>
+            <p data-zh="隐藏主窗口后自动释放前端渲染进程，只留纯 Rust 后台守护静默保鲜配额。" data-en="Automatically destroys the WebView renderer when hidden in tray, keeping pure Rust RAM ultra-low.">隐藏主窗口后自动释放前端渲染进程，只留纯 Rust 后台守护静默保鲜配额。</p>
+          </div>
+          <div class="capWidget mono" style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:10.5px;color:var(--text-3)" id="lwDesc">Lightweight ON</div>
+              <div style="font-size:14px;font-weight:800;color:var(--green)" id="lwMem">~14.2 MB RAM</div>
+            </div>
+            <button class="iosSwitch on" id="lwBtn" onclick="toggleLw()" aria-label="Toggle Lightweight"></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== DEVELOPERS & INSTALL (PIXEL-PERFECT EQUAL-HEIGHT ALIGNMENT!) ==================== -->
+    <section class="devSection" id="developers">
+      <div class="siteFrame">
+        <div class="devTopHead">
+          <h2 class="devTitle" data-zh="全平台开箱即用，终端同样得心应手" data-en="Cross-Platform Native, Terminal Parity">全平台开箱即用，终端同样得心应手</h2>
+          <p class="devDesc" data-zh="独立发布于 antigravity-manager 专属 Release Tag，内置原生 Rust 命令行程序 am（macOS · Windows · Linux 全支持），并与主分支共用 ~/.antigravity_tools/ 零冲突共存。" data-en="Published on the isolated antigravity-manager release tag with cross-platform am CLI parity. Shares ~/.antigravity_tools/ seamlessly with main.">
+            独立发布于 antigravity-manager 专属 Release Tag，内置原生 Rust 命令行程序 am（macOS · Windows · Linux 全支持），并与主分支共用 ~/.antigravity_tools/ 零冲突共存。
+          </p>
+        </div>
+
+        <div class="devGrid">
+          <div class="devLeftCol">
+            <div class="osDownloadList">
+              <a class="osRow" href="https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager" target="_blank" rel="noopener" data-guide-zh="下载 macOS Universal / Apple Silicon / Intel .dmg">
+                <div><strong>macOS</strong><small>Universal / Apple Silicon (M1–M4) / Intel .dmg</small></div>
+                <span class="osLinkPill">Download .dmg</span>
+              </a>
+              <a class="osRow" href="https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager" target="_blank" rel="noopener" data-guide-zh="下载 Windows 10/11 原生 .msi 或 NSIS .exe">
+                <div><strong>Windows</strong><small>Windows 10 / 11 (x64) .msi &amp; NSIS -setup.exe</small></div>
+                <span class="osLinkPill">Download .exe</span>
+              </a>
+              <a class="osRow" href="https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager" target="_blank" rel="noopener" data-guide-zh="下载 Linux x64 / ARM64 .deb 或 AppImage">
+                <div><strong>Linux</strong><small>x86_64 &amp; ARM64 .deb / .rpm / .AppImage</small></div>
+                <span class="osLinkPill">Download .deb</span>
+              </a>
+            </div>
+
+            <div class="warnCallout" data-guide-zh="macOS 提示应用已损坏时，点 Copy 贴进终端 1 秒解决！">
+              <strong data-zh="macOS 首次打开提示「应用已损坏，无法打开」？" data-en="macOS says &quot;App is damaged and can't be opened&quot;?">macOS 首次打开提示「应用已损坏，无法打开」？</strong>
+              <p data-zh="拖入「应用程序 (/Applications)」后，在终端执行下方命令一键清除 Gatekeeper 隔离标记：" data-en="Drag app to /Applications and clear the Gatekeeper quarantine flag in Terminal:">拖入「应用程序 (/Applications)」后，在终端执行下方命令一键清除 Gatekeeper 隔离标记：</p>
+              <div class="warnCmdRow mono">
+                <code>sudo xattr -rd com.apple.quarantine "/Applications/Antigravity Manager.app"</code>
+                <button class="copySmallBtn" onclick="copyText('sudo xattr -rd com.apple.quarantine &quot;/Applications/Antigravity Manager.app&quot;')">Copy</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="codePanel" id="codePanel" data-guide-zh="原生 Rust am CLI，支持三端全局注册与 22 个无头子命令">
+            <div class="codeTabs">
+              <div class="codeTabGroup" id="cliTabs">
+                <button class="codeTab active" onclick="setCliTab(0)" data-zh="全局注册 am" data-en="Register am">全局注册 am</button>
+                <button class="codeTab" onclick="setCliTab(1)" data-zh="四宿主热切" data-en="Host Switch">四宿主热切</button>
+                <button class="codeTab" onclick="setCliTab(2)" data-zh="SSH / 指纹" data-en="Auth &amp; FP">SSH / 指纹</button>
+                <button class="codeTab" onclick="setCliTab(3)" data-zh="实时遥测" data-en="Telemetry">实时遥测</button>
+              </div>
+              <button class="copySmallBtn" onclick="copyCurrentCli()">Copy</button>
+            </div>
+            <pre class="codePre mono" id="cliPre"></pre>
+            <div class="codeFooterBar mono">
+              <span style="color:#4ade80">● am-cli · 22 subcommands</span>
+              <div class="quickCmdChips">
+                <button class="quickChip" onclick="copyText('am list --healthy --sort quota')">am list</button>
+                <button class="quickChip" onclick="copyText('am watch --interval 2')">am watch</button>
+                <button class="quickChip" onclick="copyText('am context')">am context</button>
+                <button class="quickChip" onclick="copyText('am doctor')">am doctor</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 5. METALLIC BEZEL IP HABITAT + SCROLL-LIFTED FOOTER CLOSING CARD ==================== -->
+    <div class="closingStage">
+      <div class="ipHabitat" id="ipHabitat" data-guide-zh="点一下拉丝金属生态屏，我们的 Logo 小家伙会开心跳起来换台词！">
+        <div class="habitatBezel">
+          <div class="habitatScreen" id="habitatScreen" onclick="pokeWalker()">
+            <span class="habitatHint mono">ANTIGRAVITY HABITAT · CLICK TO INTERACT</span>
+            <div class="habitatGround"></div>
+            <div class="habitatWalker" id="habitatWalker">
+              <div class="walkerLogoWrap" id="walkerBot">
+                <span class="buddyAntenna left"></span>
+                <span class="buddyAntenna right"></span>
+                <img src="./assets/logo.png" alt="Antigravity Walker" />
+                <div class="walkerLegs"><span></span><span></span></div>
+              </div>
+              <div class="walkerBubble" id="walkerBubble">4 大宿主全部在线，零反代零延迟！</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="footerClosingCard" id="footerClosingCard">
+        <div class="footerGrid">
+          <div class="footerBrandCol">
+            <a href="#" class="brand">
+              <img src="./assets/logo.png" alt="Antigravity Manager" />
+              <span>Antigravity Manager</span>
+            </a>
+            <p data-zh="专为 Antigravity 生态打造的零反代多宿主账号管理、双池配额监控与本地 SQLite 遥测中枢。" data-en="Zero-proxy multi-host account orchestrator, dual-pool quota monitor, and local SQLite telemetry studio.">
+              专为 Antigravity 生态打造的零反代多宿主账号管理、双池配额监控与本地 SQLite 遥测中枢。
+            </p>
+          </div>
+
+          <div class="footerLinksWrap">
+            <div class="footerCol">
+              <h4 data-zh="版本与生态" data-en="Ecosystem">版本与生态</h4>
+              <ul>
+                <li><a href="https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager" target="_blank" rel="noopener">Antigravity Manager (本分支)</a></li>
+                <li><a href="https://github.com/lbjlaq/Antigravity-Manager/tree/main" target="_blank" rel="noopener">Antigravity Tools (main 反代版)</a></li>
+                <li><a href="https://github.com/lbjlaq/Antigravity-Tools-LS" target="_blank" rel="noopener">Antigravity-Tools-LS</a></li>
+              </ul>
+            </div>
+
+            <div class="footerCol">
+              <h4 data-zh="获取与文档" data-en="Resources">获取与文档</h4>
+              <ul>
+                <li><a href="https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager" target="_blank" rel="noopener" data-zh="安装包下载 (Release)" data-en="Releases">安装包下载 (Release)</a></li>
+                <li><a href="#products" data-zh="核心功能导览" data-en="Feature Tour">核心功能导览</a></li>
+                <li><a href="#developers" data-zh="am 命令行文档" data-en="am CLI Reference">am 命令行文档</a></li>
+              </ul>
+            </div>
+
+            <div class="footerCol">
+              <h4 data-zh="社区与支持" data-en="Community">社区与支持</h4>
+              <ul>
+                <li><a href="https://t.me/AntigravityManager" target="_blank" rel="noopener">Telegram Channel</a></li>
+                <li><a href="https://github.com/sponsors/lbjlaq" target="_blank" rel="noopener">GitHub Sponsors</a></li>
+                <li><button onclick="openSponsor()" data-zh="赞赏支持 (Ctrler)" data-en="Support &amp; Donate">赞赏支持 (Ctrler)</button></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="footerLegal">
+          <span>Copyright © 2024–2026 Antigravity Team · Author: Ctrler · WeChat: Ctrler</span>
+          <span>CC BY-NC-SA 4.0 (Non-Commercial) · Built with Rust + Tauri v2 + React 18</span>
+        </div>
+      </footer>
+    </div>
+  </main>
+
+  <!-- Floating Bottom Command Dock -->
+  <div class="commandDockWrap">
+    <button class="commandDock" onclick="copyDockCmd()" data-guide-zh="一键复制全宿主智能切号命令，粘贴进终端即可生效">
+      <span style="width:7px;height:7px;border-radius:50%;background:#2ca867"></span>
+      <code class="dockCode mono" id="dockCmdText">am switch --auto --target all --prefer claude</code>
+      <svg class="ic" style="color:#9ca3af" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    </button>
+  </div>
+
+  <!-- Sponsor Modal, Lightbox & Toast -->
+  <div class="modalMask" id="sponsorModal" onclick="closeSponsor()">
+    <div class="modalCard" onclick="event.stopPropagation()">
+      <h3 style="font-size:20px;font-weight:800;margin-bottom:6px" data-zh="支持 Antigravity Manager" data-en="Support Antigravity Manager">支持 Antigravity Manager</h3>
+      <p style="font-size:13.5px;color:var(--text-2)" data-zh="如果本工具为你节省了时间，欢迎请作者 Ctrler 喝杯咖啡！" data-en="If this project helps your workflow, consider buying Ctrler a coffee!">如果本工具为你节省了时间，欢迎请作者 Ctrler 喝杯咖啡！</p>
+      <div class="qr3">
+        <div class="qrBox"><img src="./assets/sponsors/alipay.png" alt="Alipay" /><span data-zh="支付宝" data-en="Alipay">支付宝</span></div>
+        <div class="qrBox"><img src="./assets/sponsors/wechat.png" alt="WeChat Pay" /><span data-zh="微信支付" data-en="WeChat Pay">微信支付</span></div>
+        <a class="qrBox" href="https://www.buymeacoffee.com/Ctrler" target="_blank" rel="noopener noreferrer"><img src="./assets/sponsors/coffee.png" alt="Buy Me a Coffee" /><span>Buy Me a Coffee ↗</span></a>
+      </div>
+      <div style="display:flex;justify-content:center;gap:10px">
+        <a class="sponsorCta" href="https://github.com/sponsors/lbjlaq" target="_blank" rel="noopener noreferrer">GitHub Sponsors ❤️</a>
+        <button class="pillToggleBtn" style="height:40px;padding:0 20px" onclick="closeSponsor()" data-zh="关闭" data-en="Close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="lightbox" id="lightbox" onclick="closeLightbox()"><img id="lightboxImg" src="" alt="Full preview" /></div>
+  <div class="toast" id="toast">已复制到剪贴板 ✓</div>
+
+  <script>
+    let lang = (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
+    let guideEnabled = true;
+
+    /* ============== 1. PIXEL-BLAST INTERACTIVE HERO CANVAS ============== */
+    const pbCanvas = document.getElementById("pixelBlastCanvas");
+    const pbCtx = pbCanvas.getContext("2d");
+    const heroVp = document.getElementById("heroViewport");
+    const pbRipples = [];
+    let pbW = 0, pbH = 0, pbMx = -999, pbMy = -999;
+
+    function resizePixelBlast() {
+      const r = heroVp.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      pbW = r.width; pbH = r.height;
+      pbCanvas.width = pbW * dpr; pbCanvas.height = pbH * dpr;
+      pbCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    heroVp.addEventListener("mousemove", e => {
+      const r = heroVp.getBoundingClientRect();
+      pbMx = e.clientX - r.left; pbMy = e.clientY - r.top;
+    }, { passive: true });
+    heroVp.addEventListener("mouseleave", () => { pbMx = pbMy = -999; });
+    heroVp.addEventListener("mousedown", e => {
+      const r = heroVp.getBoundingClientRect();
+      pbRipples.push({ x: e.clientX - r.left, y: e.clientY - r.top, r: 0, max: 380, a: 1 });
+    });
+
+    function loopPixelBlast() {
+      pbCtx.clearRect(0, 0, pbW, pbH);
+      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+      const cell = 28;
+      const cols = Math.ceil(pbW / cell), rows = Math.ceil(pbH / cell);
+
+      for (let i = pbRipples.length - 1; i >= 0; i--) {
+        pbRipples[i].r += 8.5; pbRipples[i].a -= 0.024;
+        if (pbRipples[i].a <= 0) pbRipples.splice(i, 1);
+      }
+
+      for (let gy = 0; gy < rows; gy++) {
+        for (let gx = 0; gx < cols; gx++) {
+          const px = gx * cell + cell * 0.5, py = gy * cell + cell * 0.5;
+          let energy = 0;
+          if (pbMx > 0) {
+            const dm = Math.hypot(px - pbMx, py - pbMy);
+            if (dm < 170) energy = Math.max(energy, (1 - dm / 170) * 0.65);
+          }
+          for (const rp of pbRipples) {
+            const dr = Math.abs(Math.hypot(px - rp.x, py - rp.y) - rp.r);
+            if (dr < 42) energy = Math.max(energy, (1 - dr / 42) * rp.a);
+          }
+          if (energy > 0.06) {
+            const sz = 3 + energy * 10;
+            pbCtx.fillStyle = isDark
+              ? `rgba(88, 166, 255, ${(energy * 0.34).toFixed(3)})`
+              : `rgba(22, 119, 255, ${(energy * 0.22).toFixed(3)})`;
+            pbCtx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
+          } else if ((gx + gy) % 3 === 0) {
+            pbCtx.fillStyle = isDark ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.035)";
+            pbCtx.fillRect(px - 1, py - 1, 2, 2);
+          }
+        }
+      }
+      requestAnimationFrame(loopPixelBlast);
+    }
+
+    /* ============== 2. UI-DOCKED & SCROLL-CHOREOGRAPHED LOGO IP COMPANION ============== */
+    const guideEl = document.getElementById("bubbleGuide");
+    const logoBuddyPose = document.getElementById("logoBuddyPose");
+    const logoBuddy = document.getElementById("logoBuddy");
+    const guideSpeech = document.getElementById("guideSpeech");
+    const ringCenterLogo = document.getElementById("ringCenterLogo");
+    const heroWordPill = document.getElementById("heroWordPill");
+    const proofStageEl = document.getElementById("proofDepthStage");
+    const storyCanvasEl = document.getElementById("storyCanvas");
+    const codePanelEl = document.getElementById("codePanel");
+    const habitatEl = document.getElementById("ipHabitat");
+    const walkerBotEl = document.getElementById("walkerBot");
+
+    let guideStage = "hero";
+    let preferredCapIdx = 1;
+    let lastProofIdx = 0;
+    let curGuideX = window.innerWidth * 0.62, curGuideY = 240, curGuideScale = 0.92;
+    let flightFrom = { x: curGuideX, y: curGuideY, scale: curGuideScale };
+    let flightStart = 0, flightDur = 540, inFlight = false;
+    let gHideTimer = null, pendingArrivalMsg = null;
+
+    function triggerBuddyAnim(cls, dur = 460) {
+      logoBuddy.classList.remove("hop", "landed", "nod");
+      void logoBuddy.offsetWidth;
+      logoBuddy.classList.add(cls);
+      clearTimeout(logoBuddy._animTimer);
+      logoBuddy._animTimer = setTimeout(() => logoBuddy.classList.remove(cls), dur);
+    }
+
+    function showGuideMsg(msg, duration = 2600) {
+      if (!guideEnabled || window.innerWidth < 980 || !msg) return;
+      if (guideStage === "habitat") return;
+      guideSpeech.textContent = msg;
+      guideEl.classList.add("speaking");
+      clearTimeout(gHideTimer);
+      gHideTimer = setTimeout(() => guideEl.classList.remove("speaking"), duration);
+    }
+
+    function setBuddyAccent(color) {
+      if (color) guideEl.style.setProperty("--buddy-accent", color);
+    }
+
+    function getStageArrivalMsg(stage) {
+      const zh = lang === "zh";
+      switch (stage) {
+        case "hero":    return zh ? "点我或胶囊切换四大核心能力 ✨" : "Click me or the pill to cycle pillars ✨";
+        case "ring":    return zh ? "已接入星环内核 · 四宿主同步公转" : "Core docked · 4 hosts orbiting live";
+        case "proof":   return zh ? "随滚动穿越 3D 景深性能指标" : "Scroll through 3D Z-depth benchmarks";
+        case "story":   return zh ? "已停靠实机画布 · 点图放大原图" : "Perched on showcase · click to zoom";
+        case "cap-0":
+        case "cap-1":
+        case "cap-2":   return zh ? "点下方卡片按钮，看我实时呼应！" : "Click any widget below to interact!";
+        case "dev":     return zh ? "已就位终端顶栏 · 点底部芯片秒复制" : "Terminal docked · click chips to copy";
+        default:        return "";
+      }
+    }
+
+    function resolveScrollStage() {
+      const vh = window.innerHeight;
+      if (habitatEl.getBoundingClientRect().top < vh * 0.78) return "habitat";
+      if (document.getElementById("developers").getBoundingClientRect().top < vh * 0.52) return "dev";
+      if (document.getElementById("capabilities").getBoundingClientRect().top < vh * 0.56) return `cap-${preferredCapIdx}`;
+      if (document.getElementById("products").getBoundingClientRect().top < vh * 0.52) return "story";
+      if (proofSec.getBoundingClientRect().top < vh * 0.45) return "proof";
+      if (ringSec.getBoundingClientRect().top < vh * 0.45) return "ring";
+      return "hero";
+    }
+
+    function getStageAnchor(stage) {
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const clampX = x => Math.max(36, Math.min(vw - 36, x));
+      const clampY = y => Math.max(94, Math.min(vh - 68, y));
+
+      if (stage === "ring") {
+        const r = ringCenterLogo.getBoundingClientRect();
+        return {
+          x: r.left + r.width * 0.5,
+          y: Math.max(86, Math.min(vh - 76, r.top + r.height * 0.5)),
+          scale: 68 / 46,
+          accent: "#1677ff",
+          scene: "light",
+          fused: "ring"
+        };
+      }
+      if (stage === "proof") {
+        const r = proofStageEl.getBoundingClientRect();
+        const proofAccents = ["#1677ff", "#2ca867", "#6f39e4"];
+        return {
+          x: clampX(r.right - 46),
+          y: clampY(r.top - 14),
+          scale: 0.96,
+          accent: proofAccents[lastProofIdx] || "#1677ff",
+          scene: "light",
+          fused: ""
+        };
+      }
+      if (stage === "story") {
+        const r = storyCanvasEl.getBoundingClientRect();
+        return {
+          x: clampX(r.right - 20),
+          y: clampY(r.top + 8),
+          scale: 0.96,
+          accent: chapters[curChapter].accent,
+          scene: "light",
+          fused: ""
+        };
+      }
+      if (stage.startsWith("cap-")) {
+        const idx = Math.min(capCards.length - 1, Math.max(0, parseInt(stage.split("-")[1], 10) || 0));
+        const r = capCards[idx].getBoundingClientRect();
+        const capAccents = ["#1677ff", "#ec8620", "#2ca867"];
+        return {
+          x: clampX(r.right - 34),
+          y: clampY(r.top - 14),
+          scale: 0.94,
+          accent: capAccents[idx],
+          scene: "light",
+          fused: ""
+        };
+      }
+      if (stage === "dev") {
+        const r = codePanelEl.getBoundingClientRect();
+        return {
+          x: clampX(r.right - 122),
+          y: clampY(r.top - 16),
+          scale: 0.94,
+          accent: "#60a5fa",
+          scene: "dark",
+          fused: ""
+        };
+      }
+      if (stage === "habitat") {
+        const r = walkerBotEl.getBoundingClientRect();
+        return {
+          x: r.left + r.width * 0.5,
+          y: r.top + r.height * 0.5,
+          scale: 42 / 46,
+          accent: "#f5b041",
+          scene: "dark",
+          fused: "habitat"
+        };
+      }
+      // Default: perched gracefully on the top-right rim of the Hero keyword pill
+      const r = heroWordPill.getBoundingClientRect();
+      return {
+        x: clampX(r.right - 16),
+        y: clampY(r.top - 16),
+        scale: 0.92,
+        accent: heroWords[heroWordIdx].accent,
+        scene: "light",
+        fused: ""
+      };
+    }
+
+    function transitionGuideTo(nextStage, customMsg, silent = false) {
+      if (nextStage === guideStage) return;
+      const prevStage = guideStage;
+
+      // If launching out of the metallic habitat screen, start flight cleanly from the walker's exact screen coords
+      if (prevStage === "habitat") {
+        const wr = walkerBotEl.getBoundingClientRect();
+        curGuideX = wr.left + wr.width * 0.5;
+        curGuideY = wr.top + wr.height * 0.5;
+        curGuideScale = 42 / 46;
+        guideEl.classList.remove("habitatDocked");
+        walkerBotEl.classList.add("awaitingDock");
+      }
+
+      if (nextStage === "habitat") {
+        guideEl.classList.remove("speaking");
+        walkerBotEl.classList.add("awaitingDock");
+      }
+
+      flightFrom = { x: curGuideX, y: curGuideY, scale: curGuideScale };
+      guideStage = nextStage;
+      flightStart = performance.now();
+      inFlight = true;
+      pendingArrivalMsg = silent ? null : (customMsg || getStageArrivalMsg(nextStage));
+
+      const target = getStageAnchor(nextStage);
+      flightDur = nextStage.startsWith("cap-") && prevStage.startsWith("cap-") ? 380 : 540;
+      guideEl.setAttribute("data-in-flight", "true");
+      guideEl.setAttribute("data-scene", target.scene);
+      guideEl.setAttribute("data-fused", target.fused);
+      setBuddyAccent(target.accent);
+
+      if (nextStage !== "ring") ringCenterLogo.classList.remove("fusedHidden");
+    }
+
+    function perchOnCapabilityCard(idx, msg) {
+      preferredCapIdx = idx;
+      const targetStage = `cap-${idx}`;
+      if (guideStage === targetStage) {
+        triggerBuddyAnim("nod", 380);
+        showGuideMsg(msg, 2400);
+      } else {
+        transitionGuideTo(targetStage, msg);
+      }
+    }
+
+    function syncGuideFusionFallbacks() {
+      const active = guideEnabled && window.innerWidth >= 980;
+      if (!active) {
+        ringCenterLogo.classList.remove("fusedHidden");
+        walkerBotEl.classList.remove("awaitingDock");
+        guideEl.classList.remove("habitatDocked");
+      }
+    }
+
+    function loopGuideChoreography() {
+      const active = guideEnabled && window.innerWidth >= 980;
+      if (active) {
+        const desired = resolveScrollStage();
+        if (desired !== guideStage) transitionGuideTo(desired);
+
+        const target = getStageAnchor(guideStage);
+        guideEl.setAttribute("data-scene", target.scene);
+        setBuddyAccent(target.accent);
+
+        let tilt = 0;
+        if (inFlight) {
+          const rawT = Math.min(1, (performance.now() - flightStart) / flightDur);
+          // Smooth easeOutCubic — zero overshoot, zero jitter!
+          const ease = 1 - Math.pow(1 - rawT, 3);
+          const dx = target.x - flightFrom.x;
+          const dy = target.y - flightFrom.y;
+          const dist = Math.hypot(dx, dy);
+          const arcLift = Math.sin(rawT * Math.PI) * Math.min(26, dist * 0.085);
+
+          curGuideX = flightFrom.x + dx * ease;
+          curGuideY = flightFrom.y + dy * ease - arcLift;
+          curGuideScale = flightFrom.scale + (target.scale - flightFrom.scale) * ease;
+          tilt = Math.max(-7.5, Math.min(7.5, dx * 0.015 * Math.sin(rawT * Math.PI)));
+
+          if (guideStage === "ring" && rawT > 0.72) ringCenterLogo.classList.add("fusedHidden");
+
+          if (rawT >= 1) {
+            inFlight = false;
+            guideEl.setAttribute("data-in-flight", "false");
+            if (guideStage === "ring") {
+              ringCenterLogo.classList.add("fusedHidden");
+            } else if (guideStage === "habitat") {
+              guideEl.classList.add("habitatDocked");
+              walkerBotEl.classList.remove("awaitingDock");
+              walkerBotEl.classList.remove("jump"); void walkerBotEl.offsetWidth; walkerBotEl.classList.add("jump");
+            } else {
+              triggerBuddyAnim("landed", 320);
+            }
+            if (pendingArrivalMsg && guideStage !== "habitat") {
+              showGuideMsg(pendingArrivalMsg, 2500);
+            }
+            pendingArrivalMsg = null;
+          }
+        } else {
+          // Glued 1:1 to the active UI component's live position — rock-steady during scroll!
+          curGuideX = target.x;
+          curGuideY = target.y;
+          curGuideScale = target.scale;
+          if (guideStage === "ring") ringCenterLogo.classList.add("fusedHidden");
+          if (guideStage === "habitat") {
+            guideEl.classList.add("habitatDocked");
+            walkerBotEl.classList.remove("awaitingDock");
+          }
+        }
+
+        const onRight = curGuideX > window.innerWidth * 0.54;
+        guideEl.classList.toggle("flipLeft", onRight);
+        guideEl.style.transform = `translate3d(${(curGuideX - 23).toFixed(1)}px, ${(curGuideY - 23).toFixed(1)}px, 0)`;
+        logoBuddyPose.style.transform = `scale(${curGuideScale.toFixed(3)}) rotate(${tilt.toFixed(2)}deg)`;
+      } else {
+        syncGuideFusionFallbacks();
+      }
+      requestAnimationFrame(loopGuideChoreography);
+    }
+
+    // Gentle contextual whisper ONLY when hovering download rows / ring nodes in the active section (never yanks position!)
+    document.addEventListener("mouseover", e => {
+      if (!guideEnabled || window.innerWidth < 980 || inFlight) return;
+      const osRow = e.target.closest && e.target.closest(".osRow");
+      if (osRow && guideStage === "dev") {
+        const msg = lang === "zh" ? osRow.getAttribute("data-guide-zh") : (osRow.getAttribute("data-guide-en") || osRow.getAttribute("data-guide-zh"));
+        if (msg) showGuideMsg(msg, 2400);
+        return;
+      }
+      const rNode = e.target.closest && e.target.closest(".ringNode");
+      if (rNode && guideStage === "ring") {
+        const msg = lang === "zh" ? rNode.getAttribute("data-guide-zh") : (rNode.getAttribute("data-guide-en") || rNode.getAttribute("data-guide-zh"));
+        if (msg) showGuideMsg(msg, 2200);
+      }
+    });
+
+    function hopGuide() {
+      triggerBuddyAnim("hop", 460);
+      if (guideStage === "hero") {
+        cycleHeroWord();
+        showGuideMsg(lang === "zh" ? "已为你切换核心亮点，向下滚动跟我逛全页 ↓" : "Cycled pillar! Scroll down to explore with me ↓", 2600);
+        return;
+      }
+      const zh = lang === "zh";
+      const stageTips = {
+        ring:  zh ? "8 项能力围绕 am-core 单核驱动，零反代损耗" : "8 modules orbiting one Rust am-core with 0ms proxy",
+        proof: zh ? "继续下滑切换下一项 3D 景深实测数据 ↓" : "Keep scrolling for the next 3D Z-depth metric ↓",
+        story: zh ? "点击右侧画布任意位置可全屏放大 16 张原图 🔍" : "Click the showcase canvas to expand all 16 HD screens 🔍",
+        dev:   zh ? "试试点击终端右下角的快捷命令芯片一键复制 📋" : "Try clicking the quick command chips below the terminal 📋"
+      };
+      const tip = stageTips[guideStage] || (zh ? "试试点击卡片里的实时交互按钮！" : "Try clicking the live interactive controls below!");
+      showGuideMsg(tip, 2600);
+    }
+
+    function toggleGuide() {
+      guideEnabled = !guideEnabled;
+      const b = document.getElementById("guideToggleBtn");
+      b.textContent = guideEnabled ? "IP:ON" : "IP:OFF";
+      b.classList.toggle("isOff", !guideEnabled);
+      guideEl.classList.toggle("hiddenGuide", !guideEnabled);
+      syncGuideFusionFallbacks();
+    }
+
+    /* ============== 3. HERO KINETIC WORD + HEAT FLOW BUTTON ============== */
+    const heroWords = [
+      { zh: "零反代多端热切", en: "Zero-Proxy Switcher", bg: "var(--blue-soft)", fg: "var(--blue)", accent: "#1677ff" },
+      { zh: "双池配额监控", en: "5h/7d Quota Pools", bg: "var(--green-soft)", fg: "var(--green)", accent: "#2ca867" },
+      { zh: "本地 SQLite 遥测", en: "Local SQLite Telemetry", bg: "var(--purple-soft)", fg: "var(--purple)", accent: "#6f39e4" },
+      { zh: "菜单栏灵动弹窗", en: "Menu Bar Companion", bg: "var(--orange-soft)", fg: "var(--orange)", accent: "#ec8620" }
+    ];
+    let heroWordIdx = 0;
+
+    function cycleHeroWord() {
+      heroWordIdx = (heroWordIdx + 1) % heroWords.length;
+      const w = heroWords[heroWordIdx];
+      const pill = document.getElementById("heroWordPill");
+      const txt = document.getElementById("heroWordText");
+      txt.classList.add("out");
+      setTimeout(() => {
+        pill.style.setProperty("--word-bg", w.bg);
+        pill.style.setProperty("--word-fg", w.fg);
+        txt.textContent = w[lang];
+        txt.classList.remove("out");
+        if (guideStage === "hero") setBuddyAccent(w.accent);
+      }, 200);
+    }
+    setInterval(cycleHeroWord, 3300);
+
+    const heatBtn = document.getElementById("heatBtn");
+    const heatCanvas = document.getElementById("heatCanvas");
+    const hCtx = heatCanvas.getContext("2d");
+    let hMouse = { x: 0.5, y: 0.5, hover: false }, hTick = 0;
+    heatBtn.addEventListener("mousemove", e => {
+      const r = heatBtn.getBoundingClientRect();
+      hMouse.x = (e.clientX - r.left) / r.width; hMouse.y = (e.clientY - r.top) / r.height; hMouse.hover = true;
+    });
+    heatBtn.addEventListener("mouseleave", () => { hMouse.hover = false; });
+
+    function loopHeat() {
+      if (hMouse.hover) {
+        const r = heatBtn.getBoundingClientRect();
+        if (heatCanvas.width !== Math.floor(r.width)) { heatCanvas.width = Math.floor(r.width); heatCanvas.height = Math.floor(r.height); }
+        const w = heatCanvas.width, h = heatCanvas.height;
+        hCtx.clearRect(0, 0, w, h);
+        const cx = hMouse.x * w, cy = hMouse.y * h;
+        const g1 = hCtx.createRadialGradient(cx, cy, 4, cx, cy, w * 0.72);
+        g1.addColorStop(0, "rgba(22, 119, 255, 0.94)");
+        g1.addColorStop(0.45, "rgba(111, 57, 228, 0.78)");
+        g1.addColorStop(0.82, "rgba(236, 134, 32, 0.58)");
+        g1.addColorStop(1, "transparent");
+        hCtx.fillStyle = g1; hCtx.fillRect(0, 0, w, h);
+        const ox = w * (0.5 + Math.sin(hTick * 0.05) * 0.35);
+        const g2 = hCtx.createRadialGradient(ox, h * 0.5, 2, ox, h * 0.5, w * 0.48);
+        g2.addColorStop(0, "rgba(44, 168, 103, 0.55)"); g2.addColorStop(1, "transparent");
+        hCtx.fillStyle = g2; hCtx.fillRect(0, 0, w, h);
+        hTick++;
+      }
+      requestAnimationFrame(loopHeat);
+    }
+
+    /* ============== 4. ALL SCROLL-DRIVEN INTERACTIVE CHOREOGRAPHIES ============== */
+    const heroStage = document.getElementById("heroCameraStage");
+    const ringSec = document.getElementById("ring");
+    const ringNodes = Array.from(document.querySelectorAll(".ringNode"));
+    const proofSec = document.getElementById("proof");
+    const depthCards = Array.from(document.querySelectorAll(".proofDepthCard"));
+    const proofDots = Array.from(document.querySelectorAll("#proofDots .proofDot"));
+    const kRowA = document.getElementById("kineticRowA");
+    const kRowB = document.getElementById("kineticRowB");
+    const capGrid = document.getElementById("capGrid");
+    const capCards = Array.from(document.querySelectorAll("#capGrid .capabilityCard"));
+    const footerCard = document.getElementById("footerClosingCard");
+    let ringAutoAngle = 0, guideReady = false;
+
+    function updateScrollAnimations() {
+      const sy = window.scrollY;
+      const docH = document.documentElement.scrollHeight - window.innerHeight;
+      document.getElementById("progressBar").style.width = docH > 0 ? `${(sy / docH) * 100}%` : "0%";
+
+      // A. Hero Camera Gentle Scale-Out on Scroll
+      const heroP = Math.min(1, Math.max(0, sy / 560));
+      heroStage.style.transform = `scale(${(1 - heroP * 0.065).toFixed(4)}) translateY(${(-heroP * 24).toFixed(1)}px)`;
+      heroStage.style.opacity = (1 - heroP * 0.55).toFixed(3);
+
+      // B. 3D Z-Depth Proof Tunnel (Desktop)
+      if (window.innerWidth > 980) {
+        const pr = proofSec.getBoundingClientRect();
+        const travel = proofSec.offsetHeight - window.innerHeight;
+        const p = Math.min(1, Math.max(0, -pr.top / Math.max(1, travel)));
+        const activeFloat = p * (depthCards.length - 1);
+        const nearest = Math.round(activeFloat);
+        proofDots.forEach((d, i) => d.classList.toggle("active", i === nearest));
+
+        if (nearest !== lastProofIdx) {
+          lastProofIdx = nearest;
+          if (guideReady && guideStage === "proof" && !inFlight) {
+            const proofTips = lang === "zh"
+              ? ["0 ms · 零反代直写本地宿主", "4 Hosts · App / IDE / 插件 / CLI 并行", "14 MB · 释放 WebView 极致省内存"]
+              : ["0 ms · Zero-proxy direct host write", "4 Hosts · App / IDE / Plugin / CLI", "14 MB · WebView-free tray daemon"];
+            triggerBuddyAnim("nod", 360);
+            showGuideMsg(proofTips[nearest], 2200);
+          }
+        }
+
+        depthCards.forEach((card, i) => {
+          const delta = i - activeFloat;
+          const absD = Math.abs(delta);
+          const scale = delta > 0 ? Math.max(0.74, 1 - delta * 0.16) : 1 + Math.min(0.16, -delta * 0.16);
+          const ty = delta * 54;
+          const op = Math.max(0, 1 - absD * 1.15);
+          const blur = Math.min(10, absD * 6.5);
+          card.style.transform = `translate3d(0, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(3)})`;
+          card.style.opacity = op.toFixed(3);
+          card.style.filter = `blur(${blur.toFixed(1)}px)`;
+          card.style.pointerEvents = absD < 0.45 ? "auto" : "none";
+        });
+      }
+
+      // C. Dual-Track Opposing Kinetic Scroll Typography Ribbon
+      const kbRect = document.getElementById("kineticBand").getBoundingClientRect();
+      const kbShift = (window.innerHeight - kbRect.top) * 0.24;
+      kRowA.style.transform = `translate3d(${(-kbShift).toFixed(1)}px, 0, 0)`;
+      kRowB.style.transform = `translate3d(${(kbShift - 640).toFixed(1)}px, 0, 0)`;
+
+      // D. Scroll-Scrubbed 3D Fan Unfold on Capability Cards (Desktop)
+      if (window.innerWidth > 980) {
+        const cr = capGrid.getBoundingClientRect();
+        const prog = Math.min(1, Math.max(0, (window.innerHeight - cr.top) / (window.innerHeight * 0.62)));
+        const rem = 1 - prog;
+        const settled = prog >= 0.995;
+        capCards.forEach(card => {
+          card.classList.toggle("settled", settled);
+          if (settled) {
+            card.style.transform = "";
+            card.style.opacity = "1";
+          } else {
+            const fan = parseFloat(card.dataset.fan || "0");
+            const tx = fan * rem * 38;
+            const ty = rem * 48;
+            const rz = fan * rem * 5.5;
+            const ry = fan * rem * -14;
+            const sc = 0.92 + prog * 0.08;
+            card.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotateZ(${rz.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) scale(${sc.toFixed(3)})`;
+            card.style.opacity = (0.35 + prog * 0.65).toFixed(3);
+          }
+        });
+      } else {
+        capCards.forEach(card => {
+          card.classList.add("settled");
+          card.style.transform = "";
+          card.style.opacity = "1";
+        });
+      }
+
+      // E. FooterClosingCard Scroll Curtain Rise
+      const fr = footerCard.getBoundingClientRect();
+      const fProg = Math.min(1, Math.max(0, (window.innerHeight - fr.top) / (window.innerHeight * 0.55)));
+      footerCard.style.transform = `translate3d(0, ${((1 - fProg) * 34).toFixed(1)}px, 0) scale(${(0.97 + fProg * 0.03).toFixed(4)})`;
+    }
+
+    function loopOrbitRing() {
+      const rr = ringSec.getBoundingClientRect();
+      const travel = Math.max(1, ringSec.offsetHeight - window.innerHeight);
+      const scrollSpin = Math.min(1.5, Math.max(-0.5, -rr.top / travel)) * Math.PI * 1.15;
+      ringAutoAngle += 0.0022;
+      const radX = Math.min(window.innerWidth * 0.34, 340);
+      const radY = Math.min(window.innerHeight * 0.27, 230);
+
+      ringNodes.forEach((node, i) => {
+        const ang = (Math.PI * 2 * i) / ringNodes.length + scrollSpin + ringAutoAngle;
+        const x = Math.cos(ang) * radX;
+        const y = Math.sin(ang) * radY;
+        const depth = (Math.sin(ang) + 1) * 0.5;
+        const sc = 0.84 + depth * 0.24;
+        const op = 0.48 + depth * 0.52;
+        node.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) scale(${sc.toFixed(3)})`;
+        node.style.opacity = op.toFixed(3);
+        node.style.zIndex = String(Math.round(depth * 10));
+      });
+      requestAnimationFrame(loopOrbitRing);
+    }
+
+    /* ============== 5. STICKY PRODUCT SCROLLYTELLING ============== */
+    const chapters = [
+      {
+        tint: "var(--blue-soft)", accent: "#1677ff", portrait: false,
+        items: [
+          { src: "./assets/img/Screenshot_2026-11-26_13.01.24.png", zh: "仪表盘总览", en: "Dashboard" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.05.18.png", zh: "守护策略与宿主路径", en: "Daemon & Host Paths" }
+        ]
+      },
+      {
+        tint: "var(--green-soft)", accent: "#2ca867", portrait: false,
+        items: [
+          { src: "./assets/img/Screenshot_2026-11-26_13.02.43.png", zh: "Bento 账号卡片网格", en: "Accounts Card Grid" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.01.55.png", zh: "高密度账号列表", en: "Accounts Table View" }
+        ]
+      },
+      {
+        tint: "var(--purple-soft)", accent: "#6f39e4", portrait: false,
+        items: [
+          { src: "./assets/img/Screenshot_2026-11-26_13.03.17.png", zh: "全局遥测光谱与工具矩阵", en: "Global Telemetry Overview" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.27.50.png", zh: "工作区项目六轴雷达", en: "Projects 6-Axis Radar" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.04.41.png", zh: "模型天梯与速度曲线", en: "Models Leaderboard" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.05.03.png", zh: "实时请求流水台账", en: "Real-Time Ledger" }
+        ]
+      },
+      {
+        tint: "var(--orange-soft)", accent: "#ec8620", portrait: true,
+        items: [
+          { src: "./assets/img/Screenshot_2026-11-26_12.59.23.png", zh: "Mini 弹窗 · 四宿主快切", en: "Mini Popover · Quick Switch" },
+          { src: "./assets/img/Screenshot_2026-11-26_12.59.52.png", zh: "Mini 弹窗 · 今日实时遥测", en: "Mini Popover · Live Telemetry" }
+        ]
+      },
+      {
+        tint: "var(--bg-canvas)", accent: "#f5b041", portrait: false,
+        items: [
+          { src: "./assets/img/Screenshot_2026-11-26_13.03.54.png", zh: "16:9 战报 · Polar Wave", en: "16:9 Poster · Polar Wave" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.04.01.png", zh: "16:9 战报 · Radial Burst", en: "16:9 Poster · Radial Burst" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.04.09.png", zh: "16:9 战报 · Hex Core", en: "16:9 Poster · Hex Core" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.04.16.png", zh: "16:9 战报 · Slice Matrix", en: "16:9 Poster · Slice Matrix" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.05.27.png", zh: "内置 CLI 命令矩阵", en: "Built-in CLI Matrix" },
+          { src: "./assets/img/Screenshot_2026-11-26_13.05.35.png", zh: "SQLite 存储备份与关于", en: "SQLite Backup & About" }
+        ]
+      }
+    ];
+    const chSub = [0, 0, 0, 0, 0];
+    let curChapter = 0;
+
+    function updateCaption(c, s) {
+      const ch = chapters[c];
+      const item = ch.items[s];
+      document.getElementById("stageCaptionText").textContent =
+        `${lang === "zh" ? item.zh : item.en}  ·  ${String(s + 1).padStart(2, "0")} / ${String(ch.items.length).padStart(2, "0")}`;
+    }
+
+    function swapStoryMedia(c, s) {
+      const ch = chapters[c];
+      const inner = document.getElementById("storyCanvasInner");
+      document.getElementById("storyCanvas").style.setProperty("--stage-tint", ch.tint);
+      inner.classList.add("swap");
+      updateCaption(c, s);
+      setTimeout(() => {
+        inner.classList.toggle("portraitMode", ch.portrait);
+        document.getElementById("storyImg").src = ch.items[s].src;
+        inner.classList.remove("swap");
+      }, 110);
+      if (guideReady && guideStage === "story" && !inFlight) {
+        setBuddyAccent(ch.accent);
+        triggerBuddyAnim("nod", 360);
+        const item = ch.items[s];
+        showGuideMsg(lang === "zh" ? item.zh : item.en, 2100);
+      }
+      const next = ch.items[(s + 1) % ch.items.length];
+      if (next) { const pre = new Image(); pre.src = next.src; }
+    }
+
+    function activateChapter(idx, force) {
+      if (idx === curChapter && !force) return;
+      curChapter = idx;
+      document.querySelectorAll(".storyChapter").forEach((el, i) => el.classList.toggle("active", i === idx));
+      document.querySelectorAll("#storyStepNav .storyStepBtn").forEach((el, i) => el.classList.toggle("active", i === idx));
+      swapStoryMedia(idx, chSub[idx]);
+    }
+
+    function setChapterImg(c, s) {
+      chSub[c] = s;
+      const el = document.querySelectorAll(".storyChapter")[c];
+      el.querySelectorAll(".storySubBtn").forEach((b, i) => b.classList.toggle("active", i === s));
+      if (curChapter !== c) activateChapter(c, true);
+      else swapStoryMedia(c, s);
+    }
+
+    function stepChapterSub(delta) {
+      const len = chapters[curChapter].items.length;
+      setChapterImg(curChapter, (chSub[curChapter] + delta + len) % len);
+    }
+
+    function scrollToChapter(idx) {
+      activateChapter(idx, true);
+      document.querySelectorAll(".storyChapter")[idx].scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    const chObs = new IntersectionObserver(entries => {
+      entries.forEach(en => { if (en.isIntersecting) activateChapter(parseInt(en.target.dataset.chapter, 10)); });
+    }, { rootMargin: "-35% 0px -45% 0px", threshold: 0.1 });
+    document.querySelectorAll(".storyChapter").forEach(el => chObs.observe(el));
+
+    /* ============== 6. CAPABILITY WIDGETS & WALKING LOGO HABITAT ============== */
+    const hostNames = ["App", "IDE", "ACP", "CLI"];
+    const hostPaths = [
+      "Antigravity/globalStorage/state.vscdb · 12ms",
+      "Antigravity IDE/globalStorage/state.vscdb · 14ms",
+      "~/.antigravity/acp-daemon.json (ACP) · 6ms",
+      "OS Keyring (Keychain/CredWriteW/Secret) · 9ms"
+    ];
+    function simHost(i) {
+      document.querySelectorAll("#hostMiniBar .hostMiniBtn").forEach((b, idx) => b.classList.toggle("active", idx === i));
+      document.getElementById("simHostPath").textContent = hostPaths[i];
+      perchOnCapabilityCard(0, lang === "zh" ? `已直写 ${hostNames[i]} 凭证存储 ⚡` : `Direct write to ${hostNames[i]} synced ⚡`);
+    }
+
+    function scrambleFp() {
+      const hex = () => Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0");
+      const fin = `fp_${hex()}-${hex()}-${hex()}`;
+      const el = document.getElementById("fpVal");
+      let f = 0; const cs = "0123456789abcdef_";
+      const tid = setInterval(() => {
+        el.textContent = fin.split("").map((c, idx) => idx < f ? c : cs[Math.floor(Math.random() * cs.length)]).join("");
+        f += 2;
+        if (f > fin.length) { el.textContent = fin; clearInterval(tid); }
+      }, 24);
+      showToast(lang === "zh" ? "硬件指纹档案已重置 ✓" : "Hardware fingerprint rotated ✓");
+      perchOnCapabilityCard(1, lang === "zh" ? "新设备指纹已生成，单号完全隔离 ✦" : "Fresh hardware profile bound ✦");
+    }
+
+    let lwOn = true;
+    function toggleLw() {
+      lwOn = !lwOn;
+      document.getElementById("lwBtn").classList.toggle("on", lwOn);
+      document.getElementById("lwDesc").textContent = lwOn ? "Lightweight ON" : "WebView Renderer Alive";
+      const m = document.getElementById("lwMem");
+      m.textContent = lwOn ? "~14.2 MB RAM" : "~127.6 MB RAM";
+      m.style.color = lwOn ? "var(--green)" : "var(--orange)";
+      perchOnCapabilityCard(2, lwOn
+        ? (lang === "zh" ? "已释放 WebView · 常驻仅 ~14.2 MB 🪶" : "WebView freed · ~14.2 MB daemon 🪶")
+        : (lang === "zh" ? "保持 WebView 渲染常驻 (~127.6 MB)" : "Keeping WebView renderer live (~127.6 MB)"));
+    }
+
+    const walker = document.getElementById("habitatWalker");
+    const walkerBot = document.getElementById("walkerBot");
+    const walkerBubble = document.getElementById("walkerBubble");
+    const habScreen = document.getElementById("habitatScreen");
+    let wx = 40, wDir = 1, wQuipIdx = 0;
+    const walkerQuipsZh = [
+      "4 大宿主全部在线，零反代零延迟！",
+      "今日 Prompt Cache 命中率高达 89.6% ⚡",
+      "Lightweight 模式常驻内存仅 14.2 MB 🪶",
+      "所有账号与遥测 100% 本地 SQLite 加密存储 🔒",
+      "点我一下跳一跳？或者去页脚请 Ctrler 喝杯咖啡 ☕"
+    ];
+    const walkerQuipsEn = [
+      "All 4 hosts synced — zero proxy, zero overhead!",
+      "Prompt Cache hit rate cruising at 89.6% ⚡",
+      "Lightweight Tray Daemon using just 14.2 MB RAM 🪶",
+      "100% local SQLite privacy — zero cloud uploads 🔒",
+      "Click me to hop! Or buy Ctrler a coffee below ☕"
+    ];
+
+    function loopHabitatWalker() {
+      const maxX = Math.max(40, habScreen.clientWidth - walker.offsetWidth - 28);
+      wx += wDir * 0.55;
+      if (wx >= maxX) wDir = -1;
+      if (wx <= 24) wDir = 1;
+      walker.style.transform = `translate3d(${wx.toFixed(1)}px, 0, 0)`;
+      requestAnimationFrame(loopHabitatWalker);
+    }
+
+    function pokeWalker() {
+      walkerBot.classList.remove("jump"); void walkerBot.offsetWidth; walkerBot.classList.add("jump");
+      wQuipIdx = (wQuipIdx + 1) % walkerQuipsZh.length;
+      walkerBubble.textContent = lang === "zh" ? walkerQuipsZh[wQuipIdx] : walkerQuipsEn[wQuipIdx];
+    }
+
+    /* ============== 7. ATOMIC SINGLE-PASS CLI SYNTAX HIGHLIGHTER ============== */
+    const cliData = [
+`# macOS（.dmg 安装后创建全局软链）
+sudo ln -sf "/Applications/Antigravity Manager.app/Contents/MacOS/am" \\
+  /usr/local/bin/am
+
+# Linux（独立二进制安装至系统 PATH）
+sudo install -Dm755 ./am /usr/local/bin/am
+
+# Windows PowerShell（安全追加用户 PATH，不污染系统路径）
+$amDir = "$env:LOCALAPPDATA\\Programs\\Antigravity Manager"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+[Environment]::SetEnvironmentVariable("Path", "$userPath;$amDir", "User")
+
+# 全平台 Cargo 源码直装
+cargo install --path crates/am-cli`,
+
+`# 列出全部健康账号并按剩余配额排序
+am list --healthy --sort quota
+am current
+am refresh
+
+# 单宿主热切（app / ide / plugin / cli）
+am switch user@gmail.com --target ide
+am switch user@gmail.com --target plugin
+
+# 四端全局智能优选（优先 Claude 高余量池）
+am switch --auto --target all --prefer claude --strategy max-quota`,
+
+`# 桌面浏览器回调 OAuth & 无头服务器 SSH 手动授权
+am login
+am login --manual
+am add --token "<refresh_token>" --tags pro,team
+
+# 设备指纹检查、独立隔离重置与清除 403 锁定
+am fingerprint
+am device-reset user@gmail.com
+am unblock user@gmail.com
+
+# 账号数据便携导出与恢复
+am export -o ./accounts-backup.json
+am import ./accounts-backup.json --overwrite`,
+
+`# 零反代本地 SQLite 遥测、实时 TPS 与上下文窗口诊断
+am stats --view all --range today
+am watch --interval 2
+am context
+
+# 修改后台轮询、托盘轻量模式与点击行为
+am config --auto-switch on --quota-polling on --interval-minutes 15
+am config --lightweight on --close-to-tray on --tray-click popover
+
+# 一键体检四宿主安装路径与密钥链读写状态
+am doctor`
+    ];
+    let cliIdx = 0;
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function highlightCode(str) {
+      const tokenRe = /("[^"]*")|((?:^|\s)--?[a-zA-Z][a-zA-Z0-9-]*)|(^(?:\s*)(?:am|sudo|cargo|\$[a-zA-Z_][a-zA-Z0-9_]*)\b)/g;
+      return str.split("\n").map(line => {
+        if (line.trim().startsWith("#")) return `<span class="cm">${escapeHtml(line)}</span>`;
+        let out = "", last = 0, m;
+        tokenRe.lastIndex = 0;
+        while ((m = tokenRe.exec(line)) !== null) {
+          if (m.index > last) out += escapeHtml(line.slice(last, m.index));
+          if (m[1]) out += `<span class="st">${escapeHtml(m[1])}</span>`;
+          else if (m[2]) {
+            const lead = m[2].match(/^\s*/)[0];
+            out += lead + `<span class="fl">${escapeHtml(m[2].slice(lead.length))}</span>`;
+          } else if (m[3]) {
+            const lead = m[3].match(/^\s*/)[0];
+            out += lead + `<span class="kw">${escapeHtml(m[3].slice(lead.length))}</span>`;
+          }
+          last = tokenRe.lastIndex;
+        }
+        if (last < line.length) out += escapeHtml(line.slice(last));
+        return out;
+      }).join("\n");
+    }
+
+    function setCliTab(idx) {
+      cliIdx = idx;
+      document.querySelectorAll("#cliTabs .codeTab").forEach((b, i) => b.classList.toggle("active", i === idx));
+      document.getElementById("cliPre").innerHTML = highlightCode(cliData[idx]);
+      if (guideReady && guideStage === "dev" && !inFlight) {
+        const tabNotes = lang === "zh"
+          ? ["三端全局注册 am 命令", "支持单端热切与四端智能优选", "SSH 远程授权与硬件指纹隔离", "零抓包实时遥测与后台策略"]
+          : ["Register am CLI on macOS / Win / Linux", "Per-host or global Smart Pick switch", "Headless SSH OAuth & device fingerprint", "Local SQLite telemetry & daemon config"];
+        triggerBuddyAnim("nod", 360);
+        showGuideMsg(tabNotes[idx], 2200);
+      }
+    }
+
+    function copyCurrentCli() { copyText(cliData[cliIdx]); }
+    function copyDockCmd() { copyText(document.getElementById("dockCmdText").textContent); }
+
+    function applyLang() {
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.getElementById("langBtn").textContent = lang === "zh" ? "EN" : "中文";
+      document.querySelectorAll("[data-zh]").forEach(el => {
+        el.innerHTML = lang === "zh" ? el.getAttribute("data-zh") : el.getAttribute("data-en");
+      });
+      document.getElementById("heroWordText").textContent = heroWords[heroWordIdx][lang];
+      walkerBubble.textContent = lang === "zh" ? walkerQuipsZh[wQuipIdx] : walkerQuipsEn[wQuipIdx];
+      updateCaption(curChapter, chSub[curChapter]);
+    }
+
+    function toggleLang() { lang = lang === "zh" ? "en" : "zh"; applyLang(); }
+    function toggleTheme() {
+      const h = document.documentElement;
+      h.setAttribute("data-theme", h.getAttribute("data-theme") === "dark" ? "light" : "dark");
+    }
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.textContent = msg; t.classList.add("show");
+      clearTimeout(t._id); t._id = setTimeout(() => t.classList.remove("show"), 1700);
+    }
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt).then(() => {
+        showToast(lang === "zh" ? "已复制到剪贴板 ✓" : "Copied to clipboard ✓");
+        if (guideReady && guideEnabled && guideStage !== "habitat" && !inFlight) {
+          triggerBuddyAnim("hop", 420);
+          showGuideMsg(lang === "zh" ? "命令已复制，去终端粘贴运行吧 ✓" : "Copied! Paste it into your terminal ✓", 2000);
+        }
+      });
+    }
+    function openSponsor() { document.getElementById("sponsorModal").classList.add("open"); }
+    function closeSponsor() { document.getElementById("sponsorModal").classList.remove("open"); }
+    function openLightbox(src) { document.getElementById("lightboxImg").src = src; document.getElementById("lightbox").classList.add("open"); }
+    function closeLightbox() { document.getElementById("lightbox").classList.remove("open"); }
+
+    window.addEventListener("scroll", updateScrollAnimations, { passive: true });
+    window.addEventListener("resize", () => { resizePixelBlast(); updateScrollAnimations(); syncGuideFusionFallbacks(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { closeLightbox(); closeSponsor(); } });
+
+    /* INIT */
+    resizePixelBlast();
+    setCliTab(0);
+    applyLang();
+    updateScrollAnimations();
+
+    // Seat Logo IP Buddy cleanly on its initial UI anchor without any startup jump
+    guideStage = resolveScrollStage();
+    const initAnchor = getStageAnchor(guideStage);
+    curGuideX = initAnchor.x; curGuideY = initAnchor.y; curGuideScale = initAnchor.scale;
+    guideEl.setAttribute("data-scene", initAnchor.scene);
+    guideEl.setAttribute("data-fused", initAnchor.fused);
+    setBuddyAccent(initAnchor.accent);
+    guideReady = true;
+
+    loopPixelBlast();
+    loopGuideChoreography();
+    loopHeat();
+    loopOrbitRing();
+    loopHabitatWalker();
+    setTimeout(() => {
+      if (guideStage === "hero") showGuideMsg(getStageArrivalMsg("hero"), 2800);
+    }, 850);
+  </script>
+</body>
+</html>

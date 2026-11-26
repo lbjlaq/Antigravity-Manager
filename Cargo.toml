@@ -5,3 +5,9 @@ members = [
     "crates/am-gui/src-tauri",
 ]
 resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

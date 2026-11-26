@@ -729,8 +729,8 @@ Antigravity Manager 桌面客户端 (`am-gui`) 是专为专业开发者打造的
 1. **品牌与版本识别**：
    - 精致的 Antigravity 拟物立体 App Icon（支持微光晕呼吸效果）。
    - 产品名称：**Antigravity Manager**。
-   - 核心版本：`v4.9.0 (Apple Silicon Native / Universal)`。
-   - 底层 SDK：`am-core v0.1.0`（纯本地零代理架构）。
+   - 核心版本：`v0.0.1 (Apple Silicon Native / Universal)`。
+   - 底层 SDK：`am-core v0.0.1`（纯本地零代理架构）。
 2. **核心特性声明**：
    - `🛡️ 100% 零代理网络穿透 · 纯本地官方对齐`
    - `⚡ 4 大宿主秒级热切换 (App, IDE, Plugin, CLI)`

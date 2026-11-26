@@ -30,6 +30,8 @@ dist
 src-tauri/target/
 src-tauri/gen/
 src-tauri/.env
+crates/am-gui/src-tauri/binaries/*
+!crates/am-gui/src-tauri/binaries/.gitkeep
 
 # Environment
 .env

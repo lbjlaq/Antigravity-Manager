@@ -1,11 +1,7 @@
 name: Deploy static content to Pages
 
 on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["main"]
-
-  # Allows you to run this workflow manually from the Actions tab
+  # Manual dispatch only so pushing antigravity-manager never overwrites main's Pages unless intended
   workflow_dispatch:
 
 env:
@@ -40,8 +36,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: './web_site'
+          path: './docs'
 
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4

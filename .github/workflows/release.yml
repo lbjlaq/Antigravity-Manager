@@ -3,10 +3,12 @@ on:
   push:
     tags:
       - "v*"
+      - "am-v*"
+      - "antigravity-manager"
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag name (e.g. v4.7.14-beta.1 on beta branch, or v4.7.14 on main branch). Leave empty to auto-detect from package.json.'
+        description: 'Release tag name (e.g. antigravity-manager, v0.0.1-beta.1 on beta, or v0.0.1 on main). Leave empty to auto-detect.'
         required: false
         default: ''
 
@@ -19,7 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.gate.outputs.release_tag }}
+      app_version: ${{ steps.gate.outputs.app_version }}
       is_prerelease: ${{ steps.gate.outputs.is_prerelease }}
+      is_am_channel: ${{ steps.gate.outputs.is_am_channel }}
       release_type: ${{ steps.gate.outputs.release_type }}
     steps:
       - name: Checkout repository with full history
@@ -33,6 +37,9 @@ jobs:
         run: |
           set -e
 
+          PKG_VERSION=$(jq -r '.version' crates/am-gui/src-tauri/tauri.conf.json)
+          DISPATCH_BRANCH="${{ github.ref_name }}"
+
           # 1. 确定本次发布的 Tag 名称
           INPUT_TAG="${{ github.event.inputs.release_tag }}"
           if [ -n "$INPUT_TAG" ]; then
@@ -41,57 +48,63 @@ jobs:
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG_NAME="${{ github.ref_name }}"
             echo "Using git push tag: $TAG_NAME"
+          elif [ "$DISPATCH_BRANCH" = "antigravity-manager" ]; then
+            TAG_NAME="antigravity-manager"
+            echo "Auto-resolved dedicated rolling tag for antigravity-manager branch: $TAG_NAME (v$PKG_VERSION)"
           else
-            # 未提供 tag 且非 tag push (例如在分支上手动触发)，从 package.json 获取版本号
-            PKG_VERSION=$(jq -r '.version' package.json)
             TAG_NAME="v${PKG_VERSION}"
-            echo "Auto-resolved tag from package.json: $TAG_NAME"
+            echo "Auto-resolved tag from tauri.conf.json: $TAG_NAME"
           fi
 
-          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "::error::❌ Invalid tag format: '$TAG_NAME'. Must conform to SemVer (e.g. v4.7.14 or v4.7.14-beta.1)!"
-            exit 1
-          fi
-
-          # 2. 识别是否为预发布标签 (包含 '-')
-          if [[ "$TAG_NAME" == *-* ]]; then
-            IS_PRERELEASE="true"
-            RELEASE_TYPE="prerelease"
-            echo "📋 Release category: Pre-release ($TAG_NAME)"
-          else
-            IS_PRERELEASE="false"
-            RELEASE_TYPE="stable"
-            echo "📋 Release category: Stable Release ($TAG_NAME)"
-          fi
-
-          # 3. 检查当前 commit 属于哪些远程分支
+          # 2. 检查当前 commit 属于哪些远程分支
           CURRENT_COMMIT="${{ github.sha }}"
           BRANCHES=$(git branch -r --contains "$CURRENT_COMMIT" | sed 's/^[[:space:]]*origin\///' | tr '\n' ' ')
           echo "Commit $CURRENT_COMMIT belongs to remote branches: [ $BRANCHES ]"
 
-          DISPATCH_BRANCH="${{ github.ref_name }}"
-
-          # 4. 严格通道隔离门禁 (Main 纯净正式版 / Beta 专属预发布版)
-          if [ "$IS_PRERELEASE" = "true" ]; then
-            # 预发布版本只允许在 beta 分支发布，严禁在 main 分支单独发布！
-            if echo "$BRANCHES" | grep -qw "beta" || [ "$DISPATCH_BRANCH" = "beta" ]; then
-              echo "✅ Pre-release verification passed: target is linked to 'beta' branch."
-            else
-              echo "::error::❌ [Release Gate Intercept] Pre-release tag '$TAG_NAME' (containing '-') is strictly forbidden on 'main' branch! Pre-releases must be published from the 'beta' branch to keep 'main' purely stable."
+          IS_AM_CHANNEL="false"
+          if [ "$TAG_NAME" = "antigravity-manager" ] || [[ "$TAG_NAME" =~ ^am-v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            IS_AM_CHANNEL="true"
+            IS_PRERELEASE="false"
+            RELEASE_TYPE="am-channel"
+            echo "📋 Release category: Dedicated Antigravity Manager Channel ($TAG_NAME / v$PKG_VERSION)"
+          else
+            if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+              echo "::error::❌ Invalid tag format: '$TAG_NAME'. Must be 'antigravity-manager', 'am-vX.Y.Z', or SemVer 'vX.Y.Z[-beta.N]'!"
               exit 1
             fi
-          else
-            # 正式版必须在 main 分支发布，严禁直接在 beta 分支发布正式版！
-            if echo "$BRANCHES" | grep -qw "main" || [ "$DISPATCH_BRANCH" = "main" ]; then
-              echo "✅ Stable release verification passed: target is linked to 'main' branch."
+
+            if [[ "$TAG_NAME" == *-* ]]; then
+              IS_PRERELEASE="true"
+              RELEASE_TYPE="prerelease"
+              echo "📋 Release category: Pre-release ($TAG_NAME)"
             else
-              echo "::error::❌ [Release Gate Intercept] Stable release tag '$TAG_NAME' (without '-') must be published from the 'main' branch! Please merge 'beta' into 'main' first."
-              exit 1
+              IS_PRERELEASE="false"
+              RELEASE_TYPE="stable"
+              echo "📋 Release category: Stable Release ($TAG_NAME)"
+            fi
+
+            # 严格通道隔离门禁 (Main 纯净正式版 / Beta 专属预发布版)
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              if echo "$BRANCHES" | grep -qw "beta" || [ "$DISPATCH_BRANCH" = "beta" ]; then
+                echo "✅ Pre-release verification passed: target is linked to 'beta' branch."
+              else
+                echo "::error::❌ [Release Gate Intercept] Pre-release tag '$TAG_NAME' (containing '-') is strictly forbidden on 'main' branch! Pre-releases must be published from the 'beta' branch to keep 'main' purely stable."
+                exit 1
+              fi
+            else
+              if echo "$BRANCHES" | grep -qw "main" || [ "$DISPATCH_BRANCH" = "main" ]; then
+                echo "✅ Stable release verification passed: target is linked to 'main' branch."
+              else
+                echo "::error::❌ [Release Gate Intercept] Stable release tag '$TAG_NAME' (without '-') must be published from the 'main' branch! Please merge 'beta' into 'main' first."
+                exit 1
+              fi
             fi
           fi
 
           echo "release_tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "app_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "is_am_channel=$IS_AM_CHANNEL" >> "$GITHUB_OUTPUT"
           echo "release_type=$RELEASE_TYPE" >> "$GITHUB_OUTPUT"
 
   build-tauri:
@@ -104,16 +117,22 @@ jobs:
         include:
           - platform: "macos-latest"
             args: "--target aarch64-apple-darwin"
+            sidecar_target: "aarch64-apple-darwin"
           - platform: "macos-latest"
             args: "--target x86_64-apple-darwin"
+            sidecar_target: "x86_64-apple-darwin"
           - platform: "macos-latest"
-            args: "--target universal-apple-darwin --bundles app"
+            args: "--target universal-apple-darwin --bundles app,dmg"
+            sidecar_target: "universal-apple-darwin"
           - platform: "ubuntu-22.04"
             args: ""
+            sidecar_target: "x86_64-unknown-linux-gnu"
           - platform: "ubuntu-24.04-arm"
             args: ""
+            sidecar_target: "aarch64-unknown-linux-gnu"
           - platform: "windows-2025"
             args: ""
+            sidecar_target: "x86_64-pc-windows-msvc"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -130,16 +149,26 @@ jobs:
       - name: Rust setup
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || (contains(matrix.args, 'aarch64') && 'aarch64-unknown-linux-gnu' || '') }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Tauri CLI
+        uses: taiki-e/install-action@cargo-tauri
 
       - name: Node.js setup
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: "npm"
+          cache-dependency-path: crates/am-gui/ui/package-lock.json
 
-      - name: Install frontend dependencies
-        run: npm install --legacy-peer-deps
+      - name: Install and build frontend
+        working-directory: crates/am-gui/ui
+        run: |
+          npm install --legacy-peer-deps
+          npm run build
+
+      - name: Build and stage am CLI sidecar
+        run: node scripts/prepare-sidecar.mjs --target ${{ matrix.sidecar_target }}
 
       - name: Disable updater artifacts without signing key
         shell: pwsh
@@ -151,14 +180,14 @@ jobs:
             exit 0
           }
 
-          $configPath = "src-tauri/tauri.conf.json"
+          $configPath = "crates/am-gui/src-tauri/tauri.conf.json"
           $config = Get-Content -Raw $configPath | ConvertFrom-Json
           $config.bundle.createUpdaterArtifacts = $false
           $config | ConvertTo-Json -Depth 32 | Set-Content -Path $configPath -Encoding UTF8
           Write-Host "No updater signing key configured; disabled updater artifacts for this build."
 
       # 预发布版本降级为仅 NSIS：WiX (MSI) 要求版本号预发布段为纯数字 (≤65535)，
-      # 无法打包 SemVer 预发布串 (如 4.7.14-beta)；NSIS 无此限制。正式版保持默认 bundle 不变。
+      # 无法打包 SemVer 预发布串 (如 0.0.1-beta.1)；NSIS 无此限制。正式版保持默认 bundle 不变。
       - name: Skip MSI for prerelease tags
         if: matrix.platform == 'windows-2025' && needs.verify-release-target.outputs.is_prerelease == 'true'
         shell: pwsh
@@ -166,29 +195,17 @@ jobs:
           Write-Host "Prerelease version detected; MSI (WiX) cannot bundle SemVer prerelease versions. Falling back to NSIS only."
           "PRE_BUNDLE_ARGS=--bundles nsis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # Universal macOS app: pre-build and lipo secondary binaries so Tauri's bundler finds them
-      - name: Build universal secondary binaries
-        if: matrix.platform == 'macos-latest' && contains(matrix.args, 'universal-apple-darwin')
-        run: |
-          npm run build
-          cargo build --release --target aarch64-apple-darwin --bin antigravity-server --manifest-path src-tauri/Cargo.toml
-          cargo build --release --target x86_64-apple-darwin --bin antigravity-server --manifest-path src-tauri/Cargo.toml
-          mkdir -p src-tauri/target/universal-apple-darwin/release
-          lipo -create -output src-tauri/target/universal-apple-darwin/release/antigravity-server \
-            src-tauri/target/aarch64-apple-darwin/release/antigravity-server \
-            src-tauri/target/x86_64-apple-darwin/release/antigravity-server
-
       - name: Build the app
+        working-directory: crates/am-gui/src-tauri
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build -- ${{ matrix.args }} ${{ env.PRE_BUNDLE_ARGS }}
+        run: cargo tauri build ${{ matrix.args }} ${{ env.PRE_BUNDLE_ARGS }}
 
-      # 3. 处理 macOS 架构重命名冲突 (解决 422 Already Exists)
+      # 处理 macOS 架构重命名冲突 (解决 422 Already Exists)
       - name: Rename macOS assets for architecture
         if: matrix.platform == 'macos-latest'
         run: |
-          # 识别架构
           if [[ "${{ matrix.args }}" == *"--target aarch64-apple-darwin"* ]]; then
             ARCH="aarch64"
           elif [[ "${{ matrix.args }}" == *"--target x86_64-apple-darwin"* ]]; then
@@ -198,46 +215,46 @@ jobs:
           else
             ARCH="unknown"
           fi
-          
+
           echo "Detected architecture: $ARCH"
-          
-          # 进入产物目录
-          cd src-tauri/target/*/release/bundle/macos/
-          
-          # 重命名 .app.tar.gz 和 .sig
-          if [ -f "Antigravity Tools.app.tar.gz" ]; then
-            mv "Antigravity Tools.app.tar.gz" "Antigravity Tools_${ARCH}.app.tar.gz"
-            mv "Antigravity Tools.app.tar.gz.sig" "Antigravity Tools_${ARCH}.app.tar.gz.sig"
-            echo "Renamed assets to append Arch: $ARCH"
-          fi
-          
-          # 更新对应的 updater.json (指向重命名后的文件)
-          UPDATER_JSON="../../../updater/install.json"
-          if [ ! -f "$UPDATER_JSON" ]; then
-             UPDATER_JSON=$(find ../../../updater -name "*.json" | head -n 1)
-          fi
-          
-          if [ -f "$UPDATER_JSON" ]; then
-            echo "Updating $UPDATER_JSON to use renamed assets..."
-            sed -i '' "s/Antigravity%20Tools.app.tar.gz/Antigravity%20Tools_${ARCH}.app.tar.gz/g" "$UPDATER_JSON"
+
+          MACOS_DIR="target/${{ matrix.sidecar_target }}/release/bundle/macos"
+          if [ -d "$MACOS_DIR" ]; then
+            cd "$MACOS_DIR"
+
+            if [ -f "Antigravity Manager.app.tar.gz" ]; then
+              mv "Antigravity Manager.app.tar.gz" "Antigravity Manager_${ARCH}.app.tar.gz"
+              if [ -f "Antigravity Manager.app.tar.gz.sig" ]; then
+                mv "Antigravity Manager.app.tar.gz.sig" "Antigravity Manager_${ARCH}.app.tar.gz.sig"
+              fi
+              echo "Renamed assets to append Arch: $ARCH"
+            fi
+
+            UPDATER_JSON="../../../updater/install.json"
+            if [ ! -f "$UPDATER_JSON" ] && [ -d "../../../updater" ]; then
+              UPDATER_JSON=$(find ../../../updater -name "*.json" | head -n 1)
+            fi
+
+            if [ -f "$UPDATER_JSON" ]; then
+              echo "Updating $UPDATER_JSON to use renamed assets..."
+              sed -i '' "s/Antigravity%20Manager.app.tar.gz/Antigravity%20Manager_${ARCH}.app.tar.gz/g" "$UPDATER_JSON"
+            fi
           fi
 
-      # 4. 确保 Linux AppImage 包含标准 .DirIcon (解决 AppImageHub FATAL: .DirIcon is missing)
+      # 确保 Linux AppImage 包含标准 .DirIcon (解决 AppImageHub FATAL: .DirIcon is missing)
       - name: Verify and ensure AppImage .DirIcon compliance
         if: startsWith(matrix.platform, 'ubuntu')
         run: |
-          for appimage in src-tauri/target/*/release/bundle/appimage/*.AppImage; do
+          for appimage in target/release/bundle/appimage/*.AppImage target/*/release/bundle/appimage/*.AppImage; do
             if [ -f "$appimage" ]; then
               echo "Inspecting AppImage: $appimage"
               chmod +x "$appimage"
-              # 提取 AppImage 检查根目录
               TMP_EXTRACT=$(mktemp -d)
               "$appimage" --appimage-extract > /dev/null 2>&1 || true
               if [ -d "squashfs-root" ]; then
                 if [ ! -e "squashfs-root/.DirIcon" ] || [ ! -s "squashfs-root/.DirIcon" ]; then
-                  echo "Warning: .DirIcon missing or broken in $appimage root! Fixing with icon.png..."
-                  cp src-tauri/icons/icon.png squashfs-root/.DirIcon
-                  # 使用 appimagetool 重新封包确保符合 AppImageHub 规范
+                  echo "Warning: .DirIcon missing or broken in $appimage root! Fixing with 128x128.png..."
+                  cp crates/am-gui/src-tauri/icons/128x128.png squashfs-root/.DirIcon
                   if command -v appimagetool >/dev/null 2>&1; then
                     appimagetool squashfs-root "$appimage"
                   elif [ -f "$HOME/.local/bin/appimagetool" ]; then
@@ -252,86 +269,36 @@ jobs:
             fi
           done
 
-      # 1. 上传 updater.json 到 Artifacts (供后续合并使用)
       - name: Upload updater json
         uses: actions/upload-artifact@v4
         with:
           name: updater-json-${{ matrix.platform }}-${{ strategy.job-index }}
-          path: src-tauri/target/**/release/bundle/updater/*.json
+          path: target/**/release/bundle/updater/*.json
           if-no-files-found: ignore
 
-      # 2. 上传安装包到 Artifacts (供后续统一发布任务下载)
       - name: Upload Release Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-${{ matrix.platform }}-${{ strategy.job-index }}
           path: |
-            src-tauri/target/**/release/bundle/dmg/*.dmg
-            src-tauri/target/**/release/bundle/deb/*.deb
-            src-tauri/target/**/release/bundle/appimage/*.AppImage
-            src-tauri/target/**/release/bundle/msi/*.msi
-            src-tauri/target/**/release/bundle/nsis/*.exe
-            src-tauri/target/**/release/bundle/rpm/*.rpm
-            src-tauri/target/**/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/**/release/bundle/macos/*.app.tar.gz.sig
-            src-tauri/target/**/release/bundle/dmg/*.sig
-            src-tauri/target/**/release/bundle/deb/*.sig
-            src-tauri/target/**/release/bundle/appimage/*.sig
-            src-tauri/target/**/release/bundle/msi/*.sig
-            src-tauri/target/**/release/bundle/nsis/*.sig
-            src-tauri/target/**/release/bundle/rpm/*.sig
+            target/**/release/bundle/dmg/*.dmg
+            target/**/release/bundle/deb/*.deb
+            target/**/release/bundle/appimage/*.AppImage
+            target/**/release/bundle/msi/*.msi
+            target/**/release/bundle/nsis/*.exe
+            target/**/release/bundle/rpm/*.rpm
+            target/**/release/bundle/macos/*.app.tar.gz
+            target/**/release/bundle/macos/*.app.tar.gz.sig
+            target/**/release/bundle/dmg/*.sig
+            target/**/release/bundle/deb/*.sig
+            target/**/release/bundle/appimage/*.sig
+            target/**/release/bundle/msi/*.sig
+            target/**/release/bundle/nsis/*.sig
+            target/**/release/bundle/rpm/*.sig
           if-no-files-found: warn
 
-  # Android ARM64 原生 Termux Headless 服务端构建与打包
-  build-android-arm64:
-    name: Build Android ARM64 Server (Termux)
-    needs: verify-release-target
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
-
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26d
-          add-to-path: true
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
-
-      - name: Build frontend
-        run: |
-          npm install --legacy-peer-deps
-          npm run build
-
-      - name: Build Android ARM64 headless server binary
-        run: |
-          cd src-tauri
-          cargo ndk -t arm64-v8a build --release --bin antigravity-server
-
-      - name: Package Android ARM64 artifact
-        run: |
-          mkdir -p dist-android
-          cp src-tauri/target/aarch64-linux-android/release/antigravity-server dist-android/
-          cp -r dist dist-android/dist
-          tar -czvf antigravity-server-android-arm64.tar.gz -C dist-android antigravity-server dist
-
-      - name: Upload Release Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets-android
-          path: antigravity-server-android-arm64.tar.gz
-          if-no-files-found: error
-
   publish-release:
-    needs: [verify-release-target, build-tauri, build-android-arm64]
+    needs: [verify-release-target, build-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -339,7 +306,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 下载所有构建产物 (仅限 release 相关的 assets 和 updater)
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -349,45 +315,34 @@ jobs:
 
       - name: Extract Release Notes
         env:
-          VERSION: ${{ needs.verify-release-target.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.verify-release-target.outputs.release_tag }}
+          APP_VERSION: ${{ needs.verify-release-target.outputs.app_version }}
         run: |
-          echo "Extracting release notes for version $VERSION"
-          # 版本串按字面匹配 (index 比较，正则元字符不参与解释)，且要求其后紧跟空白，
-          # 确保与 CHANGELOG 标题逐字符对齐，避免 v4.7.14 命中 v4.7.14-beta 等同基线条目。
+          VER_HEADING="v${APP_VERSION}"
+          echo "Extracting bilingual release notes for ${VER_HEADING} (tag: ${RELEASE_TAG}) from CHANGELOG.md"
+
+          # 按字面精确匹配 `## vX.Y.Z` 标题（后面须为行尾或空白/括号，避免 v0.0.1 误匹配 v0.0.1-beta.1）
           EXTRACT_AWK='
-            BEGIN { capture = 0; needle = "**" ver }
+            BEGIN { capture = 0; needle = "## " ver }
             {
-              if (capture && $0 ~ /^[[:space:]]*[*+-][[:space:]]+\*\*v/) exit
-              if (!capture && $0 ~ /^[[:space:]]*[*+-][[:space:]]+\*\*/) {
-                title = $0
-                sub(/^[[:space:]]*[*+-][[:space:]]+/, "", title)
-                if (index(title, needle) == 1) {
-                  sep = substr(title, length(needle) + 1, 1)
-                  if (sep == " " || sep == "\t") { capture = 1; next }
-                }
+              if (capture && $0 ~ /^##[[:space:]]+/) exit
+              if (!capture && index($0, needle) == 1) {
+                sep = substr($0, length(needle) + 1, 1)
+                if (sep == "" || sep == " " || sep == "\t" || sep == "(") { capture = 1; next }
               }
             }
             capture { print }
           '
 
-          # 方案 A: 双语聚合 Release Notes (英文在上，中文在下)
           > release_notes.md
-          if [ -f CHANGELOG_EN.md ]; then
-            EN_NOTES=$(awk -v ver="$VERSION" "$EXTRACT_AWK" CHANGELOG_EN.md | sed 's/^[[:space:]]\{8\}//')
-            if [ -n "$EN_NOTES" ]; then
-              echo "$EN_NOTES" >> release_notes.md
-            fi
-          fi
-
           if [ -f CHANGELOG.md ]; then
-            ZH_NOTES=$(awk -v ver="$VERSION" "$EXTRACT_AWK" CHANGELOG.md | sed 's/^[[:space:]]\{8\}//')
-            if [ -n "$ZH_NOTES" ]; then
-              if [ -s release_notes.md ]; then
-                echo "" >> release_notes.md
-                echo "---" >> release_notes.md
-                echo "" >> release_notes.md
-              fi
-              echo "$ZH_NOTES" >> release_notes.md
+            NOTES=$(awk -v ver="$VER_HEADING" "$EXTRACT_AWK" CHANGELOG.md)
+            if [ -z "$NOTES" ] && [ "$RELEASE_TAG" != "$VER_HEADING" ]; then
+              NOTES=$(awk -v ver="$RELEASE_TAG" "$EXTRACT_AWK" CHANGELOG.md)
+            fi
+            if [ -n "$NOTES" ]; then
+              # 去掉首尾空行，保持 GitHub Release 与 updater.json 干净整洁
+              printf '%s\n' "$NOTES" | awk 'NF { found=1 } found { lines[++n]=$0; last=NF ? n : last } END { for (i=1; i<=last; i++) print lines[i] }' > release_notes.md
             fi
           fi
 
@@ -395,86 +350,10 @@ jobs:
             echo "See the assets to download this version and install." > release_notes.md
           fi
 
-      - name: Build updater.json from signatures
-        env:
-          VERSION: ${{ needs.verify-release-target.outputs.release_tag }}
-          REPO: ${{ github.repository }}
-        run: |
-          DOWNLOAD_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
-          VER="${VERSION#v}"
+          echo "Extracted release_notes.md:"
+          cat release_notes.md
 
-          # Helper: read signature content from .sig file in artifacts
-          read_sig() {
-            local pattern="$1"
-            local sig_file
-            sig_file=$(find all-artifacts -name "$pattern" -type f 2>/dev/null | head -1)
-            if [ -n "$sig_file" ] && [ -f "$sig_file" ]; then
-              cat "$sig_file"
-            else
-              echo ""
-            fi
-          }
-
-          # Read signatures for each platform
-          MACOS_AARCH64_SIG=$(read_sig "*_aarch64.app.tar.gz.sig")
-          MACOS_X64_SIG=$(read_sig "*_x64.app.tar.gz.sig")
-          WINDOWS_NSIS_SIG=$(read_sig "*_x64-setup.exe.sig")
-          LINUX_AMD64_SIG=$(read_sig "*_amd64.AppImage.sig")
-          LINUX_AARCH64_SIG=$(read_sig "*_aarch64.AppImage.sig")
-
-          echo "Signatures found:"
-          [ -n "$MACOS_AARCH64_SIG" ] && echo "  macOS aarch64: YES" || echo "  macOS aarch64: NO"
-          [ -n "$MACOS_X64_SIG" ] && echo "  macOS x64: YES" || echo "  macOS x64: NO"
-          [ -n "$WINDOWS_NSIS_SIG" ] && echo "  Windows x64: YES" || echo "  Windows x64: NO"
-          [ -n "$LINUX_AMD64_SIG" ] && echo "  Linux amd64: YES" || echo "  Linux amd64: NO"
-          [ -n "$LINUX_AARCH64_SIG" ] && echo "  Linux aarch64: YES" || echo "  Linux aarch64: NO"
-
-          # Build updater.json with platform-specific download URLs and signatures
-          # macOS: arch-suffixed filenames (no version in name)
-          # Windows/Linux: version included in filename
-          jq -n \
-            --arg version "$VER" \
-            --arg notes "See release page for details" \
-            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --arg dl "$DOWNLOAD_BASE" \
-            --arg mac_a64_sig "$MACOS_AARCH64_SIG" \
-            --arg mac_x64_sig "$MACOS_X64_SIG" \
-            --arg win_nsis_sig "$WINDOWS_NSIS_SIG" \
-            --arg linux_amd64_sig "$LINUX_AMD64_SIG" \
-            --arg linux_a64_sig "$LINUX_AARCH64_SIG" \
-            --arg ver "$VER" \
-            '{
-              version: $version,
-              notes: $notes,
-              pub_date: $pub_date,
-              platforms: {
-                "darwin-aarch64": {
-                  url: "\($dl)/Antigravity.Tools_aarch64.app.tar.gz",
-                  signature: $mac_a64_sig
-                },
-                "darwin-x86_64": {
-                  url: "\($dl)/Antigravity.Tools_x64.app.tar.gz",
-                  signature: $mac_x64_sig
-                },
-                "windows-x86_64": {
-                  url: "\($dl)/Antigravity.Tools_\($ver)_x64-setup.exe",
-                  signature: $win_nsis_sig
-                },
-                "linux-x86_64": {
-                  url: "\($dl)/Antigravity.Tools_\($ver)_amd64.AppImage",
-                  signature: $linux_amd64_sig
-                },
-                "linux-aarch64": {
-                  url: "\($dl)/Antigravity.Tools_\($ver)_aarch64.AppImage",
-                  signature: $linux_a64_sig
-                }
-              }
-            }' > updater.json
-
-          echo "Generated updater.json:"
-          cat updater.json
-
-      - name: Collect release files
+      - name: Collect and normalize release files
         run: |
           mkdir -p release-files
           find all-artifacts -type f \( \
@@ -489,26 +368,108 @@ jobs:
           \) -print0 | while IFS= read -r -d '' file; do
             cp "$file" release-files/
           done
-          # 包含 Termux 一键安装脚本
-          if [ -f scripts/install-termux.sh ]; then
-            cp scripts/install-termux.sh release-files/
-          fi
-          # 同步生成点号规范命名的副本，确保与 updater.json 中的下载 URL 100% 绝对一致
+
+          # 统一用点号替换文件名空格（避免 GitHub 自动改名造成冲突或上传双份冗余文件）
           cd release-files
           for f in *\ *; do
             [ -e "$f" ] || continue
-            cp "$f" "${f// /.}"
+            mv -f "$f" "${f// /.}"
           done
-          cd ..
-          find release-files -maxdepth 1 -type f -print
 
-      # 使用 ncipollo/release-action 进行统一发布，支持稳健覆盖
+          # 为 Homebrew Cask 固定滚动通道生成无版本号规范别名（不影响版本号归档文件名）
+          alias_first() {
+            local pattern="$1"
+            local target="$2"
+            local found
+            found=$(find . -maxdepth 1 -type f -name "$pattern" ! -name "$target" | head -n 1)
+            if [ -n "$found" ] && [ -f "$found" ]; then
+              cp -f "$found" "$target"
+              echo "Created rolling alias: $target <- ${found#./}"
+            fi
+          }
+          alias_first "*_aarch64.dmg" "Antigravity.Manager_aarch64.dmg"
+          alias_first "*_x64.dmg" "Antigravity.Manager_x64.dmg"
+          alias_first "*_universal.dmg" "Antigravity.Manager_universal.dmg"
+          alias_first "*_amd64.AppImage" "Antigravity.Manager_amd64.AppImage"
+          alias_first "*_aarch64.AppImage" "Antigravity.Manager_aarch64.AppImage"
+          cd ..
+
+          echo "Final staged release-files:"
+          find release-files -maxdepth 1 -type f | sort
+
+      - name: Build updater.json from real artifacts and signatures
+        env:
+          VERSION: ${{ needs.verify-release-target.outputs.release_tag }}
+          APP_VERSION: ${{ needs.verify-release-target.outputs.app_version }}
+          REPO: ${{ github.repository }}
+        run: |
+          DOWNLOAD_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
+          VER="${APP_VERSION}"
+
+          # 按实际产物与签名文件动态匹配，彻底杜绝文件名写死导致的 404 或空签名崩溃
+          find_asset_and_sig() {
+            local pattern="$1"
+            local bin_file sig_file
+            bin_file=$(find release-files -maxdepth 1 -type f -name "$pattern" ! -name "*.sig" | sort | tail -n 1)
+            if [ -n "$bin_file" ] && [ -f "${bin_file}.sig" ]; then
+              sig_file="${bin_file}.sig"
+              printf '%s\n%s' "$(basename "$bin_file")" "$(cat "$sig_file")"
+            fi
+          }
+
+          PLATFORMS_JSON="{}"
+          add_platform() {
+            local key="$1"
+            local pattern="$2"
+            local pair bin_name sig_val
+            pair=$(find_asset_and_sig "$pattern")
+            if [ -n "$pair" ]; then
+              bin_name=$(printf '%s' "$pair" | head -n 1)
+              sig_val=$(printf '%s' "$pair" | tail -n +2)
+              if [ -n "$bin_name" ] && [ -n "$sig_val" ]; then
+                echo "  ${key}: OK (${bin_name})"
+                PLATFORMS_JSON=$(jq -n \
+                  --argjson cur "$PLATFORMS_JSON" \
+                  --arg k "$key" \
+                  --arg url "${DOWNLOAD_BASE}/${bin_name}" \
+                  --arg sig "$sig_val" \
+                  '$cur + {($k): {url: $url, signature: $sig}}')
+                return
+              fi
+            fi
+            echo "  ${key}: SKIPPED (binary or .sig missing)"
+          }
+
+          echo "Resolving updater platforms:"
+          add_platform "darwin-aarch64" "*_aarch64.app.tar.gz"
+          add_platform "darwin-x86_64" "*_x64.app.tar.gz"
+          add_platform "windows-x86_64" "*_x64-setup.exe"
+          add_platform "linux-x86_64" "*_${VER}_amd64.AppImage"
+          add_platform "linux-aarch64" "*_${VER}_aarch64.AppImage"
+
+          RELEASE_NOTES=$(cat release_notes.md)
+
+          jq -n \
+            --arg version "$VER" \
+            --arg notes "$RELEASE_NOTES" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$PLATFORMS_JSON" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: $platforms
+            }' > updater.json
+
+          echo "Generated updater.json:"
+          cat updater.json
+
       - name: Create or Update GitHub Release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           tag: ${{ needs.verify-release-target.outputs.release_tag }}
-          name: "Antigravity Tools ${{ needs.verify-release-target.outputs.release_tag }}"
+          name: "Antigravity Manager v${{ needs.verify-release-target.outputs.app_version }}"
           bodyFile: "release_notes.md"
           generateReleaseNotes: true
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -516,16 +477,33 @@ jobs:
           artifactErrorsFailBuild: false
           replacesArtifacts: true
           prerelease: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' }}
-          makeLatest: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' && 'false' || 'legacy' }}
+          makeLatest: ${{ (needs.verify-release-target.outputs.is_prerelease == 'true' || needs.verify-release-target.outputs.is_am_channel == 'true') && 'false' || 'legacy' }}
 
-      # 预览版专属通道：同步镜像至 preview Tag Release，供应用内 Beta 通道稳定拉取 updater.json
+      # 当通过归档版本 Tag (am-vX.Y.Z) 发布时，自动同步到固定滚动入口 `antigravity-manager`
+      # 确保应用内更新器 (updater.json) 与 Homebrew Cask 始终能拉取到最新版本
+      - name: Sync Rolling Antigravity Manager Channel (am-v* Tags)
+        if: needs.verify-release-target.outputs.is_am_channel == 'true' && needs.verify-release-target.outputs.release_tag != 'antigravity-manager'
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          tag: "antigravity-manager"
+          name: "Antigravity Manager v${{ needs.verify-release-target.outputs.app_version }}"
+          bodyFile: "release_notes.md"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: "release-files/*,updater.json"
+          artifactErrorsFailBuild: false
+          removeArtifacts: true
+          replacesArtifacts: true
+          prerelease: false
+          makeLatest: false
+
       - name: Sync Preview Channel Release (Beta Only)
         if: needs.verify-release-target.outputs.is_prerelease == 'true'
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           tag: "preview"
-          name: "Antigravity Tools Preview Channel (${{ needs.verify-release-target.outputs.release_tag }})"
+          name: "Antigravity Manager Preview Channel (${{ needs.verify-release-target.outputs.release_tag }})"
           body: "Preview Channel build for version ${{ needs.verify-release-target.outputs.release_tag }}. Automatically synced for in-app Beta updater."
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
@@ -534,120 +512,3 @@ jobs:
           replacesArtifacts: true
           prerelease: true
           makeLatest: false
-
-  docker-build-amd64:
-    needs: verify-release-target
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' && (github.repository == 'lbjlaq/Antigravity-Manager' || vars.ENABLE_DOCKER_PUSH == 'true')
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # 预发布 Tag (含 '-') 不更新 latest-amd64，与 GitHub Release 的 Pre-release 守卫同一语义
-      - name: Resolve Docker tags (AMD64)
-        env:
-          VER: ${{ needs.verify-release-target.outputs.release_tag }}
-          IS_PRE: ${{ needs.verify-release-target.outputs.is_prerelease }}
-        run: |
-          OWNER="${{ github.repository_owner }}"
-          TAGS="${OWNER}/antigravity-manager:${VER}-amd64"
-          if [[ "$IS_PRE" != "true" ]]; then
-            TAGS="${TAGS}"$'\n'"${OWNER}/antigravity-manager:latest-amd64"
-          fi
-          {
-            echo "DOCKER_TAGS<<EOF"
-            echo "$TAGS"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-
-      - name: Build and push (AMD64)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.DOCKER_TAGS }}
-          build-args: |
-            USE_MIRROR=false
-
-  docker-build-arm64:
-    needs: verify-release-target
-    runs-on: ubuntu-24.04-arm
-    if: github.event_name != 'pull_request' && (github.repository == 'lbjlaq/Antigravity-Manager' || vars.ENABLE_DOCKER_PUSH == 'true')
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # 预发布 Tag (含 '-') 不更新 latest-arm64，与 GitHub Release 的 Pre-release 守卫同一语义
-      - name: Resolve Docker tags (ARM64)
-        env:
-          VER: ${{ needs.verify-release-target.outputs.release_tag }}
-          IS_PRE: ${{ needs.verify-release-target.outputs.is_prerelease }}
-        run: |
-          OWNER="${{ github.repository_owner }}"
-          TAGS="${OWNER}/antigravity-manager:${VER}-arm64"
-          if [[ "$IS_PRE" != "true" ]]; then
-            TAGS="${TAGS}"$'\n'"${OWNER}/antigravity-manager:latest-arm64"
-          fi
-          {
-            echo "DOCKER_TAGS<<EOF"
-            echo "$TAGS"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-
-      - name: Build and push (ARM64)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          platforms: linux/arm64
-          push: true
-          tags: ${{ env.DOCKER_TAGS }}
-          build-args: |
-            USE_MIRROR=false
-
-  docker-manifest:
-    needs: [verify-release-target, docker-build-amd64, docker-build-arm64]
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' && (github.repository == 'lbjlaq/Antigravity-Manager' || vars.ENABLE_DOCKER_PUSH == 'true')
-    steps:
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Create and push manifest
-        env:
-          VER: ${{ needs.verify-release-target.outputs.release_tag }}
-          IS_PRE: ${{ needs.verify-release-target.outputs.is_prerelease }}
-        run: |
-          docker buildx imagetools create -t ${{ github.repository_owner }}/antigravity-manager:${VER} \
-            ${{ github.repository_owner }}/antigravity-manager:${VER}-amd64 \
-            ${{ github.repository_owner }}/antigravity-manager:${VER}-arm64
-
-          # 预发布 Tag (含 '-') 不更新 latest，避免预发布镜像进入正式更新通道
-          if [[ "$IS_PRE" != "true" ]]; then
-            docker buildx imagetools create -t ${{ github.repository_owner }}/antigravity-manager:latest \
-              ${{ github.repository_owner }}/antigravity-manager:latest-amd64 \
-              ${{ github.repository_owner }}/antigravity-manager:latest-arm64
-          fi

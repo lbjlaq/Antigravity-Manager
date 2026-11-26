@@ -13,7 +13,7 @@ use comfy_table::{Cell, Color, Row, Table};
 #[derive(Parser)]
 #[command(name = "am")]
 #[command(author = "Antigravity Team")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(
     about = "🚀 Lightweight Google AI Account Manager for Antigravity (App, IDE, Plugin, CLI)",
     long_about = None
@@ -122,9 +122,7 @@ enum Commands {
     },
 
     /// 🟢 Manually enable a disabled account
-    Enable {
-        account: String,
-    },
+    Enable { account: String },
 
     /// 🗑 Delete one or multiple accounts
     #[command(alias = "rm")]
@@ -141,6 +139,14 @@ enum Commands {
         /// Projection perspective: all (default), account, model, app, or timeline
         #[arg(short, long, default_value = "all")]
         view: String,
+
+        /// Time range filter: today, 7d, 30d, or all (default: all)
+        #[arg(short, long, default_value = "all")]
+        range: String,
+
+        /// Specific date filter (YYYY-MM-DD)
+        #[arg(long)]
+        date: Option<String>,
 
         /// Output in JSON format
         #[arg(long)]
@@ -174,6 +180,26 @@ enum Commands {
         /// Polling interval in minutes (5 to 1440)
         #[arg(long)]
         interval_minutes: Option<u64>,
+
+        /// Toggle system tray / menubar resident icon: on / off
+        #[arg(long)]
+        tray: Option<String>,
+
+        /// Tray left-click action: popover / main / menu
+        #[arg(long)]
+        tray_click: Option<String>,
+
+        /// Toggle hide-to-tray when closing main window: on / off
+        #[arg(long)]
+        close_to_tray: Option<String>,
+
+        /// Toggle quiet autostart (stay in tray on login launch): on / off
+        #[arg(long)]
+        quiet_autostart: Option<String>,
+
+        /// Toggle lightweight mode (destroy WebView process when hidden in tray): on / off
+        #[arg(long)]
+        lightweight: Option<String>,
     },
 
     /// 📦 Export all accounts into a portable backup JSON file
@@ -192,6 +218,31 @@ enum Commands {
         #[arg(short, long)]
         overwrite: bool,
     },
+
+    /// 🔓 Clear 403 / validation lock on an account
+    Unblock {
+        /// Account email, ID, or prefix
+        account: String,
+    },
+
+    /// 🆔 Regenerate device profile / fingerprint for an account
+    DeviceReset {
+        /// Account email, ID, or prefix
+        account: String,
+    },
+
+    /// ↕️ Reorder persisted accounts by ID list
+    Reorder {
+        /// Ordered list of account IDs
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
+
+    /// 🔄 Check for Antigravity Manager updates
+    Update,
+
+    /// 🩺 Inspect system diagnostics and host installation status
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -233,7 +284,10 @@ async fn main() -> Result<()> {
             json,
         }) => {
             let sort_order = match sort.as_deref() {
-                Some(s) => Some(s.parse::<AccountSortOrder>().map_err(|e| anyhow!("{}", e))?),
+                Some(s) => Some(
+                    s.parse::<AccountSortOrder>()
+                        .map_err(|e| anyhow!("{}", e))?,
+                ),
                 None => None,
             };
             handle_list(&manager, tag.as_deref(), healthy, sort_order, json)?;
@@ -244,8 +298,13 @@ async fn main() -> Result<()> {
         Some(Commands::Fingerprint) => {
             handle_fingerprint().await?;
         }
-        Some(Commands::Stats { view, json }) => {
-            handle_stats(&manager, &view, json)?;
+        Some(Commands::Stats {
+            view,
+            range,
+            date,
+            json,
+        }) => {
+            handle_stats(&manager, &view, &range, date.as_deref(), json)?;
         }
         Some(Commands::Context) => {
             handle_context(&manager)?;
@@ -258,14 +317,112 @@ async fn main() -> Result<()> {
             auto_switch,
             quota_polling,
             interval_minutes,
+            tray,
+            tray_click,
+            close_to_tray,
+            quiet_autostart,
+            lightweight,
         }) => {
-            handle_config(show, auto_switch.as_deref(), quota_polling.as_deref(), interval_minutes)?;
+            handle_config(
+                show,
+                auto_switch.as_deref(),
+                quota_polling.as_deref(),
+                interval_minutes,
+                tray.as_deref(),
+                tray_click.as_deref(),
+                close_to_tray.as_deref(),
+                quiet_autostart.as_deref(),
+                lightweight.as_deref(),
+            )?;
         }
         Some(Commands::Export { output }) => {
             handle_export(&manager, &output)?;
         }
         Some(Commands::Import { input, overwrite }) => {
             handle_import(&manager, &input, overwrite)?;
+        }
+        Some(Commands::Unblock { account }) => {
+            let acc = manager.clear_account_forbidden(&account)?;
+            println!(
+                "{}",
+                format!("🔓 Cleared 403/validation lock for {}", acc.email)
+                    .green()
+                    .bold()
+            );
+        }
+        Some(Commands::DeviceReset { account }) => {
+            let acc = manager.regenerate_device_profile(&account)?;
+            println!(
+                "{}",
+                format!("🆔 Regenerated device profile for {}", acc.email)
+                    .green()
+                    .bold()
+            );
+        }
+        Some(Commands::Reorder { ids }) => {
+            manager.reorder_accounts(&ids)?;
+            println!(
+                "{}",
+                format!("↕️ Reordered {} accounts", ids.len())
+                    .green()
+                    .bold()
+            );
+        }
+        Some(Commands::Update) => {
+            let current = env!("CARGO_PKG_VERSION");
+            let info = am_core::check_for_updates(current).await?;
+            if info.has_update {
+                println!(
+                    "{}",
+                    format!(
+                        "🆕 Update available: v{} -> v{} ({})",
+                        info.current_version, info.latest_version, info.download_url
+                    )
+                    .green()
+                    .bold()
+                );
+            } else {
+                println!(
+                    "{}",
+                    format!(
+                        "✅ You are on the latest version (v{}).",
+                        info.current_version
+                    )
+                    .cyan()
+                );
+            }
+        }
+        Some(Commands::Doctor) => {
+            let info = manager.get_system_info(env!("CARGO_PKG_VERSION"));
+            println!("{}", "🩺 Antigravity Manager Diagnostics:".cyan().bold());
+            println!("  • Version:     v{} ({})", info.app_version, info.platform);
+            println!("  • Config Path: {}", info.config_path);
+            println!(
+                "  • am CLI:      in_path={} ({})",
+                info.am_in_path,
+                info.am_cli_path.as_deref().unwrap_or("not bundled")
+            );
+            println!(
+                "  • Local DB:    {} ({} logged requests)",
+                info.db_size_formatted, info.total_logged_requests
+            );
+            println!("  • Memory:      {:.1} MB", info.memory_usage_mb);
+            println!(
+                "  • App:         installed={} live={} ({})",
+                info.app_installed, info.app_live, info.app_path
+            );
+            println!(
+                "  • IDE:         installed={} live={} ({})",
+                info.ide_installed, info.ide_live, info.ide_path
+            );
+            println!(
+                "  • Plugin:      installed={} live={} ({})",
+                info.plugin_installed, info.plugin_live, info.plugin_path
+            );
+            println!(
+                "  • CLI (agy):   installed={} live={} ({})",
+                info.cli_installed, info.cli_live, info.cli_path
+            );
         }
         Some(Commands::Switch {
             account,
@@ -309,7 +466,12 @@ async fn main() -> Result<()> {
             let acc = manager.enable_account(&account)?;
             println!(
                 "{}",
-                format!("🟢 Account {} ({}) is now ENABLED!", acc.email, &acc.id[..8]).green()
+                format!(
+                    "🟢 Account {} ({}) is now ENABLED!",
+                    acc.email,
+                    &acc.id[..8]
+                )
+                .green()
             );
         }
         Some(Commands::Refresh { account }) => {
@@ -404,11 +566,29 @@ fn handle_list(
             .map(|dt| dt.format("%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "Never".to_string());
 
-        let status_str = if acc.disabled {
+        let status_str = if acc.banned {
+            let reason = acc
+                .banned_reason
+                .as_deref()
+                .unwrap_or("Banned (TOS Violation)");
+            format!("🚫 {}", reason).red().bold().to_string()
+        } else if acc
+            .quota
+            .as_ref()
+            .and_then(|q| q.is_forbidden)
+            .unwrap_or(false)
+        {
+            let reason = acc
+                .quota
+                .as_ref()
+                .and_then(|q| q.forbidden_reason.as_deref())
+                .unwrap_or("Forbidden (403)");
+            format!("⚠️ {}", reason).red().to_string()
+        } else if acc.validation_blocked {
+            "⚠️ Validation Blocked".red().to_string()
+        } else if acc.disabled {
             let reason = acc.disabled_reason.as_deref().unwrap_or("Disabled");
             format!("🔴 {}", reason).red().to_string()
-        } else if acc.banned {
-            "🚫 Banned".red().bold().to_string()
         } else {
             "🟢 Healthy".green().to_string()
         };
@@ -445,23 +625,29 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
         Cell::new("Description").fg(Color::White),
     ]);
 
+    let app_status = match (&hosts.app_running, &hosts.app_version) {
+        (true, Some(v)) => format!("🟢 Yes (v{})", v),
+        (true, None) => "🟢 Yes".to_string(),
+        (false, Some(v)) => format!("⚪ No (v{})", v),
+        (false, None) => "⚪ No".to_string(),
+    };
+
+    let ide_status = match (&hosts.ide_running, &hosts.ide_version) {
+        (true, Some(v)) => format!("🟢 Yes (v{})", v),
+        (true, None) => "🟢 Yes".to_string(),
+        (false, Some(v)) => format!("⚪ No (v{})", v),
+        (false, None) => "⚪ No".to_string(),
+    };
+
     table.add_row(Row::from(vec![
         Cell::new("Antigravity App (Classic)"),
-        Cell::new(if hosts.app_running {
-            "🟢 Yes"
-        } else {
-            "⚪ No"
-        }),
+        Cell::new(app_status),
         Cell::new("Official Desktop App (Target: app)"),
     ]));
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity IDE"),
-        Cell::new(if hosts.ide_running {
-            "🟢 Yes"
-        } else {
-            "⚪ No"
-        }),
+        Cell::new(ide_status),
         Cell::new("VSCode-based IDE (Target: ide)"),
     ]));
 
@@ -497,8 +683,7 @@ async fn handle_switch_command(
 ) -> Result<()> {
     let target_query = if auto || account_query.is_none() {
         let strategy: SwitchStrategy = strategy_str.parse().map_err(|e| anyhow!("{}", e))?;
-        let prefer_pool: ModelPoolPreference =
-            prefer_str.parse().map_err(|e| anyhow!("{}", e))?;
+        let prefer_pool: ModelPoolPreference = prefer_str.parse().map_err(|e| anyhow!("{}", e))?;
 
         println!(
             "{}",
@@ -524,8 +709,7 @@ async fn handle_switch_command(
             .pick_best_account(filter)?
             .ok_or_else(|| anyhow!("No healthy accounts found matching selection criteria!"))?;
 
-        let quota_eval =
-            AntigravityManager::calculate_account_effective_quota(&best, prefer_pool);
+        let quota_eval = AntigravityManager::calculate_account_effective_quota(&best, prefer_pool);
         println!(
             "{}",
             format!(
@@ -544,9 +728,15 @@ async fn handle_switch_command(
 
     println!(
         "{}",
-        format!("⚡ Switching target [{:?}] to account '{}'...", target, target_query).cyan()
+        format!(
+            "⚡ Switching target [{:?}] to account '{}'...",
+            target, target_query
+        )
+        .cyan()
     );
-    let switched = manager.switch_account(&target_query, target, restart)?;
+    let switched = manager
+        .switch_account_with_refresh(&target_query, target, restart)
+        .await?;
     println!(
         "{}",
         format!(
@@ -633,8 +823,7 @@ async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str
         None => {
             println!(
                 "{}",
-                "🔄 Refreshing quotas for ALL accounts with rate-limit pacing (250ms)..."
-                    .cyan()
+                "🔄 Refreshing quotas for ALL accounts with rate-limit pacing (250ms)...".cyan()
             );
             let results = manager.refresh_all_quotas().await?;
             let mut success = 0;
@@ -650,7 +839,12 @@ async fn handle_refresh(manager: &AntigravityManager, account_query: Option<&str
                     Err(e) => {
                         let msg = e.to_string();
                         if msg.contains("Disabled") {
-                            println!("  {} Account Auto-Disabled {}: {}", "🚫".yellow(), email, msg);
+                            println!(
+                                "  {} Account Auto-Disabled {}: {}",
+                                "🚫".yellow(),
+                                email,
+                                msg
+                            );
                             disabled_count += 1;
                         } else {
                             println!("  {} Failed {}: {}", "✖".red(), email, e);
@@ -690,16 +884,13 @@ fn print_quota_summary(_email: &str, quota: &am_core::types::QuotaSummary) {
 }
 
 async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let oauth = am_core::auth::OAuthClient::new();
-
     println!(
         "{}",
         "🔐 Starting official Google OAuth authentication...".cyan()
     );
 
     if manual {
+        let oauth = am_core::auth::OAuthClient::new();
         let redirect_uri = "http://127.0.0.1/callback";
         let state = uuid::Uuid::new_v4().to_string();
         let auth_url = am_core::auth::OAuthClient::build_auth_url(redirect_uri, &state);
@@ -708,8 +899,9 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
         println!("\nEnter the authorization code or full callback URL:");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
-        let code = input.trim();
-        let token_info = oauth.exchange_code(code, redirect_uri).await?;
+        let extracted_code = am_core::auth::OAuthClient::extract_code_from_input(&input);
+
+        let token_info = oauth.exchange_code(&extracted_code, redirect_uri).await?;
         let user_info = oauth.fetch_user_info(&token_info.access_token).await?;
         println!(
             "{}",
@@ -722,68 +914,25 @@ async fn handle_login(manager: &AntigravityManager, manual: bool) -> Result<()> 
         return Ok(());
     }
 
-    // 绑定系统随机空闲端口 (:0)，彻底避免冲突
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let port = listener.local_addr()?.port();
-    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
-    let state = uuid::Uuid::new_v4().to_string();
-    let auth_url = am_core::auth::OAuthClient::build_auth_url(&redirect_uri, &state);
-
-    println!("Opening browser for authentication (Allocated loopback port: {})...", port);
-    let _ = open::that(&auth_url);
-    println!("Listening on {} for callback...", redirect_uri);
-
-    if let Ok((mut socket, _)) = listener.accept().await {
-        let mut buf = [0u8; 2048];
-        let n = socket.read(&mut buf).await?;
-        let request = String::from_utf8_lossy(&buf[..n]);
-
-        if let Some(code_part) = request
-            .lines()
-            .next()
-            .and_then(|l| l.split_whitespace().nth(1))
-        {
-            if let Some(code) = code_part
-                .split("code=")
-                .nth(1)
-                .and_then(|s| s.split('&').next())
-            {
-                let token_info = oauth.exchange_code(code, &redirect_uri).await?;
-                let user_info = oauth.fetch_user_info(&token_info.access_token).await?;
-
-                let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
-                    <html><body style='font-family:sans-serif;text-align:center;padding:50px;'>\
-                    <h1 style='color:green;'>✅ Authorization Successful!</h1>\
-                    <p>Antigravity Manager has securely linked your Google account. You may close this tab.</p>\
-                    </body></html>";
-                let _ = socket.write_all(resp.as_bytes()).await;
-
-                println!(
-                    "{}",
-                    format!("✅ Successfully authenticated as {}!", user_info.email).green()
-                );
-                let acc = manager
-                    .add_account_by_token(&token_info.refresh_token, vec![])
-                    .await?;
-                println!("{}", format!("Saved account ID: {}", acc.id).green());
-                return Ok(());
+    let acc = manager
+        .login_via_oauth_loopback(|auth_url| {
+            println!("Opening browser for authentication...");
+            if open::that(auth_url).is_err() {
+                println!("Please open this URL manually:\n{}", auth_url);
             }
-        }
+            println!("Waiting up to 120s for OAuth callback...");
+        })
+        .await?;
 
-        println!(
-            "{}",
-            "❌ Failed to extract authorization code from callback.".red()
-        );
-    }
-
+    println!(
+        "{}",
+        format!("✅ Successfully authenticated as {}!", acc.email).green()
+    );
+    println!("{}", format!("Saved account ID: {}", acc.id).green());
     Ok(())
 }
 
-async fn handle_add(
-    manager: &AntigravityManager,
-    token: &str,
-    tags: Vec<String>,
-) -> Result<()> {
+async fn handle_add(manager: &AntigravityManager, token: &str, tags: Vec<String>) -> Result<()> {
     println!("{}", "➕ Verifying token and adding account...".cyan());
     let account = manager.add_account_by_token(token, tags).await?;
     println!(
@@ -863,8 +1012,43 @@ async fn handle_fingerprint() -> Result<()> {
     Ok(())
 }
 
-fn handle_stats(manager: &AntigravityManager, view: &str, json: bool) -> Result<()> {
-    let report = manager.get_local_usage_stats()?;
+fn handle_stats(
+    manager: &AntigravityManager,
+    view: &str,
+    range: &str,
+    date: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use chrono::{Local, NaiveDate, TimeZone};
+
+    let (start_ts_ms, end_ts_ms) = if let Some(d_str) = date {
+        let nd = NaiveDate::parse_from_str(d_str.trim(), "%Y-%m-%d")
+            .map_err(|_| anyhow::anyhow!("Invalid --date '{}', expected YYYY-MM-DD", d_str))?;
+        let start = Local
+            .from_local_datetime(&nd.and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .map(|dt| dt.timestamp_millis());
+        let end = Local
+            .from_local_datetime(&nd.and_hms_milli_opt(23, 59, 59, 999).unwrap())
+            .single()
+            .map(|dt| dt.timestamp_millis());
+        (start, end)
+    } else {
+        let now = Local::now();
+        let today_start = Local
+            .from_local_datetime(&now.date_naive().and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(0);
+        match range.to_ascii_lowercase().as_str() {
+            "today" | "1d" | "24h" => (Some(today_start), None),
+            "7d" | "7days" | "week" => (Some(today_start - 6 * 86_400_000), None),
+            "30d" | "30days" | "month" => (Some(today_start - 29 * 86_400_000), None),
+            _ => (None, None),
+        }
+    };
+
+    let report = manager.get_local_usage_stats_in_range(start_ts_ms, end_ts_ms)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -890,13 +1074,27 @@ fn handle_stats(manager: &AntigravityManager, view: &str, json: bool) -> Result<
 }
 
 fn print_hero_overview(r: &am_core::stats::MasterAnalyticsReport) {
-    println!("{}", "🍎 Antigravity Intelligence & Efficiency Insights".cyan().bold());
-    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
     println!(
-        "  {} Total Volume:       {} ({} reqs)",
+        "{}",
+        "🍎 Antigravity Intelligence & Efficiency Insights"
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "────────────────────────────────────────────────────────────────────────".dimmed()
+    );
+    let cost_suffix = if r.total_estimated_cost_usd >= 0.01 {
+        format!(" · ≈ ${:.2} API equiv", r.total_estimated_cost_usd)
+    } else {
+        String::new()
+    };
+    println!(
+        "  {} Total Volume:       {} ({} reqs){}",
         "⚡".yellow(),
         format_tokens(r.total_tokens).bold(),
-        r.total_requests
+        r.total_requests,
+        cost_suffix
     );
     println!(
         "  {} Cache Hit Ratio:    {:.1}% (Saved: ${:.2} USD)",
@@ -904,17 +1102,78 @@ fn print_hero_overview(r: &am_core::stats::MasterAnalyticsReport) {
         r.global_cache_hit_rate,
         r.total_saved_cost_usd
     );
+    let latency_label = match (r.avg_ttft_ms > 0, r.avg_duration_ms > 0) {
+        (true, true) => format!(
+            "TTFT {:.1}s · Total {:.1}s",
+            r.avg_ttft_ms as f64 / 1000.0,
+            r.avg_duration_ms as f64 / 1000.0
+        ),
+        (true, false) => format!("TTFT {:.1}s", r.avg_ttft_ms as f64 / 1000.0),
+        (false, true) => format!("Avg {:.1}s", r.avg_duration_ms as f64 / 1000.0),
+        (false, false) => "-".to_string(),
+    };
+    let think_suffix = if r.total_thinking_tokens > 0 && r.total_output_tokens > 0 {
+        format!(
+            " · Thinking {} ({:.0}%)",
+            format_tokens(r.total_thinking_tokens),
+            (r.total_thinking_tokens as f64 / r.total_output_tokens as f64) * 100.0
+        )
+    } else {
+        String::new()
+    };
     println!(
-        "  {} Performance:        {:.1} tok/s · {}ms TTFT",
+        "  {} Performance:        {:.1} tok/s (Peak: {:.1} tok/s) · {}{}",
         "🚀".cyan(),
         r.avg_speed_tps,
-        r.avg_ttft_ms
+        r.peak_speed_tps,
+        latency_label,
+        think_suffix
     );
-    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+    let mut extras: Vec<String> = Vec::new();
+    if r.user_prompt_count > 0 && r.total_requests > 0 {
+        extras.push(format!(
+            "{:.1} turns/prompt",
+            r.total_requests as f64 / r.user_prompt_count as f64
+        ));
+    }
+    if let Some(tb) = &r.time_breakdown {
+        let total_ms = tb.ttft_ms + tb.streaming_ms + tb.tool_exec_ms;
+        if total_ms > 0 {
+            let ttft_p = (tb.ttft_ms as f64 / total_ms as f64 * 100.0).round() as u64;
+            let stream_p = (tb.streaming_ms as f64 / total_ms as f64 * 100.0).round() as u64;
+            let tool_p = 100u64.saturating_sub(ttft_p + stream_p);
+            extras.push(format!(
+                "Time TTFT {}%/Stream {}%/Tools {}%",
+                ttft_p, stream_p, tool_p
+            ));
+        }
+    }
+    if r.checkpoint_count > 0 {
+        extras.push(format!("{} compacts", r.checkpoint_count));
+    }
+    if !r.api_errors.is_empty() {
+        extras.push(format!("{} API errs", r.api_errors.len()));
+    }
+    if !extras.is_empty() {
+        println!(
+            "  {} Deep Telemetry:     {}",
+            "🧭".blue(),
+            extras.join(" · ")
+        );
+    }
+    println!(
+        "{}",
+        "────────────────────────────────────────────────────────────────────────".dimmed()
+    );
 }
 
 fn print_account_perspective(r: &am_core::stats::MasterAnalyticsReport) {
-    println!("{}", "👤 Account Attribution Matrix (Token 归属与价值大盘)".cyan().bold());
+    println!(
+        "{}",
+        "👤 Account Attribution Matrix (Token 归属与价值大盘)"
+            .cyan()
+            .bold()
+    );
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -931,15 +1190,23 @@ fn print_account_perspective(r: &am_core::stats::MasterAnalyticsReport) {
     for a in &r.by_account {
         let quota_str = format!(
             "{}/{}",
-            a.quota_gemini_pct.map(|p| format!("{:.0}%", p)).unwrap_or_else(|| "-".into()),
-            a.quota_claude_pct.map(|p| format!("{:.0}%", p)).unwrap_or_else(|| "-".into())
+            a.quota_gemini_pct
+                .map(|p| format!("{:.0}%", p))
+                .unwrap_or_else(|| "-".into()),
+            a.quota_claude_pct
+                .map(|p| format!("{:.0}%", p))
+                .unwrap_or_else(|| "-".into())
         );
 
         table.add_row(Row::from(vec![
             Cell::new(&a.email),
             Cell::new(a.total_requests.to_string()),
             Cell::new(format_tokens(a.new_input_tokens)),
-            Cell::new(format!("{} ({:.0}%)", format_tokens(a.cached_tokens), a.cache_hit_rate)),
+            Cell::new(format!(
+                "{} ({:.0}%)",
+                format_tokens(a.cached_tokens),
+                a.cache_hit_rate
+            )),
             Cell::new(format_tokens(a.output_tokens)),
             Cell::new(format!("${:.3}", a.estimated_cost_usd)),
             Cell::new(quota_str),
@@ -949,7 +1216,12 @@ fn print_account_perspective(r: &am_core::stats::MasterAnalyticsReport) {
 }
 
 fn print_model_perspective(r: &am_core::stats::MasterAnalyticsReport) {
-    println!("{}", "⚡ Model Fidelity & Physical Backend Resolution (真实物理模型与速度)".cyan().bold());
+    println!(
+        "{}",
+        "⚡ Model Fidelity & Physical Backend Resolution (真实物理模型与速度)"
+            .cyan()
+            .bold()
+    );
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -957,7 +1229,8 @@ fn print_model_perspective(r: &am_core::stats::MasterAnalyticsReport) {
         Cell::new("Requested Model").fg(Color::Cyan),
         Cell::new("Physical Backend Model").fg(Color::Green),
         Cell::new("Output Speed").fg(Color::Yellow),
-        Cell::new("First Byte").fg(Color::Magenta),
+        Cell::new("Peak Speed").fg(Color::Yellow),
+        Cell::new("TTFT / Total").fg(Color::Magenta),
         Cell::new("Total Volume").fg(Color::White),
         Cell::new("Share").fg(Color::Blue),
     ]);
@@ -968,12 +1241,33 @@ fn print_model_perspective(r: &am_core::stats::MasterAnalyticsReport) {
         } else {
             format!("⚡ {}", m.physical_model).green().to_string()
         };
+        let speed_str = if m.avg_tps > 0.0 {
+            format!("{:.1} tok/s", m.avg_tps)
+        } else {
+            "-".to_string()
+        };
+        let peak_str = if m.peak_tps > 0.0 {
+            format!("{:.1} tok/s", m.peak_tps)
+        } else {
+            "-".to_string()
+        };
+        let dur_str = match (m.avg_ttft_ms > 0, m.avg_duration_ms > 0) {
+            (true, true) => format!(
+                "{:.1}s / {:.1}s",
+                m.avg_ttft_ms as f64 / 1000.0,
+                m.avg_duration_ms as f64 / 1000.0
+            ),
+            (true, false) => format!("{:.1}s", m.avg_ttft_ms as f64 / 1000.0),
+            (false, true) => format!("{:.1}s", m.avg_duration_ms as f64 / 1000.0),
+            (false, false) => "-".to_string(),
+        };
 
         table.add_row(Row::from(vec![
             Cell::new(&m.requested_model),
             Cell::new(&phy_display),
-            Cell::new(format!("{:.1} tok/s", m.avg_tps)),
-            Cell::new(format!("{} ms", m.avg_ttft_ms)),
+            Cell::new(speed_str),
+            Cell::new(peak_str),
+            Cell::new(dur_str),
             Cell::new(format_tokens(m.total_tokens)),
             Cell::new(format!("{:.1}%", m.share_percentage)),
         ]));
@@ -982,7 +1276,12 @@ fn print_model_perspective(r: &am_core::stats::MasterAnalyticsReport) {
 }
 
 fn print_app_perspective(r: &am_core::stats::MasterAnalyticsReport) {
-    println!("{}", "💻 Multi-Host Target & Top Workspaces (4 大宿主与工作区分流)".cyan().bold());
+    println!(
+        "{}",
+        "💻 Multi-Host Target & Top Workspaces (4 大宿主与工作区分流)"
+            .cyan()
+            .bold()
+    );
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -995,7 +1294,11 @@ fn print_app_perspective(r: &am_core::stats::MasterAnalyticsReport) {
     ]);
 
     for h in &r.by_host {
-        let primary_ws = h.top_workspaces.first().map(|(w, s)| format!("{} ({} steps)", w, s)).unwrap_or_else(|| "-".into());
+        let primary_ws = h
+            .top_workspaces
+            .first()
+            .map(|(w, s)| format!("{} ({} steps)", w, s))
+            .unwrap_or_else(|| "-".into());
         table.add_row(Row::from(vec![
             Cell::new(&h.host_name),
             Cell::new(h.conversation_count.to_string()),
@@ -1008,7 +1311,12 @@ fn print_app_perspective(r: &am_core::stats::MasterAnalyticsReport) {
 }
 
 fn print_timeline_perspective(r: &am_core::stats::MasterAnalyticsReport) {
-    println!("{}", "⏱ 24h Developer Circadian Rhythm (生物钟时段与开发节奏)".cyan().bold());
+    println!(
+        "{}",
+        "⏱ 24h Developer Circadian Rhythm (生物钟时段与开发节奏)"
+            .cyan()
+            .bold()
+    );
     for t in &r.timeline {
         let bar_len = (t.share_percentage / 5.0) as usize;
         let bar = "█".repeat(bar_len) + &"░".repeat(20usize.saturating_sub(bar_len));
@@ -1033,13 +1341,24 @@ fn handle_context(manager: &AntigravityManager) -> Result<()> {
         }
     };
 
-    println!("{}", "🍏 Active Context Window & Session Inspector (当前会话深度上下文)".cyan().bold());
-    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+    println!(
+        "{}",
+        "🍏 Active Context Window & Session Inspector (当前会话深度上下文)"
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "────────────────────────────────────────────────────────────────────────".dimmed()
+    );
     println!("  📍 Active Session:    {}", ctx.title.bold());
     println!("  📁 Workspace:         {}", ctx.workspace.green());
     println!("  🖥️  Host Target:       {}", ctx.host_target.blue());
     println!("  🧠 Physical Engine:   {}", ctx.physical_model.magenta());
-    println!("{}", "────────────────────────────────────────────────────────────────────────".dimmed());
+    println!(
+        "{}",
+        "────────────────────────────────────────────────────────────────────────".dimmed()
+    );
 
     let bar_len = (ctx.usage_percentage / 5.0).min(20.0) as usize;
     let bar = "█".repeat(bar_len) + &"░".repeat(20usize.saturating_sub(bar_len));
@@ -1066,11 +1385,28 @@ fn handle_context(manager: &AntigravityManager) -> Result<()> {
     );
 
     println!("\n✨ Cache & Token Reservoir Decomposition (分层水库拆解)");
-    println!("  • Cached Input Tokens:   {} ({:.1}% Hit Rate)", format_tokens(ctx.cached_tokens).green(), ctx.cache_hit_rate);
-    println!("  • Direct Prompt Input:   {}", format_tokens(ctx.prompt_tokens));
-    println!("  • Completion Output:     {}", format_tokens(ctx.completion_tokens).cyan());
-    println!("  • Thinking / Reasoning:  {} ({:.1}%)", format_tokens(ctx.thinking_tokens).magenta(), (ctx.thinking_tokens as f64 / ctx.current_used_tokens.max(1) as f64) * 100.0);
-    println!("  • Tool Execution Stream: {}", format_tokens(ctx.tool_tokens).yellow());
+    println!(
+        "  • Cached Input Tokens:   {} ({:.1}% Hit Rate)",
+        format_tokens(ctx.cached_tokens).green(),
+        ctx.cache_hit_rate
+    );
+    println!(
+        "  • Direct Prompt Input:   {}",
+        format_tokens(ctx.prompt_tokens)
+    );
+    println!(
+        "  • Completion Output:     {}",
+        format_tokens(ctx.completion_tokens).cyan()
+    );
+    println!(
+        "  • Thinking / Reasoning:  {} ({:.1}%)",
+        format_tokens(ctx.thinking_tokens).magenta(),
+        (ctx.thinking_tokens as f64 / ctx.current_used_tokens.max(1) as f64) * 100.0
+    );
+    println!(
+        "  • Tool Execution Stream: {}",
+        format_tokens(ctx.tool_tokens).yellow()
+    );
     println!("  • Cost Saved (Cache):    ${:.2} USD", ctx.saved_cost_usd);
 
     if let Some(t) = ctx.last_model_update {
@@ -1104,19 +1440,38 @@ fn format_number(num: u64) -> String {
 }
 
 async fn handle_watch(interval_secs: u64) -> Result<()> {
-    println!("{}", "👀 Starting Live Antigravity Telemetry Watcher... (Ctrl+C to stop)".cyan().bold());
+    println!(
+        "{}",
+        "👀 Starting Live Antigravity Telemetry Watcher... (Ctrl+C to stop)"
+            .cyan()
+            .bold()
+    );
     let monitor = am_core::RealtimeMonitor::new()?;
     let path = match am_core::RealtimeMonitor::locate_latest_transcript() {
         Some(p) => p,
         None => {
-            println!("{}", "No active Antigravity session transcript found.".yellow());
+            println!(
+                "{}",
+                "No active Antigravity session transcript found.".yellow()
+            );
             return Ok(());
         }
     };
 
-    println!("Targeting session log: {}\n", path.display().to_string().dimmed());
-    println!("{:<10} {:<15} {:<24} {:<10} {:<10} {:<12} {:<10}", 
-        "TIME".bold(), "APP / HOST".bold(), "MODEL".bold(), "OUT TOK".bold(), "LATENCY".bold(), "SPEED (TPS)".bold(), "ACCOUNT".bold());
+    println!(
+        "Targeting session log: {}\n",
+        path.display().to_string().dimmed()
+    );
+    println!(
+        "{:<10} {:<15} {:<24} {:<10} {:<10} {:<12} {:<10}",
+        "TIME".bold(),
+        "APP / HOST".bold(),
+        "MODEL".bold(),
+        "OUT TOK".bold(),
+        "LATENCY".bold(),
+        "SPEED (TPS)".bold(),
+        "ACCOUNT".bold()
+    );
     println!("{}", "─".repeat(95).dimmed());
 
     let mut last_step = 0u64;
@@ -1126,20 +1481,30 @@ async fn handle_watch(interval_secs: u64) -> Result<()> {
             if snap.step_index != last_step {
                 last_step = snap.step_index;
                 let account = snap.account_email.unwrap_or_else(|| "current".to_string());
-                let tps_color = if snap.tps > 150.0 {
+                let tps_color = if snap.tps <= 0.0 {
+                    "-".dimmed()
+                } else if snap.tps > 150.0 {
                     format!("{:.1} tok/s", snap.tps).green().bold()
                 } else if snap.tps > 80.0 {
                     format!("{:.1} tok/s", snap.tps).cyan()
                 } else {
                     format!("{:.1} tok/s", snap.tps).yellow()
                 };
+                let dur_str = if snap.first_token_latency_seconds > 0.0 {
+                    format!("{:.1}s", snap.first_token_latency_seconds)
+                } else if snap.duration_seconds > 0.0 {
+                    format!("{:.1}s", snap.duration_seconds)
+                } else {
+                    "-".to_string()
+                };
 
-                println!("{:<10} {:<15} {:<24} {:<10} {:<10} {:<12} {:<10}",
+                println!(
+                    "{:<10} {:<15} {:<24} {:<10} {:<10} {:<12} {:<10}",
                     snap.timestamp,
                     format!("{:?}", snap.host),
                     snap.model.dimmed(),
                     format_tokens(snap.output_tokens),
-                    format!("{:.1}s", snap.first_token_latency_seconds),
+                    dur_str,
                     tps_color,
                     account.cyan()
                 );
@@ -1154,6 +1519,11 @@ fn handle_config(
     auto_switch: Option<&str>,
     quota_polling: Option<&str>,
     interval_minutes: Option<u64>,
+    tray: Option<&str>,
+    tray_click: Option<&str>,
+    close_to_tray: Option<&str>,
+    quiet_autostart: Option<&str>,
+    lightweight: Option<&str>,
 ) -> Result<()> {
     let mut cfg = am_core::AppConfig::load();
     let mut modified = false;
@@ -1162,14 +1532,28 @@ fn handle_config(
         let val = sw.eq_ignore_ascii_case("on") || sw.eq_ignore_ascii_case("true") || sw == "1";
         cfg.auto_switch.enabled = val;
         modified = true;
-        println!("⚙️ Auto-Switch on quota exhaustion: {}", if val { "ENABLED".green().bold() } else { "DISABLED".yellow() });
+        println!(
+            "⚙️ Auto-Switch on quota exhaustion: {}",
+            if val {
+                "ENABLED".green().bold()
+            } else {
+                "DISABLED".yellow()
+            }
+        );
     }
 
     if let Some(qp) = quota_polling {
         let val = qp.eq_ignore_ascii_case("on") || qp.eq_ignore_ascii_case("true") || qp == "1";
         cfg.quota_polling.enabled = val;
         modified = true;
-        println!("⚙️ Background Quota Polling: {}", if val { "ENABLED".green().bold() } else { "DISABLED".yellow() });
+        println!(
+            "⚙️ Background Quota Polling: {}",
+            if val {
+                "ENABLED".green().bold()
+            } else {
+                "DISABLED".yellow()
+            }
+        );
     }
 
     if let Some(inv) = interval_minutes {
@@ -1179,32 +1563,134 @@ fn handle_config(
         println!("⚙️ Polling Interval: {} minutes", val.to_string().cyan());
     }
 
+    if let Some(tr) = tray {
+        let val = tr.eq_ignore_ascii_case("on") || tr.eq_ignore_ascii_case("true") || tr == "1";
+        cfg.tray.enabled = val;
+        modified = true;
+        println!(
+            "⚙️ System Tray Resident: {}",
+            if val {
+                "ENABLED".green().bold()
+            } else {
+                "DISABLED".yellow()
+            }
+        );
+    }
+
+    if let Some(tc) = tray_click {
+        let lower = tc.to_ascii_lowercase();
+        if matches!(lower.as_str(), "popover" | "main" | "menu") {
+            cfg.tray.left_click_action = lower.clone();
+            modified = true;
+            println!("⚙️ Tray Left-Click Action: {}", lower.cyan());
+        } else {
+            anyhow::bail!(
+                "Invalid --tray-click '{}'. Valid values: popover, main, menu",
+                tc
+            );
+        }
+    }
+
+    if let Some(ctt) = close_to_tray {
+        let val = ctt.eq_ignore_ascii_case("on") || ctt.eq_ignore_ascii_case("true") || ctt == "1";
+        cfg.tray.close_to_tray = val;
+        modified = true;
+        println!(
+            "⚙️ Close Main Window to Tray: {}",
+            if val {
+                "ENABLED".green().bold()
+            } else {
+                "DISABLED".yellow()
+            }
+        );
+    }
+
+    if let Some(qa) = quiet_autostart {
+        let val = qa.eq_ignore_ascii_case("on") || qa.eq_ignore_ascii_case("true") || qa == "1";
+        cfg.tray.quiet_autostart = val;
+        modified = true;
+        println!(
+            "⚙️ Quiet Autostart (Stay in Tray): {}",
+            if val {
+                "ENABLED".green().bold()
+            } else {
+                "DISABLED".yellow()
+            }
+        );
+    }
+
+    if let Some(lw) = lightweight {
+        let val = lw.eq_ignore_ascii_case("on") || lw.eq_ignore_ascii_case("true") || lw == "1";
+        cfg.tray.lightweight_mode = val;
+        modified = true;
+        println!(
+            "⚙️ Lightweight Mode (Release WebView): {}",
+            if val {
+                "ENABLED".green().bold()
+            } else {
+                "DISABLED".yellow()
+            }
+        );
+    }
+
     if modified {
         cfg.save()?;
         println!("{}", "✅ Configuration saved successfully!".green());
-    } else if show || (auto_switch.is_none() && quota_polling.is_none() && interval_minutes.is_none()) {
-        println!("{}", "⚙️ Current Antigravity Manager Configuration:".cyan().bold());
+    } else if show
+        || (auto_switch.is_none()
+            && quota_polling.is_none()
+            && interval_minutes.is_none()
+            && tray.is_none()
+            && tray_click.is_none()
+            && close_to_tray.is_none()
+            && quiet_autostart.is_none()
+            && lightweight.is_none())
+    {
+        println!(
+            "{}",
+            "⚙️ Current Antigravity Manager Configuration:"
+                .cyan()
+                .bold()
+        );
         println!("{}", serde_json::to_string_pretty(&cfg)?);
     }
 
     Ok(())
 }
 
-fn handle_export(_manager: &AntigravityManager, output: &str) -> Result<()> {
-    let storage = am_core::storage::StorageManager::new()?;
+fn handle_export(manager: &AntigravityManager, output: &str) -> Result<()> {
+    let json = manager.export_accounts_json()?;
+    let count = manager.list_accounts()?.len();
     let path = std::path::Path::new(output);
-    let count = am_core::storage::backup::BackupManager::export_to_file(&storage, path)?;
-    println!("{}", format!("✅ Exported {} accounts to '{}'", count, output).green().bold());
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    println!(
+        "{}",
+        format!("✅ Exported {} accounts to '{}'", count, output)
+            .green()
+            .bold()
+    );
     Ok(())
 }
 
-fn handle_import(_manager: &AntigravityManager, input: &str, overwrite: bool) -> Result<()> {
-    let storage = am_core::storage::StorageManager::new()?;
-    let path = std::path::Path::new(input);
-    let report = am_core::storage::backup::BackupManager::import_from_file(&storage, path, overwrite)?;
+fn handle_import(manager: &AntigravityManager, input: &str, overwrite: bool) -> Result<()> {
+    let content = std::fs::read_to_string(input)?;
+    let report = manager.import_accounts_json(&content, overwrite)?;
     println!("{}", "📦 Import complete:".cyan().bold());
     println!("  • Imported new: {}", report.imported.to_string().green());
-    println!("  • Overwritten:  {}", report.overwritten.to_string().yellow());
+    println!(
+        "  • Overwritten:  {}",
+        report.overwritten.to_string().yellow()
+    );
     println!("  • Skipped:      {}", report.skipped.to_string().dimmed());
     Ok(())
 }

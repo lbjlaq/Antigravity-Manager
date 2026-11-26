@@ -92,16 +92,19 @@ pub fn get_official_user_agent() -> String {
 
 /// 异步探测官方云端最新 Hub 发布信息 (不影响主流程)
 pub async fn check_remote_hub_release() -> Option<RemoteRelease> {
-    let client = reqwest::Client::builder()
+    let client = crate::runtime::shared_http_client();
+    let resp = client
+        .get(HUB_RELEASES_URL)
         .timeout(std::time::Duration::from_secs(4))
-        .build()
+        .send()
+        .await
         .ok()?;
-    let resp = client.get(HUB_RELEASES_URL).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }
     let list: Vec<RemoteRelease> = resp.json().await.ok()?;
-    list.into_iter().find(|r| is_acceptable_hub_version(&r.version))
+    list.into_iter()
+        .find(|r| is_acceptable_hub_version(&r.version))
 }
 
 /// 检查版本号是否为合法的 2.x Hub 版本线
@@ -109,7 +112,9 @@ pub fn is_acceptable_hub_version(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
     parts.len() == 3
         && parts[0] == "2"
-        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// 探测本地已安装的语言服务与版本

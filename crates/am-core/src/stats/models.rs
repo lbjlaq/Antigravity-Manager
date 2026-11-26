@@ -38,9 +38,15 @@ pub struct RequestLedgerEntry {
     pub completion_tokens: u64,
     pub thinking_tokens: u64,
     pub ttft_ms: u64,
+    #[serde(default)]
+    pub streaming_duration_ms: u64,
     pub duration_ms: u64,
     pub tokens_per_second: f64,
     pub estimated_cost: f64,
+    #[serde(default)]
+    pub context_used_tokens: u64,
+    #[serde(default)]
+    pub context_budget_tokens: u64,
 }
 
 /// 视角 1: 会话深度上下文分析 (Session Context Snapshot)
@@ -155,8 +161,14 @@ pub struct ModelPerformanceGroup {
     pub physical_model: String,
     pub total_requests: u64,
     pub total_tokens: u64,
+    #[serde(default)]
+    pub total_thinking_tokens: u64,
     pub avg_tps: f64,
+    #[serde(default)]
+    pub peak_tps: f64,
     pub avg_ttft_ms: u64,
+    #[serde(default)]
+    pub avg_duration_ms: u64,
     pub cache_hit_rate: f64,
     pub share_percentage: f64,
     pub is_downgraded: bool,
@@ -208,6 +220,76 @@ pub struct TemporalRhythmGroup {
     pub label: String,
 }
 
+/// 视角 7: 本地工具调用遥测 (Tool Call Telemetry)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallMetric {
+    pub tool_name: String,
+    pub call_count: u64,
+    pub error_count: u64,
+    pub share_pct: f64,
+}
+
+/// 视角 8: 主/子 Agent 并发与层级统计 (Agent Hierarchy & Concurrency)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentHierarchyStats {
+    pub total_conversations: u64,
+    pub running_count: u64,
+    pub main_sessions: u64,
+    pub subagent_sessions: u64,
+    pub total_steps: u64,
+}
+
+/// 视角 9: 原生数据库 API 异常与限流事件 (429 / 403 / 超时)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiErrorEvent {
+    pub timestamp: i64,
+    pub time_str: String,
+    pub code: String,
+    pub model: String,
+    pub workspace_name: String,
+    pub session_title: String,
+    pub conversation_id: String,
+    pub message: String,
+}
+
+/// 视角 10: 活跃会话上下文窗口水位摘要
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContextItem {
+    pub session_id: String,
+    pub title: String,
+    pub workspace: String,
+    pub model: String,
+    pub used_tokens: u64,
+    pub budget_tokens: u64,
+    pub usage_pct: f64,
+    pub checkpoint_count: u64,
+    pub is_running: bool,
+    pub last_active_time: String,
+}
+
+/// 视角 11: 真实耗时三段拆解 (首字等待 TTFT / 模型流式输出 / 本地工具执行)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeBreakdownStats {
+    pub ttft_ms: u64,
+    pub streaming_ms: u64,
+    pub tool_exec_ms: u64,
+}
+
+/// 视角 12: 配额池算力分流 (Gemini 池 vs Claude 池)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolSplitStats {
+    pub gemini_tokens: u64,
+    pub claude_tokens: u64,
+    pub gemini_requests: u64,
+    pub claude_requests: u64,
+}
+
 /// 综合分析大盘实体 (Master Analytics Report)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -218,10 +300,22 @@ pub struct MasterAnalyticsReport {
     pub total_prompt_tokens: u64,
     pub total_cached_tokens: u64,
     pub total_output_tokens: u64,
+    #[serde(default)]
+    pub total_thinking_tokens: u64,
     pub global_cache_hit_rate: f64,
+    #[serde(default)]
+    pub total_estimated_cost_usd: f64,
     pub total_saved_cost_usd: f64,
     pub avg_speed_tps: f64,
+    #[serde(default)]
+    pub peak_speed_tps: f64,
     pub avg_ttft_ms: u64,
+    #[serde(default)]
+    pub avg_duration_ms: u64,
+    #[serde(default)]
+    pub user_prompt_count: u64,
+    #[serde(default)]
+    pub checkpoint_count: u64,
 
     /// 多维切片投影
     pub active_context: Option<ContextWindowSnapshot>,
@@ -231,4 +325,16 @@ pub struct MasterAnalyticsReport {
     pub by_host: Vec<HostWorkspaceGroup>,
     pub timeline: Vec<TemporalRhythmGroup>,
     pub recent_traffic: Vec<RequestLedgerEntry>,
+    #[serde(default)]
+    pub tool_metrics: Vec<ToolCallMetric>,
+    #[serde(default)]
+    pub agent_hierarchy: Option<AgentHierarchyStats>,
+    #[serde(default)]
+    pub time_breakdown: Option<TimeBreakdownStats>,
+    #[serde(default)]
+    pub pool_split: Option<PoolSplitStats>,
+    #[serde(default)]
+    pub api_errors: Vec<ApiErrorEvent>,
+    #[serde(default)]
+    pub session_contexts: Vec<SessionContextItem>,
 }

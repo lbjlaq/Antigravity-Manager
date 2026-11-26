@@ -1,128 +1,37 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { tUi } from "../i18n/ui";
+import { api } from "../api";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   TrendingUp,
   Activity,
-  Layers,
   Sparkles,
   ShieldCheck,
-  DollarSign,
-  Zap,
   Calendar,
-  CheckCircle2,
-  AlertTriangle,
   Search,
-  AppWindow,
-  Code2,
-  Puzzle,
   Terminal,
   X,
   RefreshCw,
   FolderGit2,
-  UserCheck,
   Cpu,
-  Clock,
   ChevronRight,
+  ChevronLeft,
+  ChevronDown,
+  Check,
+  Share2,
+  Copy,
+  Download,
+  Maximize2,
   BookOpen,
-  ArrowRight,
+  Layers,
 } from 'lucide-react';
 
 interface StatsProps {
-  lang: 'zh' | 'en';
+  lang: string;
 }
 
-type StatsView = 'overview' | 'account' | 'project' | 'model' | 'ledger';
-type TimeRange = 'today' | '7days' | '30days';
-type MetricMetric = 'tokens' | 'cost';
-type HostFilter = 'all' | 'app' | 'ide' | 'plugin' | 'cli';
+type StatsView = 'overview' | 'project' | 'model' | 'ledger';
+type TimeRange = 'today' | '7days' | '30days' | 'all' | 'custom';
 
-// 活跃会话上下文快照
-export interface ContextWindowSnapshot {
-  sessionId: string;
-  title: string;
-  workspace: string;
-  hostTarget: string;
-  currentUsedTokens: number;
-  budgetTokens: number;
-  remainingTokens: number;
-  usagePercentage: number;
-  healthStatus: 'healthy' | 'warning' | 'critical' | string;
-  physicalModel: string;
-  promptTokens: number;
-  cachedTokens: number;
-  completionTokens: number;
-  thinkingTokens: number;
-  toolTokens: number;
-  cacheHitRate: number;
-  savedCostUsd: number;
-  stepCount: number;
-  lastUserInput?: string;
-  lastModelUpdate?: string;
-}
-
-// 账号关联项目流向
-export interface AccountProjectDrain {
-  workspaceName: string;
-  path: string;
-  sharePct: number;
-  totalTokens: number;
-  claudeTokens: number;
-  claudePct: number;
-  geminiTokens: number;
-  geminiPct: number;
-  cacheHitRate: number;
-  avgTps: number;
-  stepCount: number;
-}
-
-// 账号模型调度与物理上游
-export interface AccountModelRouting {
-  requestedModel: string;
-  physicalModel: string;
-  totalTokens: number;
-  sharePct: number;
-  avgTps: number;
-  p50TtftSec: number;
-  cacheHitRate: number;
-  isDowngraded: boolean;
-}
-
-// 账号宿主排行
-export interface AccountHostRank {
-  hostType: 'ide' | 'app' | 'plugin' | 'cli' | string;
-  hostLabel: string;
-  sharePct: number;
-  totalTokens: number;
-  requestCount: number;
-}
-
-// 账号聚合实体
-export interface AccountUsageGroup {
-  accountId: string;
-  email: string;
-  tags: string[];
-  totalRequests: number;
-  newInputTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cacheHitRate: number;
-  estimatedCostUsd: number;
-  quotaGeminiPct?: number;
-  quotaClaudePct?: number;
-  quota5hPct?: number;
-  quota5hResetIn?: string;
-  quota7dPct?: number;
-  quota7dResetIn?: string;
-  isHealthy: boolean;
-  topWorkspaces?: [string, number][];
-  topModels?: [string, number][];
-  hourlyHeatmap?: number[];
-  projectDrains?: AccountProjectDrain[];
-  modelRoutings?: AccountModelRouting[];
-  hostRanks?: AccountHostRank[];
-}
-
-// 项目聚合实体
 export interface ProjectUsageGroup {
   workspaceName: string;
   path: string;
@@ -132,938 +41,1024 @@ export interface ProjectUsageGroup {
   estimatedCostUsd: number;
   preferredModel: string;
   modelBreakdown: [string, number][];
-  accountAttribution: [string, number][];
   lastActiveTime: string;
   sessionTitles: string[];
 }
 
-// 模型聚合实体
 export interface ModelPerformanceGroup {
   requestedModel: string;
   physicalModel: string;
   totalRequests: number;
   totalTokens: number;
-  avgTps: number;
-  avgTtftMs: number;
+  totalThinkingTokens?: number;
   cacheHitRate: number;
   sharePercentage: number;
-  isDowngraded: boolean;
+  avgTps?: number;
+  peakTps?: number;
+  avgTtftMs?: number;
+  avgDurationMs?: number;
+  isDowngraded?: boolean;
   topWorkspaces?: [string, number][];
-  topAccounts?: [string, number][];
 }
 
-// 宿主工作区聚合实体
-export interface HostWorkspaceGroup {
-  hostName: string;
-  hostId: string;
-  conversationCount: number;
-  totalSteps: number;
-  totalTokens: number;
-  sharePercentage: number;
-  topWorkspaces: [string, number][];
-}
-
-// 原子流水记录
 export interface RequestRecord {
   id: string;
+  timestamp?: number;
   time: string;
-  host: 'app' | 'ide' | 'plugin' | 'cli';
   requestedModel: string;
-  physicalModel: string;
+  physicalModel?: string;
   isDowngraded?: boolean;
   inputTokens: number;
   cachedTokens: number;
   outputTokens: number;
-  tps: number;
-  ttft: number;
-  costSaved: number;
-  accountEmail: string;
   workspace: string;
   sessionId: string;
+  sessionTitle?: string;
   thinkingTokens?: number;
-  toolTokens?: number;
+  tokensPerSecond: number;
+  ttftMs: number;
+  streamingDurationMs?: number;
+  durationMs: number;
+  contextUsedTokens?: number;
+  contextBudgetTokens?: number;
 }
 
-// 综合分析报告
+export interface ToolCallMetric {
+  toolName: string;
+  callCount: number;
+  errorCount: number;
+  sharePct: number;
+}
+
+export interface AgentHierarchyStats {
+  totalConversations: number;
+  runningCount: number;
+  mainSessions: number;
+  subagentSessions: number;
+  totalSteps: number;
+}
+
+export interface ApiErrorEvent {
+  timestamp: number;
+  timeStr: string;
+  code: string;
+  model: string;
+  workspaceName: string;
+  sessionTitle: string;
+  conversationId: string;
+  message: string;
+}
+
+export interface SessionContextItem {
+  sessionId: string;
+  title: string;
+  workspace: string;
+  model: string;
+  usedTokens: number;
+  budgetTokens: number;
+  usagePct: number;
+  checkpointCount: number;
+  isRunning: boolean;
+  lastActiveTime: string;
+}
+
+export interface TimeBreakdownStats {
+  ttftMs: number;
+  streamingMs: number;
+  toolExecMs: number;
+}
+
+export interface PoolSplitStats {
+  geminiTokens: number;
+  claudeTokens: number;
+  geminiRequests: number;
+  claudeRequests: number;
+}
+
 export interface MasterAnalyticsReport {
   totalRequests: number;
   totalTokens: number;
   totalPromptTokens: number;
   totalCachedTokens: number;
   totalOutputTokens: number;
+  totalThinkingTokens?: number;
   globalCacheHitRate: number;
+  totalEstimatedCostUsd?: number;
   totalSavedCostUsd: number;
-  avgSpeedTps: number;
-  avgTtftMs: number;
-  activeContext?: ContextWindowSnapshot;
-  byAccount: AccountUsageGroup[];
+  avgSpeedTps?: number;
+  peakSpeedTps?: number;
+  avgTtftMs?: number;
+  avgDurationMs?: number;
+  userPromptCount?: number;
+  checkpointCount?: number;
   byProject: ProjectUsageGroup[];
   byModel: ModelPerformanceGroup[];
-  byHost: HostWorkspaceGroup[];
   recentTraffic: RequestRecord[];
+  toolMetrics: ToolCallMetric[];
+  agentHierarchy?: AgentHierarchyStats;
+  timeBreakdown?: TimeBreakdownStats;
+  poolSplit?: PoolSplitStats;
+  apiErrors?: ApiErrorEvent[];
+  sessionContexts?: SessionContextItem[];
 }
 
-export const Stats: React.FC<StatsProps> = ({ lang }) => {
-  const isZh = lang === 'zh';
+interface InteractiveCurveProps {
+  series: number[];
+  labels?: string[];
+  unit?: string;
+  color: string;
+  gradId: string;
+  maxVal: number;
+  height?: number;
+  refLineY?: number;
+}
 
-  // 1. 视图切换
-  const [activeView, setActiveView] = useState<StatsView>('overview');
-  const [timeRange, setTimeRange] = useState<TimeRange>('today');
-  const [activeMetric, setActiveMetric] = useState<MetricMetric>('tokens');
-  const [isLoading, setIsLoading] = useState(false);
+const InteractiveCurve: React.FC<InteractiveCurveProps> = ({
+  series,
+  labels,
+  unit = '',
+  color,
+  gradId,
+  maxVal,
+  height = 72,
+  refLineY,
+}) => {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const W = 320;
+  const H = height;
+  const padX = 6;
+  const padY = 8;
+  const safeSeries = series.length >= 2 ? series : [0, ...series, 0];
+  const safeMax = Math.max(maxVal, 1);
 
-  // 2. 选中的下钻对象
-  const [selectedAccountEmail, setSelectedAccountEmail] = useState<string>('ctrler@868666.best');
-  const [selectedProjectName, setSelectedProjectName] = useState<string>('at');
-  const [selectedModelName, setSelectedModelName] = useState<string>('claude-3-7-sonnet');
-
-  // 3. 趋势图悬停
-  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
-
-  // 4. 流水过滤与抽屉
-  const [hostFilter, setHostFilter] = useState<HostFilter>('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRecord, setSelectedRecord] = useState<RequestRecord | null>(null);
-
-  // 5. 综合大盘基准默认状态
-  const [reportData, setReportData] = useState<MasterAnalyticsReport>({
-    totalRequests: 2024,
-    totalTokens: 310246613,
-    totalPromptTokens: 28698189,
-    totalCachedTokens: 280500264,
-    totalOutputTokens: 1048160,
-    globalCacheHitRate: 90.7,
-    totalSavedCostUsd: 280.5,
-    avgSpeedTps: 168.4,
-    avgTtftMs: 1480,
-    activeContext: {
-      sessionId: 'sess_antigravity_active',
-      title: 'Local Account Switcher & Pipeline Hub',
-      workspace: 'at',
-      hostTarget: 'Antigravity IDE',
-      currentUsedTokens: 89520,
-      budgetTokens: 256000,
-      remainingTokens: 166480,
-      usagePercentage: 34.97,
-      healthStatus: 'healthy',
-      physicalModel: 'gemini-4-hydrogen-high',
-      promptTokens: 4520,
-      cachedTokens: 38600,
-      completionTokens: 2400,
-      thinkingTokens: 22800,
-      toolTokens: 21200,
-      cacheHitRate: 89.5,
-      savedCostUsd: 14.8,
-      stepCount: 11129,
-      lastUserInput: '优化统计页面数据展示与上下文雷达',
-      lastModelUpdate: '刚刚',
-    },
-    byAccount: [
-      {
-        accountId: 'acc_01',
-        email: 'ctrler@868666.best',
-        tags: ['🌟 主力', 'VIP'],
-        totalRequests: 1340,
-        newInputTokens: 18400000,
-        cachedTokens: 188000000,
-        outputTokens: 710000,
-        totalTokens: 207110000,
-        cacheHitRate: 91.1,
-        estimatedCostUsd: 188.0,
-        quotaGeminiPct: 100,
-        quotaClaudePct: 50,
-        quota5hPct: 85,
-        quota5hResetIn: '45m',
-        quota7dPct: 50,
-        quota7dResetIn: '3天',
-        isHealthy: true,
-        topWorkspaces: [
-          ['at', 68],
-          ['omin', 22],
-          ['infra-scripts', 10],
-        ],
-        topModels: [
-          ['claude-3-7-sonnet', 58],
-          ['gemini-2.5-pro', 32],
-          ['gemini-2.5-flash', 10],
-        ],
-        hourlyHeatmap: [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8],
-        projectDrains: [
-          {
-            workspaceName: 'at',
-            path: '~/Desktop/at',
-            sharePct: 68.0,
-            totalTokens: 140800000,
-            claudeTokens: 95000000,
-            claudePct: 67.5,
-            geminiTokens: 45800000,
-            geminiPct: 32.5,
-            cacheHitRate: 92.4,
-            avgTps: 178.5,
-            stepCount: 1850,
-          },
-          {
-            workspaceName: 'omin',
-            path: '~/Workspace/omin',
-            sharePct: 22.0,
-            totalTokens: 45500000,
-            claudeTokens: 15500000,
-            claudePct: 34.1,
-            geminiTokens: 30000000,
-            geminiPct: 65.9,
-            cacheHitRate: 88.0,
-            avgTps: 162.0,
-            stepCount: 620,
-          },
-          {
-            workspaceName: 'infra-scripts',
-            path: '~/Dev/infra-scripts',
-            sharePct: 10.0,
-            totalTokens: 20810000,
-            claudeTokens: 4200000,
-            claudePct: 20.2,
-            geminiTokens: 16610000,
-            geminiPct: 79.8,
-            cacheHitRate: 85.5,
-            avgTps: 145.0,
-            stepCount: 240,
-          },
-        ],
-        modelRoutings: [
-          {
-            requestedModel: 'claude-3-7-sonnet',
-            physicalModel: 'gemini-4-hydrogen-high',
-            totalTokens: 120120000,
-            sharePct: 58.0,
-            avgTps: 184.2,
-            p50TtftSec: 1.42,
-            cacheHitRate: 91.8,
-            isDowngraded: false,
-          },
-          {
-            requestedModel: 'gemini-2.5-pro',
-            physicalModel: 'gemini-4-hydrogen-high',
-            totalTokens: 66270000,
-            sharePct: 32.0,
-            avgTps: 168.0,
-            p50TtftSec: 1.35,
-            cacheHitRate: 90.5,
-            isDowngraded: false,
-          },
-          {
-            requestedModel: 'gemini-2.5-flash',
-            physicalModel: 'gemini-4-carbon',
-            totalTokens: 20720000,
-            sharePct: 10.0,
-            avgTps: 122.5,
-            p50TtftSec: 0.98,
-            cacheHitRate: 86.2,
-            isDowngraded: false,
-          },
-        ],
-        hostRanks: [
-          {
-            hostType: 'ide',
-            hostLabel: 'Antigravity IDE',
-            sharePct: 70.0,
-            totalTokens: 145000000,
-            requestCount: 1420,
-          },
-          {
-            hostType: 'app',
-            hostLabel: '原生桌面 App',
-            sharePct: 18.0,
-            totalTokens: 37300000,
-            requestCount: 380,
-          },
-          {
-            hostType: 'plugin',
-            hostLabel: 'ACP 插件 (Cursor/VSCode)',
-            sharePct: 8.0,
-            totalTokens: 16500000,
-            requestCount: 150,
-          },
-          {
-            hostType: 'cli',
-            hostLabel: 'agy CLI 终端',
-            sharePct: 4.0,
-            totalTokens: 8310000,
-            requestCount: 74,
-          },
-        ],
-      },
-      {
-        accountId: 'acc_02',
-        email: 'developer.pro@gmail.com',
-        tags: ['Team Pro'],
-        totalRequests: 490,
-        newInputTokens: 6900000,
-        cachedTokens: 64000000,
-        outputTokens: 230000,
-        totalTokens: 71130000,
-        cacheHitRate: 90.3,
-        estimatedCostUsd: 64.0,
-        quotaGeminiPct: 100,
-        quotaClaudePct: 85,
-        quota5hPct: 92,
-        quota5hResetIn: '20m',
-        quota7dPct: 78,
-        quota7dResetIn: '5天',
-        isHealthy: true,
-        topWorkspaces: [
-          ['infra-scripts', 55],
-          ['at', 30],
-          ['omin', 15],
-        ],
-        topModels: [
-          ['gemini-2.5-pro', 50],
-          ['claude-3-7-sonnet', 35],
-          ['gemini-2.5-flash', 15],
-        ],
-        hourlyHeatmap: [0, 0, 0, 0, 0, 2, 8, 15, 30, 42, 45, 38, 25, 48, 55, 60, 52, 40, 35, 42, 30, 20, 10, 2],
-        projectDrains: [
-          {
-            workspaceName: 'infra-scripts',
-            path: '~/Dev/infra-scripts',
-            sharePct: 55.0,
-            totalTokens: 39120000,
-            claudeTokens: 13700000,
-            claudePct: 35.0,
-            geminiTokens: 25420000,
-            geminiPct: 65.0,
-            cacheHitRate: 91.2,
-            avgTps: 165.0,
-            stepCount: 890,
-          },
-          {
-            workspaceName: 'at',
-            path: '~/Desktop/at',
-            sharePct: 30.0,
-            totalTokens: 21340000,
-            claudeTokens: 15000000,
-            claudePct: 70.3,
-            geminiTokens: 6340000,
-            geminiPct: 29.7,
-            cacheHitRate: 90.5,
-            avgTps: 172.0,
-            stepCount: 420,
-          },
-          {
-            workspaceName: 'omin',
-            path: '~/Workspace/omin',
-            sharePct: 15.0,
-            totalTokens: 10670000,
-            claudeTokens: 2100000,
-            claudePct: 19.7,
-            geminiTokens: 8570000,
-            geminiPct: 80.3,
-            cacheHitRate: 87.4,
-            avgTps: 154.0,
-            stepCount: 180,
-          },
-        ],
-        modelRoutings: [
-          {
-            requestedModel: 'gemini-2.5-pro',
-            physicalModel: 'gemini-4-hydrogen-high',
-            totalTokens: 35565000,
-            sharePct: 50.0,
-            avgTps: 174.0,
-            p50TtftSec: 1.30,
-            cacheHitRate: 91.5,
-            isDowngraded: false,
-          },
-          {
-            requestedModel: 'claude-3-7-sonnet',
-            physicalModel: 'gemini-4-hydrogen-high',
-            totalTokens: 24895000,
-            sharePct: 35.0,
-            avgTps: 182.0,
-            p50TtftSec: 1.38,
-            cacheHitRate: 90.2,
-            isDowngraded: false,
-          },
-          {
-            requestedModel: 'gemini-2.5-flash',
-            physicalModel: 'gemini-4-carbon',
-            totalTokens: 10670000,
-            sharePct: 15.0,
-            avgTps: 125.0,
-            p50TtftSec: 0.95,
-            cacheHitRate: 88.0,
-            isDowngraded: false,
-          },
-        ],
-        hostRanks: [
-          {
-            hostType: 'ide',
-            hostLabel: 'Antigravity IDE',
-            sharePct: 62.0,
-            totalTokens: 44100000,
-            requestCount: 304,
-          },
-          {
-            hostType: 'cli',
-            hostLabel: 'agy CLI 终端',
-            sharePct: 24.0,
-            totalTokens: 17070000,
-            requestCount: 118,
-          },
-          {
-            hostType: 'app',
-            hostLabel: '原生桌面 App',
-            sharePct: 10.0,
-            totalTokens: 7110000,
-            requestCount: 49,
-          },
-          {
-            hostType: 'plugin',
-            hostLabel: 'ACP 插件 (Cursor/VSCode)',
-            sharePct: 4.0,
-            totalTokens: 2850000,
-            requestCount: 19,
-          },
-        ],
-      },
-      {
-        accountId: 'acc_03',
-        email: 'research.pool1@gmail.com',
-        tags: ['Claude池', '备用'],
-        totalRequests: 194,
-        newInputTokens: 3398189,
-        cachedTokens: 28500264,
-        outputTokens: 108160,
-        totalTokens: 32006613,
-        cacheHitRate: 89.3,
-        estimatedCostUsd: 28.5,
-        quotaGeminiPct: 100,
-        quotaClaudePct: 40,
-        quota5hPct: 40,
-        quota5hResetIn: '1h 15m',
-        quota7dPct: 35,
-        quota7dResetIn: '2天',
-        isHealthy: true,
-        topWorkspaces: [
-          ['cursor-ext', 75],
-          ['at', 25],
-        ],
-        topModels: [
-          ['claude-3-7-sonnet', 85],
-          ['gemini-2.5-flash', 15],
-        ],
-        hourlyHeatmap: [0, 0, 0, 0, 0, 0, 2, 5, 12, 18, 22, 20, 15, 25, 30, 35, 28, 22, 18, 20, 15, 8, 4, 0],
-        projectDrains: [
-          {
-            workspaceName: 'cursor-ext',
-            path: '~/Plugins/cursor-ext',
-            sharePct: 75.0,
-            totalTokens: 24005000,
-            claudeTokens: 21604500,
-            claudePct: 90.0,
-            geminiTokens: 2400500,
-            geminiPct: 10.0,
-            cacheHitRate: 89.8,
-            avgTps: 180.0,
-            stepCount: 310,
-          },
-          {
-            workspaceName: 'at',
-            path: '~/Desktop/at',
-            sharePct: 25.0,
-            totalTokens: 8001613,
-            claudeTokens: 5601129,
-            claudePct: 70.0,
-            geminiTokens: 2400484,
-            geminiPct: 30.0,
-            cacheHitRate: 88.0,
-            avgTps: 175.0,
-            stepCount: 110,
-          },
-        ],
-        modelRoutings: [
-          {
-            requestedModel: 'claude-3-7-sonnet',
-            physicalModel: 'gemini-4-hydrogen-high',
-            totalTokens: 27205621,
-            sharePct: 85.0,
-            avgTps: 185.0,
-            p50TtftSec: 1.40,
-            cacheHitRate: 90.0,
-            isDowngraded: false,
-          },
-          {
-            requestedModel: 'gemini-2.5-flash',
-            physicalModel: 'gemini-4-carbon',
-            totalTokens: 4800992,
-            sharePct: 15.0,
-            avgTps: 120.0,
-            p50TtftSec: 1.05,
-            cacheHitRate: 85.0,
-            isDowngraded: false,
-          },
-        ],
-        hostRanks: [
-          {
-            hostType: 'plugin',
-            hostLabel: 'ACP 插件 (Cursor/VSCode)',
-            sharePct: 75.0,
-            totalTokens: 24005000,
-            requestCount: 145,
-          },
-          {
-            hostType: 'ide',
-            hostLabel: 'Antigravity IDE',
-            sharePct: 25.0,
-            totalTokens: 8001613,
-            requestCount: 49,
-          },
-        ],
-      },
-    ],
-    byProject: [
-      {
-        workspaceName: 'at',
-        path: '~/Desktop/at',
-        totalSteps: 4067,
-        conversationCount: 12,
-        totalTokens: 215000000,
-        estimatedCostUsd: 195.4,
-        preferredModel: 'claude-3-7-sonnet',
-        modelBreakdown: [
-          ['claude-3-7-sonnet', 65.0],
-          ['gemini-2.5-pro', 25.0],
-          ['gemini-2.5-flash', 10.0],
-        ],
-        accountAttribution: [
-          ['ctrler@868666.best', 72.0],
-          ['developer.pro@gmail.com', 20.0],
-          ['research.pool1@gmail.com', 8.0],
-        ],
-        lastActiveTime: '刚刚',
-        sessionTitles: [
-          'Local Account Switcher Branch Discussion',
-          'Pipeline First & Gateway Architecture Refactoring',
-          'Stats Observability & Context Radar Design',
-          'Pre-flight Checks & Cargo Clippy Gating',
-        ],
-      },
-      {
-        workspaceName: 'omin',
-        path: '~/Desktop/omin',
-        totalSteps: 1317,
-        conversationCount: 5,
-        totalTokens: 68000000,
-        estimatedCostUsd: 61.2,
-        preferredModel: 'gemini-2.5-pro',
-        modelBreakdown: [
-          ['gemini-2.5-pro', 55.0],
-          ['claude-3-7-sonnet', 35.0],
-          ['gemini-2.5-flash', 10.0],
-        ],
-        accountAttribution: [
-          ['ctrler@868666.best', 58.0],
-          ['developer.pro@gmail.com', 42.0],
-        ],
-        lastActiveTime: '昨天 22:15',
-        sessionTitles: [
-          'Mouse Smooth Scroll Event Filter Tuning',
-          'MacBook Trackpad Physics Simulation vs LinearMouse',
-          'CoreGraphics CGEventTap Latency Optimization',
-        ],
-      },
-      {
-        workspaceName: 'infra-scripts',
-        path: '~/Desktop/infra-scripts',
-        totalSteps: 940,
-        conversationCount: 3,
-        totalTokens: 27246613,
-        estimatedCostUsd: 23.9,
-        preferredModel: 'gemini-2.5-flash',
-        modelBreakdown: [
-          ['gemini-2.5-flash', 60.0],
-          ['gemini-2.5-pro', 40.0],
-        ],
-        accountAttribution: [
-          ['developer.pro@gmail.com', 85.0],
-          ['ctrler@868666.best', 15.0],
-        ],
-        lastActiveTime: '3 天前',
-        sessionTitles: ['Deploy Automation & Docker Multi-arch', 'GitHub Actions Matrix CI Gating'],
-      },
-    ],
-    byModel: [
-      {
-        requestedModel: 'claude-3-7-sonnet',
-        physicalModel: 'gemini-4-hydrogen-high',
-        totalRequests: 1080,
-        totalTokens: 165000000,
-        avgTps: 184.2,
-        avgTtftMs: 1420,
-        cacheHitRate: 91.8,
-        sharePercentage: 53.2,
-        isDowngraded: false,
-        topWorkspaces: [
-          ['at', 75],
-          ['omin', 18],
-          ['cursor-ext', 7],
-        ],
-        topAccounts: [
-          ['ctrler@868666.best', 72],
-          ['research.pool1@gmail.com', 18],
-          ['developer.pro@gmail.com', 10],
-        ],
-      },
-      {
-        requestedModel: 'gemini-2.5-pro',
-        physicalModel: 'gemini-4-hydrogen-high',
-        totalRequests: 710,
-        totalTokens: 112000000,
-        avgTps: 168.0,
-        avgTtftMs: 1350,
-        cacheHitRate: 90.4,
-        sharePercentage: 36.1,
-        isDowngraded: false,
-        topWorkspaces: [
-          ['omin', 48],
-          ['at', 36],
-          ['infra-scripts', 16],
-        ],
-        topAccounts: [
-          ['ctrler@868666.best', 55],
-          ['developer.pro@gmail.com', 45],
-        ],
-      },
-      {
-        requestedModel: 'gemini-2.5-flash',
-        physicalModel: 'gemini-4-carbon',
-        totalRequests: 234,
-        totalTokens: 33246613,
-        avgTps: 122.5,
-        avgTtftMs: 980,
-        cacheHitRate: 88.6,
-        sharePercentage: 10.7,
-        isDowngraded: false,
-        topWorkspaces: [
-          ['infra-scripts', 60],
-          ['at', 25],
-          ['omin', 15],
-        ],
-        topAccounts: [
-          ['developer.pro@gmail.com', 65],
-          ['ctrler@868666.best', 35],
-        ],
-      },
-    ],
-    byHost: [
-      {
-        hostName: 'Antigravity IDE',
-        hostId: 'ide',
-        conversationCount: 12,
-        totalSteps: 8400,
-        totalTokens: 215000000,
-        sharePercentage: 69.3,
-        topWorkspaces: [
-          ['at', 4067],
-          ['omin', 1317],
-          ['core-gateway', 820],
-        ],
-      },
-      {
-        hostName: 'Antigravity CLI (agy)',
-        hostId: 'cli',
-        conversationCount: 3,
-        totalSteps: 1800,
-        totalTokens: 58000000,
-        sharePercentage: 18.7,
-        topWorkspaces: [
-          ['infra-scripts', 940],
-          ['at', 450],
-        ],
-      },
-      {
-        hostName: 'Plugin (ACP Daemon)',
-        hostId: 'plugin',
-        conversationCount: 2,
-        totalSteps: 929,
-        totalTokens: 37246613,
-        sharePercentage: 12.0,
-        topWorkspaces: [['cursor-ext', 929]],
-      },
-    ],
-    recentTraffic: [
-      {
-        id: 'req_9801a2',
-        time: '12:44:18',
-        host: 'app',
-        requestedModel: 'gemini-2.5-pro',
-        physicalModel: 'gemini-4-hydrogen-high',
-        inputTokens: 11620,
-        cachedTokens: 154200,
-        outputTokens: 6916,
-        tps: 168.4,
-        ttft: 1.48,
-        costSaved: 0.1542,
-        accountEmail: 'ctrler@868666.best',
-        workspace: 'at',
-        sessionId: 'sess_antigravity_active',
-        thinkingTokens: 2450,
-        toolTokens: 1120,
-      },
-      {
-        id: 'req_9800ff',
-        time: '12:35:09',
-        host: 'ide',
-        requestedModel: 'claude-3-7-sonnet',
-        physicalModel: 'gemini-4-hydrogen-high',
-        inputTokens: 3940,
-        cachedTokens: 148000,
-        outputTokens: 8722,
-        tps: 172.1,
-        ttft: 1.62,
-        costSaved: 0.148,
-        accountEmail: 'ctrler@868666.best',
-        workspace: 'at',
-        sessionId: 'sess_antigravity_active',
-        thinkingTokens: 4120,
-        toolTokens: 320,
-      },
-      {
-        id: 'req_97f901',
-        time: '12:15:33',
-        host: 'cli',
-        requestedModel: 'gemini-2.5-flash',
-        physicalModel: 'gemini-4-carbon',
-        inputTokens: 2810,
-        cachedTokens: 92400,
-        outputTokens: 335,
-        tps: 124.5,
-        ttft: 0.98,
-        costSaved: 0.0924,
-        accountEmail: 'developer.pro@gmail.com',
-        workspace: 'infra-scripts',
-        sessionId: 'sess_cli_worker_03',
-        thinkingTokens: 0,
-        toolTokens: 180,
-      },
-      {
-        id: 'req_97e41b',
-        time: '11:48:20',
-        host: 'plugin',
-        requestedModel: 'claude-3-7-sonnet',
-        physicalModel: 'used_claude_conservative',
-        isDowngraded: true,
-        inputTokens: 20850,
-        cachedTokens: 45000,
-        outputTokens: 362,
-        tps: 48.2,
-        ttft: 4.8,
-        costSaved: 0.045,
-        accountEmail: 'research.pool1@gmail.com',
-        workspace: 'cursor-ext',
-        sessionId: 'sess_cursor_49a',
-        thinkingTokens: 110,
-        toolTokens: 0,
-      },
-      {
-        id: 'req_97d312',
-        time: '11:22:45',
-        host: 'ide',
-        requestedModel: 'gemini-2.5-pro',
-        physicalModel: 'gemini-4-hydrogen-high',
-        inputTokens: 4520,
-        cachedTokens: 142000,
-        outputTokens: 3120,
-        tps: 165.2,
-        ttft: 1.35,
-        costSaved: 0.142,
-        accountEmail: 'ctrler@868666.best',
-        workspace: 'omin',
-        sessionId: 'sess_omin_mac',
-        thinkingTokens: 1240,
-        toolTokens: 590,
-      },
-    ],
+  const pts = safeSeries.map((v, i) => {
+    const x = padX + (i / (safeSeries.length - 1)) * (W - padX * 2);
+    const y = H - padY - (Math.min(Math.max(v, 0), safeMax) / safeMax) * (H - padY * 2);
+    return { x, y, v };
   });
 
-  // 6. 从 Tauri 后端获取真实遥测
-  const fetchReport = async () => {
-    setIsLoading(true);
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const data = await invoke<any>('get_stats_report');
-      if (data) {
-        setReportData((prev) => ({
-          ...prev,
-          totalRequests: data.totalRequests ?? prev.totalRequests,
-          totalTokens: data.totalTokens ?? prev.totalTokens,
-          totalPromptTokens: data.totalPromptTokens ?? prev.totalPromptTokens,
-          totalCachedTokens: data.totalCachedTokens ?? prev.totalCachedTokens,
-          totalOutputTokens: data.totalOutputTokens ?? prev.totalOutputTokens,
-          globalCacheHitRate: data.globalCacheHitRate ?? prev.globalCacheHitRate,
-          totalSavedCostUsd: data.totalSavedCostUsd ?? prev.totalSavedCostUsd,
-          avgSpeedTps: data.avgSpeedTps ?? prev.avgSpeedTps,
-          avgTtftMs: data.avgTtftMs ?? prev.avgTtftMs,
-          activeContext: data.activeContext ?? prev.activeContext,
-          byAccount: data.byAccount && data.byAccount.length > 0 ? data.byAccount : prev.byAccount,
-          byProject: data.byProject && data.byProject.length > 0 ? data.byProject : prev.byProject,
-          byModel: data.byModel && data.byModel.length > 0 ? data.byModel : prev.byModel,
-          byHost: data.byHost && data.byHost.length > 0 ? data.byHost : prev.byHost,
-          recentTraffic:
-            data.recentTraffic && data.recentTraffic.length > 0
-              ? data.recentTraffic.map((r: any) => ({
-                  id: r.id,
-                  time: r.timeStr || r.time || '刚刚',
-                  host: (r.hostTarget === 'agy' ? 'cli' : r.hostTarget) || 'ide',
-                  requestedModel: r.requestedModel,
-                  physicalModel: r.physicalModel,
-                  isDowngraded: r.isDowngraded,
-                  inputTokens: r.promptTokens || r.inputTokens || 0,
-                  cachedTokens: r.cachedTokens || 0,
-                  outputTokens: r.completionTokens || r.outputTokens || 0,
-                  tps: r.tokensPerSecond || r.tps || 168.4,
-                  ttft: r.ttftMs ? Number((r.ttftMs / 1000).toFixed(2)) : r.ttft || 1.48,
-                  costSaved: r.estimatedCost || r.costSaved || 0.05,
-                  accountEmail: r.accountEmail || 'ctrler@868666.best',
-                  workspace: r.workspaceName || r.workspace || 'at',
-                  sessionId: r.conversationId || r.sessionId || 'sess_active',
-                  thinkingTokens: r.thinkingTokens,
-                  toolTokens: r.completionTokens ? Math.round(r.completionTokens * 0.3) : 0,
-                }))
-              : prev.recentTraffic,
-        }));
-      }
-    } catch {
-      // 优雅维持真实基准
-    } finally {
-      setIsLoading(false);
+  let lineD = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i];
+    const p1 = pts[i + 1];
+    const mx = ((p0.x + p1.x) / 2).toFixed(1);
+    lineD += ` C ${mx} ${p0.y.toFixed(1)}, ${mx} ${p1.y.toFixed(1)}, ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
+  }
+  const areaD = `${lineD} L ${pts[pts.length - 1].x.toFixed(1)} ${H - 1} L ${pts[0].x.toFixed(1)} ${H - 1} Z`;
+
+  const activePt = activeIdx !== null && pts[activeIdx] ? pts[activeIdx] : null;
+  const activeLabel =
+    activeIdx !== null
+      ? labels?.[activeIdx] ?? `${String(activeIdx).padStart(2, '0')}:00`
+      : '';
+
+  return (
+    <div
+      className="relative w-full h-full overflow-hidden select-none cursor-crosshair"
+      onMouseLeave={() => setActiveIdx(null)}
+    >
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full block" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.30" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {refLineY !== undefined && (
+          <line
+            x1={padX}
+            y1={H - padY - (refLineY / safeMax) * (H - padY * 2)}
+            x2={W - padX}
+            y2={H - padY - (refLineY / safeMax) * (H - padY * 2)}
+            stroke={color}
+            strokeOpacity="0.28"
+            strokeDasharray="3 3"
+            strokeWidth="1"
+          />
+        )}
+        <path d={areaD} fill={`url(#${gradId})`} />
+        <path d={lineD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        {activePt && (
+          <line
+            x1={activePt.x}
+            y1={padY}
+            x2={activePt.x}
+            y2={H - padY}
+            stroke={color}
+            strokeOpacity="0.55"
+            strokeDasharray="2 2"
+            strokeWidth="1"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </svg>
+
+      {/* 交互式时间点热区层 (支持悬停与点击查看任意时间点精确数值) */}
+      <div className="absolute inset-0 flex">
+        {pts.map((_, idx) => (
+          <div
+            key={idx}
+            className="flex-1 h-full"
+            onMouseEnter={() => setActiveIdx(idx)}
+            onClick={() => setActiveIdx((prev) => (prev === idx ? null : idx))}
+          />
+        ))}
+      </div>
+
+      {/* 悬停/选中时间点的高亮圆点与胶囊浮标 */}
+      {activePt && activeIdx !== null && (
+        <>
+          <div
+            style={{
+              left: `${(activePt.x / W) * 100}%`,
+              top: `${(activePt.y / H) * 100}%`,
+              backgroundColor: color,
+            }}
+            className="absolute w-2.5 h-2.5 -ml-[5px] -mt-[5px] rounded-full ring-2 ring-white dark:ring-[#121316] shadow-sm pointer-events-none"
+          />
+          <div
+            style={{
+              left: `${Math.min(82, Math.max(18, (activePt.x / W) * 100))}%`,
+            }}
+            className="absolute top-0.5 -translate-x-1/2 px-2 py-0.5 rounded-md bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 text-[9px] font-mono font-bold shadow-md pointer-events-none whitespace-nowrap z-20"
+          >
+            {activeLabel} · {activePt.v.toFixed(1)}{unit}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+interface SpectrumMetricLine {
+  id: string;
+  label: string;
+  series: number[];
+  fixedMax?: number;
+  color: string;
+  format: (v: number) => string;
+  avgVal?: number;
+  avgLabel?: string;
+}
+
+const InteractiveSpectrumChart: React.FC<{
+  lines: SpectrumMetricLine[];
+  focusedId: string | null;
+  labels?: string[];
+  height?: number;
+  zoomTooltip?: string;
+  footerRight?: string;
+}> = ({ lines, focusedId, labels, height = 104, zoomTooltip, footerRight }) => {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const totalCount = Math.max(2, ...lines.map((l) => l.series.length));
+  const [viewRange, setViewRange] = useState<[number, number] | null>(null);
+
+  // 数据长度变化时（例如切换时间范围或 活跃/24h）自动重置为完整 1.0x 视图
+  useEffect(() => {
+    setViewRange(null);
+  }, [totalCount]);
+
+  const [startIdx, endIdx] = useMemo<[number, number]>(() => {
+    if (viewRange) {
+      const s = Math.max(0, Math.min(totalCount - 2, viewRange[0]));
+      const e = Math.max(s + 2, Math.min(totalCount, viewRange[1]));
+      return [s, e];
     }
+    return [0, totalCount];
+  }, [viewRange, totalCount]);
+
+  const count = Math.max(2, endIdx - startIdx);
+  const zoomRatio = totalCount / count;
+  const W = 420;
+  const H = height;
+  const padX = 6;
+  const padY = 10;
+
+  const visibleLines = useMemo(
+    () => (focusedId ? lines.filter((l) => l.id === focusedId) : lines),
+    [lines, focusedId]
+  );
+  const isSolo = visibleLines.length === 1;
+
+  const built = visibleLines.map((line) => {
+    const sliced = line.series.slice(startIdx, endIdx);
+    const localMax = Math.max(...sliced, isSolo ? line.avgVal ?? 0 : 0, 1);
+    const safeMax = line.fixedMax ?? Math.max(localMax * 1.15, 1);
+
+    const pts = Array.from({ length: count }, (_, i) => {
+      const v = sliced[i] ?? 0;
+      const x = padX + (i / (count - 1)) * (W - padX * 2);
+      const y = H - padY - (Math.min(Math.max(v, 0), safeMax) / safeMax) * (H - padY * 2);
+      return { x, y, v };
+    });
+
+    let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i];
+      const p1 = pts[i + 1];
+      const mx = ((p0.x + p1.x) / 2).toFixed(1);
+      d += ` C ${mx} ${p0.y.toFixed(1)}, ${mx} ${p1.y.toFixed(1)}, ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
+    }
+    const areaD = `${d} L ${pts[pts.length - 1].x.toFixed(1)} ${H - 1} L ${pts[0].x.toFixed(1)} ${H - 1} Z`;
+
+    const avgY =
+      isSolo && line.avgVal !== undefined && line.avgVal > 0
+        ? H - padY - (Math.min(Math.max(line.avgVal, 0), safeMax) / safeMax) * (H - padY * 2)
+        : null;
+
+    return { ...line, pts, d, areaD, avgY };
+  });
+
+  const chartRef = useRef<HTMLDivElement>(null);
+  const wheelHandlerRef = useRef<(e: WheelEvent) => void>(() => {});
+  wheelHandlerRef.current = (e: WheelEvent) => {
+    if (totalCount <= 6) return;
+    e.preventDefault();
+    const zoomIn = e.deltaY < 0;
+    const step = Math.max(2, Math.round(count * 0.2));
+    const nextCount = zoomIn
+      ? Math.max(6, count - step)
+      : Math.min(totalCount, count + step);
+    if (nextCount >= totalCount) {
+      setViewRange(null);
+      return;
+    }
+    const anchorRatio = activeIdx !== null ? activeIdx / Math.max(1, count - 1) : 0.5;
+    const anchorGlobal = startIdx + Math.round(anchorRatio * (count - 1));
+    let nextStart = Math.round(anchorGlobal - anchorRatio * (nextCount - 1));
+    nextStart = Math.max(0, Math.min(totalCount - nextCount, nextStart));
+    setViewRange([nextStart, nextStart + nextCount]);
   };
 
   useEffect(() => {
-    fetchReport();
+    const el = chartRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => wheelHandlerRef.current(e);
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // 当前选中的特定下钻对象
-  const currentAccount = useMemo(() => {
-    return (
-      reportData.byAccount.find((a) => a.email === selectedAccountEmail) ||
-      reportData.byAccount[0]
-    );
-  }, [reportData.byAccount, selectedAccountEmail]);
+  const activeX = activeIdx !== null ? built[0]?.pts[activeIdx]?.x ?? null : null;
+  const globalActiveIdx = activeIdx !== null ? startIdx + activeIdx : null;
+  const soloLine = isSolo ? built[0] : null;
+
+  // 底部首/中/尾时间刻度始终与当前缩放区间严格对齐
+  const visLabels = labels ? labels.slice(startIdx, endIdx) : [];
+  const firstTick = visLabels[0] || '00:00';
+  const midTick = visLabels[Math.floor(Math.max(0, visLabels.length - 1) / 2)] || '12:00';
+  const lastTick = visLabels[visLabels.length - 1] || '23:00';
+
+  return (
+    <div className="flex flex-col gap-1.5 w-full">
+      <div
+        ref={chartRef}
+        style={{ height }}
+        className="relative w-full overflow-hidden select-none cursor-crosshair"
+        onMouseLeave={() => setActiveIdx(null)}
+        onDoubleClick={() => setViewRange(null)}
+        title={zoomTooltip}
+      >
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full block" preserveAspectRatio="none">
+          <defs>
+            {built.map((l) => (
+              <linearGradient
+                key={l.id}
+                id={`sc-${l.id}`}
+                gradientUnits="userSpaceOnUse"
+                x1="0"
+                y1={padY}
+                x2="0"
+                y2={H}
+              >
+                <stop offset="0%" stopColor={l.color} stopOpacity={isSolo ? '0.36' : '0.26'} />
+                <stop offset="52%" stopColor={l.color} stopOpacity={isSolo ? '0.11' : '0.07'} />
+                <stop offset="100%" stopColor={l.color} stopOpacity="0.0" />
+              </linearGradient>
+            ))}
+          </defs>
+          {[0.25, 0.5, 0.75].map((ratio) => (
+            <line
+              key={ratio}
+              x1={padX}
+              y1={H - padY - ratio * (H - padY * 2)}
+              x2={W - padX}
+              y2={H - padY - ratio * (H - padY * 2)}
+              stroke="rgba(255,255,255,0.07)"
+              strokeWidth="1"
+            />
+          ))}
+          {soloLine && soloLine.avgY !== null && (
+            <line
+              x1={padX}
+              y1={soloLine.avgY}
+              x2={W - padX}
+              y2={soloLine.avgY}
+              stroke={soloLine.color}
+              strokeOpacity="0.55"
+              strokeDasharray="3 3"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+          {/* 仅对单一主线（或当前聚焦线）铺单色丝绒渐隐，避免 4 色叠加发灰发雾；全部曲线保持 Retina 刀锋锐利 */}
+          {built.map((l, idx) =>
+            isSolo || idx === 0 ? (
+              <path key={`area-${l.id}`} d={l.areaD} fill={`url(#sc-${l.id})`} />
+            ) : null
+          )}
+          {built.map((l) => (
+            <path
+              key={`line-${l.id}`}
+              d={l.d}
+              fill="none"
+              stroke={l.color}
+              strokeWidth={isSolo ? '2.1' : '1.85'}
+              strokeOpacity="1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {activeX !== null && (
+            <line
+              x1={activeX}
+              y1={padY}
+              x2={activeX}
+              y2={H - padY}
+              stroke="rgba(255,255,255,0.28)"
+              strokeDasharray="2 2"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+        </svg>
+
+        {soloLine && soloLine.avgY !== null && soloLine.avgLabel && activeX === null && (
+          <div
+            style={{
+              top: `${Math.min(76, Math.max(8, (soloLine.avgY / H) * 100 - 11))}%`,
+              color: soloLine.color,
+            }}
+            className="absolute right-1.5 px-1.5 py-0.5 rounded bg-[#141720]/85 border border-white/10 text-[8.5px] font-mono font-semibold pointer-events-none"
+          >
+            {soloLine.avgLabel}
+          </div>
+        )}
+
+        <div className="absolute inset-0 flex">
+          {Array.from({ length: count }, (_, idx) => (
+            <div
+              key={idx}
+              className="flex-1 h-full"
+              onMouseEnter={() => setActiveIdx(idx)}
+              onClick={() => setActiveIdx((prev) => (prev === idx ? null : idx))}
+            />
+          ))}
+        </div>
+
+        {zoomRatio > 1.05 && (
+          <div className="absolute bottom-1 right-1.5 px-1.5 py-0.5 rounded bg-black/45 text-[8px] font-mono text-slate-300/90 pointer-events-none">
+            {zoomRatio.toFixed(1)}x · {count}/{totalCount}
+          </div>
+        )}
+
+        {activeIdx !== null && globalActiveIdx !== null && activeX !== null && (
+          <>
+            {built.map((l) => {
+              const pt = l.pts[activeIdx];
+              if (!pt) return null;
+              return (
+                <div
+                  key={l.id}
+                  style={{
+                    left: `${(pt.x / W) * 100}%`,
+                    top: `${(pt.y / H) * 100}%`,
+                    backgroundColor: l.color,
+                  }}
+                  className="absolute w-2 h-2 -ml-1 -mt-1 rounded-full ring-2 ring-[#191c25] shadow-sm pointer-events-none"
+                />
+              );
+            })}
+            <div
+              style={{
+                left: `${Math.min(74, Math.max(26, (activeX / W) * 100))}%`,
+              }}
+              className="absolute top-0.5 -translate-x-1/2 px-2 py-0.5 rounded-md bg-[#12151e]/95 backdrop-blur-md border border-white/12 text-[8.5px] font-mono text-slate-100 shadow-lg pointer-events-none whitespace-nowrap z-20 flex items-center gap-2"
+            >
+              <span className="text-slate-400">
+                {labels?.[globalActiveIdx] ?? `${String(globalActiveIdx).padStart(2, '0')}:00`}
+              </span>
+              {built.map((l) => (
+                <span key={l.id} style={{ color: l.color }} className="font-semibold">
+                  {l.format(l.pts[activeIdx]?.v ?? 0)}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between text-[9.5px] tabular-nums text-slate-300/80 pt-1 border-t border-white/[0.08]">
+        <span>{firstTick}</span>
+        <span>{midTick}</span>
+        <span>{lastTick}</span>
+        {footerRight && <span className="text-slate-300/90">{footerRight}</span>}
+      </div>
+    </div>
+  );
+};
+
+export const Stats: React.FC<StatsProps> = ({ lang }) => {
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+
+  const [activeView, setActiveView] = useState<StatsView>('overview');
+  const [timeRange, setTimeRange] = useState<TimeRange>('today');
+  const [customStartDate, setCustomStartDate] = useState<string>(todayStr);
+  const [customEndDate, setCustomEndDate] = useState<string>(todayStr);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const datePickerRef = useRef<HTMLDivElement>(null);
+
+  // 项目下钻与分享战报状态
+  const [selectedProjectName, setSelectedProjectName] = useState<string>('__ALL__');
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+  const [projectSearchQuery, setProjectSearchQuery] = useState('');
+  const [shareTemplate, setShareTemplate] = useState<'polar' | 'radial' | 'hexcore' | 'matrix'>('polar');
+  const [projectActivityTab, setProjectActivityTab] = useState<'milestones' | 'requests' | 'perf'>('milestones');
+  const [overviewRightTab, setOverviewRightTab] = useState<'tools' | 'context' | 'alerts'>('tools');
+  const [spectrumFocus, setSpectrumFocus] = useState<'tok' | 'tps' | 'ttft' | 'cache' | null>(null);
+  const [spectrumZoom, setSpectrumZoom] = useState<'active' | '24h'>('active');
+  const [selectedModelFilter, setSelectedModelFilter] = useState<string>('__ALL__');
+  const [modelDetailTab, setModelDetailTab] = useState<'workspaces' | 'requests'>('workspaces');
+  const [projPerfModel, setProjPerfModel] = useState<string>('__ALL__');
+  const [ledgerCacheFilter, setLedgerCacheFilter] = useState<'all' | 'miss'>('all');
+  const [ledgerMode, setLedgerMode] = useState<'requests' | 'sessions'>('requests');
+  const [ledgerPage, setLedgerPage] = useState<number>(1);
+  const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [copiedShare, setCopiedShare] = useState(false);
+
+  // 会话流水过滤与详情弹窗
+  const [workspaceFilter, setWorkspaceFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRecord, setSelectedRecord] = useState<RequestRecord | null>(null);
+
+  useEffect(() => {
+    if (!datePickerOpen && !projectDropdownOpen && !shareModalOpen && !selectedRecord) return;
+
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (datePickerOpen && datePickerRef.current && !datePickerRef.current.contains(target)) {
+        setDatePickerOpen(false);
+      }
+      if (projectDropdownOpen && projectDropdownRef.current && !projectDropdownRef.current.contains(target)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDatePickerOpen(false);
+        setProjectDropdownOpen(false);
+        setShareModalOpen(false);
+        setSelectedRecord(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [datePickerOpen, projectDropdownOpen, shareModalOpen, selectedRecord]);
+
+  // 真实本地数据库报告状态
+  const [reportData, setReportData] = useState<MasterAnalyticsReport>({
+    totalRequests: 0,
+    totalTokens: 0,
+    totalPromptTokens: 0,
+    totalCachedTokens: 0,
+    totalOutputTokens: 0,
+    totalThinkingTokens: 0,
+    globalCacheHitRate: 0,
+    totalEstimatedCostUsd: 0,
+    totalSavedCostUsd: 0,
+    avgSpeedTps: 0,
+    peakSpeedTps: 0,
+    avgTtftMs: 0,
+    avgDurationMs: 0,
+    userPromptCount: 0,
+    checkpointCount: 0,
+    byProject: [],
+    byModel: [],
+    recentTraffic: [],
+    toolMetrics: [],
+    apiErrors: [],
+    sessionContexts: [],
+  });
+
+  const rangeBounds = useMemo(() => {
+    const parseStart = (ymd: string) => {
+      const [y, m, d] = ymd.split('-').map(Number);
+      return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).getTime();
+    };
+    const parseEnd = (ymd: string) => {
+      const [y, m, d] = ymd.split('-').map(Number);
+      return new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999).getTime();
+    };
+    const now = new Date();
+    if (timeRange === 'today') {
+      const startTsMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+      return { startTsMs, endTsMs: null as number | null, isSingleDay: true };
+    }
+    if (timeRange === '7days') {
+      const startTsMs = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0).getTime();
+      return { startTsMs, endTsMs: null as number | null, isSingleDay: false };
+    }
+    if (timeRange === '30days') {
+      const startTsMs = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0).getTime();
+      return { startTsMs, endTsMs: null as number | null, isSingleDay: false };
+    }
+    if (timeRange === 'custom') {
+      const sDate = customStartDate || todayStr;
+      const eDate = customEndDate || sDate;
+      const [minD, maxD] = sDate <= eDate ? [sDate, eDate] : [eDate, sDate];
+      return {
+        startTsMs: parseStart(minD),
+        endTsMs: parseEnd(maxD),
+        isSingleDay: minD === maxD,
+      };
+    }
+    return { startTsMs: null as number | null, endTsMs: null as number | null, isSingleDay: false };
+  }, [timeRange, customStartDate, customEndDate, todayStr]);
+
+  const fetchReport = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await api.getStatsReport({
+        startTsMs: rangeBounds.startTsMs,
+        endTsMs: rangeBounds.endTsMs,
+      });
+      if (data) {
+        const projects: ProjectUsageGroup[] = Array.isArray(data.byProject) ? data.byProject : [];
+        setReportData({
+          totalRequests: data.totalRequests ?? 0,
+          totalTokens: data.totalTokens ?? 0,
+          totalPromptTokens: data.totalPromptTokens ?? 0,
+          totalCachedTokens: data.totalCachedTokens ?? 0,
+          totalOutputTokens: data.totalOutputTokens ?? 0,
+          totalThinkingTokens: Number(data.totalThinkingTokens || 0),
+          globalCacheHitRate: data.globalCacheHitRate ?? 0,
+          totalEstimatedCostUsd: Number(data.totalEstimatedCostUsd || 0),
+          totalSavedCostUsd: data.totalSavedCostUsd ?? 0,
+          avgSpeedTps: Number(data.avgSpeedTps || 0),
+          peakSpeedTps: Number(data.peakSpeedTps || 0),
+          avgTtftMs: Number(data.avgTtftMs || 0),
+          avgDurationMs: Number(data.avgDurationMs || 0),
+          userPromptCount: Number(data.userPromptCount || 0),
+          checkpointCount: Number(data.checkpointCount || 0),
+          byProject: projects,
+          byModel: Array.isArray(data.byModel) ? data.byModel : [],
+          toolMetrics: Array.isArray(data.toolMetrics) ? data.toolMetrics : [],
+          agentHierarchy: data.agentHierarchy,
+          timeBreakdown: data.timeBreakdown,
+          poolSplit: data.poolSplit,
+          apiErrors: Array.isArray(data.apiErrors) ? data.apiErrors : [],
+          sessionContexts: Array.isArray(data.sessionContexts) ? data.sessionContexts : [],
+          recentTraffic: Array.isArray(data.recentTraffic)
+            ? data.recentTraffic.map((r: any) => ({
+                id: r.id,
+                timestamp: Number(r.timestamp || 0),
+                time: r.timeStr || r.time || '-',
+                requestedModel: r.requestedModel || 'unknown',
+                physicalModel: r.physicalModel || undefined,
+                isDowngraded: Boolean(r.isDowngraded),
+                inputTokens: r.promptTokens || r.inputTokens || 0,
+                cachedTokens: r.cachedTokens || 0,
+                outputTokens: r.completionTokens || r.outputTokens || 0,
+                workspace: r.workspaceName || r.workspace || 'default',
+                sessionId: r.conversationId || r.sessionId || '',
+                sessionTitle: r.sessionTitle,
+                thinkingTokens: r.thinkingTokens || 0,
+                tokensPerSecond: Number(r.tokensPerSecond || 0),
+                ttftMs: Number(r.ttftMs || 0),
+                streamingDurationMs: Number(r.streamingDurationMs || 0),
+                durationMs: Number(r.durationMs || 0),
+                contextUsedTokens: Number(r.contextUsedTokens || 0),
+                contextBudgetTokens: Number(r.contextBudgetTokens || 0),
+              }))
+            : [],
+        });
+        if (projects.length > 0 && !selectedProjectName) {
+          setSelectedProjectName(projects[0].workspaceName);
+        }
+      }
+    } catch {
+      // 非 Tauri 环境静默降级
+    } finally {
+      setIsLoading(false);
+    }
+  }, [rangeBounds.startTsMs, rangeBounds.endTsMs, selectedProjectName]);
+
+  useEffect(() => {
+    fetchReport();
+  }, [fetchReport]);
+
+  useEffect(() => {
+    setLedgerPage(1);
+  }, [timeRange, customStartDate, customEndDate, workspaceFilter, ledgerCacheFilter, searchQuery, ledgerMode]);
+
+  const allProjectsAggregated = useMemo<ProjectUsageGroup | null>(() => {
+    if (reportData.byProject.length === 0) return null;
+    const totalSteps = reportData.byProject.reduce((acc, p) => acc + p.totalSteps, 0);
+    const conversationCount = reportData.byProject.reduce((acc, p) => acc + p.conversationCount, 0);
+    const totalTokens = reportData.totalTokens || reportData.byProject.reduce((acc, p) => acc + p.totalTokens, 0);
+    const estimatedCostUsd = reportData.byProject.reduce((acc, p) => acc + p.estimatedCostUsd, 0);
+    const sessionTitles = reportData.byProject.flatMap((p) => p.sessionTitles).slice(0, 12);
+    const lastActiveTime = reportData.byProject[0]?.lastActiveTime || '';
+    const modelBreakdown: [string, number][] = reportData.byModel.map((m) => [m.requestedModel, m.sharePercentage]);
+    return {
+      workspaceName: '__ALL__',
+      path: tUi(lang, 'stats_all_projects_summary', { count: reportData.byProject.length }),
+      totalSteps,
+      conversationCount,
+      totalTokens,
+      estimatedCostUsd,
+      preferredModel: reportData.byModel[0]?.requestedModel || reportData.byProject[0]?.preferredModel || 'Gemini',
+      modelBreakdown: modelBreakdown.length > 0 ? modelBreakdown : reportData.byProject[0]?.modelBreakdown || [],
+      lastActiveTime,
+      sessionTitles,
+    };
+  }, [reportData, lang]);
+
+  const selectableProjects = useMemo(() => {
+    if (!allProjectsAggregated) return reportData.byProject;
+    return [allProjectsAggregated, ...reportData.byProject];
+  }, [allProjectsAggregated, reportData.byProject]);
 
   const currentProject = useMemo(() => {
+    if (selectedProjectName === '__ALL__' && allProjectsAggregated) return allProjectsAggregated;
     return (
       reportData.byProject.find((p) => p.workspaceName === selectedProjectName) ||
+      allProjectsAggregated ||
       reportData.byProject[0]
     );
-  }, [reportData.byProject, selectedProjectName]);
+  }, [reportData.byProject, selectedProjectName, allProjectsAggregated]);
 
-  const currentModel = useMemo(() => {
+  const totalToolCalls = useMemo(
+    () => reportData.toolMetrics.reduce((acc, t) => acc + t.callCount, 0),
+    [reportData.toolMetrics]
+  );
+
+  // 通用平滑贝塞尔面积折线渲染器 (支持交互式时间点悬停与点击查看)
+  const renderSmoothCurve = (
+    series: number[],
+    color: string,
+    gradId: string,
+    maxVal: number,
+    height = 72,
+    refLineY?: number,
+    labels?: string[],
+    unit?: string
+  ) => {
+    const inferredUnit = unit ?? (gradId.includes('tps') ? ' tok/s' : '%');
     return (
-      reportData.byModel.find((m) => m.requestedModel === selectedModelName) ||
-      reportData.byModel[0]
+      <InteractiveCurve
+        series={series}
+        labels={labels}
+        unit={inferredUnit}
+        color={color}
+        gradId={gradId}
+        maxVal={maxVal}
+        height={height}
+        refLineY={refLineY}
+      />
     );
-  }, [reportData.byModel, selectedModelName]);
+  };
 
-  // 全局 24 小时波形
-  const hourlyData = useMemo(() => {
-    return [
-      { time: '00:00', tokens: 4200000, cost: 4.2, tps: 120, cacheRate: 88 },
-      { time: '02:00', tokens: 1800000, cost: 1.8, tps: 110, cacheRate: 89 },
-      { time: '04:00', tokens: 900000, cost: 0.9, tps: 98, cacheRate: 91 },
-      { time: '06:00', tokens: 3200000, cost: 3.2, tps: 135, cacheRate: 87 },
-      { time: '08:00', tokens: 18500000, cost: 18.5, tps: 158, cacheRate: 90 },
-      { time: '10:00', tokens: 42000000, cost: 42.0, tps: 172, cacheRate: 92 },
-      { time: '12:00', tokens: 35000000, cost: 35.0, tps: 165, cacheRate: 91 },
-      { time: '14:00', tokens: 58000000, cost: 58.0, tps: 184, cacheRate: 93 },
-      { time: '16:00', tokens: 68000000, cost: 68.0, tps: 178, cacheRate: 92 },
-      { time: '18:00', tokens: 41000000, cost: 41.0, tps: 162, cacheRate: 89 },
-      { time: '20:00', tokens: 52000000, cost: 52.0, tps: 175, cacheRate: 91 },
-      { time: '22:00', tokens: 28000000, cost: 28.0, tps: 154, cacheRate: 90 },
-    ];
-  }, []);
+  // 按指定时段 (今天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期) 聚合算力、缓存率与 tok/s 曲线
+  const computePerfSeries = (records: RequestRecord[], range: TimeRange) => {
+    const dayMs = 86400_000;
+    const isSingleDay = rangeBounds.isSingleDay;
 
-  const { pathD, areaD, points } = useMemo(() => {
-    const vals = hourlyData.map((d) => (activeMetric === 'tokens' ? d.tokens : d.cost));
-    const max = Math.max(...vals, 1);
-    const width = 800;
-    const height = 180;
-    const paddingX = 30;
-    const paddingY = 20;
-    const chartW = width - paddingX * 2;
-    const chartH = height - paddingY * 2;
+    let bucketCount = 12;
+    let minTs = rangeBounds.startTsMs ?? Date.now() - 29 * dayMs;
+    let maxTs = rangeBounds.endTsMs ?? Date.now();
 
-    const coords = hourlyData.map((d, i) => {
-      const val = activeMetric === 'tokens' ? d.tokens : d.cost;
-      const x = paddingX + (i / (hourlyData.length - 1)) * chartW;
-      const y = height - paddingY - (val / max) * chartH;
-      return { x, y, data: d };
-    });
-
-    if (coords.length < 2) return { pathD: '', areaD: '', points: [] };
-
-    let pD = `M ${coords[0].x} ${coords[0].y}`;
-    for (let i = 0; i < coords.length - 1; i++) {
-      const curr = coords[i];
-      const next = coords[i + 1];
-      const cpX1 = curr.x + (next.x - curr.x) / 2;
-      const cpY1 = curr.y;
-      const cpX2 = curr.x + (next.x - curr.x) / 2;
-      const cpY2 = next.y;
-      pD += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${next.x} ${next.y}`;
+    if (isSingleDay) {
+      bucketCount = 24;
+    } else if (range === '7days') {
+      bucketCount = 7;
+    } else if (range === '30days') {
+      bucketCount = 10;
+    } else if (range === 'custom') {
+      const spanDays = Math.max(2, Math.round((maxTs - minTs) / dayMs));
+      bucketCount = Math.min(14, spanDays);
+    } else {
+      // 'all' — 动态横跨真实最早~最晚时间戳
+      bucketCount = 12;
+      let earliest = Number.POSITIVE_INFINITY;
+      let latest = 0;
+      for (const r of records) {
+        const ts = r.timestamp || Date.parse(r.time.replace(' ', 'T'));
+        if (!Number.isNaN(ts) && ts > 0) {
+          if (ts < earliest) earliest = ts;
+          if (ts > latest) latest = ts;
+        }
+      }
+      if (earliest < Number.POSITIVE_INFINITY && latest >= earliest) {
+        minTs = earliest;
+        maxTs = Math.max(latest, earliest + dayMs);
+      }
     }
 
-    const first = coords[0];
-    const last = coords[coords.length - 1];
-    const aD = `${pD} L ${last.x} ${height - paddingY} L ${first.x} ${height - paddingY} Z`;
+    const tokSeries = new Array(bucketCount).fill(0);
+    const cacheSum = new Array(bucketCount).fill(0);
+    const promptSum = new Array(bucketCount).fill(0);
+    const bucketOutTok = new Array(bucketCount).fill(0);
+    const bucketDurMs = new Array(bucketCount).fill(0);
+    const tpsSum = new Array(bucketCount).fill(0);
+    const tpsCnt = new Array(bucketCount).fill(0);
+    const ttftSum = new Array(bucketCount).fill(0);
+    const ttftCnt = new Array(bucketCount).fill(0);
 
-    return { pathD: pD, areaD: aD, points: coords };
-  }, [hourlyData, activeMetric]);
+    let totalCached = 0;
+    let totalPrompt = 0;
+    let totalMeasuredOut = 0;
+    let totalMeasuredDurMs = 0;
+    let totalMeasuredDurCnt = 0;
+    let totalTps = 0;
+    let totalTpsCnt = 0;
+    let singlePeakTps = 0;
 
-  // 过滤后的流水列表
+    for (const r of records) {
+      let bIdx = -1;
+      const ts = r.timestamp || Date.parse(r.time.replace(' ', 'T'));
+      if (isSingleDay) {
+        if (ts > 0 && !Number.isNaN(ts)) {
+          bIdx = new Date(ts).getHours();
+        } else {
+          const m = r.time.match(/(\d{2}):\d{2}/);
+          if (m) bIdx = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+        }
+      } else if (!Number.isNaN(ts) && ts > 0) {
+        if (range === '7days' && rangeBounds.startTsMs) {
+          const dIdx = Math.floor((ts - rangeBounds.startTsMs) / dayMs);
+          if (dIdx >= 0 && dIdx < 7) bIdx = dIdx;
+        } else {
+          const span = Math.max(1, maxTs - minTs);
+          bIdx = Math.min(bucketCount - 1, Math.max(0, Math.floor(((ts - minTs) / span) * bucketCount)));
+        }
+      }
+
+      const hasMeasuredDur = r.durationMs > 0 && r.outputTokens > 0;
+      if (bIdx >= 0 && bIdx < bucketCount) {
+        tokSeries[bIdx] += r.inputTokens + r.cachedTokens + r.outputTokens;
+        cacheSum[bIdx] += r.cachedTokens;
+        promptSum[bIdx] += r.inputTokens + r.cachedTokens;
+        if (hasMeasuredDur) {
+          bucketOutTok[bIdx] += r.outputTokens;
+          bucketDurMs[bIdx] += r.durationMs;
+        }
+        if (r.tokensPerSecond > 0) {
+          tpsSum[bIdx] += r.tokensPerSecond;
+          tpsCnt[bIdx] += 1;
+        }
+        if (r.ttftMs > 0) {
+          ttftSum[bIdx] += r.ttftMs;
+          ttftCnt[bIdx] += 1;
+        }
+      }
+      totalCached += r.cachedTokens;
+      totalPrompt += r.inputTokens + r.cachedTokens;
+      if (hasMeasuredDur) {
+        totalMeasuredOut += r.outputTokens;
+        totalMeasuredDurMs += r.durationMs;
+        totalMeasuredDurCnt += 1;
+      }
+      if (r.tokensPerSecond > 0) {
+        totalTps += r.tokensPerSecond;
+        totalTpsCnt += 1;
+        if (r.tokensPerSecond > singlePeakTps) {
+          singlePeakTps = r.tokensPerSecond;
+        }
+      }
+    }
+
+    const fmtMd = (ms: number) => {
+      const d = new Date(ms);
+      return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    const bucketLabels: string[] = isSingleDay
+      ? Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`)
+      : Array.from({ length: bucketCount }, (_, i) => {
+          if (range === '7days' && rangeBounds.startTsMs) {
+            return fmtMd(rangeBounds.startTsMs + i * dayMs);
+          }
+          const step = Math.max(1, maxTs - minTs) / bucketCount;
+          return fmtMd(minTs + i * step);
+        });
+
+    const cacheSeries = promptSum.map((p, i) => (p > 0 ? Math.round((cacheSum[i] / p) * 1000) / 10 : 0));
+    const tpsSeries = tpsCnt.map((c, i) =>
+      bucketDurMs[i] > 0 && bucketOutTok[i] > 0
+        ? Math.round(((bucketOutTok[i] * 1000) / bucketDurMs[i]) * 10) / 10
+        : c > 0
+        ? Math.round((tpsSum[i] / c) * 10) / 10
+        : 0
+    );
+    const ttftSeries = ttftCnt.map((c, i) =>
+      c > 0 ? Math.round((ttftSum[i] / c / 1000) * 100) / 100 : 0
+    );
+    const avgCache = totalPrompt > 0 ? (totalCached / totalPrompt) * 100 : 0;
+    const avgTps =
+      totalMeasuredDurMs > 0 && totalMeasuredOut > 0
+        ? (totalMeasuredOut * 1000) / totalMeasuredDurMs
+        : totalTpsCnt > 0
+        ? totalTps / totalTpsCnt
+        : 0;
+    const avgDurationMs = totalMeasuredDurCnt > 0 ? totalMeasuredDurMs / totalMeasuredDurCnt : 0;
+    const seriesPeakTps = Math.max(...tpsSeries, 0);
+    const rangeLabel =
+      range === 'today'
+        ? tUi(lang, 'stats_range_today_zero')
+        : range === '7days'
+        ? tUi(lang, 'stats_range_7d')
+        : range === '30days'
+        ? tUi(lang, 'stats_range_30d')
+        : range === 'all'
+        ? tUi(lang, 'stats_range_all')
+        : customStartDate === customEndDate
+        ? customStartDate
+        : `${customStartDate.slice(5)} ~ ${customEndDate.slice(5)}`;
+
+    const zoomLabel = isSingleDay ? '24h' : range === '7days' ? '7d' : range === '30days' ? '30d' : tUi(lang, 'stats_zoom_full');
+
+    return {
+      tokSeries,
+      bucketLabels,
+      cacheSeries,
+      tpsSeries,
+      ttftSeries,
+      avgCache,
+      peakCache: Math.max(...cacheSeries, 0),
+      avgTps,
+      avgDurationMs,
+      peakTps: singlePeakTps,
+      seriesPeakTps,
+      count: records.length,
+      rangeLabel,
+      zoomLabel,
+    };
+  };
+
+  // 过滤会话流水
   const filteredRecords = useMemo(() => {
     return reportData.recentTraffic.filter((r) => {
-      if (hostFilter !== 'all' && r.host !== hostFilter) return false;
+      if (workspaceFilter !== 'all' && r.workspace !== workspaceFilter) return false;
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
       return (
-        r.accountEmail.toLowerCase().includes(q) ||
+        (r.sessionTitle || '').toLowerCase().includes(q) ||
         r.requestedModel.toLowerCase().includes(q) ||
-        r.physicalModel.toLowerCase().includes(q) ||
-        r.workspace.toLowerCase().includes(q)
+        r.workspace.toLowerCase().includes(q) ||
+        r.sessionId.toLowerCase().includes(q)
       );
     });
-  }, [reportData.recentTraffic, hostFilter, searchQuery]);
+  }, [reportData.recentTraffic, workspaceFilter, searchQuery]);
 
-  // 上下文 5 层水库拆解
-  const activeCtx = reportData.activeContext;
-  const contextBreakdown = useMemo(() => {
-    if (!activeCtx) return null;
-    const total =
-      activeCtx.cachedTokens +
-      activeCtx.promptTokens +
-      activeCtx.thinkingTokens +
-      activeCtx.toolTokens +
-      activeCtx.completionTokens;
-    const totSafe = total > 0 ? total : 1;
+  const fmtTok = (n: number) => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return `${n}`;
+  };
 
-    return {
-      total,
-      cachedPct: ((activeCtx.cachedTokens / totSafe) * 100).toFixed(1),
-      promptPct: ((activeCtx.promptTokens / totSafe) * 100).toFixed(1),
-      thinkingPct: ((activeCtx.thinkingTokens / totSafe) * 100).toFixed(1),
-      toolPct: ((activeCtx.toolTokens / totSafe) * 100).toFixed(1),
-      outputPct: ((activeCtx.completionTokens / totSafe) * 100).toFixed(1),
-    };
-  }, [activeCtx]);
+  const fmtUsd = (n: number) => {
+    if (n >= 100) return `$${n.toFixed(0)}`;
+    if (n >= 10) return `$${n.toFixed(1)}`;
+    if (n >= 0.01) return `$${n.toFixed(2)}`;
+    return '$0';
+  };
+
+  const fmtDurCompact = (ms: number) => {
+    if (ms >= 3_600_000) return `${(ms / 3_600_000).toFixed(1)}h`;
+    if (ms >= 60_000) return `${Math.round(ms / 60_000)}m`;
+    if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
+    return `${ms}ms`;
+  };
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 py-2 flex flex-col gap-3 select-none animate-in fade-in-50 duration-300">
+    <div className="w-full max-w-[1400px] mx-auto px-4 py-3 flex flex-col gap-3 select-none">
       {/* ============================================================== */}
-      {/* 顶部主分段控制器 (5 大高阶维度：全局 / 账号 / 项目 / 模型 / 流水)  */}
+      {/* 顶部 4 视角药丸导航栏（100% 真实本地数据视角）                     */}
       {/* ============================================================== */}
-      <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
-        {/* 左侧：5 维导航胶囊 */}
+      <div className="relative z-40 bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
         <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/5">
           <button
             onClick={() => setActiveView('overview')}
@@ -1074,19 +1069,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             }`}
           >
             <TrendingUp className="w-3.5 h-3.5" />
-            <span>{isZh ? '全局大盘' : 'Overview'}</span>
-          </button>
-
-          <button
-            onClick={() => setActiveView('account')}
-            className={`px-3 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all ${
-              activeView === 'account'
-                ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                : 'text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100'
-            }`}
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            <span>{isZh ? '账号详情' : 'Account Drill'}</span>
+            <span>{tUi(lang, 'stats_tab_overview')}</span>
           </button>
 
           <button
@@ -1098,7 +1081,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             }`}
           >
             <FolderGit2 className="w-3.5 h-3.5" />
-            <span>{isZh ? '项目详情' : 'Project Drill'}</span>
+            <span>{tUi(lang, 'stats_tab_projects')}</span>
             <span className="px-1 py-0 rounded text-[9px] bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400 font-bold">
               {reportData.byProject.length}
             </span>
@@ -1113,7 +1096,10 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             }`}
           >
             <Cpu className="w-3.5 h-3.5" />
-            <span>{isZh ? '模型详情' : 'Model Drill'}</span>
+            <span>{tUi(lang, 'stats_tab_models')}</span>
+            <span className="px-1 py-0 rounded text-[9px] bg-purple-50 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400 font-bold">
+              {reportData.byModel.length}
+            </span>
           </button>
 
           <button
@@ -1125,28 +1111,31 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
-            <span>{isZh ? '逐笔流水' : 'Ledger'}</span>
+            <span>{tUi(lang, 'stats_tab_ledger')}</span>
             <span className="px-1 py-0 rounded text-[9px] bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400 font-bold">
               {reportData.recentTraffic.length}
             </span>
           </button>
         </div>
 
-        {/* 右侧：时间范围与刷新 */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-[11px]">
+        <div className="flex items-center gap-2 relative">
+          <div className="flex items-center gap-1 text-[11px] flex-wrap">
             <span className="text-[10px] text-gray-400 mr-1 flex items-center gap-1 font-medium">
               <Calendar className="w-3 h-3 opacity-60" />
-              <span>{isZh ? '范围:' : 'Range:'}</span>
+              <span>{tUi(lang, 'stats_range_label')}</span>
             </span>
             {[
-              { id: 'today' as TimeRange, label: isZh ? '今天' : 'Today' },
-              { id: '7days' as TimeRange, label: isZh ? '近 7 天' : '7 Days' },
-              { id: '30days' as TimeRange, label: isZh ? '近 30 天' : '30 Days' },
+              { id: 'today' as TimeRange, label: tUi(lang, 'stats_range_today_zero') },
+              { id: '7days' as TimeRange, label: tUi(lang, 'stats_range_7d') },
+              { id: '30days' as TimeRange, label: tUi(lang, 'stats_range_30d') },
+              { id: 'all' as TimeRange, label: tUi(lang, 'stats_range_all') },
             ].map((item) => (
               <button
                 key={item.id}
-                onClick={() => setTimeRange(item.id)}
+                onClick={() => {
+                  setTimeRange(item.id);
+                  setDatePickerOpen(false);
+                }}
                 className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
                   timeRange === item.id
                     ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold border border-blue-200/60 dark:border-blue-500/20 shadow-2xs'
@@ -1156,13 +1145,131 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 {item.label}
               </button>
             ))}
+
+            {/* 自定义单日 / 日期区间选择器 */}
+            <div ref={datePickerRef} className="relative">
+              <button
+                onClick={() => setDatePickerOpen((v) => !v)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-medium flex items-center gap-1 transition-all ${
+                  timeRange === 'custom'
+                    ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold border border-blue-200/60 dark:border-blue-500/20 shadow-2xs'
+                    : 'text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <span>
+                  {timeRange === 'custom'
+                    ? customStartDate === customEndDate
+                      ? customStartDate
+                      : `${customStartDate.slice(5)} ~ ${customEndDate.slice(5)}`
+                    : tUi(lang, 'stats_range_custom')}
+                </span>
+                <ChevronDown className="w-2.5 h-2.5 opacity-70" />
+              </button>
+
+              {datePickerOpen && (
+                <div
+                  className="absolute right-0 mt-1.5 z-40 w-64 p-3 rounded-xl bg-white/95 dark:bg-[#18191e]/95 backdrop-blur-xl border border-gray-200/80 dark:border-white/10 shadow-xl flex flex-col gap-2.5 text-[10.5px]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-gray-800 dark:text-zinc-200">
+                        {tUi(lang, 'stats_range_custom')}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            const yd = new Date();
+                            yd.setDate(yd.getDate() - 1);
+                            const yStr = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, '0')}-${String(yd.getDate()).padStart(2, '0')}`;
+                            setCustomStartDate(yStr);
+                            setCustomEndDate(yStr);
+                            setTimeRange('custom');
+                            setDatePickerOpen(false);
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06] hover:bg-blue-50 dark:hover:bg-blue-500/15 text-gray-600 dark:text-zinc-300 text-[9.5px]"
+                        >
+                          {tUi(lang, 'stats_date_yesterday')}
+                        </button>
+                        <button
+                          onClick={() => {
+                            const now = new Date();
+                            const mStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+                            setCustomStartDate(mStart);
+                            setCustomEndDate(todayStr);
+                            setTimeRange('custom');
+                            setDatePickerOpen(false);
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06] hover:bg-blue-50 dark:hover:bg-blue-500/15 text-gray-600 dark:text-zinc-300 text-[9.5px]"
+                        >
+                          {tUi(lang, 'stats_date_this_month')}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-center justify-between gap-2 text-gray-500 dark:text-zinc-400">
+                        <span>{tUi(lang, 'stats_date_start')}</span>
+                        <input
+                          type="date"
+                          value={customStartDate}
+                          max={todayStr}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v) {
+                              setCustomStartDate(v);
+                              if (v > customEndDate) setCustomEndDate(v);
+                              setTimeRange('custom');
+                            }
+                          }}
+                          className="px-2 py-1 rounded-lg bg-gray-100 dark:bg-white/[0.06] border border-gray-200/70 dark:border-white/10 text-gray-900 dark:text-zinc-100 font-mono text-[10px] outline-none focus:border-blue-500"
+                        />
+                      </label>
+                      <label className="flex items-center justify-between gap-2 text-gray-500 dark:text-zinc-400">
+                        <span>{tUi(lang, 'stats_date_end')}</span>
+                        <input
+                          type="date"
+                          value={customEndDate}
+                          min={customStartDate}
+                          max={todayStr}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v) {
+                              setCustomEndDate(v);
+                              if (v < customStartDate) setCustomStartDate(v);
+                              setTimeRange('custom');
+                            }
+                          }}
+                          className="px-2 py-1 rounded-lg bg-gray-100 dark:bg-white/[0.06] border border-gray-200/70 dark:border-white/10 text-gray-900 dark:text-zinc-100 font-mono text-[10px] outline-none focus:border-blue-500"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
+                      <span className="text-[9px] text-gray-400">
+                        {customStartDate === customEndDate
+                          ? tUi(lang, 'stats_date_single_day')
+                          : tUi(lang, 'stats_date_inclusive_days')}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setTimeRange('custom');
+                          setDatePickerOpen(false);
+                        }}
+                        className="px-2.5 py-0.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white font-semibold text-[10px]"
+                      >
+                        {tUi(lang, 'stats_date_apply')}
+                      </button>
+                    </div>
+                  </div>
+              )}
+            </div>
           </div>
 
           <button
             onClick={fetchReport}
             disabled={isLoading}
             className="p-1 rounded-lg border border-gray-200/70 dark:border-white/5 hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-500 dark:text-zinc-400 transition-colors"
-            title={isZh ? '刷新遥测' : 'Refresh Telemetry'}
+            title={tUi(lang, 'stats_refresh_title')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-blue-500' : ''}`} />
           </button>
@@ -1170,1636 +1277,3769 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
       </div>
 
       {/* ============================================================== */}
-      {/* 视角 1：🌐 全局大盘 (Overview)                                  */}
+      {/* 视角 1：📊 全局大盘 (100% 真实本地 SQLite + Transcript 数据)      */}
       {/* ============================================================== */}
-      {activeView === 'overview' && (
-        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
-          {/* 上下文深度与压缩雷达 */}
-          {activeCtx && (
-            <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-blue-500/20 dark:border-blue-500/20 shadow-2xs flex flex-col gap-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="p-1 rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                    <Sparkles className="w-4 h-4" />
+      {activeView === 'overview' && (() => {
+        const globalPerf = computePerfSeries(reportData.recentTraffic, timeRange);
+        const ttftVals = reportData.recentTraffic.filter((r) => r.ttftMs > 0).map((r) => r.ttftMs);
+        const avgTtftSec =
+          (reportData.avgTtftMs ?? 0) > 0
+            ? (reportData.avgTtftMs ?? 0) / 1000
+            : ttftVals.length > 0
+            ? ttftVals.reduce((a, b) => a + b, 0) / ttftVals.length / 1000
+            : 0;
+        const avgDurSec =
+          (reportData.avgDurationMs ?? 0) > 0
+            ? (reportData.avgDurationMs ?? 0) / 1000
+            : globalPerf.avgDurationMs > 0
+            ? globalPerf.avgDurationMs / 1000
+            : 0;
+        const displayGlobalTps = (reportData.avgSpeedTps ?? 0) > 0 ? (reportData.avgSpeedTps ?? 0) : globalPerf.avgTps;
+        const displayGlobalPeakTps = Math.max(reportData.peakSpeedTps ?? 0, globalPerf.peakTps);
+        const alertRecords = reportData.recentTraffic.filter((r) => {
+          const totalIn = r.inputTokens + r.cachedTokens;
+          const cPct = totalIn > 0 ? (r.cachedTokens / totalIn) * 100 : 100;
+          // 过滤新会话/子 Agent 首轮正常冷启动，只对长上下文中段异常掉缓存或严重慢速告警
+          const midSessionCacheDrop = totalIn >= 30_000 && cPct < 30;
+          const severeSlowOutput = r.outputTokens >= 200 && r.tokensPerSecond > 0 && r.tokensPerSecond < 12;
+          return midSessionCacheDrop || severeSlowOutput;
+        });
+        const apiErrors = reportData.apiErrors ?? [];
+        const sessionContexts = reportData.sessionContexts ?? [];
+        const totalAlertCount = apiErrors.length + alertRecords.length;
+        const turnsPerPrompt =
+          (reportData.userPromptCount ?? 0) > 0 && reportData.totalRequests > 0
+            ? reportData.totalRequests / (reportData.userPromptCount ?? 1)
+            : 0;
+        const poolSplit = reportData.poolSplit;
+        const poolTotalTok = (poolSplit?.geminiTokens ?? 0) + (poolSplit?.claudeTokens ?? 0);
+        const geminiPoolPct = poolTotalTok > 0 ? Math.round(((poolSplit?.geminiTokens ?? 0) / poolTotalTok) * 100) : 0;
+        const claudePoolPct = poolTotalTok > 0 ? 100 - geminiPoolPct : 0;
+        const tb = reportData.timeBreakdown;
+        const tbTotalMs = (tb?.ttftMs ?? 0) + (tb?.streamingMs ?? 0) + (tb?.toolExecMs ?? 0);
+
+        return (
+          <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+            {/* 第一层：4 列 Apple 克制中性排版核心 KPI (色相极简，数值权威统一) */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+              <div className="p-3 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
+                  <span>{tUi(lang, 'stats_kpi_total_tokens')}</span>
+                  <Sparkles className="w-3.5 h-3.5 text-slate-400/80 dark:text-zinc-500" />
+                </div>
+                <div className="my-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-zinc-50">
+                    {fmtTok(reportData.totalTokens)}
                   </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[12px] font-bold text-gray-900 dark:text-zinc-100 tracking-tight">
-                      {isZh ? '活跃会话深度与压缩雷达' : 'Active Context & Compaction Radar'}
-                    </span>
-                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md bg-gray-100 dark:bg-white/[0.06] text-gray-600 dark:text-zinc-300 font-mono">
-                      {activeCtx.hostTarget}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
-                      activeCtx.healthStatus === 'healthy'
-                        ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200/50'
-                        : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200/50'
-                    }`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                    <span>{activeCtx.healthStatus === 'healthy' ? (isZh ? '安全健康 (空间充裕)' : 'Healthy') : (isZh ? '建议压缩' : 'Warning')}</span>
+                  <span className="text-[9.5px] font-medium text-slate-500 dark:text-zinc-400 font-mono">
+                    {reportData.totalRequests} reqs
                   </span>
-                </div>
-              </div>
-
-              {/* 会话元数据 */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-gray-100 dark:border-white/5">
-                <div className="flex items-center gap-2 text-[10.5px]">
-                  <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate max-w-sm">
-                    {activeCtx.title}
-                  </span>
-                  <span className="text-[9.5px] px-1.5 py-0 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono flex items-center gap-1">
-                    <FolderGit2 className="w-2.5 h-2.5" />
-                    <span>{activeCtx.workspace}</span>
-                  </span>
-                  <span className="text-[9.5px] text-gray-400 font-mono">
-                    {activeCtx.stepCount.toLocaleString()} {isZh ? '步交互' : 'steps'}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3 text-[10.5px] font-mono">
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-gray-400 text-[9.5px]">{isZh ? '已占上下文:' : 'Context:'}</span>
-                    <span className="font-bold text-gray-900 dark:text-zinc-100 text-sm">
-                      {(activeCtx.currentUsedTokens / 1000).toFixed(1)}K
-                    </span>
-                    <span className="text-gray-400 text-[9.5px]">
-                      / {(activeCtx.budgetTokens / 1000).toFixed(0)}K ({activeCtx.usagePercentage.toFixed(1)}%)
-                    </span>
-                  </div>
-                  <span className="text-gray-300 dark:text-zinc-700">|</span>
-                  <div className="text-[9.5px] text-blue-600 dark:text-blue-400 font-medium">
-                    {isZh
-                      ? `距自动压缩阈值还剩 ~${(activeCtx.remainingTokens / 1000).toFixed(1)}K`
-                      : `~${(activeCtx.remainingTokens / 1000).toFixed(1)}K to compact`}
-                  </div>
-                </div>
-              </div>
-
-              {/* 5 层分段进度条 */}
-              {contextBreakdown && (
-                <div className="flex flex-col gap-1.5 mt-0.5">
-                  <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden flex">
-                    <div style={{ width: `${contextBreakdown.cachedPct}%` }} className="h-full bg-emerald-500" />
-                    <div style={{ width: `${contextBreakdown.promptPct}%` }} className="h-full bg-blue-500" />
-                    <div style={{ width: `${contextBreakdown.thinkingPct}%` }} className="h-full bg-purple-500" />
-                    <div style={{ width: `${contextBreakdown.toolPct}%` }} className="h-full bg-amber-500" />
-                    <div style={{ width: `${contextBreakdown.outputPct}%` }} className="h-full bg-cyan-400" />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-1 text-[9px] text-gray-400 font-mono">
-                    <span>🟢 缓存 {(activeCtx.cachedTokens / 1000).toFixed(1)}K ({contextBreakdown.cachedPct}%)</span>
-                    <span>🔵 输入 {(activeCtx.promptTokens / 1000).toFixed(1)}K ({contextBreakdown.promptPct}%)</span>
-                    <span>🟣 思考 {(activeCtx.thinkingTokens / 1000).toFixed(1)}K ({contextBreakdown.thinkingPct}%)</span>
-                    <span>🟡 工具 {(activeCtx.toolTokens / 1000).toFixed(1)}K ({contextBreakdown.toolPct}%)</span>
-                    <span>🔷 生成 {(activeCtx.completionTokens / 1000).toFixed(1)}K ({contextBreakdown.outputPct}%)</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 4 个核心 KPI */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-            <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-              <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
-                <span>{isZh ? '总吞吐 (Tokens)' : 'Total Tokens'}</span>
-                <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-              </div>
-              <div className="my-1.5 flex items-baseline gap-1.5">
-                <span className="text-2xl font-bold tracking-tight text-gray-900 dark:text-zinc-100 font-mono">
-                  {(reportData.totalTokens / 1000000).toFixed(1)}M
-                </span>
-                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  {reportData.totalRequests} {isZh ? '次交互' : 'reqs'}
-                </span>
-              </div>
-              <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
-                <span>输入 {(reportData.totalPromptTokens / 1000000).toFixed(1)}M</span>
-                <span>输出 {(reportData.totalOutputTokens / 1000).toFixed(0)}K</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-              <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
-                <span>{isZh ? '估算节省官方费用' : 'API Cost Saved'}</span>
-                <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
-              </div>
-              <div className="my-1.5 flex items-baseline gap-1">
-                <span className="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400 font-mono">
-                  ${reportData.totalSavedCostUsd.toFixed(2)}
-                </span>
-                <span className="text-[10px] text-gray-400 font-medium">USD</span>
-              </div>
-              <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
-                <span>官方缓存复用节流</span>
-                <span className="text-emerald-600 font-semibold">100% 免费</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-              <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
-                <span>{isZh ? '全局缓存命中率' : 'Cache Hit Rate'}</span>
-                <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
-              </div>
-              <div className="my-1.5 flex items-baseline gap-1.5">
-                <span className="text-2xl font-bold tracking-tight text-gray-900 dark:text-zinc-100 font-mono">
-                  {reportData.globalCacheHitRate.toFixed(1)}%
-                </span>
-                <span className="text-[10px] text-emerald-600 font-medium">{isZh ? '极佳' : 'High'}</span>
-              </div>
-              <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
-                <span>复用 {(reportData.totalCachedTokens / 1000000).toFixed(1)}M 缓存</span>
-                <span>首字提速 3.2x</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-              <div className="flex items-center justify-between text-[10.5px] text-gray-500 dark:text-zinc-400 font-medium">
-                <span>{isZh ? '平均生成流速' : 'Throughput Speed'}</span>
-                <Zap className="w-3.5 h-3.5 text-amber-500" />
-              </div>
-              <div className="my-1.5 flex items-baseline gap-1">
-                <span className="text-2xl font-bold tracking-tight text-gray-900 dark:text-zinc-100 font-mono">
-                  {reportData.avgSpeedTps.toFixed(1)}
-                </span>
-                <span className="text-[10px] text-gray-400 font-medium">tok/s</span>
-              </div>
-              <div className="text-[9.5px] text-gray-400 font-mono flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
-                <span>首字延迟 {(reportData.avgTtftMs / 1000).toFixed(2)}s</span>
-                <span>无缝打字流</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 波形趋势图 */}
-          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-3 px-4 shadow-2xs flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5 text-blue-500" />
-                <span>{isZh ? '24 小时全网吞吐与负载时间波形' : '24h System Throughput & Load Curve'}</span>
-              </span>
-              <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
-                <button
-                  onClick={() => setActiveMetric('tokens')}
-                  className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
-                    activeMetric === 'tokens'
-                      ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                      : 'text-gray-500 dark:text-zinc-400'
-                  }`}
-                >
-                  {isZh ? 'Token 吞吐' : 'Tokens'}
-                </button>
-                <button
-                  onClick={() => setActiveMetric('cost')}
-                  className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
-                    activeMetric === 'cost'
-                      ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                      : 'text-gray-500 dark:text-zinc-400'
-                  }`}
-                >
-                  {isZh ? '节省金额 ($)' : 'Cost Saved ($)'}
-                </button>
-              </div>
-            </div>
-
-            <div className="relative w-full h-[180px] mt-1 select-none">
-              <svg viewBox="0 0 800 180" className="w-full h-full overflow-visible" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="ov-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
-                <line x1="30" y1="30" x2="770" y2="30" stroke="currentColor" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="4 4" />
-                <line x1="30" y1="90" x2="770" y2="90" stroke="currentColor" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="4 4" />
-                <line x1="30" y1="150" x2="770" y2="150" stroke="currentColor" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="4 4" />
-                <path d={areaD} fill="url(#ov-grad)" />
-                <path d={pathD} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                {hoveredPointIndex !== null && points[hoveredPointIndex] && (
-                  <>
-                    <line x1={points[hoveredPointIndex].x} y1="20" x2={points[hoveredPointIndex].x} y2="160" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3 3" className="opacity-70" />
-                    <circle cx={points[hoveredPointIndex].x} cy={points[hoveredPointIndex].y} r="4.5" fill="#3b82f6" stroke="white" strokeWidth="2" className="shadow-md" />
-                  </>
-                )}
-              </svg>
-
-              <div className="absolute inset-0 flex">
-                {points.map((_, i) => (
-                  <div key={i} onMouseEnter={() => setHoveredPointIndex(i)} onMouseLeave={() => setHoveredPointIndex(null)} className="flex-1 h-full cursor-crosshair" />
-                ))}
-              </div>
-
-              {hoveredPointIndex !== null && points[hoveredPointIndex] && (
-                <div
-                  style={{
-                    left: `${(points[hoveredPointIndex].x / 800) * 100}%`,
-                    top: `${Math.max(10, points[hoveredPointIndex].y - 45)}px`,
-                    transform: 'translateX(-50%)',
-                  }}
-                  className="absolute pointer-events-none z-30 p-1.5 px-2.5 rounded-lg bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 shadow-xl text-[10px] flex flex-col gap-0.5 whitespace-nowrap"
-                >
-                  <div className="flex items-center justify-between gap-3 font-semibold">
-                    <span>{points[hoveredPointIndex].data.time}</span>
-                    <span className="text-emerald-400 dark:text-emerald-600 font-mono">⚡ {points[hoveredPointIndex].data.tps} tok/s</span>
-                  </div>
-                  <div className="text-[9px] opacity-80 font-mono">
-                    {activeMetric === 'tokens' ? `${(points[hoveredPointIndex].data.tokens / 1000000).toFixed(1)}M Tokens` : `省 $${points[hoveredPointIndex].data.cost.toFixed(2)} USD`} · 缓存 {points[hoveredPointIndex].data.cacheRate}%
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono px-2 pt-1 border-t border-gray-100 dark:border-white/5">
-              <span>00:00</span>
-              <span>06:00</span>
-              <span>12:00</span>
-              <span>16:00 (高峰)</span>
-              <span>20:00</span>
-              <span>22:00</span>
-            </div>
-          </div>
-
-          {/* 3 个维度的快速下钻导航入口卡片 (Direct Drill Shortcuts) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-            <button
-              onClick={() => setActiveView('account')}
-              className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs hover:border-blue-500/40 text-left transition-all flex flex-col justify-between group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
-                  <UserCheck className="w-3.5 h-3.5 text-blue-500" />
-                  <span>{isZh ? '进入账号详情透视' : 'Account Drill-down'}</span>
-                </span>
-                <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
-              </div>
-              <p className="text-[10px] text-gray-400 mt-1">
-                {isZh ? `管理 ${reportData.byAccount.length} 个主力账号资产、5h/7d 实时水位与工时热力图` : 'Deep asset analysis, quotas and heatmaps'}
-              </p>
-            </button>
-
-            <button
-              onClick={() => setActiveView('project')}
-              className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs hover:border-indigo-500/40 text-left transition-all flex flex-col justify-between group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
-                  <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>{isZh ? '进入项目详情透视' : 'Project Drill-down'}</span>
-                </span>
-                <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
-              </div>
-              <p className="text-[10px] text-gray-400 mt-1">
-                {isZh ? `分析 ${reportData.byProject.length} 个核心代码库研发效能、模型偏好与会话档案` : 'Workspace engineering efficiency and models'}
-              </p>
-            </button>
-
-            <button
-              onClick={() => setActiveView('model')}
-              className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs hover:border-purple-500/40 text-left transition-all flex flex-col justify-between group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-purple-500" />
-                  <span>{isZh ? '进入模型详情透视' : 'Model Drill-down'}</span>
-                </span>
-                <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:translate-x-0.5 transition-transform" />
-              </div>
-              <p className="text-[10px] text-gray-400 mt-1">
-                {isZh ? '物理上游满血保真度、暗降率诊断与流速延迟瀑布流' : 'Physical upstream fidelity & TTFT latency'}
-              </p>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* 视角 2：👤 账号详情透视 (Account Deep Dive - 资产与健康视角)       */}
-      {/* ============================================================== */}
-      {activeView === 'account' && (
-        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
-          {/* 顶部：账号选择水平胶囊栏 */}
-          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center justify-between gap-3 overflow-x-auto">
-            <div className="flex items-center gap-2 overflow-x-auto">
-              <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
-                <UserCheck className="w-3.5 h-3.5 text-blue-500" />
-                <span>{isZh ? '选择目标账号:' : 'Select Account:'}</span>
-              </span>
-
-              {reportData.byAccount.map((acc) => (
-                <button
-                  key={acc.email}
-                  onClick={() => setSelectedAccountEmail(acc.email)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
-                    selectedAccountEmail === acc.email
-                      ? 'bg-blue-600 text-white font-semibold shadow-xs'
-                      : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${acc.isHealthy ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                  <span>{acc.email}</span>
-                  {acc.tags && acc.tags.length > 0 && (
-                    <span className={`text-[8.5px] px-1 py-0 rounded ${selectedAccountEmail === acc.email ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
-                      {acc.tags[0]}
+                  {(reportData.totalEstimatedCostUsd ?? 0) >= 0.01 && (
+                    <span
+                      title={tUi(lang, 'stats_api_equiv_hint')}
+                      className="ml-auto text-[10px] font-mono font-medium text-slate-500 dark:text-zinc-400"
+                    >
+                      ≈ {fmtUsd(reportData.totalEstimatedCostUsd ?? 0)}
                     </span>
                   )}
-                </button>
-              ))}
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-zinc-400 tabular-nums flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-white/[0.08]">
+                  <span>{tUi(lang, 'stats_input')} {fmtTok(reportData.totalPromptTokens)}</span>
+                  <span
+                    title={
+                      (reportData.totalThinkingTokens ?? 0) > 0
+                        ? `${tUi(lang, 'stats_detail_thinking_tokens')}: ${fmtTok(reportData.totalThinkingTokens ?? 0)}`
+                        : undefined
+                    }
+                    className="flex items-center gap-1"
+                  >
+                    <span>{tUi(lang, 'stats_output')} {fmtTok(reportData.totalOutputTokens)}</span>
+                    {(reportData.totalThinkingTokens ?? 0) > 0 && reportData.totalOutputTokens > 0 && (
+                      <span className="text-indigo-500/80 dark:text-indigo-400/80">
+                        ({tUi(lang, 'stats_think_short')} {Math.round(((reportData.totalThinkingTokens ?? 0) / reportData.totalOutputTokens) * 100)}%)
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
+                  <span>{tUi(lang, 'stats_kpi_cache_hit')}</span>
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-500/80 dark:text-emerald-400/80" />
+                </div>
+                <div className="my-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-zinc-50">
+                    {reportData.globalCacheHitRate.toFixed(1)}%
+                  </span>
+                  {apiErrors.length > 0 ? (
+                    <button
+                      onClick={() => setOverviewRightTab('alerts')}
+                      className="text-[9px] font-mono font-semibold text-rose-500/90 dark:text-rose-400/90 hover:underline"
+                      title={tUi(lang, 'stats_alerts_count', { count: totalAlertCount })}
+                    >
+                      {apiErrors.length} API
+                    </button>
+                  ) : totalAlertCount > 0 ? (
+                    <button
+                      onClick={() => setOverviewRightTab('alerts')}
+                      className="text-[9px] font-mono text-slate-400 dark:text-zinc-500 hover:text-slate-600 dark:hover:text-zinc-300 hover:underline"
+                    >
+                      {tUi(lang, 'stats_alerts_count', { count: totalAlertCount })}
+                    </button>
+                  ) : (
+                    <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80">
+                      {tUi(lang, 'stats_healthy')}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-zinc-400 tabular-nums flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-white/[0.08]">
+                  <span>{tUi(lang, 'stats_reused')} {fmtTok(reportData.totalCachedTokens)}</span>
+                  <span className="text-emerald-600/85 dark:text-emerald-400/85 font-medium">
+                    {reportData.totalSavedCostUsd >= 0.01
+                      ? tUi(lang, 'stats_saved_usd', { val: fmtUsd(reportData.totalSavedCostUsd) })
+                      : 'Prompt Cache'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
+                  <span>{tUi(lang, 'stats_kpi_avg_speed')}</span>
+                  <TrendingUp className="w-3.5 h-3.5 text-slate-400/80 dark:text-zinc-500" />
+                </div>
+                <div className="my-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-zinc-50">
+                    {displayGlobalTps.toFixed(1)}
+                  </span>
+                  <span className="text-[9.5px] font-mono text-slate-400 dark:text-zinc-500">tok/s</span>
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-zinc-400 tabular-nums flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-white/[0.08]">
+                  <span>{tUi(lang, 'stats_peak')} {displayGlobalPeakTps > 0 ? `${displayGlobalPeakTps.toFixed(0)} tok/s` : '-'}</span>
+                  <span
+                    title={
+                      avgTtftSec > 0 && avgDurSec > 0
+                        ? `TTFT ${avgTtftSec.toFixed(2)}s · ${tUi(lang, 'stats_avg_duration')} ${avgDurSec.toFixed(2)}s`
+                        : undefined
+                    }
+                  >
+                    {avgTtftSec > 0
+                      ? `TTFT ${avgTtftSec.toFixed(1)}s`
+                      : avgDurSec > 0
+                      ? `${tUi(lang, 'stats_avg_duration')} ${avgDurSec.toFixed(1)}s`
+                      : '-'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
+                  <span>{tUi(lang, 'stats_kpi_steps_tools')}</span>
+                  <Activity className="w-3.5 h-3.5 text-slate-400/80 dark:text-zinc-500" />
+                </div>
+                <div className="my-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-zinc-50">
+                    {(reportData.agentHierarchy?.totalSteps ?? 0).toLocaleString()}
+                  </span>
+                  <span className="text-[9.5px] font-mono text-slate-500 dark:text-zinc-400 font-medium">
+                    {totalToolCalls.toLocaleString()} calls
+                  </span>
+                  {turnsPerPrompt > 0 && (
+                    <span
+                      title={`${reportData.userPromptCount ?? 0} → ${reportData.totalRequests} reqs`}
+                      className="ml-auto text-[9.5px] font-mono text-slate-500 dark:text-zinc-400 font-medium"
+                    >
+                      {tUi(lang, 'stats_turns_per_prompt', { val: turnsPerPrompt.toFixed(1) })}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-zinc-400 tabular-nums flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-white/[0.08]">
+                  <span>{tUi(lang, 'stats_sessions_projects', { sessions: reportData.agentHierarchy?.totalConversations ?? 0, projects: reportData.byProject.length })}</span>
+                  <span className="inline-flex items-center gap-1 text-emerald-600/85 dark:text-emerald-400/85 font-medium">
+                    {(reportData.agentHierarchy?.runningCount ?? 0) > 0 && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/85" />
+                    )}
+                    {tUi(lang, 'stats_running_count', { count: reportData.agentHierarchy?.runningCount ?? 0 })}
+                  </span>
+                </div>
+              </div>
             </div>
 
-            {currentAccount && (
-              <div className="shrink-0 flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-500/20 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                  <span>{isZh ? '挂载于 Antigravity IDE · 零暗降' : 'Attached to IDE · 100% Fidelity'}</span>
-                </span>
-              </div>
-            )}
-          </div>
+            {/* 第二层 (50/50 黄金对称)：Apple HIG 单轴交互光谱 + 耗时三段拆解卡 (6列) + 3-Tab 工具/水位/预警卡 (6列) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+              {/* 左卡 (6 cols)：单轴可切换遥测光谱 + Apple Storage 风格耗时拆解条 */}
+              {(() => {
+                const chron = [...reportData.recentTraffic].reverse();
+                const useActive = spectrumZoom === 'active' && chron.length >= 2;
 
-          {currentAccount && (
-            <div className="flex flex-col gap-3">
-              {/* ========================================================= */}
-              {/* 【顶层身份与微型额度 Bar】 (对齐 Accounts.tsx 真实双轨实现)   */}
-              {/* ========================================================= */}
-              <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
-                {/* 左侧身份卡 */}
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white font-bold text-xs shadow-xs">
-                    {currentAccount.email.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex flex-col">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-gray-900 dark:text-zinc-100">{currentAccount.email}</span>
-                      {currentAccount.tags.map((tag) => (
-                        <span key={tag} className="text-[9px] px-1.5 py-0.2 rounded bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 font-medium">
-                          {tag}
-                        </span>
-                      ))}
-                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-mono font-medium">
-                        PRO Tier
-                      </span>
-                    </div>
-                    <span className="text-[9.5px] text-gray-400 font-mono">
-                      Account ID: {currentAccount.accountId} · 上次同步: 刚刚
-                    </span>
-                  </div>
-                </div>
+                // 当请求数 > 42 时自动聚合为 42 个平滑采样段，既保留完整趋势又避免高频锯齿发糊
+                let activeTok: number[] = [];
+                let activeCache: number[] = [];
+                let activeTps: number[] = [];
+                let activeTtft: number[] = [];
+                let activeLabels: string[] = [];
 
-                {/* 右侧微型双轨额度胶囊 (参考 Accounts.tsx 真实实现，优雅紧凑) */}
-                <div className="flex items-center gap-2">
-                  {/* Gemini 配额微胶囊 */}
-                  <div className="p-1 px-2 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
-                    <div className="flex items-center justify-between text-[9px] font-medium text-gray-600 dark:text-zinc-300 gap-3">
-                      <span className="flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        <span>Gemini</span>
-                      </span>
-                      <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">5h: 100% · 7d: 100%</span>
-                    </div>
-                    <div className="w-24 h-1 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden">
-                      <div style={{ width: '100%' }} className="h-full rounded-full bg-blue-500" />
-                    </div>
-                  </div>
+                if (useActive) {
+                  const maxPts = 42;
+                  if (chron.length <= maxPts) {
+                    activeTok = chron.map((r) => r.inputTokens + r.cachedTokens + r.outputTokens);
+                    activeCache = chron.map((r) =>
+                      r.inputTokens + r.cachedTokens > 0 ? (r.cachedTokens / (r.inputTokens + r.cachedTokens)) * 100 : 0
+                    );
+                    activeTps = chron.map((r) => r.tokensPerSecond || 0);
+                    activeTtft = chron.map((r) => (r.ttftMs > 0 ? Math.round((r.ttftMs / 1000) * 100) / 100 : 0));
+                    activeLabels = chron.map((r) =>
+                      rangeBounds.isSingleDay && r.time.includes(' ') ? r.time.split(' ')[1] : r.time.slice(5)
+                    );
+                  } else {
+                    const step = chron.length / maxPts;
+                    for (let i = 0; i < maxPts; i++) {
+                      const s = Math.floor(i * step);
+                      const e = Math.max(s + 1, Math.floor((i + 1) * step));
+                      const slice = chron.slice(s, e);
+                      let sumT = 0;
+                      let sumC = 0;
+                      let sumP = 0;
+                      let sumOut = 0;
+                      let sumDur = 0;
+                      let sumSpd = 0;
+                      let spdCnt = 0;
+                      let sumTtft = 0;
+                      let ttftCnt = 0;
+                      for (const r of slice) {
+                        sumT += r.inputTokens + r.cachedTokens + r.outputTokens;
+                        sumC += r.cachedTokens;
+                        sumP += r.inputTokens + r.cachedTokens;
+                        if (r.durationMs > 0 && r.outputTokens > 0) {
+                          sumOut += r.outputTokens;
+                          sumDur += r.durationMs;
+                        }
+                        if (r.tokensPerSecond > 0) {
+                          sumSpd += r.tokensPerSecond;
+                          spdCnt += 1;
+                        }
+                        if (r.ttftMs > 0) {
+                          sumTtft += r.ttftMs;
+                          ttftCnt += 1;
+                        }
+                      }
+                      activeTok.push(sumT);
+                      activeCache.push(sumP > 0 ? (sumC / sumP) * 100 : 0);
+                      activeTps.push(
+                        sumDur > 0 && sumOut > 0 ? (sumOut * 1000) / sumDur : spdCnt > 0 ? sumSpd / spdCnt : 0
+                      );
+                      activeTtft.push(ttftCnt > 0 ? Math.round((sumTtft / ttftCnt / 1000) * 100) / 100 : 0);
+                      const lastR = slice[slice.length - 1];
+                      activeLabels.push(
+                        rangeBounds.isSingleDay && lastR.time.includes(' ')
+                          ? lastR.time.split(' ')[1]
+                          : lastR.time.slice(5)
+                      );
+                    }
+                  }
+                }
 
-                  {/* Claude 配额微胶囊 */}
-                  <div className="p-1 px-2 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-0.5">
-                    <div className="flex items-center justify-between text-[9px] font-medium text-gray-600 dark:text-zinc-300 gap-3">
-                      <span className="flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                        <span>Claude</span>
-                      </span>
-                      <span className="font-mono text-purple-600 dark:text-purple-400 font-bold">
-                        5h: {currentAccount.quota5hPct ?? 85}% ({currentAccount.quota5hResetIn ?? '45m'})
-                      </span>
-                    </div>
-                    <div className="w-28 h-1 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden flex">
-                      <div style={{ width: `${currentAccount.quota5hPct ?? 85}%` }} className="h-full bg-purple-500" />
-                    </div>
-                  </div>
-                </div>
-              </div>
+                const tokSeries = useActive ? activeTok : globalPerf.tokSeries;
+                const cacheSeries = useActive ? activeCache : globalPerf.cacheSeries;
+                const tpsSeries = useActive ? activeTps : globalPerf.tpsSeries;
+                const ttftSeries = useActive ? activeTtft : globalPerf.ttftSeries;
+                const timeLabels = useActive ? activeLabels : globalPerf.bucketLabels;
 
-              {/* ========================================================= */}
-              {/* 【第一层：算力资产与金库 Bento】 (参考图 08, 09, 11, 21)       */}
-              {/* ========================================================= */}
-              <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                    <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>{isZh ? '算力资产与价值折算金库' : 'Token Treasury & Valuation'}</span>
-                  </span>
-                  <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium">
-                    Prompt Caching 官方 100% 免费减免
-                  </span>
-                </div>
+                const nonZeroTok = tokSeries.filter((v) => v > 0);
+                const avgTokBucket =
+                  nonZeroTok.length > 0 ? nonZeroTok.reduce((a, b) => a + b, 0) / nonZeroTok.length : 0;
 
-                {/* 4 格核心资产指标卡 */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                  <div className="p-2.5 rounded-lg bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col justify-between">
-                    <span className="text-[10px] text-gray-400">{isZh ? '累计总吞吐' : 'Total Throughput'}</span>
-                    <div className="my-1 flex items-baseline gap-1">
-                      <span className="text-xl font-bold font-mono text-gray-900 dark:text-zinc-100">
-                        {(currentAccount.totalTokens / 1000000).toFixed(1)}M
-                      </span>
-                      <span className="text-[9.5px] text-gray-400">Tokens</span>
-                    </div>
-                    <span className="text-[9px] text-gray-400 font-mono">共承载 {currentAccount.totalRequests} 次交互请求</span>
-                  </div>
+                const avgPrefix = tUi(lang, 'stats_avg_ref');
+                const metricList: SpectrumMetricLine[] = [
+                  {
+                    id: 'tok',
+                    label: tUi(lang, 'stats_tok_short'),
+                    series: tokSeries,
+                    color: '#fb7185',
+                    format: (v) => fmtTok(Math.round(v)),
+                    avgVal: avgTokBucket,
+                    avgLabel: avgTokBucket > 0 ? `${avgPrefix} ${fmtTok(Math.round(avgTokBucket))}` : undefined,
+                  },
+                  {
+                    id: 'tps',
+                    label: 'tok/s',
+                    series: tpsSeries,
+                    color: '#38bdf8',
+                    format: (v) => `${v.toFixed(1)} t/s`,
+                    avgVal: displayGlobalTps,
+                    avgLabel: displayGlobalTps > 0 ? `${avgPrefix} ${displayGlobalTps.toFixed(1)} t/s` : undefined,
+                  },
+                  {
+                    id: 'ttft',
+                    label: 'TTFT',
+                    series: ttftSeries,
+                    color: '#c084fc',
+                    format: (v) => `${v.toFixed(2)}s`,
+                    avgVal: avgTtftSec,
+                    avgLabel: avgTtftSec > 0 ? `${avgPrefix} ${avgTtftSec.toFixed(1)}s` : undefined,
+                  },
+                  {
+                    id: 'cache',
+                    label: tUi(lang, 'stats_cache'),
+                    series: cacheSeries,
+                    fixedMax: 100,
+                    color: '#34d399',
+                    format: (v) => `${v.toFixed(1)}%`,
+                    avgVal: reportData.globalCacheHitRate,
+                    avgLabel:
+                      reportData.globalCacheHitRate > 0
+                        ? `${avgPrefix} ${reportData.globalCacheHitRate.toFixed(1)}%`
+                        : undefined,
+                  },
+                ];
 
-                  <div className="p-2.5 rounded-lg bg-emerald-50/40 dark:bg-emerald-500/5 border border-emerald-200/50 dark:border-emerald-500/10 flex flex-col justify-between">
-                    <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">{isZh ? '免计费已省金额' : 'Cash Saved'}</span>
-                    <div className="my-1 flex items-baseline gap-1">
-                      <span className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                        +${currentAccount.estimatedCostUsd.toFixed(1)}
-                      </span>
-                      <span className="text-[9.5px] text-emerald-600/70 font-mono">USD</span>
-                    </div>
-                    <span className="text-[9px] text-emerald-600 font-mono">等效 API 标价 $214.50</span>
-                  </div>
+                const ttftPct = tbTotalMs > 0 ? Math.round(((tb?.ttftMs ?? 0) / tbTotalMs) * 100) : 0;
+                const streamPct = tbTotalMs > 0 ? Math.round(((tb?.streamingMs ?? 0) / tbTotalMs) * 100) : 0;
+                const toolPct = tbTotalMs > 0 ? Math.max(0, 100 - ttftPct - streamPct) : 0;
+                const chartFooterRight = useActive
+                  ? `${chron.length} ${tUi(lang, 'stats_unit_reqs')} ${tUi(lang, 'stats_zoom_live')}`
+                  : globalPerf.rangeLabel;
 
-                  <div className="p-2.5 rounded-lg bg-blue-50/40 dark:bg-blue-500/5 border border-blue-200/50 dark:border-blue-500/10 flex flex-col justify-between">
-                    <span className="text-[10px] text-blue-600/80 dark:text-blue-400/80">{isZh ? '全局缓存命中率' : 'Cache Hit Rate'}</span>
-                    <div className="my-1 flex items-baseline gap-1">
-                      <span className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400">
-                        {currentAccount.cacheHitRate.toFixed(1)}%
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-blue-600 font-mono">首字响应提速 3.4x</span>
-                  </div>
+                const ambientGlowRgb =
+                  spectrumFocus === 'tok'
+                    ? '251,113,133'
+                    : spectrumFocus === 'tps'
+                    ? '56,189,248'
+                    : spectrumFocus === 'ttft'
+                    ? '192,132,252'
+                    : spectrumFocus === 'cache'
+                    ? '52,211,153'
+                    : '129,140,248';
 
-                  {/* 核心卖点：5h/7d 额度折算储备 */}
-                  <div className="p-2.5 rounded-lg bg-gradient-to-r from-blue-500/[0.08] to-purple-500/[0.08] border border-blue-500/20 dark:border-blue-500/20 flex flex-col justify-between">
-                    <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-purple-500" />
-                      <span>{isZh ? '额度折算资产储备' : 'Quota Valuation'}</span>
-                    </span>
-                    <div className="my-0.5 flex flex-col text-[10.5px] font-mono leading-tight">
-                      <span className="text-gray-900 dark:text-zinc-100 font-bold">
-                        5h: 约 {Math.round(((currentAccount.quota5hPct ?? 85) / 100) * 450).toLocaleString()}K Tok
-                        <span className="text-emerald-600 dark:text-emerald-400 text-[9px] ml-1">
-                          (${( ((currentAccount.quota5hPct ?? 85) / 100) * 16.80).toFixed(2)})
-                        </span>
-                      </span>
-                      <span className="text-gray-900 dark:text-zinc-100 font-bold">
-                        7d: 约 {(Math.round(((currentAccount.quota7dPct ?? 50) / 100) * 4500) / 1000).toFixed(1)}M Tok
-                        <span className="text-purple-600 dark:text-purple-400 text-[9px] ml-1">
-                          (${( ((currentAccount.quota7dPct ?? 50) / 100) * 168.00).toFixed(2)})
-                        </span>
-                      </span>
-                    </div>
-                    <span className="text-[8.5px] text-gray-400 font-mono">*标称 450K/4.5M 额度模型</span>
-                  </div>
-                </div>
+                return (
+                  <div className="md:col-span-6 relative overflow-hidden p-3.5 rounded-2xl bg-gradient-to-br from-[#232734] via-[#1a1d27] to-[#141720] dark:from-[#07090e] dark:via-[#05070b] dark:to-[#030407] border border-slate-900/15 dark:border-white/[0.14] shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_14px_34px_-14px_rgba(15,23,42,0.28)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_18px_40px_-14px_rgba(0,0,0,0.85)] text-white flex flex-col justify-between gap-2 min-h-[224px]">
+                    {/* 纯 CSS radial-gradient 零 GPU 模糊开销氛围层（全平台 120Hz 零负担） */}
+                    <div
+                      style={{
+                        background: `radial-gradient(circle at 0% 0%, rgba(${ambientGlowRgb},0.16) 0%, rgba(${ambientGlowRgb},0) 62%), radial-gradient(circle at 100% 100%, rgba(56,189,248,0.09) 0%, rgba(56,189,248,0) 58%)`,
+                      }}
+                      className="pointer-events-none absolute inset-0 transition-all duration-300"
+                    />
 
-                {/* 5 层 Token 构成水库连续流胶囊条 (参考图 11) */}
-                <div className="pt-2 border-t border-gray-100 dark:border-white/5 flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-zinc-400">
-                    <span className="font-medium">五层上下文水库构成拆解 (Continuous Reservoir Stream)</span>
-                    <span className="font-mono text-[9px]">缓存占比 {currentAccount.cacheHitRate.toFixed(1)}%</span>
-                  </div>
-
-                  <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden flex">
-                    <div style={{ width: '90.8%' }} className="h-full bg-emerald-500" title="官方缓存命中: 188.0M" />
-                    <div style={{ width: '5.2%' }} className="h-full bg-blue-500" title="新输入 Prompt: 10.8M" />
-                    <div style={{ width: '2.4%' }} className="h-full bg-purple-500" title="深度思考: 5.0M" />
-                    <div style={{ width: '1.2%' }} className="h-full bg-amber-500" title="工具流: 2.5M" />
-                    <div style={{ width: '0.4%' }} className="h-full bg-cyan-400" title="模型输出: 710K" />
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between text-[9px] text-gray-400 font-mono pt-0.5">
-                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      <span>缓存 {(currentAccount.cachedTokens / 1000000).toFixed(1)}M (90.8%)</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                      <span>输入 {(currentAccount.newInputTokens / 1000000).toFixed(1)}M (5.2%)</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                      <span>思考 8.5M (2.4%)</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      <span>工具 6.2M (1.2%)</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                      <span>输出 {(currentAccount.outputTokens / 1000).toFixed(0)}K (0.4%)</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ========================================================= */}
-              {/* 【第二层：6维战力雷达 + 模型圆环 VS 山脉波形曲线】 (参考图 05, 02, 19) */}
-              {/* ========================================================= */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                {/* 左卡：6 维战力雷达 + 模型圆环分布 (参考图 05 CLARITY.GG + 图 02 Donut) */}
-                <div className="lg:col-span-6 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <Activity className="w-3.5 h-3.5 text-purple-500" />
-                      <span>{isZh ? '6 维技术战力雷达与模型分布' : 'Technical Radar & Model Donut'}</span>
-                    </span>
-                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-mono font-medium">
-                      SSS 满血旗舰
-                    </span>
-                  </div>
-
-                  {/* 左右并列：左边雷达图，右边圆环图 */}
-                  <div className="grid grid-cols-2 gap-2 items-center my-2">
-                    {/* 1. 六边形战力雷达 SVG */}
-                    <div className="flex flex-col items-center justify-center">
-                      <svg viewBox="0 0 170 160" className="w-36 h-36 overflow-visible">
-                        <defs>
-                          <radialGradient id="radar-glow" cx="50%" cy="50%" r="50%">
-                            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.4" />
-                            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
-                          </radialGradient>
-                        </defs>
-                        {/* 3 层六边形底网 */}
-                        {[0.33, 0.66, 1].map((scale, sIdx) => {
-                          const r = 50 * scale;
-                          const pts = [0, 60, 120, 180, 240, 300].map((deg) => {
-                            const rad = ((deg - 90) * Math.PI) / 180;
-                            return `${85 + r * Math.cos(rad)},${80 + r * Math.sin(rad)}`;
-                          }).join(' ');
-                          return <polygon key={sIdx} points={pts} fill="none" stroke="currentColor" strokeWidth="0.8" className="text-gray-200 dark:text-white/10" strokeDasharray={sIdx < 2 ? "2 2" : undefined} />;
-                        })}
-                        {/* 6 根辐射轴线 */}
-                        {[0, 60, 120, 180, 240, 300].map((deg, aIdx) => {
-                          const rad = ((deg - 90) * Math.PI) / 180;
-                          return <line key={aIdx} x1="85" y1="80" x2={85 + 50 * Math.cos(rad)} y2={80 + 50 * Math.sin(rad)} stroke="currentColor" strokeWidth="0.8" className="text-gray-200 dark:text-white/10" />;
-                        })}
-                        {/* 数据多边形: TPS: 92, TTFT: 88, Cache: 95, Fidelity: 100, Concurrency: 98, Endurance: 75 */}
-                        {(() => {
-                          const vals = [92, 88, 95, 100, 98, 75];
-                          const pts = vals.map((val, idx) => {
-                            const deg = idx * 60;
-                            const rad = ((deg - 90) * Math.PI) / 180;
-                            const r = (50 * val) / 100;
-                            return { x: 85 + r * Math.cos(rad), y: 80 + r * Math.sin(rad) };
-                          });
-                          const polyStr = pts.map(p => `${p.x},${p.y}`).join(' ');
+                    <div className="relative flex items-center justify-between gap-2 pb-1.5 border-b border-white/[0.08]">
+                      {/* 默认同屏展示全部 4 条曲线；点击任意药丸独显聚焦，再点恢复全显 */}
+                      <div className="inline-flex items-center p-0.5 rounded-lg bg-white/[0.06] border border-white/[0.08] gap-0.5">
+                        {metricList.map((def) => {
+                          const isFocused = spectrumFocus === def.id;
+                          const isDimmed = spectrumFocus !== null && !isFocused;
                           return (
-                            <>
-                              <polygon points={polyStr} fill="url(#radar-glow)" stroke="#8b5cf6" strokeWidth="2" strokeLinejoin="round" />
-                              {pts.map((p, pIdx) => (
-                                <circle key={pIdx} cx={p.x} cy={p.y} r="2.5" fill="#8b5cf6" stroke="white" strokeWidth="1" />
-                              ))}
-                            </>
-                          );
-                        })()}
-                        {/* 6 个顶点标签 */}
-                        <text x="85" y="14" textAnchor="middle" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">流速 92</text>
-                        <text x="142" y="48" textAnchor="start" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">响应 88</text>
-                        <text x="142" y="115" textAnchor="start" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">缓存 95</text>
-                        <text x="85" y="148" textAnchor="middle" className="text-[8.5px] fill-emerald-600 dark:fill-emerald-400 font-bold">保真 100</text>
-                        <text x="28" y="115" textAnchor="end" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">并发 98</text>
-                        <text x="28" y="48" textAnchor="end" className="text-[8.5px] fill-gray-500 dark:fill-zinc-400 font-medium">续航 75</text>
-                      </svg>
-                      <span className="text-[9px] text-gray-400 font-mono mt-1">6 维综合效能雷达</span>
-                    </div>
-
-                    {/* 2. 模型消耗圆环 Donut SVG */}
-                    <div className="flex flex-col items-center justify-center">
-                      <svg viewBox="0 0 160 160" className="w-36 h-36 overflow-visible">
-                        {/* 底轨 */}
-                        <circle cx="80" cy="80" r="48" fill="none" stroke="currentColor" strokeWidth="12" className="text-gray-100 dark:text-white/[0.06]" />
-                        {/* Claude 58% -> 301.59 * 0.58 = 174.92 */}
-                        <circle cx="80" cy="80" r="48" fill="none" stroke="#8b5cf6" strokeWidth="12" strokeDasharray="174.92 126.67" strokeDashoffset="0" transform="rotate(-90 80 80)" />
-                        {/* Gemini Pro 32% -> 301.59 * 0.32 = 96.51 */}
-                        <circle cx="80" cy="80" r="48" fill="none" stroke="#3b82f6" strokeWidth="12" strokeDasharray="96.51 205.08" strokeDashoffset="-174.92" transform="rotate(-90 80 80)" />
-                        {/* Gemini Flash 10% -> 301.59 * 0.10 = 30.16 */}
-                        <circle cx="80" cy="80" r="48" fill="none" stroke="#06b6d4" strokeWidth="12" strokeDasharray="30.16 271.43" strokeDashoffset="-271.43" transform="rotate(-90 80 80)" />
-                        {/* 中心文字 */}
-                        <text x="80" y="76" textAnchor="middle" className="text-sm font-bold font-mono fill-gray-900 dark:fill-zinc-100">
-                          {(currentAccount.totalTokens / 1000000).toFixed(1)}M
-                        </text>
-                        <text x="80" y="92" textAnchor="middle" className="text-[8px] fill-gray-400 font-medium">
-                          Tokens 构成
-                        </text>
-                      </svg>
-
-                      {/* 环形图图例 */}
-                      <div className="flex items-center gap-2 text-[8.5px] font-mono mt-1">
-                        <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                          <span>Claude 58%</span>
-                        </span>
-                        <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                          <span>Pro 32%</span>
-                        </span>
-                        <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400">
-                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                          <span>Flash 10%</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-1.5 border-t border-gray-100 dark:border-white/5 text-[9px] text-gray-400 font-mono flex items-center justify-between">
-                    <span>主力调用模型: Claude 3.7 Sonnet</span>
-                    <span>双模型组完全兼容</span>
-                  </div>
-                </div>
-
-                {/* 右卡：山脉面积波形曲线与高峰标注 (参考图 19 高峰山脉波形 + 图 04 趋势线) */}
-                <div className="lg:col-span-6 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <TrendingUp className="w-3.5 h-3.5 text-blue-500" />
-                      <span>{isZh ? 'Token 吞吐时序山脉波形与峰值标注' : 'Throughput Mountain Wave & Peak'}</span>
-                    </span>
-                    <span className="text-[9.5px] text-gray-400 font-mono">
-                      波峰实时诊断 · ⚡ 192 tok/s
-                    </span>
-                  </div>
-
-                  {/* 山脉波形 SVG */}
-                  <div className="my-2 relative">
-                    <svg viewBox="0 0 520 140" className="w-full h-32 overflow-visible">
-                      <defs>
-                        <linearGradient id="peak-wave-grad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.4" />
-                          <stop offset="60%" stopColor="#3b82f6" stopOpacity="0.15" />
-                          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
-                        </linearGradient>
-                      </defs>
-                      {/* 背景水平网格虚线 */}
-                      <line x1="20" y1="35" x2="500" y2="35" stroke="currentColor" strokeWidth="0.8" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="3 3" />
-                      <line x1="20" y1="75" x2="500" y2="75" stroke="currentColor" strokeWidth="0.8" className="text-gray-100 dark:text-white/[0.04]" strokeDasharray="3 3" />
-                      <line x1="20" y1="115" x2="500" y2="115" stroke="currentColor" strokeWidth="0.8" className="text-gray-100 dark:text-white/[0.04]" />
-
-                      {/* 填充面积 */}
-                      <path
-                        d="M 20 120 Q 70 115, 110 95 T 190 70 T 270 55 T 350 25 T 420 50 T 500 85 L 500 120 L 20 120 Z"
-                        fill="url(#peak-wave-grad)"
-                      />
-                      {/* 发光曲线 */}
-                      <path
-                        d="M 20 120 Q 70 115, 110 95 T 190 70 T 270 55 T 350 25 T 420 50 T 500 85"
-                        fill="none"
-                        stroke="#8b5cf6"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      />
-
-                      {/* 波峰光标与提示气泡 (在 350, 25 处) */}
-                      <line x1="350" y1="25" x2="350" y2="120" stroke="#8b5cf6" strokeWidth="1" strokeDasharray="2 2" className="opacity-60" />
-                      <circle cx="350" cy="25" r="5" fill="#8b5cf6" stroke="white" strokeWidth="2" />
-                      <circle cx="350" cy="25" r="9" fill="none" stroke="#8b5cf6" strokeWidth="1" className="opacity-40 animate-ping" />
-
-                      {/* 悬停波峰气泡 */}
-                      <g transform="translate(350, 8)">
-                        <rect x="-85" y="-18" width="170" height="20" rx="5" fill="#1e1b4b" stroke="#8b5cf6" strokeWidth="1" />
-                        <text x="0" y="-4" textAnchor="middle" fill="#c4b5fd" className="text-[9px] font-mono font-semibold">
-                          🔥 16:00 峰值: 18.5M Tok · 192 tok/s
-                        </text>
-                      </g>
-                    </svg>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono pt-1.5 border-t border-gray-100 dark:border-white/5">
-                    <span>00:00 (休眠)</span>
-                    <span>06:00</span>
-                    <span>12:00</span>
-                    <span className="text-purple-600 dark:text-purple-400 font-bold">16:00 (重度编码波峰)</span>
-                    <span>20:00</span>
-                    <span>23:00</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ========================================================= */}
-              {/* 【第三层：工程管道流向矩阵 VS 真实物理调度】 (参考图 03, 14, 01, 15) */}
-              {/* ========================================================= */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {/* 模块 4：工程消耗管道流向矩阵 (参考图 03 SAP ECC 管道路由 + 图 14 发光桑基流) */}
-                <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>{isZh ? '工程消耗管道流向矩阵' : 'Project Drain Flow Matrix'}</span>
-                    </span>
-                    <span className="text-[9.5px] text-gray-400">{isZh ? '细分 Gemini 与 Claude 吞吐' : 'Gemini vs Claude breakdown'}</span>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    {(currentAccount.projectDrains || [
-                      {
-                        workspaceName: 'at',
-                        path: '~/Desktop/at',
-                        sharePct: 68.0,
-                        totalTokens: 140800000,
-                        claudeTokens: 95000000,
-                        claudePct: 67.5,
-                        geminiTokens: 45800000,
-                        geminiPct: 32.5,
-                        cacheHitRate: 92.4,
-                        avgTps: 178.5,
-                        stepCount: 1850,
-                      },
-                      {
-                        workspaceName: 'omin',
-                        path: '~/Workspace/omin',
-                        sharePct: 22.0,
-                        totalTokens: 45500000,
-                        claudeTokens: 15500000,
-                        claudePct: 34.1,
-                        geminiTokens: 30000000,
-                        geminiPct: 65.9,
-                        cacheHitRate: 88.0,
-                        avgTps: 162.0,
-                        stepCount: 620,
-                      },
-                      {
-                        workspaceName: 'infra-scripts',
-                        path: '~/Dev/infra-scripts',
-                        sharePct: 10.0,
-                        totalTokens: 20810000,
-                        claudeTokens: 4200000,
-                        claudePct: 20.2,
-                        geminiTokens: 16610000,
-                        geminiPct: 79.8,
-                        cacheHitRate: 85.5,
-                        avgTps: 145.0,
-                        stepCount: 240,
-                      },
-                    ]).map((pd) => (
-                      <div
-                        key={pd.workspaceName}
-                        className="p-2.5 rounded-lg bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/5 flex flex-col gap-1.5"
-                      >
-                        {/* 头部：名称与总耗 */}
-                        <div className="flex items-center justify-between text-[11px]">
-                          <div className="flex items-center gap-1.5">
-                            <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-                            <span className="font-semibold text-gray-900 dark:text-zinc-100">{pd.workspaceName}</span>
-                            <span className="text-[9px] text-gray-400 font-mono">{pd.path}</span>
-                          </div>
-                          <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">
-                            {(pd.totalTokens / 1000000).toFixed(1)}M ({pd.sharePct}%)
-                          </span>
-                        </div>
-
-                        {/* 双核心模型分段条：Claude (紫) vs Gemini (青绿) */}
-                        <div className="w-full h-1.5 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden flex">
-                          <div style={{ width: `${pd.claudePct}%` }} className="h-full bg-purple-500" title={`Claude: ${pd.claudePct}%`} />
-                          <div style={{ width: `${pd.geminiPct}%` }} className="h-full bg-emerald-400" title={`Gemini: ${pd.geminiPct}%`} />
-                        </div>
-
-                        {/* 指标明细行 */}
-                        <div className="flex items-center justify-between text-[9px] font-mono text-gray-500 dark:text-zinc-400 pt-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-purple-600 dark:text-purple-400 font-medium">
-                              Claude: {(pd.claudeTokens / 1000000).toFixed(1)}M ({pd.claudePct.toFixed(0)}%)
-                            </span>
-                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                              Gemini: {(pd.geminiTokens / 1000000).toFixed(1)}M ({pd.geminiPct.toFixed(0)}%)
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-emerald-600">缓存 {pd.cacheHitRate}%</span>
-                            <span className="text-blue-600">⚡ {pd.avgTps} tok/s</span>
-                            <span className="text-gray-400">{pd.stepCount}步</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 模块 3：模型消耗与真实物理调度 (参考图 01, 04, 15 纯技术参数行) */}
-                <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <Cpu className="w-3.5 h-3.5 text-purple-500" />
-                      <span>{isZh ? '真实物理调度与保真度诊断' : 'Physical Upstream & Fidelity'}</span>
-                    </span>
-                    <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                      <ShieldCheck className="w-3 h-3 text-emerald-500" />
-                      <span>{isZh ? '物理上游保真度 100% · 零暗降' : '100% Upstream Fidelity'}</span>
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    {(currentAccount.modelRoutings || [
-                      {
-                        requestedModel: 'claude-3-7-sonnet',
-                        physicalModel: 'gemini-4-hydrogen-high',
-                        totalTokens: 120120000,
-                        sharePct: 58.0,
-                        avgTps: 184.2,
-                        p50TtftSec: 1.42,
-                        cacheHitRate: 91.8,
-                        isDowngraded: false,
-                      },
-                      {
-                        requestedModel: 'gemini-2.5-pro',
-                        physicalModel: 'gemini-4-hydrogen-high',
-                        totalTokens: 66270000,
-                        sharePct: 32.0,
-                        avgTps: 168.0,
-                        p50TtftSec: 1.35,
-                        cacheHitRate: 90.5,
-                        isDowngraded: false,
-                      },
-                      {
-                        requestedModel: 'gemini-2.5-flash',
-                        physicalModel: 'gemini-4-carbon',
-                        totalTokens: 20720000,
-                        sharePct: 10.0,
-                        avgTps: 122.5,
-                        p50TtftSec: 0.98,
-                        cacheHitRate: 86.2,
-                        isDowngraded: false,
-                      },
-                    ]).map((mr) => (
-                      <div
-                        key={mr.requestedModel}
-                        className="p-2.5 rounded-lg bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/5 flex flex-col gap-1.5"
-                      >
-                        {/* 模型请求 ➔ 物理调度 */}
-                        <div className="flex items-center justify-between text-[11px]">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-gray-900 dark:text-zinc-100">{mr.requestedModel}</span>
-                            <ArrowRight className="w-3 h-3 text-gray-400" />
-                            <span className="font-mono text-purple-600 dark:text-purple-400 font-bold">{mr.physicalModel}</span>
-                          </div>
-                          <span className="font-mono font-bold text-gray-800 dark:text-zinc-200">
-                            {(mr.totalTokens / 1000000).toFixed(1)}M ({mr.sharePct}%)
-                          </span>
-                        </div>
-
-                        {/* 进度条 */}
-                        <div className="w-full h-1.5 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden">
-                          <div style={{ width: `${mr.sharePct}%` }} className="h-full rounded-full bg-purple-500" />
-                        </div>
-
-                        {/* 硬核技术指标网格 */}
-                        <div className="grid grid-cols-4 gap-1 text-[9.5px] font-mono pt-0.5">
-                          <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
-                            <span>⚡ {mr.avgTps} tok/s</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-gray-600 dark:text-zinc-400">
-                            <span>⏱ {mr.p50TtftSec}s TTFT</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                            <span>缓存 {mr.cacheHitRate}%</span>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400 font-sans font-semibold">
-                              满血保真
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* ========================================================= */}
-              {/* 【第四层：客户端消耗排行 + 24小时高密度热力柱】 (参考图 04, 19, 10, 23) */}
-              {/* ========================================================= */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                {/* 模块 5：客户端/宿主消耗排行榜 (参考图 04, 19) */}
-                <div className="lg:col-span-5 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                        <AppWindow className="w-3.5 h-3.5 text-blue-500" />
-                        <span>{isZh ? '客户端消耗排行榜' : 'Host Matrix Ranking'}</span>
-                      </span>
-                      <span className="text-[9.5px] text-gray-400">{isZh ? '消耗宿主分布' : 'Clients'}</span>
-                    </div>
-
-                    <div className="flex flex-col gap-2 mt-2">
-                      {(currentAccount.hostRanks || [
-                        {
-                          hostType: 'ide',
-                          hostLabel: 'Antigravity IDE',
-                          sharePct: 70.0,
-                          totalTokens: 145000000,
-                          requestCount: 1420,
-                        },
-                        {
-                          hostType: 'app',
-                          hostLabel: '原生桌面 App',
-                          sharePct: 18.0,
-                          totalTokens: 37300000,
-                          requestCount: 380,
-                        },
-                        {
-                          hostType: 'plugin',
-                          hostLabel: 'ACP 插件 (Cursor/VSCode)',
-                          sharePct: 8.0,
-                          totalTokens: 16500000,
-                          requestCount: 150,
-                        },
-                        {
-                          hostType: 'cli',
-                          hostLabel: 'agy CLI 终端',
-                          sharePct: 4.0,
-                          totalTokens: 8310000,
-                          requestCount: 74,
-                        },
-                      ]).map((hr, idx) => {
-                        const IconComponent =
-                          hr.hostType === 'ide'
-                            ? Code2
-                            : hr.hostType === 'app'
-                            ? AppWindow
-                            : hr.hostType === 'plugin'
-                            ? Puzzle
-                            : Terminal;
-
-                        return (
-                          <div key={hr.hostType} className="flex flex-col gap-1">
-                            <div className="flex items-center justify-between text-[10.5px]">
-                              <span className="font-medium text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
-                                <span className="w-3.5 h-3.5 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center text-[9px] font-bold">
-                                  {idx + 1}
-                                </span>
-                                <IconComponent className="w-3 h-3 text-blue-500" />
-                                <span>{hr.hostLabel}</span>
-                              </span>
-                              <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                                <span className="font-bold text-blue-600 dark:text-blue-400">{hr.sharePct}%</span>
-                                <span className="text-gray-400">({(hr.totalTokens / 1000000).toFixed(1)}M)</span>
-                              </div>
-                            </div>
-
-                            <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                              <div
-                                style={{ width: `${hr.sharePct}%` }}
-                                className={`h-full rounded-full ${
-                                  idx === 0
-                                    ? 'bg-blue-600'
-                                    : idx === 1
-                                    ? 'bg-blue-400'
-                                    : idx === 2
-                                    ? 'bg-indigo-400'
-                                    : 'bg-gray-400'
-                                }`}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-gray-100 dark:border-white/5 text-[9px] text-gray-400 font-mono flex items-center justify-between">
-                    <span>主力战场: Antigravity IDE (70%)</span>
-                    <span>共承载 4 种开发宿主</span>
-                  </div>
-                </div>
-
-                {/* 模块 6：24 小时活跃调用时间热力图 (参考图 10, 18, 23 彩色高密度柱) */}
-                <div className="lg:col-span-7 p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
-                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>{isZh ? '24 小时活跃调用时间热力图' : 'Circadian Activity Heatmap'}</span>
-                      </span>
-                      <span className="text-[9.5px] text-gray-400 font-mono">{isZh ? '峰值时段: 14:00 - 17:00 (192 tok/s)' : 'Peak: 14:00 - 17:00'}</span>
-                    </div>
-
-                    <div className="h-28 w-full flex items-end gap-1 pt-3 pb-1 px-1">
-                      {(currentAccount.hourlyHeatmap || [2, 0, 0, 1, 3, 5, 12, 28, 45, 62, 58, 40, 35, 68, 85, 92, 74, 55, 48, 65, 52, 38, 20, 8]).map((val, hour) => {
-                        const heightPct = Math.max(10, (val / 100) * 100);
-                        return (
-                          <div key={hour} className="flex-1 flex flex-col items-center gap-1 group relative">
-                            <div
-                              style={{ height: `${heightPct}%` }}
-                              className={`w-full rounded-t-sm transition-all duration-300 ${
-                                val > 70
-                                  ? 'bg-gradient-to-t from-blue-600 to-indigo-500'
-                                  : val > 40
-                                  ? 'bg-gradient-to-t from-blue-500 to-blue-400'
-                                  : val > 15
-                                  ? 'bg-blue-300 dark:bg-blue-500/40'
-                                  : 'bg-gray-200 dark:bg-white/[0.06]'
+                            <button
+                              key={def.id}
+                              onClick={() =>
+                                setSpectrumFocus((prev) =>
+                                  prev === def.id ? null : (def.id as 'tok' | 'tps' | 'ttft' | 'cache')
+                                )
+                              }
+                              className={`px-2 py-0.5 rounded-md text-[9.5px] font-medium flex items-center gap-1 transition-all ${
+                                isFocused
+                                  ? 'bg-white/[0.15] text-white shadow-2xs'
+                                  : isDimmed
+                                  ? 'text-slate-400/60 hover:text-slate-200'
+                                  : 'text-slate-200/90 hover:bg-white/[0.07]'
                               }`}
+                            >
+                              <span
+                                style={{
+                                  backgroundColor: def.color,
+                                  opacity: isDimmed ? 0.3 : 1,
+                                  boxShadow: isDimmed ? 'none' : `0 0 6px ${def.color}bb`,
+                                }}
+                                className="w-1.5 h-1.5 rounded-full shrink-0"
+                              />
+                              <span>{def.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="inline-flex p-0.5 rounded-lg bg-white/[0.06] border border-white/[0.07] shrink-0">
+                        <button
+                          onClick={() => setSpectrumZoom('active')}
+                          className={`px-1.5 py-0.5 rounded-md text-[8.5px] font-medium transition-all ${
+                            spectrumZoom === 'active'
+                              ? 'bg-white/90 text-slate-900 shadow-2xs'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {tUi(lang, 'stats_zoom_active')}
+                        </button>
+                        <button
+                          onClick={() => setSpectrumZoom('24h')}
+                          className={`px-1.5 py-0.5 rounded-md text-[8.5px] font-medium transition-all ${
+                            spectrumZoom === '24h'
+                              ? 'bg-white/90 text-slate-900 shadow-2xs'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {globalPerf.zoomLabel}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 多维平滑曲线 + 缩放联动时间轴 (单选时叠加虚线均值基线) */}
+                    <div className="relative">
+                      <InteractiveSpectrumChart
+                        height={102}
+                        labels={timeLabels}
+                        zoomTooltip={tUi(lang, 'stats_chart_zoom_hint')}
+                        lines={metricList}
+                        focusedId={spectrumFocus}
+                        footerRight={chartFooterRight}
+                      />
+                    </div>
+
+                    {/* Apple Storage 风格三段真实耗时拆解条 (首字 TTFT / 流式生成 / 本地工具实际执行) */}
+                    {tbTotalMs > 0 && (
+                      <div className="relative flex flex-col gap-1">
+                        <div className="w-full h-1.5 rounded-full bg-white/[0.08] overflow-hidden flex gap-px">
+                          {ttftPct > 0 && (
+                            <div
+                              style={{ width: `${ttftPct}%` }}
+                              className="h-full bg-violet-400/80 first:rounded-l-full last:rounded-r-full"
+                              title={`${tUi(lang, 'stats_time_ttft')} ${ttftPct}% (${fmtDurCompact(tb?.ttftMs ?? 0)})`}
                             />
-                            {/* 悬停微型交互 Tooltip */}
-                            <div className="absolute -top-8 hidden group-hover:flex bg-gray-900/95 dark:bg-zinc-100/95 text-white dark:text-zinc-900 text-[8.5px] font-mono px-1.5 py-0.5 rounded-md shadow-xl pointer-events-none whitespace-nowrap z-20 flex-col items-center">
-                              <span>{hour}:00 - {val} 次请求</span>
-                              <span className="text-[7.5px] opacity-80">约 {(val * 0.2).toFixed(1)}M Tokens</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[9px] text-gray-400 font-mono pt-1.5 border-t border-gray-100 dark:border-white/5">
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-zinc-600" />
-                      <span>00:00 (休眠待机)</span>
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                      <span>09:00 (晨间架构)</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                      <span>15:00 (午后重度波峰)</span>
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-300" />
-                      <span>21:00 (夜间验证)</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* 视角 3：📁 项目详情透视 (Project Deep Dive - 研发效能视角)        */}
-      {/* ============================================================== */}
-      {activeView === 'project' && (
-        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
-          {/* 项目工作区选择胶囊栏 */}
-          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center gap-2 overflow-x-auto">
-            <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
-              <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-              <span>{isZh ? '选择工程目录:' : 'Select Project:'}</span>
-            </span>
-
-            {reportData.byProject.map((p) => (
-              <button
-                key={p.workspaceName}
-                onClick={() => setSelectedProjectName(p.workspaceName)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
-                  selectedProjectName === p.workspaceName
-                    ? 'bg-indigo-600 text-white font-semibold shadow-xs'
-                    : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
-                }`}
-              >
-                <FolderGit2 className="w-3 h-3" />
-                <span>{p.workspaceName}</span>
-                <span className={`text-[8.5px] px-1 py-0 rounded ${selectedProjectName === p.workspaceName ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
-                  {p.totalSteps.toLocaleString()}步
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {currentProject && (
-            <div className="flex flex-col gap-3">
-              {/* 项目概览指标卡片 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '工程累计交互步数' : 'Total Steps'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-gray-900 dark:text-zinc-100">
-                      {currentProject.totalSteps.toLocaleString()}
-                    </span>
-                    <span className="text-[10px] text-gray-400">{isZh ? '步' : 'steps'}</span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono">共归档 {currentProject.conversationCount} 个开发会话</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '工程累计消耗 Token' : 'Project Tokens'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-indigo-600 dark:text-indigo-400">
-                      {(currentProject.totalTokens / 1000000).toFixed(1)}M
-                    </span>
-                    <span className="text-[10px] text-gray-400">Tokens</span>
-                  </div>
-                  <span className="text-[9px] text-indigo-600 font-mono">首选: {currentProject.preferredModel}</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '估算等效官方成本' : 'Estimated Cost'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                      ${currentProject.estimatedCostUsd.toFixed(1)}
-                    </span>
-                    <span className="text-[10px] text-gray-400">USD</span>
-                  </div>
-                  <span className="text-[9px] text-emerald-600 font-mono">零代理本地直接连接</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '最后活跃时间' : 'Last Activity'}</span>
-                  <div className="my-1.5 flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    <span className="text-base font-bold text-gray-800 dark:text-zinc-200">{currentProject.lastActiveTime}</span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono truncate">{currentProject.path}</span>
-                </div>
-              </div>
-
-              {/* 对称双卡：项目模型偏好度 VS 消耗账号归属 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* 模型偏好度 */}
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-blue-500" />
-                      <span>{isZh ? '该项目模型偏好度' : 'Model Affinity in this Project'}</span>
-                    </span>
-                    <span className="text-[9.5px] text-gray-400">{isZh ? '架构 vs 排错' : 'Usage'}</span>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    {currentProject.modelBreakdown.map(([m, pct]) => (
-                      <div key={m} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-[10.5px]">
-                          <span className="font-medium text-gray-800 dark:text-zinc-200">{m}</span>
-                          <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">{pct.toFixed(0)}%</span>
+                          )}
+                          {streamPct > 0 && (
+                            <div
+                              style={{ width: `${streamPct}%` }}
+                              className="h-full bg-sky-400/80 first:rounded-l-full last:rounded-r-full"
+                              title={`${tUi(lang, 'stats_time_stream')} ${streamPct}% (${fmtDurCompact(tb?.streamingMs ?? 0)})`}
+                            />
+                          )}
+                          {toolPct > 0 && (
+                            <div
+                              style={{ width: `${toolPct}%` }}
+                              className="h-full bg-amber-300/80 first:rounded-l-full last:rounded-r-full"
+                              title={`${tUi(lang, 'stats_time_tools')} ${toolPct}% (${fmtDurCompact(tb?.toolExecMs ?? 0)})`}
+                            />
+                          )}
                         </div>
-                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-blue-500" />
+                        <div className="flex items-center justify-between text-[9.5px] tabular-nums text-slate-200/90">
+                          <span className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+                            {tUi(lang, 'stats_time_ttft')} {ttftPct}%
+                            <span className="text-slate-400">({fmtDurCompact(tb?.ttftMs ?? 0)})</span>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                            {tUi(lang, 'stats_time_stream')} {streamPct}%
+                            <span className="text-slate-400">({fmtDurCompact(tb?.streamingMs ?? 0)})</span>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />
+                            {tUi(lang, 'stats_time_tools')} {toolPct}%
+                            <span className="text-slate-400">({fmtDurCompact(tb?.toolExecMs ?? 0)})</span>
+                          </span>
                         </div>
                       </div>
-                    ))}
+                    )}
                   </div>
-                </div>
+                );
+              })()}
 
-                {/* 账号归属溯源 */}
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                      <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>{isZh ? '该工程被哪些账号供能？' : 'Accounts Powering this Project'}</span>
-                    </span>
-                    <span className="text-[9.5px] text-gray-400">{isZh ? '账号承载' : 'Share'}</span>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    {currentProject.accountAttribution.map(([acc, pct]) => (
-                      <div key={acc} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-[10.5px]">
-                          <span className="font-medium text-gray-800 dark:text-zinc-200 truncate pr-2">{acc}</span>
-                          <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold shrink-0">{pct.toFixed(0)}%</span>
-                        </div>
-                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-emerald-500" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* 历史开发会话档案库 (Session Archive) */}
-              <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                    <BookOpen className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>{isZh ? '该项目的历史研发会话记录' : 'Project Session Archive'}</span>
-                  </span>
-                  <span className="text-[9.5px] text-gray-400">{currentProject.sessionTitles.length} 个历史会话</span>
-                </div>
-
-                <div className="divide-y divide-gray-100 dark:divide-white/5">
-                  {currentProject.sessionTitles.map((title, idx) => (
-                    <div key={idx} className="py-2 flex items-center justify-between text-[11px] hover:bg-gray-50/50 dark:hover:bg-white/[0.02] px-1 rounded transition-colors">
-                      <div className="flex items-center gap-2 truncate pr-2">
-                        <span className="w-4 h-4 rounded-full bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-[9px] font-bold shrink-0">
-                          {idx + 1}
-                        </span>
-                        <span className="font-medium text-gray-800 dark:text-zinc-200 truncate">{title}</span>
-                      </div>
-                      <span className="text-[9.5px] text-gray-400 font-mono shrink-0">步数 150~450 步</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* 视角 4：⚡ 模型详情透视 (Model Deep Dive - 物理保真视角)          */}
-      {/* ============================================================== */}
-      {activeView === 'model' && (
-        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
-          {/* 模型选择胶囊栏 */}
-          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex items-center gap-2 overflow-x-auto">
-            <span className="text-[10.5px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 mr-1 flex items-center gap-1">
-              <Cpu className="w-3.5 h-3.5 text-purple-500" />
-              <span>{isZh ? '选择模型:' : 'Select Model:'}</span>
-            </span>
-
-            {reportData.byModel.map((m) => (
-              <button
-                key={m.requestedModel}
-                onClick={() => setSelectedModelName(m.requestedModel)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 shrink-0 ${
-                  selectedModelName === m.requestedModel
-                    ? 'bg-purple-600 text-white font-semibold shadow-xs'
-                    : 'bg-gray-100/90 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-800'
-                }`}
-              >
-                <Cpu className="w-3 h-3" />
-                <span>{m.requestedModel}</span>
-                <span className={`text-[8.5px] px-1 py-0 rounded ${selectedModelName === m.requestedModel ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300'}`}>
-                  {m.sharePercentage.toFixed(0)}%
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {currentModel && (
-            <div className="flex flex-col gap-3">
-              {/* 物理保真度与拓扑卡片 */}
-              <div className="p-3.5 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-purple-500/20 dark:border-purple-500/20 shadow-2xs flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="p-1 rounded-lg bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400">
-                      <Cpu className="w-4 h-4" />
-                    </span>
-                    <div>
-                      <div className="text-[12px] font-bold text-gray-900 dark:text-zinc-100">
-                        {currentModel.requestedModel}
-                      </div>
-                      <div className="text-[9.5px] text-gray-400 font-mono">
-                        真实上游: <span className="font-semibold text-purple-600 dark:text-purple-400">{currentModel.physicalModel}</span>
-                      </div>
-                    </div>
+              {/* 右卡 (6 cols)：3-Tab 胶囊遥测卡 (工具矩阵 / 上下文水位 / 真实异常预警) */}
+              <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5 gap-2">
+                  <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06]">
+                    <button
+                      onClick={() => setOverviewRightTab('tools')}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                        overviewRightTab === 'tools'
+                          ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                          : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'
+                      }`}
+                    >
+                      <Terminal className={`w-3 h-3 ${overviewRightTab === 'tools' ? 'text-slate-700 dark:text-zinc-200' : 'text-slate-400 dark:text-zinc-500'}`} />
+                      <span>{tUi(lang, 'stats_tool_matrix')}</span>
+                    </button>
+                    <button
+                      onClick={() => setOverviewRightTab('context')}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                        overviewRightTab === 'context'
+                          ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                          : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'
+                      }`}
+                    >
+                      <Layers className={`w-3 h-3 ${overviewRightTab === 'context' ? 'text-slate-700 dark:text-zinc-200' : 'text-slate-400 dark:text-zinc-500'}`} />
+                      <span>{tUi(lang, 'stats_context_tab')}</span>
+                    </button>
+                    <button
+                      onClick={() => setOverviewRightTab('alerts')}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                        overviewRightTab === 'alerts'
+                          ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                          : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'
+                      }`}
+                    >
+                      <ShieldCheck className={`w-3 h-3 ${apiErrors.length > 0 ? 'text-rose-500/85' : overviewRightTab === 'alerts' ? 'text-slate-700 dark:text-zinc-200' : 'text-slate-400 dark:text-zinc-500'}`} />
+                      <span>{`${tUi(lang, 'stats_alerts_title')} (${totalAlertCount})`}</span>
+                    </button>
                   </div>
 
-                  <div>
-                    {currentModel.isDowngraded ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200/50">
-                        <AlertTriangle className="w-3 h-3" />
-                        <span>检测到暗降 (Conservative)</span>
+                  <div className="flex items-center gap-1.5 text-[9px] text-gray-400 font-mono shrink-0">
+                    {overviewRightTab === 'tools' && (
+                      <>
+                        {poolTotalTok > 0 && (poolSplit?.claudeTokens ?? 0) > 0 && (
+                          <span
+                            title={`Gemini ${fmtTok(poolSplit?.geminiTokens ?? 0)} · Claude ${fmtTok(poolSplit?.claudeTokens ?? 0)}`}
+                            className="hidden xl:inline-flex px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06] text-gray-600 dark:text-zinc-300"
+                          >
+                            G {geminiPoolPct}% · C {claudePoolPct}%
+                          </span>
+                        )}
+                        <span>{totalToolCalls.toLocaleString()} calls</span>
+                      </>
+                    )}
+                    {overviewRightTab === 'context' && (
+                      <span>
+                        {(reportData.checkpointCount ?? 0) > 0
+                          ? tUi(lang, 'stats_compactions_count', { count: reportData.checkpointCount ?? 0 })
+                          : `${sessionContexts.length} ${tUi(lang, 'stats_unit_sessions')}`}
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>100% 原生高算力保真</span>
+                    )}
+                    {overviewRightTab === 'alerts' && apiErrors.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-rose-500/12 text-rose-600 dark:text-rose-400 font-semibold">
+                        {apiErrors.length} API
                       </span>
                     )}
                   </div>
                 </div>
-              </div>
 
-              {/* 性能 4 格指标 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '平均持续生成流速' : 'Throughput (TPS)'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                      {currentModel.avgTps.toFixed(0)}
-                    </span>
-                    <span className="text-[10px] text-gray-400">tok/s</span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono">秒级高响应吞吐</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '首字延迟中位数 (TTFT)' : 'First Token Latency'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
-                      {(currentModel.avgTtftMs / 1000).toFixed(2)}
-                    </span>
-                    <span className="text-[10px] text-gray-400">秒</span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono">极速建立响应通道</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '模型专属缓存率' : 'Cache Hit Rate'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-purple-600 dark:text-purple-400">
-                      {currentModel.cacheHitRate.toFixed(1)}%
-                    </span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono">复用大部分系统指令</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col justify-between">
-                  <span className="text-[10.5px] text-gray-500 dark:text-zinc-400">{isZh ? '全网调用占比' : 'Share Percentage'}</span>
-                  <div className="my-1.5 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold font-mono text-gray-900 dark:text-zinc-100">
-                      {currentModel.sharePercentage.toFixed(1)}%
-                    </span>
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-mono">共 {currentModel.totalRequests} 次调用</span>
-                </div>
-              </div>
-
-              {/* 对称双卡：高频依赖项目 VS 承载账号分布 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                    <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>{isZh ? '哪些工程最重度使用该模型？' : 'Projects Using this Model'}</span>
-                  </span>
-                  <div className="flex flex-col gap-2">
-                    {(currentModel.topWorkspaces || [['at', 75], ['omin', 18], ['other', 7]]).map(([w, pct]) => (
-                      <div key={w} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-[10.5px]">
-                          <span className="font-medium text-gray-800 dark:text-zinc-200">{w}</span>
-                          <span className="font-mono text-indigo-600 font-bold">{pct}%</span>
+                {overviewRightTab === 'tools' ? (
+                  <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-2 content-center">
+                    {reportData.toolMetrics.slice(0, 6).map((t, idx) => {
+                      const filled = Math.max(1, Math.round((t.sharePct / Math.max(reportData.toolMetrics[0]?.sharePct || 1, 1)) * 8));
+                      const segColors = [
+                        'bg-blue-500/80 dark:bg-blue-400/85',
+                        'bg-blue-500/60 dark:bg-blue-400/65',
+                        'bg-indigo-400/75 dark:bg-indigo-400/70',
+                        'bg-sky-400/75 dark:bg-sky-400/70',
+                        'bg-slate-400/70 dark:bg-zinc-400/60',
+                        'bg-slate-400/50 dark:bg-zinc-500/50',
+                      ];
+                      return (
+                        <div key={t.toolName} className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between text-[10px] font-mono gap-1">
+                            <span className="font-semibold text-slate-700 dark:text-zinc-200 truncate">{t.toolName}</span>
+                            <span className="text-slate-500 dark:text-zinc-400 shrink-0 flex items-center gap-1">
+                              <span>{t.callCount}</span>
+                              {t.errorCount > 0 && (
+                                <span
+                                  title={`${t.errorCount} ${tUi(lang, 'errors')}`}
+                                  className="px-1 py-0 rounded bg-rose-500/10 text-rose-600/85 dark:text-rose-400/85 text-[8.5px] font-medium"
+                                >
+                                  {t.errorCount}!
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-8 gap-0.5">
+                            {Array.from({ length: 8 }, (_, bIdx) => (
+                              <div
+                                key={bIdx}
+                                className={`h-2 rounded-xs ${
+                                  bIdx < filled ? segColors[idx % segColors.length] : 'bg-gray-100 dark:bg-white/[0.06]'
+                                }`}
+                              />
+                            ))}
+                          </div>
                         </div>
-                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-indigo-500" />
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-2xs flex flex-col gap-2.5">
-                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
-                    <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>{isZh ? '哪些账号承载了该模型的调用？' : 'Accounts Hosting this Model'}</span>
-                  </span>
-                  <div className="flex flex-col gap-2">
-                    {(currentModel.topAccounts || [['ctrler@868666.best', 70], ['developer.pro@gmail.com', 20], ['research.pool1@gmail.com', 10]]).map(([a, pct]) => (
-                      <div key={a} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-[10.5px]">
-                          <span className="font-medium text-gray-800 dark:text-zinc-200 truncate pr-2">{a}</span>
-                          <span className="font-mono text-emerald-600 font-bold shrink-0">{pct}%</span>
-                        </div>
-                        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                          <div style={{ width: `${pct}%` }} className="h-full rounded-full bg-emerald-500" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* 视角 5：📜 逐笔流水对账 (Traffic Ledger)                         */}
-      {/* ============================================================== */}
-      {activeView === 'ledger' && (
-        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200 relative">
-          <div className="bg-white/70 dark:bg-[#121316]/70 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="relative w-48">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={isZh ? '搜索模型、账号或工程...' : 'Filter ledger...'}
-                  className="w-full pl-8 pr-2.5 py-1 text-[11px] rounded-lg bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 outline-none"
-                />
-              </div>
-
-              <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
-                {[
-                  { id: 'all' as HostFilter, label: isZh ? '全部' : 'All' },
-                  { id: 'app' as HostFilter, label: 'App' },
-                  { id: 'ide' as HostFilter, label: 'IDE' },
-                  { id: 'plugin' as HostFilter, label: isZh ? '插件' : 'Plugin' },
-                  { id: 'cli' as HostFilter, label: 'CLI' },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setHostFilter(item.id)}
-                    className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
-                      hostFilter === item.id
-                        ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                        : 'text-gray-500 hover:text-gray-800 dark:text-zinc-400'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="text-[10px] text-gray-400 font-mono">
-              {isZh ? `已捕获 ${filteredRecords.length} 笔本地流水` : `${filteredRecords.length} requests logged`}
-            </div>
-          </div>
-
-          <div className="bg-white/80 dark:bg-[#121316]/80 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 rounded-xl overflow-hidden shadow-2xs">
-            <table className="w-full text-left border-collapse table-fixed select-none">
-              <colgroup>
-                <col className="w-[75px]" />
-                <col className="w-[65px]" />
-                <col className="w-[28%]" />
-                <col className="w-[18%]" />
-                <col className="w-[90px]" />
-                <col className="w-[85px]" />
-                <col className="w-[65px]" />
-                <col className="w-[75px]" />
-              </colgroup>
-              <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 text-[10px] font-medium uppercase tracking-wider">
-                <tr>
-                  <th className="px-3 py-2">时间</th>
-                  <th className="px-1.5 py-2 text-center">宿主</th>
-                  <th className="px-2.5 py-2">请求模型 ➔ 物理上游</th>
-                  <th className="px-2.5 py-2">输入 / 缓存复用</th>
-                  <th className="px-2 py-2">输出 Tokens</th>
-                  <th className="px-2 py-2">流速 (TPS)</th>
-                  <th className="px-2 py-2">首字延迟</th>
-                  <th className="px-2 py-2 text-right pr-3">已省成本</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-white/5 font-sans text-[10.5px]">
-                {filteredRecords.map((r) => (
-                  <tr
-                    key={r.id}
-                    onClick={() => setSelectedRecord(r)}
-                    className="hover:bg-blue-50/40 dark:hover:bg-blue-500/5 transition-colors cursor-pointer group"
-                  >
-                    <td className="px-3 py-2 font-mono text-[10px] text-gray-500 dark:text-zinc-400">
-                      {r.time}
-                    </td>
-
-                    <td className="px-1.5 py-2 text-center">
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-gray-100 dark:bg-white/[0.05] text-gray-700 dark:text-zinc-300">
-                        {r.host === 'app' ? (
-                          <AppWindow className="w-2.5 h-2.5 text-blue-500" />
-                        ) : r.host === 'ide' ? (
-                          <Code2 className="w-2.5 h-2.5 text-indigo-500" />
-                        ) : r.host === 'plugin' ? (
-                          <Puzzle className="w-2.5 h-2.5 text-amber-500" />
-                        ) : (
-                          <Terminal className="w-2.5 h-2.5 text-cyan-500" />
-                        )}
-                        <span>{r.host.toUpperCase()}</span>
-                      </span>
-                    </td>
-
-                    <td className="px-2.5 py-2 truncate">
-                      <div className="flex items-center gap-1 truncate">
-                        <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate">{r.requestedModel}</span>
-                        <span className="text-gray-400 text-[9px]">➔</span>
-                        <span
-                          className={`font-mono text-[9.5px] truncate ${
-                            r.isDowngraded ? 'text-rose-600 dark:text-rose-400 font-bold' : 'text-purple-600 dark:text-purple-400 font-medium'
-                          }`}
+                ) : overviewRightTab === 'context' ? (
+                  <div className="flex-1 flex flex-col justify-center gap-2">
+                    {sessionContexts.slice(0, 4).map((sc) => {
+                      const pct = Math.min(100, Math.max(0, sc.usagePct));
+                      const barColor =
+                        pct >= 80 ? 'bg-rose-500' : pct >= 60 ? 'bg-amber-500' : 'bg-indigo-500';
+                      const textColor =
+                        pct >= 80
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : pct >= 60
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-indigo-600 dark:text-indigo-400';
+                      return (
+                        <button
+                          key={sc.sessionId}
+                          onClick={() => {
+                            setWorkspaceFilter('all');
+                            setSearchQuery(sc.sessionId);
+                            setActiveView('ledger');
+                          }}
+                          className="w-full text-left flex flex-col gap-1 px-2 py-1 rounded-lg hover:bg-gray-50 dark:hover:bg-white/[0.03] transition-colors"
+                          title={`${sc.title} · ${sc.model} · ${sc.lastActiveTime}`}
                         >
-                          {r.physicalModel}
-                        </span>
-                        {r.isDowngraded && (
-                          <span className="px-1 py-0 rounded text-[8px] bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400 font-bold shrink-0">
-                            暗降
-                          </span>
-                        )}
+                          <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {sc.isRunning && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                              )}
+                              <span className="px-1 py-0 rounded bg-gray-100 dark:bg-white/[0.07] text-gray-500 dark:text-zinc-400 text-[8.5px] shrink-0">
+                                {sc.workspace}
+                              </span>
+                              <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate">
+                                {sc.title}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {sc.checkpointCount > 0 && (
+                                <span
+                                  title={tUi(lang, 'stats_compactions_count', { count: sc.checkpointCount })}
+                                  className="text-[8.5px] text-purple-500 dark:text-purple-400"
+                                >
+                                  ↻{sc.checkpointCount}
+                                </span>
+                              )}
+                              <span className="text-gray-400">
+                                {fmtTok(sc.usedTokens)}/{fmtTok(sc.budgetTokens)}
+                              </span>
+                              <span className={`font-bold ${textColor}`}>{pct.toFixed(0)}%</span>
+                            </div>
+                          </div>
+                          <div className="w-full h-1 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                            <div
+                              style={{ width: `${Math.max(2, pct)}%` }}
+                              className={`h-full rounded-full ${barColor}`}
+                            />
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {sessionContexts.length === 0 && (
+                      <div className="py-6 text-center text-[10.5px] text-gray-400 dark:text-zinc-500 font-medium">
+                        {tUi(lang, 'stats_no_context_data')}
                       </div>
-                    </td>
-
-                    <td className="px-2.5 py-2 font-mono text-[10px] text-gray-600 dark:text-zinc-400">
-                      <span>{(r.inputTokens / 1000).toFixed(1)}K</span>
-                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400 ml-1">
-                        ({(r.cachedTokens / 1000).toFixed(0)}K Cache)
-                      </span>
-                    </td>
-
-                    <td className="px-2 py-2 font-mono font-semibold text-gray-800 dark:text-zinc-200">
-                      {r.outputTokens.toLocaleString()}
-                    </td>
-
-                    <td className="px-2 py-2 font-mono">
-                      <span
-                        className={`font-bold ${
-                          r.tps > 150
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : r.tps > 80
-                            ? 'text-blue-600 dark:text-blue-400'
-                            : 'text-rose-500 font-bold'
-                        }`}
-                      >
-                        ⚡ {r.tps.toFixed(0)} tok/s
-                      </span>
-                    </td>
-
-                    <td className="px-2 py-2 font-mono text-gray-500 dark:text-zinc-400">
-                      ⏱ {r.ttft}s
-                    </td>
-
-                    <td className="px-2 py-2 text-right pr-3 font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                      +${r.costSaved.toFixed(4)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* 抽屉透视 */}
-          {selectedRecord && (
-            <div className="fixed inset-y-0 right-0 z-50 w-96 bg-white/95 dark:bg-[#16171b]/95 backdrop-blur-2xl border-l border-gray-200/80 dark:border-white/10 shadow-2xl p-4 flex flex-col gap-3 animate-in slide-in-from-right duration-200">
-              <div className="flex items-center justify-between pb-2 border-b border-gray-200/60 dark:border-white/10">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-blue-500" />
-                  <span className="font-semibold text-xs text-gray-900 dark:text-zinc-100">
-                    {isZh ? '请求原子流水透视' : 'Request Inspector'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setSelectedRecord(null)}
-                  className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Request ID:</span>
-                  <span className="font-mono text-gray-800 dark:text-zinc-200 font-semibold">{selectedRecord.id}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Session ID:</span>
-                  <span className="font-mono text-gray-600 dark:text-zinc-400">{selectedRecord.sessionId}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Workspace:</span>
-                  <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold truncate max-w-[200px]">{selectedRecord.workspace}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Account:</span>
-                  <span className="font-mono text-gray-700 dark:text-zinc-300">{selectedRecord.accountEmail}</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">物理模型拓扑</span>
-                <div className="flex items-center justify-between mt-0.5">
-                  <span className="text-gray-500">请求模型:</span>
-                  <span className="font-semibold text-gray-800 dark:text-zinc-200">{selectedRecord.requestedModel}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">物理真实执行:</span>
-                  <span className="font-mono font-bold text-purple-600 dark:text-purple-400">{selectedRecord.physicalModel}</span>
-                </div>
-                {selectedRecord.isDowngraded ? (
-                  <div className="p-1.5 mt-1 rounded-lg bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 text-[9.5px] font-semibold flex items-center gap-1 border border-rose-200/60">
-                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                    <span>检测到云端暗降！上游模型未满足预期高算力代号。</span>
+                    )}
                   </div>
                 ) : (
-                  <div className="p-1.5 mt-1 rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 text-[9.5px] font-semibold flex items-center gap-1 border border-emerald-200/40">
-                    <CheckCircle2 className="w-3 h-3 shrink-0" />
-                    <span>100% 原生高算力保真路由</span>
+                  <div className="flex-1 flex flex-col justify-center gap-1.5">
+                    {apiErrors.slice(0, 4).map((e, idx) => (
+                      <button
+                        key={`${e.conversationId}-${e.timestamp}-${idx}`}
+                        onClick={() => {
+                          setWorkspaceFilter('all');
+                          setSearchQuery(e.conversationId);
+                          setActiveView('ledger');
+                        }}
+                        title={e.message}
+                        className="w-full text-left px-2.5 py-1.5 rounded-xl bg-rose-50/70 dark:bg-rose-500/[0.07] border border-rose-200/60 dark:border-rose-500/20 flex items-center justify-between gap-2 text-[10px] font-mono"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="px-1.5 py-0 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold text-[8.5px] shrink-0">
+                            {e.code}
+                          </span>
+                          <span className="truncate font-semibold text-gray-800 dark:text-zinc-200">
+                            {e.workspaceName} · {e.model}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 text-[9px]">
+                          <span className="text-rose-500/80 dark:text-rose-400/80 max-w-[110px] truncate hidden sm:inline">
+                            {e.message}
+                          </span>
+                          <span className="text-gray-400">
+                            {e.timeStr.includes(' ') ? e.timeStr.split(' ')[1] : e.timeStr}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                    {alertRecords.slice(0, Math.max(0, 4 - Math.min(4, apiErrors.length))).map((r) => {
+                      const totalIn = r.inputTokens + r.cachedTokens;
+                      const cPct = totalIn > 0 ? Math.round((r.cachedTokens / totalIn) * 100) : 0;
+                      return (
+                        <button
+                          key={r.id}
+                          onClick={() => {
+                            setSelectedRecord(r);
+                            setActiveView('ledger');
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-xl bg-amber-50/70 dark:bg-amber-500/[0.06] border border-amber-200/60 dark:border-amber-500/20 flex items-center justify-between gap-2 text-[10px] font-mono"
+                        >
+                          <span className="truncate font-semibold text-gray-800 dark:text-zinc-200">
+                            {r.workspace} · {r.requestedModel}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-amber-600 dark:text-amber-400 font-bold">{cPct}% {tUi(lang, 'stats_cache')}</span>
+                            <span className="text-sky-600 dark:text-sky-400">
+                              {r.tokensPerSecond > 0 ? `${r.tokensPerSecond.toFixed(0)} t/s` : '-'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {totalAlertCount === 0 && (
+                      <div className="py-6 text-center text-[10.5px] text-emerald-600 dark:text-emerald-400 font-medium">
+                        {tUi(lang, 'stats_all_healthy')}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+            </div>
 
-              <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">Token 构成拆解</span>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">直接输入 (New Input):</span>
-                  <span className="font-mono font-semibold">{selectedRecord.inputTokens}</span>
+            {/* 第三层 (50/50 双排行榜)：工程消耗排行 + 真实模型性能排行 */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+              <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col gap-2">
+                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                  <span className="text-[11px] font-semibold text-slate-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <FolderGit2 className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
+                    <span>{tUi(lang, 'stats_top_workspaces')}</span>
+                  </span>
+                  <button onClick={() => setActiveView('project')} className="text-[9.5px] text-slate-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    {tUi(lang, 'stats_all_arrow')}
+                  </button>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">缓存命中 (Cache Read):</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{selectedRecord.cachedTokens}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-purple-600 dark:text-purple-400">Thinking 思考 Token:</span>
-                  <span className="font-mono font-semibold">{selectedRecord.thinkingTokens ?? 0}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-amber-600 dark:text-amber-400">工具调用 Token:</span>
-                  <span className="font-mono font-semibold">{selectedRecord.toolTokens ?? 0}</span>
-                </div>
-                <div className="flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5">
-                  <span className="font-semibold text-gray-800 dark:text-zinc-200">最终回答输出:</span>
-                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{selectedRecord.outputTokens}</span>
+                <div className="flex flex-col gap-1.5">
+                  {reportData.byProject.slice(0, 4).map((p, idx) => {
+                    const pct = reportData.totalTokens > 0 ? (p.totalTokens / reportData.totalTokens) * 100 : 0;
+                    return (
+                      <button
+                        key={p.workspaceName}
+                        onClick={() => {
+                          setSelectedProjectName(p.workspaceName);
+                          setActiveView('project');
+                        }}
+                        className="flex flex-col gap-1 text-left hover:bg-gray-50 dark:hover:bg-white/[0.03] px-2 py-1 rounded-lg transition-colors"
+                      >
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className="w-4 h-4 rounded-full bg-slate-100 dark:bg-white/[0.07] text-slate-600 dark:text-zinc-300 text-[9px] font-semibold flex items-center justify-center shrink-0">
+                              {idx + 1}
+                            </span>
+                            <span className="font-semibold text-slate-800 dark:text-zinc-200 truncate">{p.workspaceName}</span>
+                          </span>
+                          <span className="tabular-nums shrink-0 flex items-center gap-1.5 text-[10.5px]">
+                            {p.estimatedCostUsd >= 0.1 && (
+                              <span className="text-[10px] font-normal text-slate-500 dark:text-zinc-400">
+                                ≈ {fmtUsd(p.estimatedCostUsd)}
+                              </span>
+                            )}
+                            <span className="font-semibold text-slate-900 dark:text-zinc-50">
+                              {fmtTok(p.totalTokens)} <span className="text-slate-500 dark:text-zinc-400 font-normal">({pct.toFixed(0)}%)</span>
+                            </span>
+                          </span>
+                        </div>
+                        <div className="w-full h-1 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                          <div style={{ width: `${Math.max(4, pct)}%` }} className="h-full rounded-full bg-gradient-to-r from-blue-500/80 to-indigo-400/75" />
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1 p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 text-[10.5px]">
-                <span className="text-[10px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">延迟瀑布流与成本</span>
-                <div className="flex items-center justify-between mt-0.5">
-                  <span className="text-gray-500">首字响应 (TTFT):</span>
-                  <span className="font-mono font-bold text-gray-800 dark:text-zinc-200">{selectedRecord.ttft} 秒</span>
+              <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col gap-2">
+                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                  <span className="text-[11px] font-semibold text-slate-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
+                    <span>{tUi(lang, 'stats_top_models')}</span>
+                  </span>
+                  <button onClick={() => setActiveView('model')} className="text-[9.5px] text-slate-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    {tUi(lang, 'stats_compare_arrow')}
+                  </button>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">持续流速:</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{selectedRecord.tps} tok/s</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">本地节省官方费用:</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">+${selectedRecord.costSaved.toFixed(4)} USD</span>
+                <div className="flex flex-col gap-1.5">
+                  {reportData.byModel.slice(0, 4).map((m, idx) => (
+                    <button
+                      key={m.requestedModel}
+                      onClick={() => {
+                        setSelectedModelFilter(m.requestedModel);
+                        setActiveView('model');
+                      }}
+                      className="flex items-center justify-between gap-2 text-left hover:bg-gray-50 dark:hover:bg-white/[0.03] px-2 py-1.5 rounded-lg transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-4 h-4 rounded-full bg-slate-100 dark:bg-white/[0.07] text-slate-600 dark:text-zinc-300 text-[9px] font-semibold flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="text-[10.5px] font-semibold font-mono text-slate-800 dark:text-zinc-200 truncate">
+                          {m.requestedModel}
+                        </span>
+                      </div>
+                      <div
+                        className="flex items-center gap-2 tabular-nums text-[10px] shrink-0"
+                        title={`${m.physicalModel} · ${fmtTok(m.totalTokens)} · ${m.totalRequests} reqs`}
+                      >
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/[0.10] text-emerald-700 dark:text-emerald-400 font-medium">
+                          {m.cacheHitRate.toFixed(0)}%
+                        </span>
+                        {(m.avgTtftMs || 0) > 0 && (
+                          <span className="text-slate-500 dark:text-zinc-400 w-10 text-right">
+                            {((m.avgTtftMs || 0) / 1000).toFixed(1)}s
+                          </span>
+                        )}
+                        <span className="text-slate-700 dark:text-zinc-200 w-12 text-right font-medium">
+                          {(m.avgTps || 0) > 0 ? `${(m.avgTps || 0).toFixed(0)} t/s` : '-'}
+                        </span>
+                        <span className="font-semibold text-slate-900 dark:text-zinc-50 w-9 text-right">
+                          {m.sharePercentage.toFixed(0)}%
+                        </span>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
-          )}
+          </div>
+        );
+      })()}
+
+      {/* ============================================================== */}
+      {/* 视角 2：📁 项目详情 (4:3/3:4 战报卡 + 真实工程遥测，无虚假账号归因) */}
+      {/* ============================================================== */}
+      {activeView === 'project' && (
+        <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+          <div className="relative z-30 bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 shrink-0 flex items-center gap-1.5">
+                <FolderGit2 className="w-3.5 h-3.5 text-indigo-500" />
+                <span>{tUi(lang, 'stats_target_project')}</span>
+              </span>
+              <div ref={projectDropdownRef} className="relative">
+                <button
+                  onClick={() => setProjectDropdownOpen((prev) => !prev)}
+                  className="px-3 py-1.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.05] hover:bg-gray-200/80 dark:hover:bg-white/[0.08] border border-gray-200/70 dark:border-white/10 transition-all flex items-center gap-2 text-[11.5px] font-semibold text-gray-900 dark:text-zinc-100"
+                >
+                  <FolderGit2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span className="truncate max-w-[180px]">
+                    {currentProject?.workspaceName === '__ALL__'
+                      ? tUi(lang, 'stats_all_projects_agg')
+                      : currentProject?.workspaceName || '-'}
+                  </span>
+                  {currentProject && (
+                    <span className="text-[9px] px-1.5 py-[1px] rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-mono font-medium shrink-0">
+                      {fmtTok(currentProject.totalTokens)}
+                    </span>
+                  )}
+                  <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-150 ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {projectDropdownOpen && (
+                  <div className="absolute left-0 mt-1.5 w-72 rounded-xl bg-white/95 dark:bg-[#18191d]/95 backdrop-blur-2xl border border-gray-200/80 dark:border-white/10 shadow-xl z-30 overflow-hidden">
+                      <div className="p-2 border-b border-gray-100 dark:border-white/5 flex items-center gap-2">
+                        <Search className="w-3.5 h-3.5 text-gray-400 shrink-0 ml-1" />
+                        <input
+                          type="text"
+                          value={projectSearchQuery}
+                          onChange={(e) => setProjectSearchQuery(e.target.value)}
+                          placeholder={tUi(lang, 'stats_search_workspace')}
+                          autoFocus
+                          className="w-full bg-transparent text-[11px] text-gray-800 dark:text-zinc-100 placeholder-gray-400 focus:outline-none"
+                        />
+                      </div>
+                      <div className="max-h-60 overflow-y-auto p-1.5 flex flex-col gap-0.5">
+                        {selectableProjects
+                          .filter((p) => {
+                            const label = p.workspaceName === '__ALL__' ? tUi(lang, 'stats_all_projects_agg') : p.workspaceName;
+                            return !projectSearchQuery.trim() || label.toLowerCase().includes(projectSearchQuery.toLowerCase());
+                          })
+                          .map((p) => {
+                            const isSelected = p.workspaceName === currentProject?.workspaceName;
+                            const displayTitle = p.workspaceName === '__ALL__' ? tUi(lang, 'stats_all_projects_agg') : p.workspaceName;
+                            return (
+                              <button
+                                key={p.workspaceName}
+                                onClick={() => {
+                                  setSelectedProjectName(p.workspaceName);
+                                  setProjectDropdownOpen(false);
+                                  setProjectSearchQuery('');
+                                }}
+                                className={`w-full px-2.5 py-2 rounded-lg text-left transition-all flex items-center justify-between gap-2 ${
+                                  isSelected ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : 'hover:bg-gray-100/80 dark:hover:bg-white/[0.04] text-gray-800 dark:text-zinc-200'
+                                }`}
+                              >
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-[11px] font-semibold truncate">{displayTitle}</span>
+                                  <span className="text-[9px] text-gray-400 font-mono truncate">
+                                    {fmtTok(p.totalTokens)} · {p.totalSteps.toLocaleString()} {tUi(lang, 'stats_unit_steps')} · {p.conversationCount} {tUi(lang, 'stats_unit_sessions')}
+                                  </span>
+                                </div>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setShareModalOpen(true)}
+                className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-[10.5px] font-semibold shadow-xs flex items-center gap-1.5"
+              >
+                <Share2 className="w-3 h-3" />
+                <span>{tUi(lang, 'stats_share_poster')}</span>
+              </button>
+              <span className="text-[10px] font-mono text-gray-400 pl-1">
+                {Math.max(1, selectableProjects.findIndex((p) => p.workspaceName === currentProject?.workspaceName) + 1)} / {Math.max(1, selectableProjects.length)}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    const idx = selectableProjects.findIndex((p) => p.workspaceName === currentProject?.workspaceName);
+                    const prevIdx = idx <= 0 ? selectableProjects.length - 1 : idx - 1;
+                    if (selectableProjects[prevIdx]) setSelectedProjectName(selectableProjects[prevIdx].workspaceName);
+                  }}
+                  className="p-1 rounded-md bg-gray-100/80 dark:bg-white/[0.04] hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-zinc-300"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    const idx = selectableProjects.findIndex((p) => p.workspaceName === currentProject?.workspaceName);
+                    const nextIdx = idx >= selectableProjects.length - 1 ? 0 : idx + 1;
+                    if (selectableProjects[nextIdx]) setSelectedProjectName(selectableProjects[nextIdx].workspaceName);
+                  }}
+                  className="p-1 rounded-md bg-gray-100/80 dark:bg-white/[0.04] hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-zinc-300"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {currentProject && (() => {
+            const displayProjectTitle =
+              currentProject.workspaceName === '__ALL__'
+                ? tUi(lang, 'stats_all_projects_agg')
+                : currentProject.workspaceName;
+            const posterRangeBadge =
+              timeRange === 'today'
+                ? tUi(lang, 'stats_range_today_zero')
+                : timeRange === '7days'
+                ? tUi(lang, 'stats_range_7d')
+                : timeRange === '30days'
+                ? tUi(lang, 'stats_range_30d')
+                : timeRange === 'all'
+                ? tUi(lang, 'stats_range_all')
+                : customStartDate === customEndDate
+                ? customStartDate
+                : `${customStartDate} ~ ${customEndDate}`;
+
+            const projTraffic =
+              currentProject.workspaceName === '__ALL__'
+                ? reportData.recentTraffic
+                : reportData.recentTraffic.filter((r) => r.workspace === currentProject.workspaceName);
+
+            // 基于真实请求时间戳与单步耗时计算活跃研发时长（15 分钟滑动活跃窗口聚合，无流量时回退步数估算）
+            const realActiveMs = (() => {
+              const tsList: Array<{ ts: number; dur: number }> = [];
+              for (const r of projTraffic) {
+                const ts = r.timestamp || Date.parse(r.time.replace(' ', 'T'));
+                if (!Number.isNaN(ts) && ts > 0) {
+                  tsList.push({ ts, dur: Math.min(180_000, Math.max(4_000, r.durationMs || 12_000)) });
+                }
+              }
+              if (tsList.length === 0) return 0;
+              tsList.sort((a, b) => a.ts - b.ts);
+              const SESSION_GAP_MS = 15 * 60 * 1000;
+              let accMs = tsList[0].dur;
+              for (let i = 1; i < tsList.length; i++) {
+                const gap = tsList[i].ts - tsList[i - 1].ts;
+                if (gap >= 0 && gap <= SESSION_GAP_MS) {
+                  accMs += gap;
+                } else {
+                  accMs += tsList[i].dur;
+                }
+              }
+              return accMs;
+            })();
+            const estHours =
+              realActiveMs > 0
+                ? Math.max(0.1, realActiveMs / 3_600_000)
+                : Math.max(0.1, +(currentProject.totalSteps * 0.0046).toFixed(2));
+            const estHrsInt = Math.floor(estHours);
+            const estMinsInt = Math.max(realActiveMs > 0 || currentProject.totalSteps > 0 ? 1 : 0, Math.round((estHours - estHrsInt) * 60));
+
+            const recentIn = projTraffic.reduce((s, r) => s + r.inputTokens, 0);
+            const recentCache = projTraffic.reduce((s, r) => s + r.cachedTokens, 0);
+            const recentOut = projTraffic.reduce((s, r) => s + r.outputTokens, 0);
+            const recentSum = recentIn + recentCache + recentOut;
+
+            const projCacheRate =
+              recentIn + recentCache > 0 ? (recentCache / (recentIn + recentCache)) * 100 : reportData.globalCacheHitRate;
+            const outRatio = recentSum > 0 ? Math.min(0.25, recentOut / recentSum) : 0.015;
+
+            // 当 projTraffic 包含当前时段真实全量流水时直接采用真实累计值；否则按项目总 Token 等比还原
+            const projOut = recentSum > 0 ? recentOut : Math.round(currentProject.totalTokens * outRatio);
+            const projCache =
+              recentSum > 0
+                ? recentCache
+                : Math.round(Math.max(0, currentProject.totalTokens - projOut) * (projCacheRate / 100));
+            const projIn =
+              recentSum > 0 ? recentIn : Math.max(0, currentProject.totalTokens - projOut - projCache);
+            const projThink = 0;
+            const avgStepsPerSession = Math.round(
+              currentProject.totalSteps / Math.max(1, currentProject.conversationCount)
+            );
+            const formattedLastActive = currentProject.lastActiveTime
+              ? currentProject.lastActiveTime.replace('T', ' ').split('.')[0]
+              : '-';
+
+            // 100% 真实工程级多维遥测聚合：24h 分布、7天×6时段矩阵、模型 6 维能力指标与 32 段全环会话脉冲
+            const projHourly = new Array(24).fill(0);
+            const rawWeekMatrix: number[][] = Array.from({ length: 7 }, () => new Array(6).fill(0));
+            const dayTotals = new Array(7).fill(0);
+            const realModelAgg = new Map<
+              string,
+              {
+                reqs: number;
+                inp: number;
+                cache: number;
+                out: number;
+                tot: number;
+                measuredOut: number;
+                measuredDurMs: number;
+                tpsSum: number;
+                tpsCnt: number;
+              }
+            >();
+
+            for (const r of projTraffic) {
+              const tok = r.inputTokens + r.cachedTokens + r.outputTokens;
+              const ts = r.timestamp || Date.parse(r.time.replace(' ', 'T'));
+              let hour = -1;
+              let dayIdx = -1;
+              if (!Number.isNaN(ts) && ts > 0) {
+                const d = new Date(ts);
+                hour = d.getHours();
+                dayIdx = (d.getDay() + 6) % 7;
+              } else {
+                const m = r.time.match(/(\d{2}):\d{2}/);
+                if (m) hour = parseInt(m[1], 10);
+              }
+
+              if (hour >= 0 && hour < 24) {
+                projHourly[hour] += tok;
+                if (dayIdx >= 0 && dayIdx < 7) {
+                  const slotIdx = Math.min(5, Math.floor(hour / 4));
+                  rawWeekMatrix[dayIdx][slotIdx] += tok;
+                  dayTotals[dayIdx] += tok;
+                }
+              }
+
+              let mEntry = realModelAgg.get(r.requestedModel);
+              if (!mEntry) {
+                mEntry = { reqs: 0, inp: 0, cache: 0, out: 0, tot: 0, measuredOut: 0, measuredDurMs: 0, tpsSum: 0, tpsCnt: 0 };
+                realModelAgg.set(r.requestedModel, mEntry);
+              }
+              mEntry.reqs += 1;
+              mEntry.inp += r.inputTokens;
+              mEntry.cache += r.cachedTokens;
+              mEntry.out += r.outputTokens;
+              mEntry.tot += tok;
+              if (r.durationMs > 0 && r.outputTokens > 0) {
+                mEntry.measuredOut += r.outputTokens;
+                mEntry.measuredDurMs += r.durationMs;
+              }
+              if (r.tokensPerSecond > 0) {
+                mEntry.tpsSum += r.tokensPerSecond;
+                mEntry.tpsCnt += 1;
+              }
+            }
+
+            // Token 构成占比
+            const sumComp = Math.max(1, projCache + projIn + projThink + projOut);
+            const compCachePct = +((projCache / sumComp) * 100).toFixed(1);
+            const compInPct = +((projIn / sumComp) * 100).toFixed(1);
+            const compOutPct = Math.max(0.2, +((projOut / sumComp) * 100).toFixed(1));
+
+            // 合并真实模型明细（包含 6 维实测指标：算力占比、缓存率、单步上下文、生成速度、单步输出、调用频次）
+            const mergedModelNames = Array.from(
+              new Set([
+                ...Array.from(realModelAgg.keys()),
+                ...currentProject.modelBreakdown.map(([m]) => m),
+              ])
+            );
+            const baseProjectTotal = Math.max(1, recentSum > 0 ? recentSum : currentProject.totalTokens);
+            const projModelRows = mergedModelNames
+              .map((model) => {
+                const real = realModelAgg.get(model);
+                const bdPct = currentProject.modelBreakdown.find(([m]) => m === model)?.[1] ?? 0;
+                const matchedModel = reportData.byModel.find((m) => m.requestedModel === model);
+                if (real && real.tot > 0) {
+                  const cRate = real.inp + real.cache > 0 ? (real.cache / (real.inp + real.cache)) * 100 : projCacheRate;
+                  const pct = (real.tot / baseProjectTotal) * 100;
+                  const avgTps =
+                    real.measuredDurMs > 0 && real.measuredOut > 0
+                      ? (real.measuredOut * 1000) / real.measuredDurMs
+                      : real.tpsCnt > 0
+                      ? real.tpsSum / real.tpsCnt
+                      : matchedModel?.avgTps || reportData.avgSpeedTps || 0;
+                  return {
+                    model,
+                    reqs: real.reqs,
+                    tot: real.tot,
+                    cache: real.cache,
+                    inp: real.inp,
+                    out: real.out,
+                    cRate,
+                    pct,
+                    avgTps,
+                    avgCtx: (real.inp + real.cache) / Math.max(1, real.reqs),
+                    avgOut: real.out / Math.max(1, real.reqs),
+                  };
+                }
+                const tot = Math.round((currentProject.totalTokens * bdPct) / 100);
+                const cRate = matchedModel ? matchedModel.cacheHitRate : projCacheRate;
+                const out = Math.round(tot * outRatio);
+                const nonOut = Math.max(0, tot - out);
+                const cache = Math.round(nonOut * (cRate / 100));
+                const inp = Math.max(0, nonOut - cache);
+                const reqs = matchedModel
+                  ? matchedModel.totalRequests
+                  : Math.max(1, Math.round((currentProject.totalSteps * bdPct) / 100));
+                const avgTps = matchedModel?.avgTps || reportData.avgSpeedTps || 0;
+                return {
+                  model,
+                  reqs,
+                  tot,
+                  cache,
+                  inp,
+                  out,
+                  cRate,
+                  pct: bdPct,
+                  avgTps,
+                  avgCtx: nonOut / Math.max(1, reqs),
+                  avgOut: out / Math.max(1, reqs),
+                };
+              })
+              .filter((row) => row.tot > 0 || row.pct > 0)
+              .sort((a, b) => b.tot - a.tot);
+
+            const wavePalette = ['#34d399', '#a855f7', '#38bdf8', '#f59e0b', '#fb7185', '#818cf8', '#2dd4bf', '#f472b6', '#a3e635', '#22d3ee'];
+            const modelColorIdxMap = new Map<string, number>();
+            projModelRows.forEach((r, idx) => modelColorIdxMap.set(r.model, idx));
+
+            // 32 柱 360° 全环真实会话脉冲重采样（将当前时段全部真实请求按时间先后映射为 32 个环绕扇区，彻底消除半圈留白）
+            const chronProj = [...projTraffic].reverse();
+            const PULSE_COUNT = 32;
+            const pulseBars32 = (() => {
+              const rawToks = new Array(PULSE_COUNT).fill(0);
+              const colorIdxs = new Array(PULSE_COUNT).fill(0);
+              const labels = new Array(PULSE_COUNT).fill('');
+
+              if (chronProj.length >= PULSE_COUNT) {
+                const step = chronProj.length / PULSE_COUNT;
+                for (let i = 0; i < PULSE_COUNT; i++) {
+                  const s = Math.floor(i * step);
+                  const e = Math.max(s + 1, Math.floor((i + 1) * step));
+                  const mMap = new Map<string, number>();
+                  let sum = 0;
+                  for (let k = s; k < e; k++) {
+                    const r = chronProj[k];
+                    const t = r.inputTokens + r.cachedTokens + r.outputTokens + (r.thinkingTokens ?? 0);
+                    sum += t;
+                    mMap.set(r.requestedModel, (mMap.get(r.requestedModel) || 0) + t);
+                  }
+                  rawToks[i] = sum;
+                  let topM = chronProj[s].requestedModel;
+                  let topV = 0;
+                  mMap.forEach((v, m) => {
+                    if (v > topV) {
+                      topV = v;
+                      topM = m;
+                    }
+                  });
+                  colorIdxs[i] = modelColorIdxMap.get(topM) ?? i % wavePalette.length;
+                  const sampleTime = chronProj[s].time;
+                  labels[i] = sampleTime.includes(' ') ? sampleTime.split(' ')[1].slice(0, 5) : sampleTime.slice(0, 5);
+                }
+              } else if (chronProj.length > 0) {
+                for (let i = 0; i < PULSE_COUNT; i++) {
+                  const pos = chronProj.length === 1 ? 0 : (i / (PULSE_COUNT - 1)) * (chronProj.length - 1);
+                  const idx = Math.min(chronProj.length - 1, Math.round(pos));
+                  const r = chronProj[idx];
+                  const t = r.inputTokens + r.cachedTokens + r.outputTokens + (r.thinkingTokens ?? 0);
+                  const fracDist = Math.abs(pos - idx);
+                  rawToks[i] = t * (0.72 + 0.28 * Math.cos(fracDist * Math.PI));
+                  colorIdxs[i] = modelColorIdxMap.get(r.requestedModel) ?? idx % wavePalette.length;
+                  labels[i] = r.time.includes(' ') ? r.time.split(' ')[1].slice(0, 5) : r.time.slice(0, 5);
+                }
+              } else {
+                const fallbackRows = projModelRows.length > 0 ? projModelRows : [{ model: 'default', tot: 100, pct: 100 }];
+                for (let i = 0; i < PULSE_COUNT; i++) {
+                  const mIdx = i % fallbackRows.length;
+                  rawToks[i] = Math.max(1, fallbackRows[mIdx].tot);
+                  colorIdxs[i] = mIdx;
+                  labels[i] = `#${i + 1}`;
+                }
+              }
+
+              const minT = Math.min(...rawToks);
+              const maxT = Math.max(1, ...rawToks);
+              const floorBase = minT * 0.62;
+              const span = Math.max(1, maxT - floorBase);
+              return rawToks.map((tok, i) => ({
+                tok,
+                norm: 0.28 + 0.72 * Math.pow(Math.max(0, Math.min(1, (tok - floorBase) / span)), 0.58),
+                color: wavePalette[colorIdxs[i] % wavePalette.length],
+                label: labels[i],
+              }));
+            })();
+
+            // 自适应热力矩阵：多日范围展示「周一~周日 × 6时段」，单日或仅单天活跃时自动切换为「主力模型 × 6段真实时序切片」
+            const weekDays = tUi(lang, 'stats_weekdays').split(',');
+            const timeSlots = ['00h', '04h', '08h', '12h', '16h', '20h'];
+            const activeWeekdays = dayTotals.filter((v) => v > 0).length;
+            const useSessionSliceMatrix = rangeBounds.isSingleDay || activeWeekdays <= 1;
+
+            const shortenModelLabel = (name: string) => {
+              return name
+                .replace(/^gemini-/i, 'g')
+                .replace(/^Gemini\s+/i, 'G')
+                .replace(/^claude-/i, 'c-')
+                .replace(/hydrogen/i, 'hydro')
+                .replace(/Carbon\s*\(([^)]+)\)/i, (_, g) => `Carb·${g.slice(0, 1)}`)
+                .replace(/Neon\s*\(([^)]+)\)/i, (_, g) => `Neon·${g.slice(0, 1)}`)
+                .slice(0, 11);
+            };
+
+            const adaptiveMatrix = (() => {
+              if (!useSessionSliceMatrix) {
+                const maxCell = Math.max(1, ...rawWeekMatrix.flatMap((r) => r));
+                const heat = rawWeekMatrix.map((row) =>
+                  row.map((v) => (v <= 0 ? 0 : Math.min(100, Math.max(15, Math.round(Math.sqrt(v / maxCell) * 100)))))
+                );
+                return {
+                  modeTag: '7d × 24h',
+                  colLabels: timeSlots,
+                  rowLabels: weekDays,
+                  rawVals: rawWeekMatrix,
+                  heat,
+                };
+              }
+
+              // 单日 / 单活跃日精细视图：Top 6 真实模型 × 6 段按时间推进的真实会话切片
+              const topM = projModelRows.slice(0, 6);
+              const colCount = 6;
+              const rawGrid: number[][] = Array.from({ length: topM.length }, () => new Array(colCount).fill(0));
+              const colLabels = new Array(colCount).fill('');
+
+              if (chronProj.length > 0 && topM.length > 0) {
+                const mRowMap = new Map<string, number>();
+                topM.forEach((m, idx) => mRowMap.set(m.model, idx));
+                const step = chronProj.length / colCount;
+                for (let c = 0; c < colCount; c++) {
+                  const s = Math.floor(c * step);
+                  const e = Math.max(s + 1, Math.floor((c + 1) * step));
+                  const sample = chronProj[Math.min(chronProj.length - 1, s)];
+                  colLabels[c] = sample.time.includes(' ') ? sample.time.split(' ')[1].slice(0, 5) : `#${c + 1}`;
+                  for (let k = s; k < e && k < chronProj.length; k++) {
+                    const r = chronProj[k];
+                    const rIdx = mRowMap.get(r.requestedModel);
+                    if (rIdx !== undefined) {
+                      rawGrid[rIdx][c] += r.inputTokens + r.cachedTokens + r.outputTokens + (r.thinkingTokens ?? 0);
+                    }
+                  }
+                }
+              } else {
+                for (let c = 0; c < colCount; c++) colLabels[c] = timeSlots[c];
+              }
+
+              const maxCell = Math.max(1, ...rawGrid.flatMap((r) => r));
+              const heat = rawGrid.map((row) =>
+                row.map((v) => (v <= 0 ? 0 : Math.min(100, Math.max(16, Math.round(Math.sqrt(v / maxCell) * 100)))))
+              );
+              return {
+                modeTag: tUi(lang, 'stats_matrix_mode_slices', { count: topM.length }),
+                colLabels,
+                rowLabels: topM.map((m) => shortenModelLabel(m.model)),
+                rawVals: rawGrid,
+                heat,
+              };
+            })();
+
+            // 6 维真实工程遥测极坐标谐波玫瑰曲线（TOK 算力 / HIT 缓存 / CTX 上下文 / TPS 速率 / OUT 输出 / REQ 频次）
+            const maxModelPct = Math.max(1, ...projModelRows.map((r) => r.pct));
+            const maxModelReqs = Math.max(1, ...projModelRows.map((r) => r.reqs));
+            const maxModelAvgCtx = Math.max(1, ...projModelRows.map((r) => r.avgCtx));
+            const maxModelAvgOut = Math.max(1, ...projModelRows.map((r) => r.avgOut));
+            const maxModelTps = Math.max(10, ...projModelRows.map((r) => r.avgTps));
+
+            const buildPolarWavePoints = (
+              row: (typeof projModelRows)[number],
+              modelIdx: number,
+              cx: number,
+              cy: number,
+              minR: number,
+              maxR: number
+            ) => {
+              const span = maxR - minR;
+              // 6 项 100% 真实实测遥测归一化指标 (0.28 .. 1.0)
+              const axes6 = [
+                0.30 + 0.70 * Math.sqrt(row.pct / maxModelPct),
+                0.28 + 0.72 * Math.min(1, row.cRate / 100),
+                0.30 + 0.70 * Math.sqrt(row.avgCtx / maxModelAvgCtx),
+                0.30 + 0.70 * Math.min(1, row.avgTps / maxModelTps),
+                0.30 + 0.70 * Math.sqrt(row.avgOut / maxModelAvgOut),
+                0.30 + 0.70 * Math.sqrt(row.reqs / maxModelReqs),
+              ];
+              // 12 点闭合谐波玫瑰控制点（偶数点为真实维度波峰，奇数点为呼吸波谷，模型间带微小相位交织防完全重叠）
+              const N = 12;
+              const phase = (modelIdx % 5) * 0.16;
+              return Array.from({ length: N }, (_, i) => {
+                const angle = (i * 2 * Math.PI) / N - Math.PI / 2 + phase;
+                const axisIdx = Math.floor(i / 2) % 6;
+                if (i % 2 === 0) {
+                  const r = minR + span * axes6[axisIdx];
+                  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+                }
+                const nextAxis = axes6[(axisIdx + 1) % 6];
+                const valleyNorm = 0.22 + 0.34 * ((axes6[axisIdx] + nextAxis) / 2);
+                const r = minR + span * valleyNorm;
+                return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+              });
+            };
+
+            const buildPolarWavePath = (row: (typeof projModelRows)[number], modelIdx: number) => {
+              const pts = buildPolarWavePoints(row, modelIdx, 80, 80, 22, 63);
+              const N = pts.length;
+              let d = '';
+              for (let i = 0; i < N; i++) {
+                const p0 = pts[i];
+                const p1 = pts[(i + 1) % N];
+                const mx = (p0.x + p1.x) / 2;
+                const my = (p0.y + p1.y) / 2;
+                if (i === 0) {
+                  const prev = pts[N - 1];
+                  d += `M ${((prev.x + p0.x) / 2).toFixed(1)} ${((prev.y + p0.y) / 2).toFixed(1)} `;
+                }
+                d += `Q ${p0.x.toFixed(1)} ${p0.y.toFixed(1)} ${mx.toFixed(1)} ${my.toFixed(1)} `;
+              }
+              return `${d}Z`;
+            };
+
+            const polarAxisLabels = ['TOK', 'HIT', 'CTX', 'TPS', 'OUT', 'REQ'];
+            const renderPolarRadar = (sizeClass: string, clipId = 'polar-logo-hero') => (
+              <svg viewBox="0 0 160 160" className={`${sizeClass} overflow-visible`}>
+                <defs>
+                  <filter id="neon-wave-glow" x="-30%" y="-30%" width="160%" height="160%">
+                    <feGaussianBlur stdDeviation="2.2" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                  <clipPath id={clipId}>
+                    <circle cx="80" cy="80" r="16.8" />
+                  </clipPath>
+                </defs>
+                {/* 外圈与内圈极坐标底网 */}
+                <circle cx="80" cy="80" r="64" fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth="0.8" />
+                <circle cx="80" cy="80" r="44" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="0.7" />
+                <circle cx="80" cy="80" r="24" fill="none" stroke="rgba(255,255,255,0.11)" strokeWidth="0.8" />
+                {[0, 60, 120, 180, 240, 300].map((deg, idx) => {
+                  const rad = ((deg - 90) * Math.PI) / 180;
+                  return (
+                    <g key={deg}>
+                      <line
+                        x1={80 + 24 * Math.cos(rad)}
+                        y1={80 + 24 * Math.sin(rad)}
+                        x2={80 + 64 * Math.cos(rad)}
+                        y2={80 + 64 * Math.sin(rad)}
+                        stroke="rgba(255,255,255,0.08)"
+                        strokeWidth="0.7"
+                      />
+                      <text
+                        x={80 + 73 * Math.cos(rad)}
+                        y={80 + 73 * Math.sin(rad) + 2.5}
+                        textAnchor="middle"
+                        className="text-[6.5px] font-mono fill-zinc-500 font-semibold"
+                      >
+                        {polarAxisLabels[idx]}
+                      </text>
+                    </g>
+                  );
+                })}
+                {/* 主力模型 6 维实测极坐标谐波玫瑰（叠绘 Top 6 模型保证层次清晰） */}
+                {[...projModelRows.slice(0, 6)].reverse().map((row, revIdx, arr) => {
+                  const origIdx = arr.length - 1 - revIdx;
+                  return (
+                    <path
+                      key={row.model}
+                      d={buildPolarWavePath(row, origIdx)}
+                      fill="none"
+                      stroke={wavePalette[origIdx % wavePalette.length]}
+                      strokeWidth={origIdx < 3 ? '2.1' : '1.5'}
+                      strokeLinejoin="round"
+                      filter="url(#neon-wave-glow)"
+                      opacity={origIdx === 0 ? 0.96 : origIdx < 3 ? 0.85 : 0.68}
+                    >
+                      <title>{`${row.model}: ${fmtTok(row.tot)} · ${tUi(lang, 'stats_hit_short')} ${row.cRate.toFixed(0)}% · ${row.avgTps.toFixed(0)} tok/s`}</title>
+                    </path>
+                  );
+                })}
+                {/* 中央专属黑曜石钛金品牌徽章 */}
+                <circle cx="80" cy="80" r="19" fill="none" stroke="rgba(251,191,36,0.22)" strokeWidth="0.8" />
+                <circle cx="80" cy="80" r="17" fill="#050507" />
+                <image
+                  href="/icon.png"
+                  x="62"
+                  y="62"
+                  width="36"
+                  height="36"
+                  preserveAspectRatio="xMidYMid slice"
+                  clipPath={`url(#${clipId})`}
+                />
+                <circle cx="80" cy="80" r="16.8" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="0.9" />
+              </svg>
+            );
+
+            return (
+              <div className="flex flex-col gap-3.5">
+                {/* ========================================================= */}
+                {/* 【第一层：50/50 黄金对称：极坐标波纹海报 (6列) + 结构占比 (6列)】 */}
+                {/* ========================================================= */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+                  {/* 左卡 (6 cols)：Hyper Charts 极坐标多模型发光波纹海报 */}
+                  <div className="md:col-span-6 flex flex-col">
+                    <div className="relative h-full min-h-[264px] w-full rounded-2xl bg-gradient-to-br from-[#232734] via-[#1a1d27] to-[#141720] dark:from-[#07090e] dark:via-[#05070b] dark:to-[#030407] border border-slate-900/15 dark:border-white/[0.14] shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_14px_34px_-14px_rgba(15,23,42,0.28)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_18px_40px_-14px_rgba(0,0,0,0.85)] p-4 flex flex-col justify-between overflow-hidden text-white">
+                      {/* 顶部：工程名 + 路径 + 放大按钮 */}
+                      <div className="relative flex items-center justify-between gap-2 pb-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-extrabold tracking-tight text-white truncate">
+                            {currentProject.workspaceName === '__ALL__'
+                              ? tUi(lang, 'stats_all_projects_short')
+                              : currentProject.workspaceName}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 font-mono truncate hidden sm:inline">
+                            {currentProject.path}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setShareModalOpen(true)}
+                          title={tUi(lang, 'stats_expand_poster')}
+                          className="p-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/30 text-emerald-300 transition-colors shrink-0"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* 主体六宫格 + 中央大尺寸极坐标多模型波纹 */}
+                      <div className="relative flex-1 flex items-center justify-between gap-2 pt-1 min-h-0">
+                        {/* 左列：左上总 Token + 左中无感渐隐滚动全模型列表 + 左下输入/输出微卡 */}
+                        <div className="w-[148px] shrink-0 flex flex-col justify-between h-full py-1 gap-2 min-h-0">
+                          <div>
+                            <div className="text-[9.5px] text-emerald-400 font-mono flex items-center gap-1 mb-0.5">
+                              <span>●</span><span>{tUi(lang, 'stats_total_short')}</span>
+                            </div>
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-[22px] font-black font-mono tracking-tight text-white leading-none">
+                                {fmtTok(currentProject.totalTokens)}
+                              </span>
+                              <span className="text-[9.5px] font-mono text-emerald-400 font-bold">
+                                ↑{projCacheRate.toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-1 max-h-[86px] overflow-y-auto no-scrollbar fade-mask-bottom pb-2 text-[9px] font-mono text-zinc-300">
+                            {projModelRows.map((row, idx) => (
+                              <div
+                                key={row.model}
+                                title={`${row.model} · ${fmtTok(row.tot)} (${row.pct.toFixed(1)}%)`}
+                                className="flex items-center justify-between gap-1.5 shrink-0"
+                              >
+                                <span className="flex items-center gap-1.5 min-w-0">
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                    style={{ backgroundColor: wavePalette[idx % wavePalette.length] }}
+                                  />
+                                  <span className="truncate">{row.model}</span>
+                                </span>
+                                <span className="text-[8.5px] text-zinc-400 tabular-nums shrink-0">{row.pct.toFixed(0)}%</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-lg bg-purple-600/90 flex items-center justify-center text-[8.5px] font-bold shrink-0">IN</span>
+                              <div className="leading-tight">
+                                <div className="text-[8px] text-zinc-500">{tUi(lang, 'stats_net_input')}</div>
+                                <div className="text-[11px] font-bold font-mono text-white">{fmtTok(projIn)}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-[8.5px] font-bold text-zinc-300 shrink-0">OUT</span>
+                              <div className="leading-tight">
+                                <div className="text-[8px] text-zinc-500">{tUi(lang, 'stats_answer_output')}</div>
+                                <div className="text-[11px] font-bold font-mono text-white">{fmtTok(projOut)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 中列：大尺寸极坐标多模型发光波纹 */}
+                        <div className="flex-1 flex items-center justify-center min-w-0">
+                          {renderPolarRadar('w-[188px] h-[188px]')}
+                        </div>
+
+                        {/* 右列：右上耗时 + 右中步数 + 右下会话明细 */}
+                        <div className="w-[110px] shrink-0 flex flex-col justify-between h-full py-1 text-right">
+                          <div>
+                            <div className="text-[9.5px] text-amber-400 font-mono mb-0.5">✦ {tUi(lang, 'stats_active_time')}</div>
+                            <div className="text-[19px] font-black font-mono tracking-tight text-white leading-none">
+                              {estHrsInt}h {estMinsInt}m
+                            </div>
+                            <div className="text-[8.5px] text-zinc-500 font-mono mt-1">{tUi(lang, 'stats_session_span')}</div>
+                          </div>
+
+                          <div>
+                            <div className="text-[9.5px] text-purple-400 font-mono mb-0.5">◆ {tUi(lang, 'stats_steps_label')}</div>
+                            <div className="text-[19px] font-black font-mono tracking-tight text-white leading-none">
+                              {currentProject.totalSteps.toLocaleString()}
+                            </div>
+                            <div className="text-[8.5px] text-zinc-500 font-mono mt-1">{tUi(lang, 'stats_cache')} {fmtTok(projCache)}</div>
+                          </div>
+
+                          <div className="flex flex-col gap-1 text-[9.5px] font-mono pt-2 border-t border-white/[0.08]">
+                            <div className="flex items-center justify-between text-zinc-400">
+                              <span>{tUi(lang, 'stats_archived_sessions')}</span>
+                              <span className="text-white font-bold">{currentProject.conversationCount}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-zinc-400">
+                              <span>{tUi(lang, 'stats_avg_steps_per_sess')}</span>
+                              <span className="text-white font-bold">{avgStepsPerSession}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 右卡 (6 cols)：与左卡等高对齐的圆角卡片 */}
+                  <div className="md:col-span-6 p-4 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between gap-3">
+                    {/* 顶部 4 列极简大数字指标带 (参考 electrys Charge Statistics) */}
+                    <div className="grid grid-cols-4 gap-2 pb-2 border-b border-gray-100 dark:border-white/5">
+                      <div>
+                        <span className="text-[9px] text-gray-400 block">{tUi(lang, 'stats_cache_hit_label')}</span>
+                        <span className="text-base font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
+                          {projCacheRate.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-gray-400 block">{tUi(lang, 'stats_cache_reused_label')}</span>
+                        <span className="text-base font-extrabold font-mono text-purple-600 dark:text-purple-400">
+                          {fmtTok(projCache)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-gray-400 block">{tUi(lang, 'stats_net_input')}</span>
+                        <span className="text-base font-extrabold font-mono text-amber-500">
+                          {fmtTok(projIn)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-gray-400 block">{tUi(lang, 'stats_steps_per_sess_label')}</span>
+                        <span className="text-base font-extrabold font-mono text-blue-600 dark:text-blue-400">
+                          {avgStepsPerSession}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 中部：Apple Storage 分段比例条 + 全部模型算力分布列表 */}
+                    <div className="flex flex-col gap-2.5 flex-1 min-h-0">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                          <TrendingUp className="w-3.5 h-3.5 text-purple-500" />
+                          <span>{tUi(lang, 'stats_all_models_breakdown', { count: projModelRows.length })}</span>
+                        </span>
+                        <span className="text-[9px] text-gray-400 font-mono">{tUi(lang, 'stats_last_active')} {formattedLastActive}</span>
+                      </div>
+
+                      {/* Apple Storage 风格连续多色分段条 */}
+                      <div className="h-3 w-full rounded-full bg-gray-100 dark:bg-white/[0.06] p-0.5 flex items-center gap-0.5 overflow-hidden">
+                        {projModelRows.map((row, idx) => {
+                          const segColors = [
+                            'bg-emerald-500',
+                            'bg-purple-500',
+                            'bg-sky-500',
+                            'bg-amber-400',
+                            'bg-rose-500',
+                            'bg-indigo-500',
+                            'bg-teal-400',
+                          ];
+                          return (
+                            <div
+                              key={row.model}
+                              title={`${row.model}: ${row.pct.toFixed(1)}%`}
+                              style={{ width: `${Math.max(3, row.pct)}%` }}
+                              className={`h-full rounded-full transition-all duration-300 ${segColors[idx % segColors.length]}`}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      {/* 全模型明细行 (极细透明滚动条 + 右侧留白绝不压数字) */}
+                      <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto mini-scroll pr-1.5 max-h-[144px]">
+                        {projModelRows.map((row, idx) => {
+                          const dotColors = [
+                            'bg-emerald-500',
+                            'bg-purple-500',
+                            'bg-sky-500',
+                            'bg-amber-400',
+                            'bg-rose-500',
+                            'bg-indigo-500',
+                            'bg-teal-400',
+                          ];
+                          return (
+                            <div
+                              key={row.model}
+                              className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-gray-50/90 dark:bg-white/[0.03] border border-gray-100/80 dark:border-white/[0.04] shrink-0"
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${dotColors[idx % dotColors.length]}`} />
+                                <span className="text-[10.5px] font-semibold font-mono text-gray-800 dark:text-zinc-200 truncate">
+                                  {row.model}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0 font-mono text-[10px] tabular-nums">
+                                <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[9px] font-semibold">
+                                  {row.cRate.toFixed(0)}% {tUi(lang, 'stats_cache')}
+                                </span>
+                                <span className="font-bold text-gray-900 dark:text-zinc-100 w-12 text-right">
+                                  {fmtTok(row.tot)}
+                                </span>
+                                <span className="text-gray-400 w-10 text-right">
+                                  {row.pct.toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 底部结构摘要 */}
+                    <div className="pt-2 border-t border-gray-100 dark:border-white/5 flex items-center justify-between text-[9px] font-mono text-gray-500 dark:text-zinc-400">
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{tUi(lang, 'stats_cache')} {compCachePct}%</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" />{tUi(lang, 'stats_input')} {compInPct}%</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-500" />{tUi(lang, 'stats_output')} {compOutPct}%</span>
+                      <span className="text-gray-400">{projModelRows.length} {tUi(lang, 'stats_unit_models')}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ========================================================= */}
+                {/* 【第二层：50/50 零滚动收尾：自适应算力点阵热力图 (6列) + 工程动态融合卡 (6列)】 */}
+                {/* ========================================================= */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+                  {/* 左卡 (6 cols)：自适应多日星期 / 单日模型时序点阵热力图 */}
+                  <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between gap-2">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                      <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>
+                          {useSessionSliceMatrix
+                            ? tUi(lang, 'stats_matrix_session_slice')
+                            : tUi(lang, 'stats_matrix_work_hour')}
+                        </span>
+                      </span>
+                      <div className="flex items-center gap-2 text-[8.5px] font-mono text-gray-400">
+                        <div className="flex items-center gap-0.5">
+                          <span className="w-2 h-2 rounded-xs bg-gray-100 dark:bg-white/[0.06]" />
+                          <span className="w-2 h-2 rounded-xs bg-indigo-500" />
+                          <span className="w-2 h-2 rounded-xs bg-emerald-400" />
+                          <span className="w-2 h-2 rounded-xs bg-lime-400" />
+                          <span className="w-2 h-2 rounded-xs bg-amber-400" />
+                        </div>
+                        <span>{adaptiveMatrix.modeTag}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 text-[8px] font-mono text-gray-400 text-center">
+                        <span className={useSessionSliceMatrix ? 'w-16 shrink-0' : 'w-8 shrink-0'} />
+                        <div className="flex-1 grid grid-cols-6 gap-1.5">
+                          {adaptiveMatrix.colLabels.map((s, ci) => (
+                            <span key={ci} className="truncate">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                      {adaptiveMatrix.rowLabels.map((rowLabel, dIdx) => (
+                        <div key={dIdx} className="flex items-center gap-1.5">
+                          <span
+                            title={rowLabel}
+                            className={`${
+                              useSessionSliceMatrix ? 'w-16' : 'w-8'
+                            } shrink-0 text-[8.5px] font-mono text-gray-400 text-right pr-1 truncate`}
+                          >
+                            {rowLabel}
+                          </span>
+                          <div className="flex-1 grid grid-cols-6 gap-1.5">
+                            {adaptiveMatrix.heat[dIdx].map((intensity, sIdx) => (
+                              <div
+                                key={sIdx}
+                                title={`${rowLabel} · ${adaptiveMatrix.colLabels[sIdx]} · ${fmtTok(adaptiveMatrix.rawVals[dIdx]?.[sIdx] || 0)}`}
+                                className={`h-4 rounded flex items-center justify-center text-[8px] font-mono font-bold transition-all ${
+                                  intensity >= 80
+                                    ? 'bg-amber-400 text-gray-950'
+                                    : intensity >= 60
+                                    ? 'bg-lime-400 text-gray-950'
+                                    : intensity >= 40
+                                    ? 'bg-emerald-400 text-gray-950'
+                                    : intensity >= 15
+                                    ? 'bg-indigo-500 text-white'
+                                    : 'bg-gray-100 dark:bg-white/[0.04] text-gray-400 dark:text-zinc-600'
+                                }`}
+                              >
+                                {intensity > 0 ? String(intensity).padStart(2, '0') : '·'}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 右卡 (6 cols)：合并「关键会话里程碑」+「最近真实请求」分段融合卡 */}
+                  <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between gap-2">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                      <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06]">
+                        <button
+                          onClick={() => setProjectActivityTab('milestones')}
+                          className={`px-2.5 py-0.5 rounded-md text-[10.5px] font-semibold flex items-center gap-1 transition-all ${
+                            projectActivityTab === 'milestones'
+                              ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-white shadow-2xs'
+                              : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                          }`}
+                        >
+                          <BookOpen className="w-3 h-3 text-indigo-500" />
+                          <span>{tUi(lang, 'stats_milestones')}</span>
+                          <span className="text-[9px] font-mono opacity-60">{currentProject.sessionTitles.length}</span>
+                        </button>
+                        <button
+                          onClick={() => setProjectActivityTab('requests')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                            projectActivityTab === 'requests'
+                              ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-white shadow-2xs'
+                              : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                          }`}
+                        >
+                          <Terminal className="w-3 h-3 text-blue-500" />
+                          <span>{tUi(lang, 'stats_recent_requests')}</span>
+                        </button>
+                        <button
+                          onClick={() => setProjectActivityTab('perf')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                            projectActivityTab === 'perf'
+                              ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-white shadow-2xs'
+                              : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                          }`}
+                        >
+                          <TrendingUp className="w-3 h-3 text-emerald-500" />
+                          <span>{tUi(lang, 'stats_perf_curves')}</span>
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setWorkspaceFilter(currentProject.workspaceName === '__ALL__' ? 'all' : currentProject.workspaceName);
+                          setSearchQuery('');
+                          setActiveView('ledger');
+                        }}
+                        className="text-[9.5px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
+                      >
+                        <span>{tUi(lang, 'stats_all_ledger')}</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {projectActivityTab === 'perf' ? (() => {
+                      const projModelsList = Array.from(
+                        new Set([
+                          ...currentProject.modelBreakdown.map(([m]) => m),
+                          ...projTraffic.map((r) => r.requestedModel),
+                        ])
+                      );
+                      const activeProjModel =
+                        projPerfModel === '__ALL__' || !projModelsList.includes(projPerfModel) ? '__ALL__' : projPerfModel;
+                      const filteredProjPerfTraffic =
+                        activeProjModel === '__ALL__'
+                          ? projTraffic
+                          : projTraffic.filter((r) => r.requestedModel === activeProjModel);
+                      const perf = computePerfSeries(filteredProjPerfTraffic, timeRange);
+                      const matchedMeta =
+                        activeProjModel === '__ALL__'
+                          ? null
+                          : reportData.byModel.find((m) => m.requestedModel === activeProjModel) || null;
+                      const displayProjCache =
+                        perf.count > 0 ? perf.avgCache : matchedMeta ? matchedMeta.cacheHitRate : projCacheRate;
+                      const displayProjTps =
+                        perf.avgTps > 0 ? perf.avgTps : matchedMeta ? matchedMeta.avgTps || 0 : 0;
+                      return (
+                        <div className="flex-1 flex flex-col gap-1.5 min-h-0">
+                          {/* 项目内全模型微筛选条 */}
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                              <button
+                                onClick={() => setProjPerfModel('__ALL__')}
+                                className={`px-1.5 py-0.5 rounded text-[8.5px] font-semibold shrink-0 transition-all ${
+                                  activeProjModel === '__ALL__'
+                                    ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
+                                    : 'bg-gray-100 dark:bg-white/[0.06] text-gray-500 dark:text-zinc-400'
+                                }`}
+                              >
+                                {`${tUi(lang, 'all')} (${projModelsList.length})`}
+                              </button>
+                              {projModelsList.map((m) => (
+                                <button
+                                  key={m}
+                                  onClick={() => setProjPerfModel(m)}
+                                  className={`px-1.5 py-0.5 rounded text-[8.5px] font-mono font-semibold shrink-0 transition-all ${
+                                    activeProjModel === m
+                                      ? 'bg-indigo-600 text-white'
+                                      : 'bg-gray-100 dark:bg-white/[0.06] text-gray-600 dark:text-zinc-300'
+                                  }`}
+                                >
+                                  {m}
+                                </button>
+                              ))}
+                            </div>
+                            <span className="text-[8px] font-mono text-gray-400 shrink-0">{perf.rangeLabel}</span>
+                          </div>
+
+                          <div className="flex-1 grid grid-cols-2 gap-2 items-stretch">
+                            <div className="p-2 rounded-xl bg-gray-50/90 dark:bg-white/[0.03] border border-gray-100/80 dark:border-white/[0.04] flex flex-col justify-between gap-1">
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[9px] font-semibold text-gray-600 dark:text-zinc-300">
+                                  {tUi(lang, 'stats_cache_hit_label')}
+                                </span>
+                                <span className="text-[11px] font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
+                                  {displayProjCache.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="h-[58px] w-full">
+                                {renderSmoothCurve(perf.cacheSeries, '#10b981', 'proj-cache-grad', 100, 58, 90)}
+                              </div>
+                              <div className="flex items-center justify-between text-[8px] font-mono text-gray-400">
+                                <span>{perf.count > 0 ? `${perf.count} ${tUi(lang, 'stats_unit_reqs')}` : matchedMeta ? `${matchedMeta.totalRequests} ${tUi(lang, 'stats_unit_reqs')}` : `0 ${tUi(lang, 'stats_unit_reqs')}`}</span>
+                                <span>{tUi(lang, 'stats_peak')} {(perf.peakCache > 0 ? perf.peakCache : displayProjCache).toFixed(0)}%</span>
+                              </div>
+                            </div>
+
+                            <div className="p-2 rounded-xl bg-gray-50/90 dark:bg-white/[0.03] border border-gray-100/80 dark:border-white/[0.04] flex flex-col justify-between gap-1">
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[9px] font-semibold text-gray-600 dark:text-zinc-300">
+                                  {tUi(lang, 'stats_gen_speed')}
+                                </span>
+                                <span className="text-[11px] font-extrabold font-mono text-sky-600 dark:text-sky-400">
+                                  {displayProjTps.toFixed(1)} <span className="text-[8px] font-normal">tok/s</span>
+                                </span>
+                              </div>
+                              <div className="h-[58px] w-full">
+                                {renderSmoothCurve(perf.tpsSeries, '#0ea5e9', 'proj-tps-grad', Math.max(perf.seriesPeakTps, 10) * 1.15, 58)}
+                              </div>
+                              <div className="flex items-center justify-between text-[8px] font-mono text-gray-400">
+                                <span>{tUi(lang, 'stats_peak')} {(perf.peakTps > 0 ? perf.peakTps : displayProjTps).toFixed(1)} tok/s</span>
+                                <span>{perf.rangeLabel}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })() : projectActivityTab === 'milestones' ? (
+                      <div className="flex-1 relative pl-3.5 flex flex-col justify-center gap-2 before:content-[''] before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200 dark:before:bg-white/10">
+                        {currentProject.sessionTitles.slice(0, 5).map((title, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setWorkspaceFilter(currentProject.workspaceName);
+                              setSearchQuery(title.slice(0, 12));
+                              setActiveView('ledger');
+                            }}
+                            className="relative flex items-center justify-between gap-2 text-[11px] text-left hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors group"
+                          >
+                            <span className="absolute -left-[13px] w-2 h-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-[#121316]" />
+                            <span className="font-medium text-gray-800 dark:text-zinc-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate">
+                              {title}
+                            </span>
+                            <ChevronRight className="w-3 h-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex flex-col justify-center gap-1.5">
+                        {projTraffic.slice(0, 4).map((r) => {
+                          const tot = r.inputTokens + r.cachedTokens + r.outputTokens;
+                          const cPct =
+                            r.inputTokens + r.cachedTokens > 0
+                              ? Math.round((r.cachedTokens / (r.inputTokens + r.cachedTokens)) * 100)
+                              : 0;
+                          return (
+                            <button
+                              key={r.id}
+                              onClick={() => {
+                                setSelectedRecord(r);
+                                setActiveView('ledger');
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-xl bg-gray-50/90 dark:bg-white/[0.03] hover:bg-blue-50/50 dark:hover:bg-blue-500/[0.06] border border-gray-100/80 dark:border-white/[0.04] flex items-center justify-between gap-2 text-[10px] transition-colors"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono font-semibold text-purple-600 dark:text-purple-400 truncate">
+                                  {r.requestedModel}
+                                </span>
+                                <span className="text-[8.5px] text-gray-400 font-mono shrink-0">
+                                  {r.time.split(' ')[1] || r.time}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 font-mono shrink-0">
+                                <span className="text-[9px] text-emerald-600 dark:text-emerald-400">{cPct}% {tUi(lang, 'stats_cache')}</span>
+                                <span className="font-bold text-gray-800 dark:text-zinc-200">{fmtTok(tot)}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                        {projTraffic.length === 0 && (
+                          <div className="py-6 text-center text-[10px] text-gray-400">
+                            {tUi(lang, 'stats_no_recent_requests')}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 16:9 四模板战报分享弹窗 */}
+                {shareModalOpen && (
+                  <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setShareModalOpen(false)}>
+                    <div
+                      className="bg-white/95 dark:bg-[#14151a]/95 border border-gray-200/80 dark:border-white/10 rounded-2xl p-5 shadow-2xl flex flex-col items-center gap-4 w-full max-w-[700px]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* 顶部工具栏：4 模板选择 + 16:9 标识 + 关闭 */}
+                      <div className="w-full flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-xs font-bold text-gray-900 dark:text-zinc-100">
+                            {tUi(lang, 'stats_poster_title')}
+                          </span>
+                          <div className="inline-flex p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.06]">
+                            {([
+                              { id: 'polar', label: tUi(lang, 'stats_tpl_polar') },
+                              { id: 'radial', label: tUi(lang, 'stats_tpl_radial') },
+                              { id: 'hexcore', label: tUi(lang, 'stats_tpl_hexcore') },
+                              { id: 'matrix', label: tUi(lang, 'stats_tpl_matrix') },
+                            ] as const).map((tpl) => (
+                              <button
+                                key={tpl.id}
+                                onClick={() => setShareTemplate(tpl.id)}
+                                className={`px-2.5 py-0.5 rounded-md text-[10.5px] font-semibold transition-all ${
+                                  shareTemplate === tpl.id
+                                    ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-xs'
+                                    : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                                }`}
+                              >
+                                {tpl.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-mono font-bold">
+                            16:9
+                          </span>
+                          <button onClick={() => setShareModalOpen(false)} className="p-1 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 16:9 电影宽屏海报画布：4 套 100% 真实遥测且 360° 饱满构图模板 */}
+                      {(() => {
+                        const canvasClass = 'relative aspect-[16/9] w-full max-w-[656px] rounded-2xl bg-gradient-to-br from-[#1f2432] via-[#151822] to-[#0f1118] border border-indigo-300/15 shadow-2xl p-6 flex flex-col justify-between overflow-hidden text-white';
+
+                        // 海报专用无滚动条精选模型榜单：展示 Top 5 主力模型（带微缩算力条与完整对齐数值）+ 剩余模型汇总胶囊
+                        const posterTopCount = 5;
+                        const posterTopModels = projModelRows.slice(0, posterTopCount);
+                        const posterRestModels = projModelRows.slice(posterTopCount);
+                        const posterRestPct = posterRestModels.reduce((s, r) => s + r.pct, 0);
+                        const posterRestTok = posterRestModels.reduce((s, r) => s + r.tot, 0);
+                        const topMaxPct = Math.max(1, posterTopModels[0]?.pct || 100);
+
+                        const renderPosterModelList = (valMode: 'pct' | 'tok', showBar = true) => (
+                          <div className="flex flex-col gap-1.5 text-[9.5px] font-mono">
+                            {posterTopModels.map((row, idx) => {
+                              const color = wavePalette[idx % wavePalette.length];
+                              const barW = Math.max(10, Math.round((row.pct / topMaxPct) * 100));
+                              return (
+                                <div key={row.model} className="flex items-center justify-between gap-2">
+                                  <span className="flex items-center gap-1.5 min-w-0 flex-1 text-zinc-200">
+                                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                                    <span className="truncate">{row.model}</span>
+                                  </span>
+                                  {showBar && (
+                                    <span className="w-9 h-1 rounded-full bg-white/[0.07] overflow-hidden shrink-0 hidden sm:inline-block">
+                                      <span
+                                        className="block h-full rounded-full"
+                                        style={{ width: `${barW}%`, backgroundColor: color }}
+                                      />
+                                    </span>
+                                  )}
+                                  <span className="text-zinc-300 font-bold tabular-nums shrink-0 text-right min-w-[34px]">
+                                    {valMode === 'tok' ? fmtTok(row.tot) : `${row.pct.toFixed(0)}%`}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                            {posterRestModels.length > 0 && (
+                              <div className="mt-0.5 px-2 py-0.5 rounded-md bg-white/[0.05] border border-white/[0.07] flex items-center justify-between text-[8.5px] text-zinc-400">
+                                <span>
+                                  ✦ +{posterRestModels.length} {tUi(lang, 'stats_more_models')}
+                                </span>
+                                <span className="font-semibold text-zinc-300 tabular-nums">
+                                  {valMode === 'tok' ? fmtTok(posterRestTok) : `${posterRestPct.toFixed(1)}%`}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+
+                        // 真实蜂巢聚变热核计算器：中心金黄聚变核心由真实缓存命中率点亮，外围日冕由 32 段真实会话脉冲 360° 调制！
+                        const computeRealHexHeat = (distRatio: number, normAngleRad: number) => {
+                          const sector32 = Math.floor((normAngleRad / (Math.PI * 2)) * PULSE_COUNT) % PULSE_COUNT;
+                          const prev32 = (sector32 + PULSE_COUNT - 1) % PULSE_COUNT;
+                          const pulseNorm = (pulseBars32[sector32].norm * 0.65 + pulseBars32[prev32].norm * 0.35);
+                          const cacheFactor = 0.62 + 0.38 * Math.min(1, projCacheRate / 100);
+                          const radialDecay = Math.pow(Math.max(0, 1 - distRatio * 0.94), 0.85);
+                          // 中心聚变核饱满明亮，外围随真实会话脉冲呈现星冕起伏
+                          return Math.min(1, radialDecay * cacheFactor * (0.68 + 0.54 * pulseNorm));
+                        };
+
+                        // 模板 1：极坐标 6 维实测遥测谐波玫瑰 (Hyper Charts Polar Wave)
+                        if (shareTemplate === 'polar') {
+                          return (
+                            <div className={canvasClass}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] shrink-0" />
+                                  <div className="min-w-0">
+                                    <div className="text-base font-black tracking-tight truncate">{displayProjectTitle}</div>
+                                    <div className="text-[10px] text-zinc-500 font-mono truncate">{currentProject.path}</div>
+                                  </div>
+                                </div>
+                                <span className="px-2.5 py-0.5 rounded-full bg-white/[0.08] border border-white/10 text-[9.5px] font-mono text-emerald-300 shrink-0">
+                                  {posterRangeBadge} · POLAR WAVE
+                                </span>
+                              </div>
+
+                              <div className="flex-1 flex items-center justify-between gap-4 py-2 min-h-0">
+                                <div className="w-[206px] shrink-0 flex flex-col justify-between h-full py-1 gap-2 min-h-0">
+                                  <div>
+                                    <div className="text-[10px] text-emerald-400 font-mono mb-0.5">● {tUi(lang, 'stats_total_tokens_upper')}</div>
+                                    <div className="flex items-baseline gap-1.5">
+                                      <span className="text-2xl font-black font-mono text-white leading-none">{fmtTok(currentProject.totalTokens)}</span>
+                                      <span className="text-[10px] font-mono text-emerald-400 font-bold">↑{projCacheRate.toFixed(0)}%</span>
+                                    </div>
+                                    <div className="text-[9px] text-zinc-500 font-mono mt-1">{tUi(lang, 'stats_reused')} {fmtTok(projCache)}</div>
+                                  </div>
+                                  {renderPosterModelList('pct', false)}
+                                  <div className="flex items-center gap-4 pt-0.5">
+                                    <div>
+                                      <div className="text-[8.5px] text-zinc-500">{tUi(lang, 'stats_net_input')}</div>
+                                      <div className="text-xs font-bold font-mono text-white">{fmtTok(projIn)}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[8.5px] text-zinc-500">{tUi(lang, 'stats_answer_output')}</div>
+                                      <div className="text-xs font-bold font-mono text-white">{fmtTok(projOut)}</div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex-1 flex items-center justify-center min-w-0">
+                                  {renderPolarRadar('w-[224px] h-[224px]', 'polar-logo-modal')}
+                                </div>
+
+                                <div className="w-[144px] shrink-0 flex flex-col justify-between h-full py-1 text-right">
+                                  <div>
+                                    <div className="text-[10px] text-amber-400 font-mono mb-0.5">✦ {tUi(lang, 'stats_active_time_upper')}</div>
+                                    <div className="text-2xl font-black font-mono text-white leading-none">{estHrsInt}h {estMinsInt}m</div>
+                                    <div className="text-[9px] text-zinc-500 font-mono mt-1">{tUi(lang, 'stats_session_span')}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-purple-400 font-mono mb-0.5">◆ {tUi(lang, 'stats_steps_label')}</div>
+                                    <div className="text-2xl font-black font-mono text-white leading-none">{currentProject.totalSteps.toLocaleString()}</div>
+                                    <div className="text-[9px] text-zinc-500 font-mono mt-1">{tUi(lang, 'stats_avg_steps_fmt', { count: avgStepsPerSession })}</div>
+                                  </div>
+                                  <div className="flex flex-col gap-1 text-[10px] font-mono pt-2 border-t border-white/10">
+                                    <div className="flex items-center justify-between text-zinc-400">
+                                      <span>{tUi(lang, 'stats_archived_sessions')}</span>
+                                      <span className="text-white font-bold">{currentProject.conversationCount}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-zinc-400">
+                                      <span>{tUi(lang, 'stats_used_models')}</span>
+                                      <span className="text-white font-bold">{projModelRows.length}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[9px] font-mono text-zinc-500">
+                                <span>6-Axis Telemetry · {posterRangeBadge}</span>
+                                <span className="text-zinc-300">Antigravity Manager</span>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // 模板 2：放射光谱 (32 根 360° 全环真实会话脉冲重采样光谱柱)
+                        if (shareTemplate === 'radial') {
+                          return (
+                            <div className={canvasClass}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-base font-black tracking-tight truncate">{displayProjectTitle}</div>
+                                  <div className="text-[10px] text-zinc-500 font-mono truncate">{currentProject.path}</div>
+                                </div>
+                                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/30 text-[9.5px] font-mono text-amber-300 shrink-0">
+                                  {posterRangeBadge} · RADIAL BURST
+                                </span>
+                              </div>
+
+                              <div className="flex-1 flex items-center justify-between gap-4 py-2 min-h-0">
+                                <div className="w-[208px] shrink-0 flex flex-col justify-between h-full py-1 gap-2 min-h-0">
+                                  <div>
+                                    <div className="text-[10px] text-emerald-400 font-mono">● {tUi(lang, 'stats_cache_hit_upper')}</div>
+                                    <div className="text-2xl font-black font-mono">{projCacheRate.toFixed(1)}%</div>
+                                    <div className="text-[9px] text-zinc-500 font-mono">{tUi(lang, 'stats_reused')} {fmtTok(projCache)}</div>
+                                  </div>
+                                  {renderPosterModelList('pct', true)}
+                                </div>
+
+                                <div className="flex-1 flex items-center justify-center min-w-0">
+                                  <svg viewBox="0 0 200 200" className="w-[228px] h-[228px] overflow-visible">
+                                    <defs>
+                                      <filter id="radial-bar-glow" x="-30%" y="-30%" width="160%" height="160%">
+                                        <feGaussianBlur stdDeviation="1.8" result="blur" />
+                                        <feMerge>
+                                          <feMergeNode in="blur" />
+                                          <feMergeNode in="SourceGraphic" />
+                                        </feMerge>
+                                      </filter>
+                                    </defs>
+                                    <circle
+                                      cx="100"
+                                      cy="100"
+                                      r="92"
+                                      fill="none"
+                                      stroke="rgba(255,255,255,0.08)"
+                                      strokeWidth="0.8"
+                                      strokeDasharray="2 4"
+                                    />
+                                    <circle cx="100" cy="100" r="64" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="0.7" />
+                                    {pulseBars32.map((bar, i) => {
+                                      const angle = ((i * 360) / PULSE_COUNT - 90) * (Math.PI / 180);
+                                      const r1 = 42;
+                                      const r2 = r1 + bar.norm * 46;
+                                      return (
+                                        <line
+                                          key={i}
+                                          x1={100 + r1 * Math.cos(angle)}
+                                          y1={100 + r1 * Math.sin(angle)}
+                                          x2={100 + r2 * Math.cos(angle)}
+                                          y2={100 + r2 * Math.sin(angle)}
+                                          stroke={bar.color}
+                                          strokeWidth="4.2"
+                                          strokeLinecap="round"
+                                          filter="url(#radial-bar-glow)"
+                                          opacity={0.72 + bar.norm * 0.28}
+                                        >
+                                          <title>{`${bar.label} · ${fmtTok(Math.round(bar.tok))}`}</title>
+                                        </line>
+                                      );
+                                    })}
+                                    <circle cx="100" cy="100" r="35" fill="#07080c" stroke="rgba(255,255,255,0.16)" strokeWidth="1.2" />
+                                    <text x="100" y="97" textAnchor="middle" className="fill-white font-mono font-black text-[15px]">
+                                      {fmtTok(currentProject.totalTokens)}
+                                    </text>
+                                    <text x="100" y="111" textAnchor="middle" className="fill-zinc-500 font-mono text-[8px]">
+                                      TOKENS
+                                    </text>
+                                  </svg>
+                                </div>
+
+                                <div className="w-[142px] shrink-0 flex flex-col justify-between h-full py-2 text-right">
+                                  <div>
+                                    <div className="text-[10px] text-amber-400 font-mono">✦ {tUi(lang, 'stats_active_time_upper')}</div>
+                                    <div className="text-2xl font-black font-mono">{estHrsInt}h {estMinsInt}m</div>
+                                    <div className="text-[9px] text-zinc-500 font-mono">{tUi(lang, 'stats_archived_sessions_count', { count: currentProject.conversationCount })}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-sky-400 font-mono">◆ {tUi(lang, 'stats_steps_label')}</div>
+                                    <div className="text-2xl font-black font-mono">{currentProject.totalSteps.toLocaleString()}</div>
+                                    <div className="text-[9px] text-zinc-500 font-mono">{tUi(lang, 'stats_avg_steps_fmt', { count: avgStepsPerSession })}</div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[9px] font-mono text-zinc-500">
+                                <span>360° Session Pulse · {posterRangeBadge}</span>
+                                <span className="text-zinc-300">Antigravity Manager</span>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // 模板 3：蜂巢热核 (真实缓存聚变核心 + 32 扇区真实会话星冕辐射 + 无滚动条精选榜单)
+                        if (shareTemplate === 'hexcore') {
+                          const hexCells: Array<{ cx: number; cy: number; fill: string; opacity: number; label: string }> = [];
+                          const hexR = 9.5;
+                          const dx = hexR * 1.78;
+                          const dy = hexR * 1.54;
+                          for (let row = -4; row <= 4; row++) {
+                            for (let col = -4; col <= 4; col++) {
+                              const cx = 110 + col * dx + (Math.abs(row) % 2 === 1 ? dx / 2 : 0);
+                              const cy = 100 + row * dy;
+                              const dist = Math.hypot(cx - 110, cy - 100);
+                              if (dist > 84) continue;
+                              const angleRad = Math.atan2(cy - 100, cx - 110);
+                              const normAngle = (angleRad + Math.PI * 2.5) % (Math.PI * 2);
+                              const heat = computeRealHexHeat(dist / 84, normAngle);
+                              let fill = '#181c30';
+                              let opacity = 0.55;
+                              if (heat >= 0.70) {
+                                fill = '#facc15';
+                                opacity = 0.98;
+                              } else if (heat >= 0.52) {
+                                fill = '#ef4444';
+                                opacity = 0.93;
+                              } else if (heat >= 0.34) {
+                                fill = '#9f1239';
+                                opacity = 0.86;
+                              } else if (heat >= 0.18) {
+                                fill = '#312e81';
+                                opacity = 0.78;
+                              }
+                              hexCells.push({
+                                cx,
+                                cy,
+                                fill,
+                                opacity,
+                                label: tUi(lang, 'stats_fusion_intensity', { pct: Math.round(heat * 100) }),
+                              });
+                            }
+                          }
+                          const hexPoints = (cx: number, cy: number, r: number) =>
+                            Array.from({ length: 6 }, (_, i) => {
+                              const a = ((60 * i - 30) * Math.PI) / 180;
+                              return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`;
+                            }).join(' ');
+
+                          return (
+                            <div className={canvasClass}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-base font-black tracking-tight truncate">{displayProjectTitle}</div>
+                                  <div className="text-[10px] text-zinc-500 font-mono truncate">{currentProject.path}</div>
+                                </div>
+                                <span className="px-2.5 py-0.5 rounded-full bg-rose-500/15 border border-rose-400/30 text-[9.5px] font-mono text-rose-300 shrink-0">
+                                  {posterRangeBadge} · HEX CORE
+                                </span>
+                              </div>
+
+                              <div className="flex-1 flex items-center justify-between gap-6 py-1 min-h-0">
+                                <div className="flex-1 flex items-center justify-center">
+                                  <svg viewBox="0 0 220 200" className="w-[240px] h-[218px]">
+                                    {hexCells.map((cell, idx) => (
+                                      <polygon
+                                        key={idx}
+                                        points={hexPoints(cell.cx, cell.cy, hexR - 1.1)}
+                                        fill={cell.fill}
+                                        opacity={cell.opacity}
+                                        stroke="#07080c"
+                                        strokeWidth="1.2"
+                                      >
+                                        <title>{cell.label}</title>
+                                      </polygon>
+                                    ))}
+                                  </svg>
+                                </div>
+
+                                <div className="w-[272px] shrink-0 flex flex-col justify-between h-full py-1.5 min-h-0 gap-2">
+                                  <div className="grid grid-cols-2 gap-4 pb-2.5 border-b border-white/10 shrink-0">
+                                    <div>
+                                      <div className="text-[9.5px] text-emerald-400 font-mono mb-0.5">✦ {tUi(lang, 'stats_total_tokens_upper')}</div>
+                                      <div className="text-2xl font-black font-mono text-white leading-none">{fmtTok(currentProject.totalTokens)}</div>
+                                      <div className="text-[9px] text-emerald-400 font-mono mt-1">↑{projCacheRate.toFixed(1)}% {tUi(lang, 'stats_cache')}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[9.5px] text-amber-400 font-mono mb-0.5">● {tUi(lang, 'stats_active_time')}</div>
+                                      <div className="text-2xl font-black font-mono text-white leading-none">{estHrsInt}h {estMinsInt}m</div>
+                                      <div className="text-[9px] text-zinc-400 font-mono mt-1">{currentProject.conversationCount} {tUi(lang, 'stats_unit_sessions')} · {currentProject.totalSteps.toLocaleString()} {tUi(lang, 'stats_unit_steps')}</div>
+                                    </div>
+                                  </div>
+
+                                  {renderPosterModelList('tok', true)}
+                                </div>
+                              </div>
+
+                              <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[9px] font-mono text-zinc-500">
+                                <span>Thermal Fusion Telemetry · {posterRangeBadge}</span>
+                                <span className="text-zinc-300">Antigravity Manager</span>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // 模板 4：暗夜矩阵 (自适应单日「模型×时序切片」/ 多日「星期×时段」饱满矩阵 + 无滚动条精选榜单)
+                        return (
+                          <div className={canvasClass}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-base font-black tracking-tight truncate">{displayProjectTitle}</div>
+                                <div className="text-[10px] text-zinc-500 font-mono truncate">{currentProject.path}</div>
+                              </div>
+                              <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-400/30 text-[9.5px] font-mono text-indigo-300 shrink-0">
+                                {posterRangeBadge} · {adaptiveMatrix.modeTag}
+                              </span>
+                            </div>
+
+                            <div className="flex-1 flex items-center gap-5 py-2 min-h-0">
+                              <div className="flex-1 flex flex-col gap-1">
+                                <div className="flex items-center gap-1 text-[8px] font-mono text-zinc-500 text-center">
+                                  <span className={useSessionSliceMatrix ? 'w-16 shrink-0' : 'w-8 shrink-0'} />
+                                  <div className="flex-1 grid grid-cols-6 gap-1">
+                                    {adaptiveMatrix.colLabels.map((s, ci) => (
+                                      <span key={ci} className="truncate">{s}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                                {adaptiveMatrix.rowLabels.map((rLabel, rIdx) => (
+                                  <div key={rIdx} className="flex items-center gap-1">
+                                    <span
+                                      className={`${
+                                        useSessionSliceMatrix ? 'w-16' : 'w-8'
+                                      } shrink-0 text-[8.5px] font-mono text-zinc-400 text-right pr-1 truncate`}
+                                    >
+                                      {rLabel}
+                                    </span>
+                                    <div className="flex-1 grid grid-cols-6 gap-1">
+                                      {adaptiveMatrix.heat[rIdx].map((val, cIdx) => (
+                                        <div
+                                          key={cIdx}
+                                          title={`${rLabel} · ${adaptiveMatrix.colLabels[cIdx]} · ${fmtTok(adaptiveMatrix.rawVals[rIdx]?.[cIdx] || 0)}`}
+                                          className={`h-6 rounded-md flex items-center justify-center text-[9.5px] font-mono font-bold ${
+                                            val >= 80
+                                              ? 'bg-amber-400 text-gray-950'
+                                              : val >= 60
+                                              ? 'bg-lime-400 text-gray-950'
+                                              : val >= 40
+                                              ? 'bg-emerald-400 text-gray-950'
+                                              : val >= 15
+                                              ? 'bg-indigo-500 text-white'
+                                              : 'bg-white/[0.06] text-zinc-600'
+                                          }`}
+                                        >
+                                          {val > 0 ? String(val).padStart(2, '0') : '·'}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="w-[232px] shrink-0 flex flex-col justify-between h-full py-1 gap-2 min-h-0">
+                                <div className="grid grid-cols-2 gap-2.5 py-2 border-y border-white/10 shrink-0">
+                                  <div>
+                                    <span className="text-[8.5px] text-emerald-400 font-mono block">✦ {tUi(lang, 'stats_total_power')}</span>
+                                    <span className="text-lg font-black font-mono text-white">{fmtTok(currentProject.totalTokens)}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[8.5px] text-amber-400 font-mono block">● {tUi(lang, 'stats_cache_rate_short')}</span>
+                                    <span className="text-lg font-black font-mono text-emerald-400">{projCacheRate.toFixed(1)}%</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[8.5px] text-zinc-400 font-mono block">{tUi(lang, 'stats_active_time')}</span>
+                                    <span className="text-xs font-bold font-mono text-white">{estHrsInt}h {estMinsInt}m</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[8.5px] text-zinc-400 font-mono block">{tUi(lang, 'stats_sess_and_steps')}</span>
+                                    <span className="text-xs font-bold font-mono text-indigo-300">
+                                      {currentProject.conversationCount} · {currentProject.totalSteps.toLocaleString()}
+                                    </span>
+                                  </div>
+                                </div>
+                                {renderPosterModelList('pct', false)}
+                              </div>
+                            </div>
+
+                            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[9px] font-mono text-zinc-500">
+                              <span>Antigravity Telemetry · {posterRangeBadge}</span>
+                              <span className="text-zinc-300">Antigravity Manager</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {(() => {
+                        const renderPosterPngBlob = async (): Promise<Blob | null> => {
+                          const logoImg = await new Promise<HTMLImageElement | null>((resImg) => {
+                            const img = new window.Image();
+                            img.onload = () => resImg(img);
+                            img.onerror = () => resImg(null);
+                            img.src = '/icon.png';
+                          });
+
+                          return new Promise((resolve) => {
+                            const W = 1280;
+                            const H = 720;
+                            const canvas = document.createElement('canvas');
+                            canvas.width = W;
+                            canvas.height = H;
+                            const ctx = canvas.getContext('2d');
+                            if (!ctx) return resolve(null);
+
+                            // 深空背景
+                            ctx.fillStyle = '#07080c';
+                            ctx.fillRect(0, 0, W, H);
+                            ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(1, 1, W - 2, H - 2);
+
+                            // 顶部真实标题与时段标签
+                            ctx.fillStyle = '#34d399';
+                            ctx.beginPath();
+                            ctx.arc(58, 62, 7, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = '800 30px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+                            ctx.fillText(displayProjectTitle, 78, 68);
+                            ctx.fillStyle = '#71717a';
+                            ctx.font = '500 18px ui-monospace, SFMono-Regular, Menlo, monospace';
+                            ctx.fillText(currentProject.path, 78, 94);
+
+                            const tagLabel = `${posterRangeBadge} · ${shareTemplate.toUpperCase()}`;
+                            ctx.font = '600 16px ui-monospace, SFMono-Regular, Menlo, monospace';
+                            const tagW = ctx.measureText(tagLabel).width + 32;
+                            ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                            ctx.beginPath();
+                            ctx.roundRect(W - 52 - tagW, 44, tagW, 34, 17);
+                            ctx.fill();
+                            ctx.fillStyle = '#6ee7b7';
+                            ctx.fillText(tagLabel, W - 52 - tagW + 16, 67);
+
+                            // 左侧核心数据
+                            ctx.fillStyle = '#34d399';
+                            ctx.font = '600 18px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`● ${tUi(lang, 'stats_total_tokens_upper')}`, 56, 168);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = '900 46px ui-monospace, Menlo, monospace';
+                            ctx.fillText(fmtTok(currentProject.totalTokens), 56, 220);
+                            ctx.fillStyle = '#34d399';
+                            ctx.font = '700 19px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`↑${projCacheRate.toFixed(1)}% ${tUi(lang, 'stats_cache')}`, 56, 250);
+
+                            // Top 5 模型精选 + 剩余汇总胶囊（与预览视觉 1:1 对齐）
+                            const showRows = projModelRows.slice(0, 5);
+                            const restRows = projModelRows.slice(5);
+                            showRows.forEach((row, idx) => {
+                              const y = 304 + idx * 36;
+                              ctx.fillStyle = wavePalette[idx % wavePalette.length];
+                              ctx.beginPath();
+                              ctx.arc(64, y - 5, 5, 0, Math.PI * 2);
+                              ctx.fill();
+                              ctx.fillStyle = '#e4e4e7';
+                              ctx.font = '500 17px ui-monospace, Menlo, monospace';
+                              const shortM = row.model.length > 22 ? `${row.model.slice(0, 21)}…` : row.model;
+                              ctx.fillText(shortM, 80, y);
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.textAlign = 'right';
+                              ctx.fillText(`${row.pct.toFixed(0)}%`, 362, y);
+                              ctx.textAlign = 'left';
+                            });
+                            if (restRows.length > 0) {
+                              const y = 304 + showRows.length * 36 + 6;
+                              const restPct = restRows.reduce((s, r) => s + r.pct, 0);
+                              ctx.fillStyle = 'rgba(255,255,255,0.06)';
+                              ctx.beginPath();
+                              ctx.roundRect(56, y - 22, 314, 30, 8);
+                              ctx.fill();
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.font = '500 15px ui-monospace, Menlo, monospace';
+                              ctx.fillText(`✦ +${restRows.length} ${tUi(lang, 'stats_more_models')}`, 68, y - 2);
+                              ctx.textAlign = 'right';
+                              ctx.fillStyle = '#e4e4e7';
+                              ctx.fillText(`${restPct.toFixed(1)}%`, 358, y - 2);
+                              ctx.textAlign = 'left';
+                            }
+
+                            // 左下输入/输出
+                            ctx.fillStyle = '#71717a';
+                            ctx.font = '500 16px -apple-system, sans-serif';
+                            ctx.fillText(tUi(lang, 'stats_net_input'), 56, 568);
+                            ctx.fillText(tUi(lang, 'stats_answer_output'), 196, 568);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = '700 24px ui-monospace, Menlo, monospace';
+                            ctx.fillText(fmtTok(projIn), 56, 598);
+                            ctx.fillText(fmtTok(projOut), 196, 598);
+
+                            // 中央主视觉图形 (与 4 套饱满升级版预览完全一致)
+                            const cx = 640;
+                            const cy = 365;
+                            if (shareTemplate === 'radial') {
+                              ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+                              ctx.lineWidth = 1.5;
+                              ctx.setLineDash([4, 8]);
+                              ctx.beginPath();
+                              ctx.arc(cx, cy, 198, 0, Math.PI * 2);
+                              ctx.stroke();
+                              ctx.setLineDash([]);
+                              pulseBars32.forEach((bar, i) => {
+                                const ang = (((i * 360) / PULSE_COUNT - 90) * Math.PI) / 180;
+                                const r1 = 90;
+                                const r2 = r1 + bar.norm * 102;
+                                ctx.strokeStyle = bar.color;
+                                ctx.shadowColor = bar.color;
+                                ctx.shadowBlur = 10;
+                                ctx.lineWidth = 8.5;
+                                ctx.lineCap = 'round';
+                                ctx.globalAlpha = 0.72 + bar.norm * 0.28;
+                                ctx.beginPath();
+                                ctx.moveTo(cx + r1 * Math.cos(ang), cy + r1 * Math.sin(ang));
+                                ctx.lineTo(cx + r2 * Math.cos(ang), cy + r2 * Math.sin(ang));
+                                ctx.stroke();
+                              });
+                              ctx.shadowBlur = 0;
+                              ctx.globalAlpha = 1;
+                              ctx.fillStyle = '#07080c';
+                              ctx.beginPath();
+                              ctx.arc(cx, cy, 74, 0, Math.PI * 2);
+                              ctx.fill();
+                              ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+                              ctx.lineWidth = 2;
+                              ctx.stroke();
+                              ctx.fillStyle = '#ffffff';
+                              ctx.textAlign = 'center';
+                              ctx.font = '900 30px ui-monospace, Menlo, monospace';
+                              ctx.fillText(fmtTok(currentProject.totalTokens), cx, cy + 4);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = '600 15px ui-monospace, Menlo, monospace';
+                              ctx.fillText('TOKENS', cx, cy + 28);
+                              ctx.textAlign = 'left';
+                            } else if (shareTemplate === 'hexcore') {
+                              const hexR = 20;
+                              const dx = hexR * 1.78;
+                              const dy = hexR * 1.54;
+                              for (let row = -4; row <= 4; row++) {
+                                for (let col = -4; col <= 4; col++) {
+                                  const hx = cx + col * dx + (Math.abs(row) % 2 === 1 ? dx / 2 : 0);
+                                  const hy = cy + row * dy;
+                                  const dist = Math.hypot(hx - cx, hy - cy);
+                                  if (dist > 175) continue;
+                                  const ang = (Math.atan2(hy - cy, hx - cx) + Math.PI * 2.5) % (Math.PI * 2);
+                                  const distRatio = dist / 175;
+                                  const sec32 = Math.floor((ang / (Math.PI * 2)) * PULSE_COUNT) % PULSE_COUNT;
+                                  const prev32 = (sec32 + PULSE_COUNT - 1) % PULSE_COUNT;
+                                  const pNorm = pulseBars32[sec32].norm * 0.65 + pulseBars32[prev32].norm * 0.35;
+                                  const cFac = 0.62 + 0.38 * Math.min(1, projCacheRate / 100);
+                                  const rDec = Math.pow(Math.max(0, 1 - distRatio * 0.94), 0.85);
+                                  const heat = Math.min(1, rDec * cFac * (0.68 + 0.54 * pNorm));
+                                  ctx.fillStyle =
+                                    heat >= 0.70 ? '#facc15' : heat >= 0.52 ? '#ef4444' : heat >= 0.34 ? '#9f1239' : heat >= 0.18 ? '#312e81' : '#181c30';
+                                  ctx.beginPath();
+                                  for (let k = 0; k < 6; k++) {
+                                    const a = ((60 * k - 30) * Math.PI) / 180;
+                                    const px = hx + (hexR - 2) * Math.cos(a);
+                                    const py = hy + (hexR - 2) * Math.sin(a);
+                                    if (k === 0) ctx.moveTo(px, py);
+                                    else ctx.lineTo(px, py);
+                                  }
+                                  ctx.closePath();
+                                  ctx.fill();
+                                }
+                              }
+                            } else if (shareTemplate === 'matrix') {
+                              const rowCnt = Math.max(1, adaptiveMatrix.heat.length);
+                              const cellW = 54;
+                              const cellH = rowCnt <= 6 ? 42 : 36;
+                              const gap = 8;
+                              const startX = cx - (6 * cellW + 5 * gap) / 2 + 24;
+                              const startY = cy - (rowCnt * cellH + (rowCnt - 1) * gap) / 2;
+                              adaptiveMatrix.heat.forEach((row, rIdx) => {
+                                const ry = startY + rIdx * (cellH + gap);
+                                ctx.textAlign = 'right';
+                                ctx.fillStyle = '#71717a';
+                                ctx.font = '500 13px ui-monospace, Menlo, monospace';
+                                ctx.fillText(adaptiveMatrix.rowLabels[rIdx] || '', startX - 10, ry + cellH / 2 + 5);
+                                ctx.textAlign = 'center';
+                                row.forEach((val, cIdx) => {
+                                  const x = startX + cIdx * (cellW + gap);
+                                  ctx.fillStyle =
+                                    val >= 80 ? '#fbbf24' : val >= 60 ? '#a3e635' : val >= 40 ? '#34d399' : val >= 15 ? '#6366f1' : 'rgba(255,255,255,0.06)';
+                                  ctx.beginPath();
+                                  ctx.roundRect(x, ry, cellW, cellH, 8);
+                                  ctx.fill();
+                                  ctx.fillStyle = val >= 40 ? '#09090b' : val >= 15 ? '#ffffff' : '#52525b';
+                                  ctx.font = '700 16px ui-monospace, Menlo, monospace';
+                                  ctx.fillText(val > 0 ? String(val).padStart(2, '0') : '·', x + cellW / 2, ry + cellH / 2 + 6);
+                                });
+                              });
+                              ctx.textAlign = 'left';
+                            } else {
+                              // 6 维实测遥测极坐标谐波玫瑰
+                              [168, 114, 62].forEach((r) => {
+                                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                                ctx.lineWidth = 1.5;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.stroke();
+                              });
+                              [...projModelRows.slice(0, 6)].reverse().forEach((row, revIdx, arr) => {
+                                const mIdx = arr.length - 1 - revIdx;
+                                const pts = buildPolarWavePoints(row, mIdx, cx, cy, 56, 166);
+                                const N = pts.length;
+                                ctx.strokeStyle = wavePalette[mIdx % wavePalette.length];
+                                ctx.lineWidth = mIdx < 3 ? 4.8 : 3.4;
+                                ctx.globalAlpha = mIdx === 0 ? 0.96 : mIdx < 3 ? 0.85 : 0.68;
+                                ctx.shadowColor = wavePalette[mIdx % wavePalette.length];
+                                ctx.shadowBlur = 12;
+                                ctx.beginPath();
+                                const prev = pts[N - 1];
+                                ctx.moveTo((prev.x + pts[0].x) / 2, (prev.y + pts[0].y) / 2);
+                                for (let i = 0; i < N; i++) {
+                                  const p0 = pts[i];
+                                  const p1 = pts[(i + 1) % N];
+                                  ctx.quadraticCurveTo(p0.x, p0.y, (p0.x + p1.x) / 2, (p0.y + p1.y) / 2);
+                                }
+                                ctx.closePath();
+                                ctx.stroke();
+                                ctx.shadowBlur = 0;
+                                ctx.globalAlpha = 1;
+                              });
+                              ctx.strokeStyle = 'rgba(251,191,36,0.24)';
+                              ctx.lineWidth = 2;
+                              ctx.beginPath();
+                              ctx.arc(cx, cy, 48, 0, Math.PI * 2);
+                              ctx.stroke();
+
+                              ctx.fillStyle = '#050507';
+                              ctx.beginPath();
+                              ctx.arc(cx, cy, 43, 0, Math.PI * 2);
+                              ctx.fill();
+
+                              if (logoImg) {
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, 42, 0, Math.PI * 2);
+                                ctx.clip();
+                                ctx.drawImage(logoImg, cx - 44, cy - 44, 88, 88);
+                                ctx.restore();
+                              }
+
+                              ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+                              ctx.lineWidth = 2;
+                              ctx.beginPath();
+                              ctx.arc(cx, cy, 42.5, 0, Math.PI * 2);
+                              ctx.stroke();
+                            }
+
+                            // 右侧数据列
+                            ctx.textAlign = 'right';
+                            ctx.fillStyle = '#fbbf24';
+                            ctx.font = '600 18px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`✦ ${tUi(lang, 'stats_active_time_upper')}`, W - 56, 178);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = '900 44px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`${estHrsInt}h ${estMinsInt}m`, W - 56, 228);
+                            ctx.fillStyle = '#71717a';
+                            ctx.font = '500 16px ui-monospace, Menlo, monospace';
+                            ctx.fillText(tUi(lang, 'stats_session_span'), W - 56, 256);
+
+                            ctx.fillStyle = '#c084fc';
+                            ctx.font = '600 18px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`◆ ${tUi(lang, 'stats_steps_label')}`, W - 56, 354);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = '900 44px ui-monospace, Menlo, monospace';
+                            ctx.fillText(currentProject.totalSteps.toLocaleString(), W - 56, 404);
+                            ctx.fillStyle = '#71717a';
+                            ctx.font = '500 16px ui-monospace, Menlo, monospace';
+                            ctx.fillText(tUi(lang, 'stats_avg_steps_fmt', { count: avgStepsPerSession }), W - 56, 432);
+
+                            ctx.fillStyle = '#a1a1aa';
+                            ctx.font = '500 18px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`${tUi(lang, 'stats_archived_sessions')}   ${currentProject.conversationCount}`, W - 56, 558);
+                            ctx.fillText(`${tUi(lang, 'stats_used_models')}   ${projModelRows.length}`, W - 56, 594);
+
+                            // 底部水印条
+                            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.moveTo(56, H - 64);
+                            ctx.lineTo(W - 56, H - 64);
+                            ctx.stroke();
+                            ctx.textAlign = 'left';
+                            ctx.fillStyle = '#71717a';
+                            ctx.font = '500 17px ui-monospace, Menlo, monospace';
+                            ctx.fillText(`Antigravity Local Telemetry · ${posterRangeBadge}`, 56, H - 30);
+                            ctx.textAlign = 'right';
+                            ctx.fillStyle = '#d4d4d8';
+                            ctx.fillText('Antigravity Manager', W - 56, H - 30);
+
+                            canvas.toBlob((blob) => resolve(blob), 'image/png');
+                          });
+                        };
+
+                        const triggerDownload = (blob: Blob) => {
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          const safeProjSlug =
+                            currentProject.workspaceName === '__ALL__' ? 'all-projects' : currentProject.workspaceName;
+                          a.download = `antigravity-${safeProjSlug}-${shareTemplate}.png`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        };
+
+                        const handleCopyImage = async () => {
+                          const blob = await renderPosterPngBlob();
+                          if (!blob) return;
+                          try {
+                            if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+                              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                            } else {
+                              triggerDownload(blob);
+                            }
+                            setCopiedShare(true);
+                            setTimeout(() => setCopiedShare(false), 1800);
+                          } catch {
+                            triggerDownload(blob);
+                            setCopiedShare(true);
+                            setTimeout(() => setCopiedShare(false), 1800);
+                          }
+                        };
+
+                        const handleDownloadImage = async () => {
+                          const blob = await renderPosterPngBlob();
+                          if (blob) triggerDownload(blob);
+                        };
+
+                        return (
+                          <div className="w-full flex items-center justify-between pt-1">
+                            <span className="text-[10px] text-gray-400">
+                              {tUi(lang, 'stats_poster_hd_hint')}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={handleDownloadImage}
+                                className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] text-gray-700 dark:text-zinc-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>{tUi(lang, 'stats_download_png')}</span>
+                              </button>
+                              <button
+                                onClick={handleCopyImage}
+                                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+                              >
+                                {copiedShare ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                <span>{copiedShare ? tUi(lang, 'stats_image_copied') : tUi(lang, 'stats_copy_poster')}</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
+
+      {/* ============================================================== */}
+      {/* 视角 3：⚡ 模型全景对比 (无 Tab，100% 真实本地解析模型)           */}
+      {/* ============================================================== */}
+      {activeView === 'model' && (() => {
+        const models = reportData.byModel;
+        const palette = [
+          { bar: 'bg-purple-500', text: 'text-purple-600 dark:text-purple-400', badge: 'bg-purple-500/10 text-purple-600 dark:text-purple-400', dot: 'bg-purple-500' },
+          { bar: 'bg-blue-500', text: 'text-blue-600 dark:text-blue-400', badge: 'bg-blue-500/10 text-blue-600 dark:text-blue-400', dot: 'bg-blue-500' },
+          { bar: 'bg-cyan-500', text: 'text-cyan-600 dark:text-cyan-400', badge: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400', dot: 'bg-cyan-500' },
+          { bar: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400', badge: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-500' },
+        ];
+
+        const modelRecords =
+          selectedModelFilter === '__ALL__'
+            ? reportData.recentTraffic
+            : reportData.recentTraffic.filter((r) => r.requestedModel === selectedModelFilter);
+        const modelPerf = computePerfSeries(modelRecords, timeRange);
+        const activeModelMeta =
+          selectedModelFilter === '__ALL__'
+            ? null
+            : models.find((m) => m.requestedModel === selectedModelFilter) || null;
+        const displayCacheRate =
+          modelPerf.count > 0
+            ? modelPerf.avgCache
+            : activeModelMeta
+            ? activeModelMeta.cacheHitRate
+            : reportData.globalCacheHitRate;
+        const displayAvgTps =
+          modelPerf.avgTps > 0 ? modelPerf.avgTps : activeModelMeta ? activeModelMeta.avgTps || 0 : 0;
+        const displayModelPeakTps =
+          selectedModelFilter === '__ALL__'
+            ? Math.max(reportData.peakSpeedTps ?? 0, modelPerf.peakTps, displayAvgTps)
+            : Math.max(activeModelMeta?.peakTps ?? 0, modelPerf.peakTps, displayAvgTps);
+
+        return (
+          <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+            {/* 模型筛选 Pill 条：支持「全部模型」或单个模型按时段查看缓存率与 tok/s 曲线 */}
+            <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <button
+                  onClick={() => setSelectedModelFilter('__ALL__')}
+                  className={`px-2.5 py-1 rounded-lg text-[10.5px] font-semibold shrink-0 transition-all ${
+                    selectedModelFilter === '__ALL__'
+                      ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-xs'
+                      : 'text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]'
+                  }`}
+                >
+                  {tUi(lang, 'stats_all_models_count', { count: models.length })}
+                </button>
+                {models.map((m, idx) => {
+                  const isSel = selectedModelFilter === m.requestedModel;
+                  const color = palette[idx % palette.length];
+                  return (
+                    <button
+                      key={m.requestedModel}
+                      onClick={() => setSelectedModelFilter(m.requestedModel)}
+                      className={`px-2.5 py-1 rounded-lg text-[10.5px] font-mono font-semibold shrink-0 flex items-center gap-1.5 transition-all ${
+                        isSel
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-gray-100/80 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200/70 dark:hover:bg-white/[0.08]'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : color.dot}`} />
+                      <span>{m.requestedModel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[9.5px] font-mono text-gray-400 shrink-0 hidden sm:inline">
+                {modelPerf.rangeLabel} · {modelPerf.count} reqs
+              </span>
+            </div>
+
+            {/* 第一行 (50/50 黄金对称)：深空黑模型性能 Hero 卡 (6列) + 交互式双曲线遥测卡 (6列) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+              {/* 左卡 (6 cols)：深空黑 Model Performance Hero Card (Electrys / Hyper Charts 风格) */}
+              {(() => {
+                const heroTokens = activeModelMeta ? activeModelMeta.totalTokens : reportData.totalTokens;
+                const heroReqs = activeModelMeta ? activeModelMeta.totalRequests : reportData.totalRequests;
+                const heroShare = activeModelMeta ? activeModelMeta.sharePercentage : 100;
+                const heroTtftMs = activeModelMeta ? activeModelMeta.avgTtftMs ?? 0 : reportData.avgTtftMs ?? 0;
+                const heroDurMs = activeModelMeta ? activeModelMeta.avgDurationMs ?? 0 : reportData.avgDurationMs ?? 0;
+                const topWs = activeModelMeta?.topWorkspaces?.[0]?.[0] || reportData.byProject[0]?.workspaceName || '-';
+                const outerR = 54;
+                const outerC = 2 * Math.PI * outerR;
+                const outerDash = outerC * (Math.min(100, Math.max(0, displayCacheRate)) / 100);
+                const innerR = 40;
+                const innerC = 2 * Math.PI * innerR;
+                const speedNorm = Math.min(100, (displayAvgTps / 150) * 100);
+                const innerDash = innerC * (Math.max(8, speedNorm) / 100);
+
+                return (
+                  <div className="md:col-span-6 relative min-h-[246px] rounded-2xl bg-gradient-to-br from-[#232734] via-[#1a1d27] to-[#141720] dark:from-[#07090e] dark:via-[#05070b] dark:to-[#030407] border border-slate-900/15 dark:border-white/[0.14] shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_14px_34px_-14px_rgba(15,23,42,0.28)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_18px_40px_-14px_rgba(0,0,0,0.85)] p-4 flex flex-col justify-between overflow-hidden text-white">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2.5 h-2.5 rounded-full bg-purple-400 shadow-[0_0_8px_#a855f7] shrink-0" />
+                        <span className="text-sm font-extrabold tracking-tight truncate">
+                          {selectedModelFilter === '__ALL__'
+                            ? tUi(lang, 'stats_all_models_telemetry')
+                            : selectedModelFilter}
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-white/[0.08] border border-white/10 text-[9px] font-mono text-purple-300 shrink-0">
+                        {selectedModelFilter === '__ALL__'
+                          ? tUi(lang, 'stats_models_badge', { count: models.length })
+                          : tUi(lang, 'stats_share_badge', { pct: heroShare.toFixed(1) })}
+                      </span>
+                    </div>
+
+                    <div className="flex-1 flex items-center justify-between gap-4 py-1">
+                      {/* 左侧核心指标 */}
+                      <div className="flex flex-col justify-between gap-3">
+                        <div>
+                          <div className="text-[9px] text-emerald-400 font-mono mb-0.5">● {tUi(lang, 'stats_total_throughput')}</div>
+                          <div className="text-2xl font-black font-mono tracking-tight text-white leading-none">
+                            {fmtTok(heroTokens)}
+                          </div>
+                          <div className="text-[9px] text-zinc-500 font-mono mt-1">{heroReqs.toLocaleString()} {tUi(lang, 'stats_unit_reqs')}</div>
+                        </div>
+                        <div className="flex items-center gap-3.5">
+                          <div>
+                            <div className="text-[8.5px] text-sky-400 font-mono">✦ {tUi(lang, 'stats_avg_speed_upper')}</div>
+                            <div className="text-base font-black font-mono text-white leading-tight">
+                              {displayAvgTps.toFixed(1)} <span className="text-[9px] text-zinc-400 font-normal">tok/s</span>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[8.5px] text-amber-400 font-mono">◆ {tUi(lang, 'stats_peak_speed_upper')}</div>
+                            <div className="text-base font-black font-mono text-white leading-tight">
+                              {displayModelPeakTps.toFixed(1)}
+                            </div>
+                          </div>
+                          {heroTtftMs > 0 && (
+                            <div
+                              title={
+                                heroDurMs > 0
+                                  ? `TTFT ${(heroTtftMs / 1000).toFixed(2)}s · ${tUi(lang, 'stats_avg_duration')} ${(heroDurMs / 1000).toFixed(2)}s`
+                                  : undefined
+                              }
+                            >
+                              <div className="text-[8.5px] text-purple-400 font-mono">◉ TTFT</div>
+                              <div className="text-base font-black font-mono text-white leading-tight">
+                                {(heroTtftMs / 1000).toFixed(1)}<span className="text-[9px] text-zinc-400 font-normal">s</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 右侧双环同心霓虹性能仪表 (外环=缓存命中率，内环=生成速率) */}
+                      <div className="relative w-[138px] h-[138px] shrink-0 flex items-center justify-center">
+                        <svg viewBox="0 0 132 132" className="w-full h-full -rotate-90">
+                          <circle cx="66" cy="66" r={outerR} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="7" />
+                          <circle
+                            cx="66"
+                            cy="66"
+                            r={outerR}
+                            fill="none"
+                            stroke="#34d399"
+                            strokeWidth="7"
+                            strokeLinecap="round"
+                            strokeDasharray={`${outerDash} ${outerC}`}
+                          />
+                          <circle cx="66" cy="66" r={innerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="6" />
+                          <circle
+                            cx="66"
+                            cy="66"
+                            r={innerR}
+                            fill="none"
+                            stroke="#38bdf8"
+                            strokeWidth="6"
+                            strokeLinecap="round"
+                            strokeDasharray={`${innerDash} ${innerC}`}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                          <span className="text-lg font-black font-mono text-white leading-none">
+                            {displayCacheRate.toFixed(1)}%
+                          </span>
+                          <span className="text-[8px] font-mono text-emerald-400 mt-0.5">
+                            {tUi(lang, 'stats_cache_hit_short')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-white/[0.08] flex items-center justify-between text-[9px] font-mono text-zinc-400">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        {tUi(lang, 'stats_outer_cache')}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-sky-400" />
+                        {tUi(lang, 'stats_inner_speed')}
+                      </span>
+                      <span className="text-zinc-300 truncate max-w-[120px]">
+                        {tUi(lang, 'stats_top_workspace_prefix')} {topWs}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 右卡 (6 cols)：交互式双曲线性能遥测卡 (缓存率 % + tok/s 速度) */}
+              <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between gap-2.5">
+                <div className="flex-1 flex flex-col justify-between gap-1 min-h-0">
+                  <div className="flex items-center justify-between text-[10.5px]">
+                    <span className="font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>{tUi(lang, 'stats_cache_hit_curve')}</span>
+                    </span>
+                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      {displayCacheRate.toFixed(1)}% <span className="text-[9px] text-gray-400 font-normal">· {modelPerf.rangeLabel}</span>
+                    </span>
+                  </div>
+                  <div className="h-[74px] w-full overflow-hidden">
+                    {renderSmoothCurve(modelPerf.cacheSeries, '#10b981', 'mod-cache-grad', 100, 74, 90)}
+                  </div>
+                </div>
+
+                <div className="border-t border-gray-100 dark:border-white/5 pt-2 flex-1 flex flex-col justify-between gap-1 min-h-0">
+                  <div className="flex items-center justify-between text-[10.5px]">
+                    <span className="font-semibold text-gray-800 dark:text-zinc-200 flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                      <span>{tUi(lang, 'stats_gen_speed_curve')}</span>
+                    </span>
+                    <span className="font-mono font-bold text-sky-600 dark:text-sky-400">
+                      {displayAvgTps.toFixed(1)} tok/s <span className="text-[9px] text-gray-400 font-normal">· {tUi(lang, 'stats_peak')} {displayModelPeakTps.toFixed(1)}</span>
+                    </span>
+                  </div>
+                  <div className="h-[74px] w-full overflow-hidden">
+                    {renderSmoothCurve(modelPerf.tpsSeries, '#0ea5e9', 'mod-tps-grad', Math.max(modelPerf.seriesPeakTps, 10) * 1.15, 74)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 第二行 (50/50 零滚动收尾)：全模型横向 PK 榜 (6列，点击即联动) + 工程分布/模型调用融合卡 (6列) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+              {/* 左卡 (6 cols)：全模型横向 PK 榜 (三合一去重，点击任意行聚焦该模型) */}
+              <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col gap-2">
+                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                  <span className="text-[11px] font-semibold text-gray-900 dark:text-zinc-100 flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-purple-500" />
+                    <span>{tUi(lang, 'stats_models_leaderboard')}</span>
+                  </span>
+                  <span className="text-[9px] text-gray-400 font-mono">{models.length} {tUi(lang, 'stats_unit_models')}</span>
+                </div>
+
+                {/* Apple Storage 风格连续比例条 */}
+                <div className="h-2.5 w-full rounded-full bg-gray-100 dark:bg-white/[0.06] p-0.5 flex items-center gap-0.5 overflow-hidden">
+                  {models.map((m, idx) => (
+                    <div
+                      key={m.requestedModel}
+                      title={`${m.requestedModel}: ${m.sharePercentage.toFixed(1)}%`}
+                      style={{ width: `${Math.max(4, m.sharePercentage)}%` }}
+                      className={`h-full rounded-full ${palette[idx % palette.length].bar}`}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex flex-col gap-1.5 max-h-[168px] overflow-y-auto pr-0.5">
+                  {models.map((m, idx) => {
+                    const color = palette[idx % palette.length];
+                    const isSel = selectedModelFilter === m.requestedModel;
+                    return (
+                      <button
+                        key={m.requestedModel}
+                        onClick={() => setSelectedModelFilter(isSel ? '__ALL__' : m.requestedModel)}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${
+                          isSel
+                            ? 'bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/20'
+                            : 'bg-gray-50/90 dark:bg-white/[0.03] border-gray-100/80 dark:border-white/[0.04] hover:bg-gray-100/80 dark:hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${color.dot}`} />
+                          <span className="text-[10.5px] font-semibold font-mono text-gray-800 dark:text-zinc-200 truncate">
+                            {m.requestedModel}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 font-mono text-[9.5px]">
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
+                            {m.cacheHitRate.toFixed(0)}%
+                          </span>
+                          <span className="text-sky-600 dark:text-sky-400 w-14 text-right">
+                            {(m.avgTps || 0) > 0 ? `${(m.avgTps || 0).toFixed(0)} t/s` : '-'}
+                          </span>
+                          <span className="font-bold text-gray-900 dark:text-zinc-100 w-12 text-right">
+                            {fmtTok(m.totalTokens)}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 右卡 (6 cols)：主力工程分布 & 该模型最近调用融合卡 */}
+              <div className="md:col-span-6 p-3.5 rounded-2xl bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] shadow-xs flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-white/5">
+                  <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06]">
+                    <button
+                      onClick={() => setModelDetailTab('workspaces')}
+                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                        modelDetailTab === 'workspaces'
+                          ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-white shadow-2xs'
+                          : 'text-gray-500 dark:text-zinc-400'
+                      }`}
+                    >
+                      <FolderGit2 className="w-3 h-3 text-indigo-500" />
+                      <span>{tUi(lang, 'stats_top_workspaces_dist')}</span>
+                    </button>
+                    <button
+                      onClick={() => setModelDetailTab('requests')}
+                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                        modelDetailTab === 'requests'
+                          ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-white shadow-2xs'
+                          : 'text-gray-500 dark:text-zinc-400'
+                      }`}
+                    >
+                      <Terminal className="w-3 h-3 text-blue-500" />
+                      <span>{tUi(lang, 'stats_recent_calls')}</span>
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSearchQuery(selectedModelFilter === '__ALL__' ? '' : selectedModelFilter);
+                      setWorkspaceFilter('all');
+                      setActiveView('ledger');
+                    }}
+                    className="text-[9.5px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
+                  >
+                    <span>{tUi(lang, 'stats_all_ledger')}</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {modelDetailTab === 'workspaces' ? (
+                  <div className="flex-1 flex flex-col justify-center gap-2">
+                    {(() => {
+                      const wsList: [string, number][] = activeModelMeta?.topWorkspaces?.length
+                        ? activeModelMeta.topWorkspaces
+                        : reportData.byProject.slice(0, 5).map((p) => [
+                            p.workspaceName,
+                            reportData.totalTokens > 0 ? (p.totalTokens / reportData.totalTokens) * 100 : 0,
+                          ]);
+                      return wsList.slice(0, 5).map(([ws, pct]) => (
+                        <button
+                          key={ws}
+                          onClick={() => {
+                            setSelectedProjectName(ws);
+                            setActiveView('project');
+                          }}
+                          className="w-full text-left flex flex-col gap-1 group"
+                        >
+                          <div className="flex items-center justify-between text-[10.5px]">
+                            <span className="font-semibold text-gray-800 dark:text-zinc-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate">
+                              {ws}
+                            </span>
+                            <span className="font-mono font-bold text-gray-600 dark:text-zinc-300 shrink-0">
+                              {pct.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+                            <div
+                              style={{ width: `${Math.max(4, pct)}%` }}
+                              className="h-full rounded-full bg-gradient-to-r from-blue-500/80 to-indigo-400/75"
+                            />
+                          </div>
+                        </button>
+                      ));
+                    })()}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col justify-center gap-1.5">
+                    {modelRecords.slice(0, 4).map((r) => {
+                      const tot = r.inputTokens + r.cachedTokens + r.outputTokens;
+                      const cPct =
+                        r.inputTokens + r.cachedTokens > 0
+                          ? Math.round((r.cachedTokens / (r.inputTokens + r.cachedTokens)) * 100)
+                          : 0;
+                      return (
+                        <button
+                          key={r.id}
+                          onClick={() => {
+                            setSelectedRecord(r);
+                            setActiveView('ledger');
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-xl bg-gray-50/90 dark:bg-white/[0.03] hover:bg-blue-50/50 dark:hover:bg-blue-500/[0.06] border border-gray-100/80 dark:border-white/[0.04] flex items-center justify-between gap-2 text-[10px] font-mono transition-colors"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[9px] font-semibold truncate">
+                              {r.workspace}
+                            </span>
+                            <span className="text-[8.5px] text-gray-400 shrink-0">{r.time.split(' ')[1] || r.time}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[9px] text-sky-600 dark:text-sky-400">
+                              {r.tokensPerSecond > 0 ? `${r.tokensPerSecond.toFixed(0)} t/s` : '-'}
+                            </span>
+                            <span className="text-[9px] text-emerald-600 dark:text-emerald-400">{cPct}%</span>
+                            <span className="font-bold text-gray-800 dark:text-zinc-200">{fmtTok(tot)}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {modelRecords.length === 0 && (
+                      <div className="py-6 text-center text-[10px] text-gray-400">
+                        {tUi(lang, 'stats_no_model_calls')}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ============================================================== */}
+      {/* 视角 4：📜 会话流水 (按工程/关键词筛选 + 真实 Token 列表 + 弹窗)   */}
+      {/* ============================================================== */}
+      {activeView === 'ledger' && (() => {
+        const displayRecords = filteredRecords.filter((r) => {
+          if (ledgerCacheFilter === 'miss') {
+            const totalIn = r.inputTokens + r.cachedTokens;
+            const cPct = totalIn > 0 ? (r.cachedTokens / totalIn) * 100 : 0;
+            return cPct < 50;
+          }
+          return true;
+        });
+        const sumTokens = displayRecords.reduce((acc, r) => acc + r.inputTokens + r.cachedTokens + r.outputTokens, 0);
+        const sumCached = displayRecords.reduce((acc, r) => acc + r.cachedTokens, 0);
+        const sumIn = displayRecords.reduce((acc, r) => acc + r.inputTokens + r.cachedTokens, 0);
+        const filteredCachePct = sumIn > 0 ? (sumCached / sumIn) * 100 : 0;
+
+        const fmtRowTime = (t: string) => {
+          if (rangeBounds.isSingleDay) {
+            return t.includes(' ') ? t.split(' ')[1] : t;
+          }
+          // 多日范围保留 MM-DD HH:mm，便于跨天检索
+          if (t.length >= 16 && t.includes('-')) {
+            return t.slice(5, 16);
+          }
+          return t;
+        };
+
+        // 按会话聚合（仅在 sessions 模式下渲染，使用 displayRecords 已按最新时间倒序的特性）
+        const sessionGroups = (() => {
+          if (ledgerMode !== 'sessions') return [];
+          const map = new Map<
+            string,
+            {
+              sessionKey: string;
+              sessionTitle: string;
+              workspace: string;
+              primaryModel: string;
+              latestTime: string;
+              inputTokens: number;
+              cachedTokens: number;
+              outputTokens: number;
+              thinkingTokens: number;
+              measuredOut: number;
+              measuredDurMs: number;
+              tpsSum: number;
+              tpsCnt: number;
+              records: RequestRecord[];
+            }
+          >();
+          for (const r of displayRecords) {
+            const key = r.sessionId || r.id;
+            let g = map.get(key);
+            if (!g) {
+              g = {
+                sessionKey: key,
+                sessionTitle: r.sessionTitle || `#${key.slice(0, 8)}`,
+                workspace: r.workspace,
+                primaryModel: r.requestedModel,
+                latestTime: r.time,
+                inputTokens: 0,
+                cachedTokens: 0,
+                outputTokens: 0,
+                thinkingTokens: 0,
+                measuredOut: 0,
+                measuredDurMs: 0,
+                tpsSum: 0,
+                tpsCnt: 0,
+                records: [],
+              };
+              map.set(key, g);
+            }
+            if (!g.sessionTitle && r.sessionTitle) g.sessionTitle = r.sessionTitle;
+            g.inputTokens += r.inputTokens;
+            g.cachedTokens += r.cachedTokens;
+            g.outputTokens += r.outputTokens;
+            g.thinkingTokens += r.thinkingTokens ?? 0;
+            if (r.durationMs > 0 && r.outputTokens > 0) {
+              g.measuredOut += r.outputTokens;
+              g.measuredDurMs += r.durationMs;
+            }
+            if (r.tokensPerSecond > 0) {
+              g.tpsSum += r.tokensPerSecond;
+              g.tpsCnt += 1;
+            }
+            g.records.push(r);
+          }
+          return Array.from(map.values());
+        })();
+
+        const pageSize = ledgerMode === 'requests' ? 50 : 25;
+        const totalItems = ledgerMode === 'requests' ? displayRecords.length : sessionGroups.length;
+        const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+        const safePage = Math.min(ledgerPage, totalPages);
+        const pagedRequests =
+          ledgerMode === 'requests' ? displayRecords.slice((safePage - 1) * pageSize, safePage * pageSize) : [];
+        const pagedSessions =
+          ledgerMode === 'sessions' ? sessionGroups.slice((safePage - 1) * pageSize, safePage * pageSize) : [];
+
+        const renderRequestRow = (r: RequestRecord, isNested = false) => {
+          const totalIn = r.inputTokens + r.cachedTokens;
+          const cachePct = totalIn > 0 ? (r.cachedTokens / totalIn) * 100 : 0;
+          const timeText = fmtRowTime(r.time);
+          const ttftSec =
+            r.ttftMs > 0 ? `${(r.ttftMs / 1000).toFixed(1)}s` : r.durationMs > 0 ? `${(r.durationMs / 1000).toFixed(1)}s` : '-';
+          const timingTooltip =
+            r.ttftMs > 0 || r.durationMs > 0
+              ? [
+                  r.ttftMs > 0 ? `TTFT ${(r.ttftMs / 1000).toFixed(2)}s` : null,
+                  (r.streamingDurationMs ?? 0) > 0
+                    ? `${tUi(lang, 'stats_detail_streaming')} ${((r.streamingDurationMs ?? 0) / 1000).toFixed(2)}s`
+                    : null,
+                  r.durationMs > 0 ? `${tUi(lang, 'stats_detail_total_dur')} ${(r.durationMs / 1000).toFixed(2)}s` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : undefined;
+          return (
+            <div
+              key={r.id}
+              onClick={() => setSelectedRecord(r)}
+              className={`grid grid-cols-12 gap-2 px-4 py-2.5 items-center hover:bg-blue-50/40 dark:hover:bg-blue-500/[0.06] transition-colors cursor-pointer text-[10.5px] font-mono ${
+                isNested ? 'bg-gray-50/55 dark:bg-white/[0.015] pl-7 border-l-2 border-blue-500/40' : ''
+              }`}
+            >
+              <div className="col-span-1 text-gray-500 dark:text-zinc-400 truncate text-[9.5px]" title={r.time}>
+                {timeText}
+              </div>
+              <div className="col-span-2 min-w-0 flex items-center gap-1.5">
+                <span className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[9.5px] font-semibold truncate max-w-[84px]">
+                  {r.workspace}
+                </span>
+                <span className="text-[9.5px] text-gray-400 truncate">
+                  {r.sessionTitle || `#${r.id.slice(0, 6)}`}
+                </span>
+              </div>
+              <div className="col-span-2 min-w-0 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate text-[10px]">
+                  {r.requestedModel}
+                </span>
+              </div>
+              <div className="col-span-1 text-right font-bold text-gray-800 dark:text-zinc-200">
+                {fmtTok(totalIn)}
+              </div>
+              <div className="col-span-1 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                {r.cachedTokens > 0 ? fmtTok(r.cachedTokens) : '0'}
+              </div>
+              <div className="col-span-1 text-right text-gray-600 dark:text-zinc-300">
+                {fmtTok(r.inputTokens)}
+              </div>
+              <div className="col-span-1 text-right flex flex-col items-end leading-tight">
+                <span className="font-semibold text-gray-800 dark:text-zinc-200">{r.outputTokens.toLocaleString()}</span>
+                {(r.thinkingTokens ?? 0) > 0 && (
+                  <span className="text-[8.5px] px-1 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    {tUi(lang, 'stats_think_short')} {fmtTok(r.thinkingTokens ?? 0)}
+                  </span>
+                )}
+              </div>
+              <div className="col-span-1 text-right flex flex-col items-end leading-tight" title={timingTooltip}>
+                <span className="font-semibold text-gray-700 dark:text-zinc-300">{ttftSec}</span>
+                <span className="text-[8.5px] text-sky-600 dark:text-sky-400">
+                  {r.tokensPerSecond > 0 ? `${r.tokensPerSecond.toFixed(1)} tok/s` : '-'}
+                </span>
+              </div>
+              <div className="col-span-2 flex items-center justify-end gap-2">
+                <div className="w-10 h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden hidden sm:block">
+                  <div
+                    style={{ width: `${Math.min(100, cachePct)}%` }}
+                    className={`h-full rounded-full ${
+                      cachePct >= 80 ? 'bg-emerald-500' : cachePct >= 40 ? 'bg-amber-400' : 'bg-rose-400'
+                    }`}
+                  />
+                </div>
+                <span className="text-[10px] font-bold text-gray-700 dark:text-zinc-300 w-10 text-right">
+                  {cachePct.toFixed(1)}%
+                </span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[8.5px] font-sans font-semibold shrink-0 ${
+                    cachePct >= 80
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : cachePct > 0
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                      : 'bg-gray-100 dark:bg-white/[0.06] text-gray-400'
+                  }`}
+                >
+                  {cachePct >= 80 ? tUi(lang, 'stats_cache_high') : cachePct > 0 ? tUi(lang, 'stats_cache_low') : tUi(lang, 'stats_cache_cold')}
+                </span>
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
+            <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* 视图粒度切换：单步请求流 | 按会话分组 */}
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
+                  <button
+                    onClick={() => setLedgerMode('requests')}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
+                      ledgerMode === 'requests'
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    {tUi(lang, 'stats_ledger_mode_requests')}
+                  </button>
+                  <button
+                    onClick={() => setLedgerMode('sessions')}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
+                      ledgerMode === 'sessions'
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    {tUi(lang, 'stats_ledger_mode_sessions')}
+                  </button>
+                </div>
+
+                <div className="relative w-48">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={tUi(lang, 'stats_ledger_search_placeholder')}
+                    className="w-full pl-8 pr-6 py-1 text-[11px] rounded-lg bg-gray-100/90 dark:bg-white/[0.05] border border-transparent focus:border-blue-500/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 outline-none"
+                  />
+                  {searchQuery && (
+                    <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* 状态筛选：全部状态 | 掉缓存 */}
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
+                  <button
+                    onClick={() => setLedgerCacheFilter('all')}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
+                      ledgerCacheFilter === 'all' ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                    }`}
+                  >
+                    {tUi(lang, 'stats_ledger_all_status')}
+                  </button>
+                  <button
+                    onClick={() => setLedgerCacheFilter('miss')}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
+                      ledgerCacheFilter === 'miss' ? 'bg-amber-500 text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                    }`}
+                  >
+                    {tUi(lang, 'stats_ledger_cache_miss')}
+                  </button>
+                </div>
+
+                {/* 按真实工作区筛选 */}
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
+                  <button
+                    onClick={() => setWorkspaceFilter('all')}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                      workspaceFilter === 'all' ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                    }`}
+                  >
+                    {tUi(lang, 'stats_ledger_all_workspaces')}
+                  </button>
+                  {reportData.byProject.slice(0, 4).map((p) => (
+                    <button
+                      key={p.workspaceName}
+                      onClick={() => setWorkspaceFilter(p.workspaceName)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                        workspaceFilter === p.workspaceName ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                      }`}
+                    >
+                      {p.workspaceName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-[9.5px] font-mono">
+                {ledgerMode === 'sessions' && (
+                  <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-semibold">
+                    {sessionGroups.length} {tUi(lang, 'stats_unit_sessions')}
+                  </span>
+                )}
+                <span className="px-2 py-0.5 rounded-md bg-gray-100/80 dark:bg-white/[0.04] text-gray-600 dark:text-zinc-300">
+                  {displayRecords.length} {tUi(lang, 'stats_unit_reqs')}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold">{fmtTok(sumTokens)}</span>
+                <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">{filteredCachePct.toFixed(1)}% {tUi(lang, 'stats_cache')}</span>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-2xl overflow-hidden shadow-xs">
+              <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gray-50/90 dark:bg-[#16171b]/90 border-b border-gray-200/60 dark:border-white/5 text-[10px] font-semibold text-gray-400 dark:text-zinc-500">
+                <div className="col-span-1">{tUi(lang, 'stats_th_time')}</div>
+                <div className="col-span-2">{tUi(lang, 'stats_th_workspace')}</div>
+                <div className="col-span-2">{tUi(lang, 'stats_th_model')}</div>
+                <div className="col-span-1 text-right">{tUi(lang, 'stats_th_context')}</div>
+                <div className="col-span-1 text-right">{tUi(lang, 'stats_th_cached')}</div>
+                <div className="col-span-1 text-right">{tUi(lang, 'stats_th_input')}</div>
+                <div className="col-span-1 text-right">{tUi(lang, 'stats_th_output')}</div>
+                <div className="col-span-1 text-right">{tUi(lang, 'stats_th_speed')}</div>
+                <div className="col-span-2 text-right">{tUi(lang, 'stats_th_cache_hit')}</div>
+              </div>
+              <div className="divide-y divide-gray-100/90 dark:divide-white/[0.05]">
+                {displayRecords.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-gray-400 dark:text-zinc-500">
+                    {tUi(lang, 'stats_no_ledger_records')}
+                  </div>
+                ) : ledgerMode === 'requests' ? (
+                  pagedRequests.map((r) => renderRequestRow(r, false))
+                ) : (
+                  pagedSessions.map((g) => {
+                    const isExpanded = !!expandedSessions[g.sessionKey];
+                    const gTotalIn = g.inputTokens + g.cachedTokens;
+                    const gCachePct = gTotalIn > 0 ? (g.cachedTokens / gTotalIn) * 100 : 0;
+                    const gAvgTps =
+                      g.measuredDurMs > 0 && g.measuredOut > 0
+                        ? (g.measuredOut * 1000) / g.measuredDurMs
+                        : g.tpsCnt > 0
+                        ? g.tpsSum / g.tpsCnt
+                        : 0;
+                    return (
+                      <React.Fragment key={g.sessionKey}>
+                        <div
+                          onClick={() =>
+                            setExpandedSessions((prev) => ({
+                              ...prev,
+                              [g.sessionKey]: !prev[g.sessionKey],
+                            }))
+                          }
+                          className="grid grid-cols-12 gap-2 px-4 py-2.5 items-center hover:bg-indigo-50/40 dark:hover:bg-indigo-500/[0.06] transition-colors cursor-pointer text-[10.5px] font-mono"
+                        >
+                          <div className="col-span-1 text-gray-500 dark:text-zinc-400 truncate text-[9.5px] flex items-center gap-1" title={g.latestTime}>
+                            {isExpanded ? (
+                              <ChevronDown className="w-3 h-3 text-blue-500 shrink-0" />
+                            ) : (
+                              <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />
+                            )}
+                            <span className="truncate">{fmtRowTime(g.latestTime)}</span>
+                          </div>
+                          <div className="col-span-2 min-w-0 flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[9.5px] font-semibold truncate max-w-[76px]">
+                              {g.workspace}
+                            </span>
+                            <span className="text-[10px] font-sans font-semibold text-gray-800 dark:text-zinc-200 truncate">
+                              {g.sessionTitle}
+                            </span>
+                            <span className="px-1 py-0 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[8.5px] font-bold shrink-0">
+                              {g.records.length}
+                            </span>
+                          </div>
+                          <div className="col-span-2 min-w-0 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                            <span className="font-semibold text-gray-800 dark:text-zinc-200 truncate text-[10px]">
+                              {g.primaryModel}
+                            </span>
+                          </div>
+                          <div className="col-span-1 text-right font-bold text-gray-800 dark:text-zinc-200">
+                            {fmtTok(gTotalIn)}
+                          </div>
+                          <div className="col-span-1 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                            {g.cachedTokens > 0 ? fmtTok(g.cachedTokens) : '0'}
+                          </div>
+                          <div className="col-span-1 text-right text-gray-600 dark:text-zinc-300">
+                            {fmtTok(g.inputTokens)}
+                          </div>
+                          <div className="col-span-1 text-right flex flex-col items-end leading-tight">
+                            <span className="font-semibold text-gray-800 dark:text-zinc-200">{fmtTok(g.outputTokens)}</span>
+                            {g.thinkingTokens > 0 && (
+                              <span className="text-[8.5px] px-1 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                                {tUi(lang, 'stats_think_short')} {fmtTok(g.thinkingTokens)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-1 text-right flex flex-col items-end leading-tight">
+                            <span className="text-[9.5px] text-gray-500">{g.records.length} {tUi(lang, 'stats_unit_steps')}</span>
+                            <span className="text-[8.5px] text-sky-600 dark:text-sky-400">
+                              {gAvgTps > 0 ? `${gAvgTps.toFixed(1)} tok/s` : '-'}
+                            </span>
+                          </div>
+                          <div className="col-span-2 flex items-center justify-end gap-2">
+                            <div className="w-10 h-1.5 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden hidden sm:block">
+                              <div
+                                style={{ width: `${Math.min(100, gCachePct)}%` }}
+                                className={`h-full rounded-full ${
+                                  gCachePct >= 80 ? 'bg-emerald-500' : gCachePct >= 40 ? 'bg-amber-400' : 'bg-rose-400'
+                                }`}
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold text-gray-700 dark:text-zinc-300 w-10 text-right">
+                              {gCachePct.toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+                        {isExpanded && g.records.map((r) => renderRequestRow(r, true))}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* 底部分页控制器（每页 50 条单步请求 / 25 个会话） */}
+              {totalPages > 1 && (
+                <div className="px-4 py-2.5 bg-gray-50/80 dark:bg-[#16171b]/80 border-t border-gray-200/60 dark:border-white/5 flex items-center justify-between text-[10.5px]">
+                  <span className="text-gray-500 dark:text-zinc-400 font-mono">
+                    {tUi(lang, 'stats_pagination_summary', {
+                      start: (safePage - 1) * pageSize + 1,
+                      end: Math.min(safePage * pageSize, totalItems),
+                      total: totalItems,
+                      unit: tUi(lang, ledgerMode === 'requests' ? 'stats_unit_reqs_full' : 'stats_unit_sessions_full'),
+                    })}
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <button
+                      onClick={() => setLedgerPage(1)}
+                      disabled={safePage <= 1}
+                      className="px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-white/10 disabled:opacity-40 hover:bg-white dark:hover:bg-white/10 text-gray-700 dark:text-zinc-300 transition-colors"
+                    >
+                      1
+                    </button>
+                    <button
+                      onClick={() => setLedgerPage((p) => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                      className="px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-white/10 disabled:opacity-40 hover:bg-white dark:hover:bg-white/10 text-gray-700 dark:text-zinc-300 flex items-center gap-0.5 transition-colors"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                      <span>{tUi(lang, 'stats_prev_page')}</span>
+                    </button>
+                    <span className="px-2.5 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold">
+                      {safePage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setLedgerPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={safePage >= totalPages}
+                      className="px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-white/10 disabled:opacity-40 hover:bg-white dark:hover:bg-white/10 text-gray-700 dark:text-zinc-300 flex items-center gap-0.5 transition-colors"
+                    >
+                      <span>{tUi(lang, 'stats_next_page')}</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => setLedgerPage(totalPages)}
+                      disabled={safePage >= totalPages}
+                      className="px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-white/10 disabled:opacity-40 hover:bg-white dark:hover:bg-white/10 text-gray-700 dark:text-zinc-300 transition-colors"
+                    >
+                      {totalPages}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {selectedRecord && (() => {
+              const thinkTok = Math.min(selectedRecord.thinkingTokens ?? 0, selectedRecord.outputTokens);
+              const visibleOutTok = Math.max(0, selectedRecord.outputTokens - thinkTok);
+              const totalTok = selectedRecord.inputTokens + selectedRecord.cachedTokens + selectedRecord.outputTokens;
+              const pct = (v: number) => (totalTok > 0 && v > 0 ? Math.max(2, (v / totalTok) * 100) : 0);
+              const hasTiming = selectedRecord.ttftMs > 0 || selectedRecord.durationMs > 0 || selectedRecord.tokensPerSecond > 0;
+              const ctxBudget = selectedRecord.contextBudgetTokens ?? 0;
+              const ctxUsed = selectedRecord.contextUsedTokens ?? 0;
+              const ctxPct = ctxBudget > 0 ? Math.min(100, (ctxUsed / ctxBudget) * 100) : 0;
+              return (
+                <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-xs flex items-center justify-center p-4" onClick={() => setSelectedRecord(null)}>
+                  <div className="w-full max-w-md bg-white/95 dark:bg-[#16171b]/95 backdrop-blur-2xl border border-gray-200/80 dark:border-white/10 rounded-2xl shadow-2xl p-4 flex flex-col gap-3 animate-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between pb-2 border-b border-gray-200/60 dark:border-white/10">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-gray-900 dark:text-zinc-100 truncate">
+                          {selectedRecord.sessionTitle || selectedRecord.workspace}
+                        </div>
+                        <div className="text-[9.5px] text-gray-400 font-mono">{selectedRecord.id} · {selectedRecord.time}</div>
+                      </div>
+                      <button onClick={() => setSelectedRecord(null)} className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-400"><X className="w-4 h-4" /></button>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-1.5 text-[10.5px]">
+                      <div className="flex items-center justify-between"><span className="text-gray-400">Session ID</span><span className="font-mono text-gray-700 dark:text-zinc-300 truncate max-w-[220px]">{selectedRecord.sessionId}</span></div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">{tUi(lang, 'stats_detail_workspace')}</span>
+                        <button onClick={() => { setSelectedProjectName(selectedRecord.workspace); setSelectedRecord(null); setActiveView('project'); }} className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold hover:underline flex items-center gap-0.5">
+                          <span>{selectedRecord.workspace}</span><ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-gray-400 shrink-0">{tUi(lang, 'stats_detail_model')}</span>
+                        <span className="font-mono font-bold text-purple-600 dark:text-purple-400 truncate">
+                          {selectedRecord.requestedModel}
+                          {selectedRecord.physicalModel && selectedRecord.physicalModel !== selectedRecord.requestedModel && (
+                            <span className="text-[9px] font-normal text-gray-400 dark:text-zinc-500 ml-1.5">({selectedRecord.physicalModel})</span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                    {hasTiming && (
+                      <div className="p-3 rounded-xl bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-2 text-[10px]">
+                        <div className="grid grid-cols-4 gap-2 font-mono text-center">
+                          <div className="p-1.5 rounded-lg bg-white/70 dark:bg-white/[0.04]">
+                            <div className="text-[8.5px] text-gray-400">TTFT</div>
+                            <div className="font-bold text-purple-600 dark:text-purple-400">
+                              {selectedRecord.ttftMs > 0 ? `${(selectedRecord.ttftMs / 1000).toFixed(2)}s` : '-'}
+                            </div>
+                          </div>
+                          <div className="p-1.5 rounded-lg bg-white/70 dark:bg-white/[0.04]">
+                            <div className="text-[8.5px] text-gray-400">{tUi(lang, 'stats_detail_streaming')}</div>
+                            <div className="font-bold text-emerald-600 dark:text-emerald-400">
+                              {(selectedRecord.streamingDurationMs ?? 0) > 0 ? `${((selectedRecord.streamingDurationMs ?? 0) / 1000).toFixed(2)}s` : '-'}
+                            </div>
+                          </div>
+                          <div className="p-1.5 rounded-lg bg-white/70 dark:bg-white/[0.04]">
+                            <div className="text-[8.5px] text-gray-400">{tUi(lang, 'stats_detail_total_dur')}</div>
+                            <div className="font-bold text-gray-800 dark:text-zinc-200">
+                              {selectedRecord.durationMs > 0 ? `${(selectedRecord.durationMs / 1000).toFixed(2)}s` : '-'}
+                            </div>
+                          </div>
+                          <div className="p-1.5 rounded-lg bg-white/70 dark:bg-white/[0.04]">
+                            <div className="text-[8.5px] text-gray-400">{tUi(lang, 'stats_gen_speed')}</div>
+                            <div className="font-bold text-sky-600 dark:text-sky-400">
+                              {selectedRecord.tokensPerSecond > 0 ? `${selectedRecord.tokensPerSecond.toFixed(1)} t/s` : '-'}
+                            </div>
+                          </div>
+                        </div>
+                        {ctxBudget > 0 && (
+                          <div className="flex flex-col gap-1 pt-1 border-t border-gray-200/60 dark:border-white/[0.06]">
+                            <div className="flex items-center justify-between text-[9.5px] font-mono">
+                              <span className="text-gray-400">{tUi(lang, 'stats_detail_context_window')}</span>
+                              <span className="text-gray-700 dark:text-zinc-300 font-semibold">
+                                {fmtTok(ctxUsed)} / {fmtTok(ctxBudget)} ({ctxPct.toFixed(1)}%)
+                              </span>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden">
+                              <div
+                                style={{ width: `${Math.max(2, ctxPct)}%` }}
+                                className={`h-full rounded-full ${
+                                  ctxPct > 80 ? 'bg-rose-500' : ctxPct > 60 ? 'bg-amber-400' : 'bg-indigo-500'
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="p-3 rounded-xl bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5 flex flex-col gap-2 text-[10.5px]">
+                      <div className="flex items-center justify-between"><span className="font-semibold text-gray-700 dark:text-zinc-300">{tUi(lang, 'stats_detail_token_breakdown')}</span><span className="font-mono text-gray-400">{totalTok.toLocaleString()}</span></div>
+                      <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden flex">
+                        <div style={{ width: `${pct(selectedRecord.cachedTokens)}%` }} className="h-full bg-emerald-500" />
+                        <div style={{ width: `${pct(selectedRecord.inputTokens)}%` }} className="h-full bg-blue-500" />
+                        <div style={{ width: `${pct(thinkTok)}%` }} className="h-full bg-purple-500" />
+                        <div style={{ width: `${pct(visibleOutTok)}%` }} className="h-full bg-cyan-400" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px]">
+                        <div className="flex items-center justify-between"><span className="text-emerald-600 dark:text-emerald-400">● {tUi(lang, 'stats_detail_cache_read')}</span><span className="font-bold">{selectedRecord.cachedTokens.toLocaleString()}</span></div>
+                        <div className="flex items-center justify-between"><span className="text-blue-600 dark:text-blue-400">● {tUi(lang, 'stats_detail_direct_input')}</span><span>{selectedRecord.inputTokens.toLocaleString()}</span></div>
+                        <div className="flex items-center justify-between"><span className="text-purple-600 dark:text-purple-400">● {tUi(lang, 'stats_detail_thinking_tokens')}</span><span>{thinkTok.toLocaleString()}</span></div>
+                        <div className="flex items-center justify-between"><span className="text-cyan-600 dark:text-cyan-400 font-semibold">● {tUi(lang, 'stats_detail_output_tokens')}</span><span className="font-bold">{visibleOutTok.toLocaleString()}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        );
+      })()}
     </div>
   );
 };

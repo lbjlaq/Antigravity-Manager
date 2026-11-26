@@ -17,7 +17,7 @@ body,
 }
 
 html {
-  background-color: #FAFBFC;
+  background-color: #F3F4F6;
 }
 
 html.dark {
@@ -30,11 +30,28 @@ body {
     "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #FAFBFC;
+  background-color: #F3F4F6;
 }
 
 .dark body {
   background-color: #09090b;
+}
+
+/* 主题切换瞬间冻结子元素 CSS 过渡与重型模糊层，避免 View Transition 捕获到半暗半明中间帧及 GPU 掉帧 */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 窗口隐藏或切到后台时暂停全部无限 CSS 动画（animate-ping/pulse/spin），避免空耗 GPU 与电量 */
+html.app-hidden *,
+html.app-hidden *::before,
+html.app-hidden *::after {
+  animation-play-state: paused !important;
 }
 
 /* ==================== 跨平台 120Hz 黄金 View Transitions 规则 ==================== */
@@ -42,8 +59,10 @@ body {
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+  will-change: clip-path;
 }
 
+/* 浅 → 深：深色新画布从月牙按钮向外平滑扩散 */
 ::view-transition-old(root) {
   z-index: 1;
 }
@@ -52,6 +71,50 @@ body {
   z-index: 9999;
 }
 
+/* 深 → 浅：深色旧幕布向太阳按钮平滑收拢，底层已完全就绪的浅色画布零闪烁显现 */
+html.theme-to-light::view-transition-old(root) {
+  z-index: 9999;
+}
+
+html.theme-to-light::view-transition-new(root) {
+  z-index: 1;
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+button:focus,
+button:focus-visible {
+  outline: none;
+}
+
+/* 精致窄滚动条 (适配悬浮小窗与列表) */
+.mini-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.mini-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mini-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+.dark .mini-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* 隐藏原生滚动条轨道但保留顺滑滚动能力 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 列表底部柔和渐隐遮罩，避免滚动项文字被生硬腰斩 */
+.fade-mask-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
 }

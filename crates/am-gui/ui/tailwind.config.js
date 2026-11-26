@@ -17,6 +17,16 @@ export default {
         'dark-base-200': '#15161b',
         'dark-base-300': '#26272f',
       },
+      boxShadow: {
+        '2xs': '0 1px rgb(0 0 0 / 0.05)',
+        'xs': '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+      },
+      backdropBlur: {
+        xs: '2px',
+      },
+      transitionDuration: {
+        250: '250ms',
+      },
     },
   },
   plugins: [],

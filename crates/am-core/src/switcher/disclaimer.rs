@@ -34,4 +34,34 @@ impl DisclaimerBypass {
 
         Ok(())
     }
+
+    /// 同步安全条款/协议确认状态与清理旧会话历史标识，消除切号后弹窗与历史缺失 (Fixes #4026)
+    pub fn apply_onboarding_to_db(conn: &Connection, email: &str, is_gcp_tos: bool) -> Result<()> {
+        let tos_str = if is_gcp_tos { "true" } else { "false" };
+
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('agy.onboarding.lastLoginUsername', ?1)",
+            [email],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('agy.onboarding.lastLoginIsGcpTos', ?1)",
+            [tos_str],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('jetski.onboarding.lastLoginUsername', ?1)",
+            [email],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('jetski.onboarding.lastLoginIsGcpTos', ?1)",
+            [tos_str],
+        );
+
+        // 删除旧格式状态，避免 IDE 读取陈旧 UserID 导致历史记录拉取失败
+        let _ = conn.execute(
+            "DELETE FROM ItemTable WHERE key = 'jetskiStateSync.agentManagerInitState'",
+            [],
+        );
+
+        Ok(())
+    }
 }
