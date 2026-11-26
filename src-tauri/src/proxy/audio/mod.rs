@@ -87,31 +87,27 @@ pub fn audio_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
         return Some(json!({ "fileData": { "fileUri": src, "mimeType": mime } }));
     }
 
-    // 3) 本地文件 (file:// 或普通路径)
-    let looks_like_path =
-        src.starts_with("file://") || (src.len() < 4096 && Path::new(src).is_file());
-    if looks_like_path {
-        let file_path = if let Some(rest) = src.strip_prefix("file://") {
-            #[cfg(target_os = "windows")]
-            {
-                rest.trim_start_matches('/').replace('/', "\\")
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                rest.to_string()
-            }
-        } else {
-            src.to_string()
-        };
-
-        match std::fs::read(&file_path) {
+    // 3) 本地文件 (file:// 或普通路径) — 仅限本机直连回环主请求，且须通过大小与容器魔数校验
+    let is_file_uri = src.starts_with("file://");
+    if !crate::proxy::pipeline::budget::can_read_local_files() {
+        if is_file_uri {
+            tracing::warn!("[Audio] Denied local file URI outside loopback owner context");
+            return None;
+        }
+    } else if is_file_uri || (src.len() < 4096 && Path::new(src).is_file()) {
+        let file_path = crate::proxy::mappers::common_utils::strip_file_scheme(src);
+        const MAX_AUDIO_BYTES: usize = 15 * 1024 * 1024;
+        match crate::proxy::mappers::common_utils::read_bounded_local_file(
+            &file_path,
+            MAX_AUDIO_BYTES,
+        ) {
             Ok(bytes) => {
-                if AudioProcessor::exceeds_size_limit(bytes.len()) {
+                if !has_valid_audio_magic(&bytes) {
                     tracing::warn!(
-                        "[Audio] 本地音频超过 15MB ({} bytes)，仍会尝试上传: {}",
-                        bytes.len(),
+                        "[Audio] Rejected local file failing audio container magic check: {}",
                         file_path
                     );
+                    return None;
                 }
                 let mime = declared.unwrap_or_else(|| mime_from_path(&file_path));
                 let b64 = AudioProcessor::encode_to_base64(&bytes);
@@ -137,6 +133,29 @@ pub fn audio_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
     let mime = declared.unwrap_or_else(|| "audio/mp3".to_string());
     warn_if_oversized(src.len(), &mime);
     Some(json!({ "inlineData": { "mimeType": mime, "data": src } }))
+}
+
+fn has_valid_audio_magic(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    if bytes.starts_with(b"ID3")
+        || bytes.starts_with(b"OggS")
+        || bytes.starts_with(b"fLaC")
+        || (bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
+    {
+        return true;
+    }
+    if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" {
+        return true;
+    }
+    if bytes.len() >= 12
+        && ((&bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE")
+            || (&bytes[0..4] == b"FORM" && (&bytes[8..12] == b"AIFF" || &bytes[8..12] == b"AIFC")))
+    {
+        return true;
+    }
+    false
 }
 
 fn warn_if_oversized(base64_len: usize, mime: &str) {
@@ -179,6 +198,36 @@ mod part_tests {
         assert_eq!(normalize_audio_mime("wav"), "audio/wav");
         assert_eq!(normalize_audio_mime("audio/mpeg"), "audio/mp3");
         assert_eq!(normalize_audio_mime("m4a"), "audio/aac");
+    }
+
+    #[tokio::test]
+    async fn test_local_audio_file_security_guards() {
+        let dir = std::env::temp_dir().join(format!("ag_audio_sec_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_mp3 = dir.join("secret.mp3");
+        std::fs::write(&fake_mp3, b"{\"api_key\":\"sk-secret\"}").unwrap();
+        let valid_wav = dir.join("tone.wav");
+        std::fs::write(&valid_wav, b"RIFF\x24\x00\x00\x00WAVEfmt ").unwrap();
+
+        let fake_uri = format!("file://{}", fake_mp3.display());
+        let valid_uri = format!("file://{}", valid_wav.display());
+
+        // 1. Denied outside loopback RequestContext
+        assert!(audio_part_from_source(&valid_uri, None).is_none());
+
+        // 2. Inside loopback RequestContext: disguised text rejected, real WAV allowed
+        let ctx = crate::proxy::pipeline::budget::RequestContext::new(
+            crate::proxy::pipeline::budget::deadline_now(),
+        );
+        ctx.set_allow_local_files(true);
+        crate::proxy::pipeline::budget::scope(ctx, async {
+            assert!(audio_part_from_source(&fake_uri, None).is_none());
+            let part = audio_part_from_source(&valid_uri, None).unwrap();
+            assert_eq!(part["inlineData"]["mimeType"], "audio/wav");
+        })
+        .await;
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

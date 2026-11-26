@@ -421,15 +421,17 @@ pub async fn stage_trace_middleware(request: Request, next: Next) -> Response {
         ),
     );
 
+    let budget_ctx = crate::proxy::pipeline::budget::RequestContext::new(
+        crate::proxy::pipeline::budget::deadline_now(),
+    );
+    budget_ctx.set_allow_local_files(
+        crate::proxy::middleware::ip_filter::is_unproxied_direct_loopback(&request),
+    );
+
     let response = StageTrace::scope(
         Arc::clone(&trace),
         // Pipeline 级全局预算：四大协议共用同一个截止时刻（与上游客户端夹取同源）
-        crate::proxy::pipeline::budget::scope(
-            crate::proxy::pipeline::budget::RequestContext::new(
-                crate::proxy::pipeline::budget::deadline_now(),
-            ),
-            next.run(request),
-        ),
+        crate::proxy::pipeline::budget::scope(budget_ctx, next.run(request)),
     )
     .await;
     let status = response.status().as_u16();

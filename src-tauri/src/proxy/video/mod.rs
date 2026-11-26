@@ -90,31 +90,27 @@ pub fn video_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
         return Some(json!({ "fileData": { "fileUri": src, "mimeType": mime } }));
     }
 
-    // 3) 本地文件 (file:// 或普通路径)
-    let looks_like_path =
-        src.starts_with("file://") || (src.len() < 4096 && Path::new(src).is_file());
-    if looks_like_path {
-        let file_path = if let Some(rest) = src.strip_prefix("file://") {
-            #[cfg(target_os = "windows")]
-            {
-                rest.trim_start_matches('/').replace('/', "\\")
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                rest.to_string()
-            }
-        } else {
-            src.to_string()
-        };
-
-        match std::fs::read(&file_path) {
+    // 3) 本地文件 (file:// 或普通路径) — 仅限本机直连回环主请求，且须通过大小与容器魔数校验
+    let is_file_uri = src.starts_with("file://");
+    if !crate::proxy::pipeline::budget::can_read_local_files() {
+        if is_file_uri {
+            tracing::warn!("[Video] Denied local file URI outside loopback owner context");
+            return None;
+        }
+    } else if is_file_uri || (src.len() < 4096 && Path::new(src).is_file()) {
+        let file_path = crate::proxy::mappers::common_utils::strip_file_scheme(src);
+        const MAX_VIDEO_BYTES: usize = 20 * 1024 * 1024;
+        match crate::proxy::mappers::common_utils::read_bounded_local_file(
+            &file_path,
+            MAX_VIDEO_BYTES,
+        ) {
             Ok(bytes) => {
-                if VideoProcessor::exceeds_size_limit(bytes.len()) {
+                if !has_valid_video_magic(&bytes) {
                     tracing::warn!(
-                        "[Video] 本地视频超过 20MB ({} bytes)，仍会尝试内联上传: {}",
-                        bytes.len(),
+                        "[Video] Rejected local file failing video container magic check: {}",
                         file_path
                     );
+                    return None;
                 }
                 let mime = declared.unwrap_or_else(|| mime_from_path(&file_path));
                 let b64 = VideoProcessor::encode_to_base64(&bytes);
@@ -140,6 +136,30 @@ pub fn video_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
     let mime = declared.unwrap_or_else(|| "video/mp4".to_string());
     warn_if_oversized(src.len(), &mime);
     Some(json!({ "inlineData": { "mimeType": mime, "data": src } }))
+}
+
+fn has_valid_video_magic(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    if bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) || bytes.starts_with(b"FLV\x01") {
+        return true;
+    }
+    if bytes.len() >= 8
+        && matches!(
+            &bytes[4..8],
+            b"ftyp" | b"moov" | b"mdat" | b"wide" | b"free"
+        )
+    {
+        return true;
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"AVI " {
+        return true;
+    }
+    if bytes.len() >= 16 && bytes.starts_with(&[0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11]) {
+        return true;
+    }
+    false
 }
 
 fn warn_if_oversized(base64_len: usize, mime: &str) {
@@ -169,5 +189,35 @@ mod tests {
         let part = video_part_from_source("https://example.com/demo.webm", None).unwrap();
         assert_eq!(part["fileData"]["fileUri"], "https://example.com/demo.webm");
         assert_eq!(part["fileData"]["mimeType"], "video/webm");
+    }
+
+    #[tokio::test]
+    async fn test_local_video_file_security_guards() {
+        let dir = std::env::temp_dir().join(format!("ag_video_sec_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_mp4 = dir.join("secret.mp4");
+        std::fs::write(&fake_mp4, b"root:x:0:0:root:/root:/bin/bash").unwrap();
+        let valid_mp4 = dir.join("clip.mp4");
+        std::fs::write(&valid_mp4, b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00").unwrap();
+
+        let fake_uri = format!("file://{}", fake_mp4.display());
+        let valid_uri = format!("file://{}", valid_mp4.display());
+
+        // 1. Denied outside loopback RequestContext
+        assert!(video_part_from_source(&valid_uri, None).is_none());
+
+        // 2. Inside loopback RequestContext: disguised text rejected, real MP4 allowed
+        let ctx = crate::proxy::pipeline::budget::RequestContext::new(
+            crate::proxy::pipeline::budget::deadline_now(),
+        );
+        ctx.set_allow_local_files(true);
+        crate::proxy::pipeline::budget::scope(ctx, async {
+            assert!(video_part_from_source(&fake_uri, None).is_none());
+            let part = video_part_from_source(&valid_uri, None).unwrap();
+            assert_eq!(part["inlineData"]["mimeType"], "video/mp4");
+        })
+        .await;
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
