@@ -122,25 +122,25 @@ pub struct StreamLifecycleConfig {
 }
 
 impl StreamLifecycleConfig {
-    pub fn new(
+    pub fn from_timeouts(
+        timeouts: crate::proxy::config::StreamTimeoutConfig,
+        remaining_secs: Option<u64>,
+        env_budget_override: Option<u64>,
         adapter_name: &'static str,
         function_name: &'static str,
         trace_info: String,
     ) -> Self {
-        let timeouts = crate::proxy::get_stream_timeout_config();
-        // 首字阶段与上游首字节预算同源：
-        // - 同一 15..MAX_FIRST_BYTE_CEILING_SECS(270) 上限，避免前端配置 > 上限时两段行为不一致；
-        // - 再用全局剩余预算封顶，避免“响应头已耗时 + 又等满 180s”超出 270s。
-        let mut initial_ttft_secs = timeouts.initial_ttft_secs.clamp(
-            15,
-            crate::proxy::upstream::client::MAX_FIRST_BYTE_CEILING_SECS,
+        let (_, ceiling_cap) = crate::proxy::pipeline::budget::effective_first_byte_caps_for(
+            &timeouts,
+            env_budget_override,
         );
+        let mut initial_ttft_secs = timeouts.initial_ttft_secs.clamp(15, ceiling_cap.max(15));
         let transition_secs = timeouts.transition_secs;
         let streaming_sliding_secs = timeouts.streaming_sliding_secs;
 
         // 仅首字等待与上游首字节预算同源封顶；TTFT 之后的 transition / sliding
         // 超时不再被排队/轮换/长思考消耗的 admission 预算压缩，避免流中短暂停顿被提前熔断。
-        if let Some(remaining) = crate::proxy::pipeline::budget::remaining_secs() {
+        if let Some(remaining) = remaining_secs {
             initial_ttft_secs = initial_ttft_secs.min(remaining.max(3));
         }
         Self {
@@ -152,6 +152,21 @@ impl StreamLifecycleConfig {
             function_name,
             trace_info,
         }
+    }
+
+    pub fn new(
+        adapter_name: &'static str,
+        function_name: &'static str,
+        trace_info: String,
+    ) -> Self {
+        Self::from_timeouts(
+            crate::proxy::get_stream_timeout_config(),
+            crate::proxy::pipeline::budget::remaining_secs(),
+            crate::proxy::pipeline::budget::env_gateway_request_budget_secs(),
+            adapter_name,
+            function_name,
+            trace_info,
+        )
     }
 
     #[cfg(test)]
@@ -1075,5 +1090,53 @@ mod tests {
             error_propagated,
             "Must propagate Err on premature stream EOF to trigger client native retry"
         );
+    }
+
+    #[test]
+    fn from_timeouts_respects_extended_ttft_opt_in_and_preserves_post_ttft() {
+        let mut timeouts = crate::proxy::config::StreamTimeoutConfig {
+            initial_ttft_secs: 600,
+            transition_secs: 300,
+            streaming_sliding_secs: 240,
+            gateway_request_budget_secs: 900,
+            allow_extended_ttft_budget: false,
+        };
+
+        let capped = StreamLifecycleConfig::from_timeouts(
+            timeouts.clone(),
+            None,
+            None,
+            "test",
+            "fn",
+            "t".into(),
+        );
+        assert_eq!(capped.initial_ttft_secs, 270);
+        assert_eq!(capped.transition_secs, 300);
+        assert_eq!(capped.streaming_sliding_secs, 240);
+
+        timeouts.allow_extended_ttft_budget = true;
+        let extended = StreamLifecycleConfig::from_timeouts(
+            timeouts.clone(),
+            Some(750),
+            None,
+            "test",
+            "fn",
+            "t".into(),
+        );
+        assert_eq!(extended.initial_ttft_secs, 600);
+        assert_eq!(extended.transition_secs, 300);
+        assert_eq!(extended.streaming_sliding_secs, 240);
+
+        let tightly_clamped = StreamLifecycleConfig::from_timeouts(
+            timeouts,
+            Some(12),
+            None,
+            "test",
+            "fn",
+            "t".into(),
+        );
+        assert_eq!(tightly_clamped.initial_ttft_secs, 12);
+        assert_eq!(tightly_clamped.transition_secs, 300);
+        assert_eq!(tightly_clamped.streaming_sliding_secs, 240);
     }
 }

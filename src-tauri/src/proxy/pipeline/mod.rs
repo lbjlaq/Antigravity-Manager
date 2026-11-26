@@ -29,9 +29,11 @@ pub use auto_heal::{
     ThinkingAutoHealContext,
 };
 pub use budget::{
-    clamp_budget_secs, clamp_secs, current, current_deadline, deadline_now, estimated_tokens,
-    exhausted, gateway_request_budget_secs, register_upstream_call, remaining_secs, scope_optional,
-    set_estimated_tokens, RequestContext, DEFAULT_GATEWAY_REQUEST_BUDGET_SECS,
+    clamp_budget_secs, clamp_secs, current, current_deadline, deadline_now,
+    effective_first_byte_caps_for, effective_gateway_budget_secs_for,
+    env_gateway_request_budget_secs, estimated_tokens, exhausted, gateway_request_budget_secs,
+    register_upstream_call, remaining_secs, scope_optional, set_estimated_tokens, RequestContext,
+    DEFAULT_GATEWAY_REQUEST_BUDGET_SECS, MAX_EXTENDED_GATEWAY_REQUEST_BUDGET_SECS,
     MAX_LARGE_BODY_UPSTREAM_CALLS, REPLAY_GUARD_BODY_BYTES,
 };
 pub use estimator::{estimate_tokens, PipelineTokenEstimator};
