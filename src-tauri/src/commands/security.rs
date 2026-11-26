@@ -130,7 +130,7 @@ pub async fn clear_ip_blacklist() -> Result<(), String> {
     // 获取所有黑名单条目并逐个删除
     let entries = security_db::get_blacklist()?;
     for entry in entries {
-        security_db::remove_from_blacklist(&entry.ip_pattern)?;
+        security_db::remove_from_blacklist(&entry.id)?;
     }
     Ok(())
 }
