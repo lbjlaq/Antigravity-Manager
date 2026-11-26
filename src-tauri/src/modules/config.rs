@@ -1,8 +1,46 @@
 use serde_json;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::account::get_data_dir;
 use crate::models::AppConfig;
+
+static CLI_SILENT_MODE_OVERRIDE: AtomicBool = AtomicBool::new(false);
+
+fn parse_bool_env_value(val: Option<&str>) -> bool {
+    val.map(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+    .unwrap_or(false)
+}
+
+/// Enable silent mode for the current process (via `--silent-mode` CLI flag).
+pub fn set_cli_silent_mode_override(enabled: bool) {
+    CLI_SILENT_MODE_OVERRIDE.store(enabled, Ordering::Relaxed);
+}
+
+/// Returns true if silent mode is forced by `--silent-mode` or env vars (`ABV_SILENT_MODE` / `ANTIGRAVITY_SILENT_MODE`).
+pub fn is_runtime_silent_mode_override() -> bool {
+    CLI_SILENT_MODE_OVERRIDE.load(Ordering::Relaxed)
+        || parse_bool_env_value(std::env::var("ABV_SILENT_MODE").ok().as_deref())
+        || parse_bool_env_value(std::env::var("ANTIGRAVITY_SILENT_MODE").ok().as_deref())
+}
+
+/// Effective silent mode state given an already-loaded `AppConfig`.
+pub fn is_silent_mode_effective(config: &AppConfig) -> bool {
+    config.silent_mode || is_runtime_silent_mode_override()
+}
+
+/// Returns true if silent mode is active via runtime overrides or persisted `gui_config.json`.
+pub fn is_silent_mode_enabled() -> bool {
+    if is_runtime_silent_mode_override() {
+        return true;
+    }
+    load_app_config().map(|c| c.silent_mode).unwrap_or(false)
+}
 
 const CONFIG_FILE: &str = "gui_config.json";
 
@@ -419,5 +457,20 @@ mod tests {
         // 3. v2 deleted entry must not resurrect
         let (v2_deleted, _) = migrate(2, None);
         assert!(!v2_deleted.proxy.custom_mapping.contains_key(KEY));
+    }
+
+    #[test]
+    fn test_parse_bool_env_value_and_effective_silent_mode() {
+        for truthy in ["1", "true", "TRUE", " yes ", "On"] {
+            assert!(parse_bool_env_value(Some(truthy)));
+        }
+        for falsy in ["", "0", "false", "no", "off", "random"] {
+            assert!(!parse_bool_env_value(Some(falsy)));
+        }
+        assert!(!parse_bool_env_value(None));
+
+        let mut cfg = AppConfig::new();
+        cfg.silent_mode = true;
+        assert!(is_silent_mode_effective(&cfg));
     }
 }

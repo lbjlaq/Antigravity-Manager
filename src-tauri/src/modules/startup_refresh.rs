@@ -41,6 +41,13 @@ pub fn spawn_startup_quota_refresh(
             }
         };
 
+        if config::is_silent_mode_effective(&app_config) {
+            logger::log_info(
+                "[StartupRefresh] Silent mode is enabled; skipping startup quota refresh",
+            );
+            return;
+        }
+
         if !app_config.startup_refresh {
             logger::log_info("[StartupRefresh] Startup quota refresh is disabled by config");
             return;

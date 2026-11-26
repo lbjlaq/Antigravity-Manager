@@ -591,6 +591,9 @@
         },
         "account": {
             "title": "Tetapan Akaun",
+            "silent_mode": "တိတ်ဆိတ်မုဒ်",
+            "silent_mode_desc": "စတင်ချိန် ပြန်လည်စစ်ဆေးခြင်း၊ နောက်ခံအလိုအလျောက် စစ်ဆေးခြင်း၊ အချိန်ဇယားဖြင့် နွှေးခြင်း၊ နောက်ခံ Token/QoS စစ်ဆေးခြင်းနှင့် အလိုအလျောက် အပ်ဒိတ်စစ်ဆေးခြင်းတို့ကို ခေတ္တရပ်ထားပြီး ကိုယ်တိုင်ပြောင်းလဲခြင်းနှင့် ကိုယ်တိုင်ပြန်လည်စစ်ဆေးခြင်းကိုသာ ဖွင့်ထားပါမည်။",
+            "silent_mode_active_hint": "တိတ်ဆိတ်မုဒ် ဖွင့်ထားပါသည်- နောက်ခံအလိုအလျောက် ကွန်ရက်စစ်ဆေးမှုများကို ရပ်နားထားပြီး ကိုယ်တိုင်လုပ်ဆောင်မှုများကို ပုံမှန်အတိုင်း အသုံးပြုနိုင်ပါသည်။",
             "auto_refresh": "Muat Semula Automatik Latar Belakang",
             "auto_refresh_desc": "Muat semula kuota semua akaun secara automatik di latar belakang. Ini diperlukan untuk perlindungan kuota dan pemanasan pintar.",
             "auto_refresh_locked_hint": "Perlindungan kuota didayakan; muat semula automatik latar belakang sentiasa aktif",

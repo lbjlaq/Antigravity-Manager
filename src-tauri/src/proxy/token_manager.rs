@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use tokio_util::sync::CancellationToken;
 
@@ -437,6 +437,7 @@ pub struct TokenManager {
     /// [NEW] QoS 智能熔断与阶梯探针守卫
     pub qos_guardian: Arc<crate::proxy::qos_guardian::QoSGuardian>,
     qos_probe_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    silent_mode: AtomicBool,
 }
 
 impl TokenManager {
@@ -483,7 +484,20 @@ impl TokenManager {
                 guardian
             },
             qos_probe_handle: Arc::new(tokio::sync::Mutex::new(None)),
+            silent_mode: AtomicBool::new(crate::modules::config::is_silent_mode_enabled()),
         }
+    }
+
+    pub fn set_silent_mode(&self, enabled: bool) {
+        self.silent_mode.store(
+            enabled || crate::modules::config::is_runtime_silent_mode_override(),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn is_silent_mode(&self) -> bool {
+        self.silent_mode.load(Ordering::Relaxed)
+            || crate::modules::config::is_runtime_silent_mode_override()
     }
 
     /// 获取指定账号当前的活跃在途请求数
@@ -632,6 +646,9 @@ impl TokenManager {
 
     /// 执行一次主动预刷新检查轮次
     async fn run_proactive_token_refresh_tick(&self) {
+        if self.is_silent_mode() {
+            return;
+        }
         let now = chrono::Utc::now().timestamp();
         const PROACTIVE_REFRESH_BUFFER_SECS: i64 = 600; // 提前10分钟预刷新
 
@@ -8010,6 +8027,9 @@ impl TokenManager {
 
     /// 执行一次 QoS 阶梯自愈扫描轮次
     async fn run_qos_probing_tick(&self) {
+        if self.is_silent_mode() {
+            return;
+        }
         let expired_jails = self.qos_guardian.take_expired_jails_for_probing();
         for (account_id, level) in expired_jails {
             let guardian = self.qos_guardian.clone();

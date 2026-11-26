@@ -575,9 +575,6 @@ impl AxumServer {
         // Start health check loop
         proxy_pool_manager.clone().start_health_check_loop();
 
-        // 启动 TokenManager 后台维护（主动预刷新与限流自动清理）
-        token_manager.start_auto_cleanup().await;
-
         let security_state = Arc::new(RwLock::new(security_config));
         let experimental_state = Arc::new(RwLock::new(experimental_config));
         let debug_logging_state = Arc::new(RwLock::new(debug_logging));
@@ -2200,6 +2197,11 @@ async fn admin_save_config(
     state
         .token_manager
         .set_qos_auto_jail(new_config.proxy.qos_auto_jail);
+    state
+        .token_manager
+        .set_silent_mode(crate::modules::config::is_silent_mode_effective(
+            &new_config,
+        ));
 
     // 同步健康检查日志捕获开关
     state
@@ -2349,6 +2351,11 @@ async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoRe
         logger::log_error(&format!("[API] 启用服务并加载账号失败: {}", e));
     }
 
+    state
+        .token_manager
+        .set_silent_mode(crate::modules::config::is_silent_mode_enabled());
+    state.token_manager.start_auto_cleanup().await;
+
     let mut running = state.is_running.write().await;
     *running = true;
     logger::log_info("[API] 反代服务功能已启用 (持久化已同步)");
@@ -2379,6 +2386,7 @@ async fn admin_stop_proxy_service(State(state): State<AppState>) -> impl IntoRes
         let _ = crate::modules::config::save_app_config(&config);
     }
 
+    state.token_manager.abort_background_tasks().await;
     let mut running = state.is_running.write().await;
     *running = false;
     logger::log_info("[API] 反代服务功能已禁用 (Axum 模式 / 持久化已同步)");

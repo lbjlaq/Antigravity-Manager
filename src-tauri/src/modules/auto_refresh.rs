@@ -143,7 +143,7 @@ pub fn start_auto_refresh(
             }
 
             if should_trigger_auto_refresh(
-                app_config.auto_refresh,
+                !config::is_silent_mode_effective(&app_config) && app_config.auto_refresh,
                 app_config.refresh_interval,
                 now,
                 last,

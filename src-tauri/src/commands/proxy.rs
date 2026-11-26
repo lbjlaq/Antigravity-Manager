@@ -234,6 +234,9 @@ pub async fn internal_start_proxy_service(
     // [NEW] 加载熔断配置 (从主配置加载)
     let app_config = crate::modules::config::load_app_config()
         .unwrap_or_else(|_| crate::models::AppConfig::new());
+    token_manager.set_silent_mode(crate::modules::config::is_silent_mode_effective(
+        &app_config,
+    ));
     token_manager
         .update_circuit_breaker_config(app_config.circuit_breaker)
         .await;
@@ -402,6 +405,7 @@ pub async fn ensure_admin_server(
             let app_data_dir = crate::modules::account::get_data_dir()?;
             let tm = Arc::new(TokenManager::new(app_data_dir));
             tm.set_qos_auto_jail(config.qos_auto_jail);
+            tm.set_silent_mode(crate::modules::config::is_silent_mode_enabled());
             let _ = tm.load_accounts().await;
             if let Some(ref account_id) = config.preferred_account_id {
                 let trimmed = account_id.trim();

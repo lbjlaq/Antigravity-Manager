@@ -593,6 +593,9 @@
         },
         "account": {
             "title": "Hesap Ayarları",
+            "silent_mode": "Sessiz Mod",
+            "silent_mode_desc": "Başlangıçta yenilemeyi, arka plan periyodik yoklamasını, zamanlanmış ısıtmayı, arka plan token/QoS yoklamalarını ve otomatik güncelleme denetimlerini duraklatır; yalnızca manuel geçiş ve manuel yenileme açık kalır.",
+            "silent_mode_active_hint": "Sessiz Mod etkin: otomatik arka plan ağ yoklamaları duraklatıldı, manuel işlemler kullanılabilir durumda.",
             "auto_refresh": "Otomatik Kota Yenileme",
             "auto_refresh_desc": "Tüm hesaplar için kota bilgilerini periyodik olarak otomatik yenile",
             "auto_refresh_locked_hint": "Kota koruması devrede; arka plan otomatik yenileme sürekli açık tutulur",

@@ -665,6 +665,9 @@ pub async fn save_config(
         instance
             .axum_server
             .update_qos_auto_jail(config.proxy.qos_auto_jail);
+        instance
+            .token_manager
+            .set_silent_mode(crate::modules::config::is_silent_mode_effective(&config));
         // 更新熔断配置
         instance
             .token_manager
@@ -697,6 +700,10 @@ pub async fn save_config(
         admin
             .axum_server
             .update_qos_auto_jail(config.proxy.qos_auto_jail);
+        admin
+            .axum_server
+            .token_manager
+            .set_silent_mode(crate::modules::config::is_silent_mode_effective(&config));
         admin
             .axum_server
             .token_manager

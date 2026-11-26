@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, startTransition } from 'react';
-import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, Copy, Check, ShieldAlert, Terminal } from 'lucide-react';
+import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, Copy, Check, ShieldAlert, Terminal, BellOff } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -58,6 +58,7 @@ function Settings() {
         auto_sync: false,
         sync_interval: 5,
         auto_switch_classic_depleted: false,
+        silent_mode: false,
         classic_auto_switch: {
             enabled: false,
             threshold_percentage: 0,
@@ -1135,6 +1136,55 @@ function Settings() {
                     {/* 账号设置 */}
                     {activeTab === 'account' && (
                         <div className="space-y-4 animate-in fade-in duration-500">
+                            {/* 静默常驻模式 */}
+                            <div className={`group bg-white dark:bg-base-100 rounded-xl p-5 border transition-all duration-300 shadow-sm ${formData.silent_mode ? 'border-amber-200 dark:border-amber-800/60' : 'border-gray-100 dark:border-base-200 hover:border-amber-200'}`}>
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="flex items-center gap-4 min-w-0">
+                                        <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center transition-all duration-300 ${formData.silent_mode ? 'bg-amber-500 text-white' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 group-hover:bg-amber-500 group-hover:text-white'}`}>
+                                            <BellOff size={20} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <label htmlFor="account-silent-mode" className="block font-bold text-gray-900 dark:text-gray-100 cursor-pointer">
+                                                {t('settings.account.silent_mode')}
+                                            </label>
+                                            <p id="account-silent-mode-desc" className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                                {t('settings.account.silent_mode_desc')}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <label htmlFor="account-silent-mode" className="relative inline-flex shrink-0 items-center cursor-pointer">
+                                        <input
+                                            id="account-silent-mode"
+                                            name="silent_mode"
+                                            type="checkbox"
+                                            role="switch"
+                                            aria-describedby="account-silent-mode-desc"
+                                            className="sr-only peer"
+                                            checked={Boolean(formData.silent_mode)}
+                                            onChange={async (e) => {
+                                                const previousConfig = { ...formData };
+                                                const enabled = e.target.checked;
+                                                const newConfig = { ...formData, silent_mode: enabled };
+                                                setFormData(newConfig);
+                                                try {
+                                                    await saveConfig(newConfig);
+                                                } catch (error) {
+                                                    setFormData(previousConfig);
+                                                    showToast(`${t('common.error')}: ${error}`, 'error');
+                                                }
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 rounded-full peer peer-focus-visible:ring-2 peer-focus-visible:ring-amber-500 peer-focus-visible:ring-offset-2 dark:peer-focus-visible:ring-offset-base-100 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 shadow-inner"></div>
+                                    </label>
+                                </div>
+                                {formData.silent_mode && (
+                                    <div className="mt-3 pt-3 border-t border-amber-100 dark:border-amber-900/40 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                                        <span className="w-1.5 h-1.5 shrink-0 rounded-full bg-amber-500" />
+                                        <span>{t('settings.account.silent_mode_active_hint')}</span>
+                                    </div>
+                                )}
+                            </div>
+
                             {/* 自动刷新配额 */}
                             <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-blue-200 transition-all duration-300 shadow-sm">
                                 <div className="flex items-center justify-between">
