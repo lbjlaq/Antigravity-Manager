@@ -207,11 +207,20 @@ pub trait SystemIntegration: Send + Sync {
 
     /// 发送系统通知
     fn show_notification(&self, title: &str, body: &str);
+
+    /// Whether `on_account_switch` already handled WSL credential sync for `target_ide`.
+    fn handles_wsl_sync(&self, _target_ide: Option<&str>) -> bool {
+        false
+    }
 }
 
 /// Check if `target_ide` refers to the Antigravity ACP IDE Plugin (`antigravity-acp`).
 pub fn is_acp_target(target_ide: Option<&str>) -> bool {
     matches!(target_ide, Some("acp" | "plugin" | "ide-plugin"))
+}
+
+fn desktop_handles_wsl_sync(target_ide: Option<&str>) -> bool {
+    target_ide != Some("agy") && !is_acp_target(target_ide)
 }
 
 /// 根据目标参数、进程运行态及可执行文件存在性决策最终切换环境
@@ -720,6 +729,11 @@ impl SystemIntegration for DesktopIntegration {
                 15,
                 &killed_subprocesses,
             ) {
+                #[cfg(target_os = "windows")]
+                crate::modules::wsl_sync::sync_account_to_wsl_blocking(
+                    account,
+                    std::time::Duration::from_secs(5),
+                );
                 crate::modules::logger::log_info(&format!(
                     "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
                     account.email
@@ -741,6 +755,14 @@ impl SystemIntegration for DesktopIntegration {
                 active_exe_path.as_deref(),
             );
         }
+
+        // 在 Windows 宿主机重新拉起 IDE 之前先有界同步 WSL 凭据（Ref #4032），
+        // 避免 Remote-WSL 窗口启动瞬间抢先连接并使用旧凭据。
+        #[cfg(target_os = "windows")]
+        crate::modules::wsl_sync::sync_account_to_wsl_blocking(
+            account,
+            std::time::Duration::from_secs(5),
+        );
 
         if let Err(e) = process::start_antigravity_with_fallback_path(
             effective_target,
@@ -772,6 +794,10 @@ impl SystemIntegration for DesktopIntegration {
     fn show_notification(&self, title: &str, body: &str) {
         // 使用 tauri-plugin-dialog 或原生通知（此处简化）
         crate::modules::logger::log_info(&format!("[Notification] {}: {}", title, body));
+    }
+
+    fn handles_wsl_sync(&self, target_ide: Option<&str>) -> bool {
+        desktop_handles_wsl_sync(target_ide)
     }
 }
 
@@ -2128,6 +2154,13 @@ impl SystemManager {
             }
         }
     }
+
+    pub fn handles_wsl_sync(&self, target_ide: Option<&str>) -> bool {
+        match self {
+            SystemManager::Desktop(_) => desktop_handles_wsl_sync(target_ide),
+            SystemManager::Headless | SystemManager::Cli => false,
+        }
+    }
 }
 
 impl SystemIntegration for SystemManager {
@@ -2145,6 +2178,10 @@ impl SystemIntegration for SystemManager {
 
     fn show_notification(&self, title: &str, body: &str) {
         self.show_notification(title, body);
+    }
+
+    fn handles_wsl_sync(&self, target_ide: Option<&str>) -> bool {
+        self.handles_wsl_sync(target_ide)
     }
 }
 
@@ -3007,5 +3044,30 @@ mod tests {
 
         std::env::remove_var("GEMINI_HOME");
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn system_integration_handles_wsl_sync_dispatch_and_desktop_targets() {
+        fn check_handles(
+            integration: &(impl SystemIntegration + ?Sized),
+            target_ide: Option<&str>,
+        ) -> bool {
+            integration.handles_wsl_sync(target_ide)
+        }
+
+        assert!(!check_handles(&HeadlessIntegration, None));
+        assert!(!check_handles(&HeadlessIntegration, Some("ide")));
+        assert!(!check_handles(&CliIntegration, None));
+        assert!(!check_handles(&CliIntegration, Some("agy")));
+        assert!(!check_handles(&SystemManager::Headless, None));
+        assert!(!check_handles(&SystemManager::Cli, Some("ide")));
+
+        assert!(desktop_handles_wsl_sync(None));
+        assert!(desktop_handles_wsl_sync(Some("ide")));
+        assert!(desktop_handles_wsl_sync(Some("classic")));
+        assert!(!desktop_handles_wsl_sync(Some("agy")));
+        assert!(!desktop_handles_wsl_sync(Some("acp")));
+        assert!(!desktop_handles_wsl_sync(Some("plugin")));
+        assert!(!desktop_handles_wsl_sync(Some("ide-plugin")));
     }
 }
