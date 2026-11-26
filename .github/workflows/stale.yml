@@ -1,0 +1,59 @@
+name: Close Stale Issues
+
+on:
+  schedule:
+    # Run daily at 02:30 UTC (10:30 UTC+8)
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: "stale-issues"
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark and close inactive issues (>180 days)
+        uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-issue-stale: 180
+          days-before-issue-close: 14
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: "stale"
+          exempt-issue-labels: "documentation 文档,discussion 讨论,enhancement 改进,wait for update 等待更新,good first issue 优秀的首个问题,help wanted 需要帮助,optimization 优化,pinned,security"
+          exempt-all-milestones: true
+          exempt-all-assignees: true
+          remove-stale-when-updated: true
+          close-issue-reason: "not_planned"
+          ascending: true
+          operations-per-run: 100
+          stale-issue-message: |
+            此 Issue 已超过 180 天无新动态，现已自动标记为 `stale`。由于项目已完成多个大版本架构迭代，许多历史问题在新版本中可能已修复或场景已变化。
+
+            请升级至最新正式版或预览版复测：
+            - 如问题在最新版本中**仍复现**，请直接回复补充当前版本号与日志，系统会自动移除 `stale` 标签并保留本 Issue；
+            - 如 14 天内无进一步回复，本 Issue 将自动关闭。
+
+            ---
+
+            This issue has been inactive for over 180 days and has been automatically marked as `stale`. As the project has undergone major updates, many older issues may already be resolved in newer releases.
+
+            Please test on the latest stable or preview release:
+            - If this **still reproduces**, reply with your current version and logs to remove the `stale` label and keep it open.
+            - Otherwise, it will be automatically closed in 14 days.
+          close-issue-message: |
+            由于超过 14 天未收到进一步反馈，本 Issue 已自动关闭。如在最新版本中仍遇到相同问题，欢迎随时重新开启或携带最新版本信息提交新 Issue，感谢理解与支持！
+
+            ---
+
+            Closing this issue automatically after 14 days of inactivity following the `stale` notice. If you still encounter this on the latest release, please feel free to reopen it or file a new issue with updated version details and logs.
