@@ -30,6 +30,7 @@ const CARGO_TOMLS = [
   'crates/am-cli/Cargo.toml',
   'crates/am-gui/src-tauri/Cargo.toml',
 ];
+const BREW_CASK = path.join(ROOT_DIR, 'Casks/antigravity-manager.rb');
 const CHANGELOG = path.join(ROOT_DIR, 'CHANGELOG.md');
 
 const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
@@ -114,6 +115,20 @@ function updateCargoTomlVersion(relPath, newVersion, isDryRun) {
   return true;
 }
 
+function updateBrewCaskVersion(filePath, newVersion, isDryRun) {
+  if (!fs.existsSync(filePath)) return false;
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const updated = raw.replace(
+    /^(\s*version\s+)(?:"[^"]+"|:latest)\s*$/m,
+    `$1"${newVersion}"`
+  );
+  if (updated === raw) return false;
+  if (!isDryRun) {
+    fs.writeFileSync(filePath, updated, 'utf8');
+  }
+  return true;
+}
+
 function ensureChangelogSkeleton(newVersion, isDryRun) {
   if (!fs.existsSync(CHANGELOG)) return false;
   const raw = fs.readFileSync(CHANGELOG, 'utf8');
@@ -162,6 +177,7 @@ function main() {
     ['crates/am-gui/ui/package.json', updateJsonVersion(UI_PKG, newVersion, isDryRun)],
     ['crates/am-gui/ui/package-lock.json', updateJsonVersion(UI_LOCK, newVersion, isDryRun)],
     ...CARGO_TOMLS.map((p) => [p, updateCargoTomlVersion(p, newVersion, isDryRun)]),
+    ['Casks/antigravity-manager.rb', updateBrewCaskVersion(BREW_CASK, newVersion, isDryRun)],
     ['CHANGELOG.md', ensureChangelogSkeleton(newVersion, isDryRun)],
   ]) {
     if (changed) {

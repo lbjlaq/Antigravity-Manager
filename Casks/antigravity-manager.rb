@@ -1,5 +1,5 @@
 cask "antigravity-manager" do
-  version :latest
+  version "0.0.3"
   sha256 :no_check
 
   name "Antigravity Manager"
@@ -9,7 +9,7 @@ cask "antigravity-manager" do
   on_macos do
     arch intel: "x64", arm: "aarch64"
 
-    url "https://github.com/lbjlaq/Antigravity-Manager/releases/download/antigravity-manager/Antigravity.Manager_#{arch}.dmg"
+    url "https://github.com/lbjlaq/Antigravity-Manager/releases/download/am-v#{version}/Antigravity.Manager_#{version}_#{arch}.dmg"
 
     app "Antigravity Manager.app"
     binary "#{appdir}/Antigravity Manager.app/Contents/MacOS/am"
@@ -31,11 +31,11 @@ cask "antigravity-manager" do
   on_linux do
     arch arm: "aarch64", intel: "amd64"
 
-    url "https://github.com/lbjlaq/Antigravity-Manager/releases/download/antigravity-manager/Antigravity.Manager_#{arch}.AppImage"
-    binary "Antigravity.Manager_#{arch}.AppImage", target: "antigravity-manager"
+    url "https://github.com/lbjlaq/Antigravity-Manager/releases/download/am-v#{version}/Antigravity.Manager_#{version}_#{arch}.AppImage"
+    binary "Antigravity.Manager_#{version}_#{arch}.AppImage", target: "antigravity-manager"
 
     preflight_steps do
-      set_permissions "Antigravity.Manager_{{arch}}.AppImage", "0755"
+      set_permissions "Antigravity.Manager_{{version}}_{{arch}}.AppImage", "0755"
     end
   end
 end

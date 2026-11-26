@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/2.0/tooling/cli/schema.json",
   "productName": "Antigravity Manager",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "identifier": "com.antigravity.manager",
   "build": {
     "frontendDist": "../ui/dist"
