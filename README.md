@@ -42,11 +42,17 @@
   <img src="docs/assets/img/Screenshot_2026-11-26_13.01.24.png" width="100%" alt="Antigravity Manager Dashboard" />
 </div>
 
-> [!NOTE]
-> **Branch &amp; Edition Guide (`antigravity-manager` vs `main`)**
-> - **Current Branch ([`antigravity-manager`](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager))**: **Antigravity Manager** — Lightweight, **zero-proxy** native multi-host account switcher, dual-pool quota monitor, local SQLite telemetry studio &amp; `am` CLI. Releases are published independently under the **[`antigravity-manager` Release Tag](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)**.
-> - **Main Branch ([`main`](https://github.com/lbjlaq/Antigravity-Manager/tree/main))**: **Antigravity Tools** — Full-featured local AI protocol proxy &amp; relay gateway (OpenAI / Anthropic Claude / Gemini API conversion, Docker &amp; headless server).
-> - **Zero-Conflict Shared Storage**: Both editions share `~/.antigravity_tools/` seamlessly and can run side-by-side without conflict.
+## 📦 Editions &amp; Quick Download
+
+Choose the channel that best fits your workflow (both editions share `~/.antigravity_tools/` seamlessly and can run side-by-side without conflict):
+
+| Edition / Channel | Positioning | Best For | Direct Download / Homebrew |
+| :--- | :--- | :--- | :--- |
+| **⚡ Antigravity Manager (Current Branch)** | Lightweight **zero-proxy** 4-host switcher, dual-pool quota monitor, local SQLite telemetry &amp; `am` CLI ([`antigravity-manager`](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager)) | Seamless account switching &amp; quota monitoring without running a local proxy | **[Download Manager](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)** · `brew install --cask antigravity-manager` |
+| **🚀 Antigravity Tools (Stable)** | Full AI protocol proxy &amp; relay gateway ([`main`](https://github.com/lbjlaq/Antigravity-Manager/tree/main)) | Local OpenAI / Anthropic Claude / Gemini API conversion, Docker &amp; headless deployment | **[Download Latest](https://github.com/lbjlaq/Antigravity-Manager/releases/latest)** · `brew install --cask antigravity-tools` |
+| **🧪 Antigravity Tools (Beta Preview)** | Early-access preview builds ([`beta`](https://github.com/lbjlaq/Antigravity-Manager/tree/beta)) | Testing upcoming model routing &amp; protocol adaptations | **[Download Preview](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/preview)** |
+
+> First time using Homebrew? Run `brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manager` once, then install either cask above.
 
 ---
 

@@ -42,11 +42,17 @@
   <img src="docs/assets/img/Screenshot_2026-11-26_13.01.24.png" width="100%" alt="Antigravity Manager 仪表盘总览" />
 </div>
 
-> [!NOTE]
-> **分支与版本选型指引（`antigravity-manager` 分支 vs `main` 主分支）**
-> - **当前分支（[`antigravity-manager`](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager)）**：**Antigravity Manager（纯净零反代直连版）** —— 专注多宿主无感切号、双池配额监控、本地 SQLite 全链路遥测与 `am` 终端工具，安装包独立发布于 **[`antigravity-manager` 专属 Release 页面](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)**（与主分支 `releases/latest` 完全隔离）。
-> - **仓库主分支（[`main`](https://github.com/lbjlaq/Antigravity-Manager/tree/main)）**：**Antigravity Tools（全功能协议反代网关版）** —— 提供 OpenAI / Anthropic Claude / Gemini 多协议本地 API 中转站、模型路由与 Docker/Headless 部署。
-> - **数据互通免冲突**：两个版本底层共用 `~/.antigravity_tools/` 账号池目录，支持同机并存、数据实时互通。
+## 📦 版本选型与一键下载
+
+本仓库提供两个定位互补的版本与三条独立发布通道（两个版本共用 `~/.antigravity_tools/` 账号数据，支持同机并存免冲突）：
+
+| 版本 / 通道 | 核心定位 | 适合人群 | 直达下载 / Homebrew 一键安装 |
+| :--- | :--- | :--- | :--- |
+| **⚡ Antigravity Manager（当前分支 · 纯净零反代版）** | 轻量原生四宿主热切、双池配额监控、本地遥测与 `am` CLI（[`antigravity-manager` 分支](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager)） | 只需无感切号、监控配额与本地 Token 统计，不需要本地反代服务 | **[下载纯净版 (Manager)](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)** · `brew install --cask antigravity-manager` |
+| **🚀 Antigravity Tools（正式版）** | 全功能本地 AI 协议反代网关（[`main` 分支](https://github.com/lbjlaq/Antigravity-Manager/tree/main)） | 需要 OpenAI / Anthropic Claude / Gemini 本地 API 转发、Docker / 无头服务端部署 | **[下载正式版 (Latest)](https://github.com/lbjlaq/Antigravity-Manager/releases/latest)** · `brew install --cask antigravity-tools` |
+| **🧪 Antigravity Tools（Beta 预览版）** | 抢先体验最新模型与协议适配（[`beta` 分支](https://github.com/lbjlaq/Antigravity-Manager/tree/beta)） | 愿意尝鲜并反馈问题的进阶用户 | **[下载预览版 (Preview)](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/preview)** |
+
+> 首次使用 Homebrew 请先执行一次 `brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manager`，随后即可按需安装上方任意版本。
 
 ---
 
