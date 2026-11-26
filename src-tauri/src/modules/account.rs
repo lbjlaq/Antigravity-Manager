@@ -20,7 +20,7 @@ static ACCOUNT_FILE_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn get_account_lock(account_id: &str) -> Arc<Mutex<()>> {
-    let mut locks = ACCOUNT_FILE_LOCKS.lock().unwrap();
+    let mut locks = ACCOUNT_FILE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     locks
         .entry(account_id.to_string())
         .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -190,6 +190,126 @@ mod tests {
         index_at_beta.current_agy_account_id = Some("id-beta-222".to_string());
         let acc6 = resolve_account_summary_in_index(&index_at_beta, None, Some("agy")).unwrap();
         assert_eq!(acc6.id, "id-alpha-111");
+    }
+
+    #[test]
+    fn test_select_round_robin_candidate_skips_validation_banned_forbidden_and_prefers_non_depleted(
+    ) {
+        let make_summary = |id: &str, email: &str, disabled: bool, proxy_disabled: bool| {
+            crate::models::AccountSummary {
+                id: id.to_string(),
+                email: email.to_string(),
+                name: None,
+                disabled,
+                proxy_disabled,
+                protected_models: HashSet::new(),
+                created_at: 1,
+                last_used: 1,
+            }
+        };
+        let make_account = |id: &str, email: &str| {
+            Account::new(
+                id.to_string(),
+                email.to_string(),
+                TokenData::new(
+                    "tok".to_string(),
+                    "ref".to_string(),
+                    3600,
+                    Some(email.to_string()),
+                    None,
+                    None,
+                    false,
+                    None,
+                ),
+            )
+        };
+
+        let now = 1_700_000_000i64;
+        let summaries = vec![
+            make_summary("id-val", "val@test.com", false, false),
+            make_summary("id-ban", "ban@test.com", false, false),
+            make_summary("id-forb", "forb@test.com", false, false),
+            make_summary("id-zero", "zero@test.com", false, false),
+            make_summary("id-good", "good@test.com", false, false),
+        ];
+
+        let mut map = HashMap::new();
+
+        let mut acc_val = make_account("id-val", "val@test.com");
+        acc_val.validation_blocked = true;
+        acc_val.validation_blocked_until = Some(now + 600);
+        map.insert("id-val".to_string(), acc_val);
+
+        let mut acc_ban = make_account("id-ban", "ban@test.com");
+        acc_ban.banned = true;
+        map.insert("id-ban".to_string(), acc_ban);
+
+        let mut acc_forb = make_account("id-forb", "forb@test.com");
+        let mut q_forb = QuotaData::new();
+        q_forb.is_forbidden = true;
+        acc_forb.quota = Some(q_forb);
+        map.insert("id-forb".to_string(), acc_forb);
+
+        let make_quota = |percentage: i32| {
+            let mut q = QuotaData::new();
+            q.add_model(crate::models::quota::ModelQuota {
+                name: "gemini-3.8-flash-high".to_string(),
+                percentage,
+                reset_time: String::new(),
+                display_name: None,
+                supports_images: None,
+                supports_thinking: None,
+                thinking_budget: None,
+                recommended: None,
+                max_tokens: None,
+                max_output_tokens: None,
+                model: None,
+                supported_mime_types: None,
+            });
+            q
+        };
+
+        let mut acc_zero = make_account("id-zero", "zero@test.com");
+        acc_zero.quota = Some(make_quota(0));
+        map.insert("id-zero".to_string(), acc_zero);
+
+        let mut acc_good = make_account("id-good", "good@test.com");
+        acc_good.quota = Some(make_quota(80));
+        map.insert("id-good".to_string(), acc_good);
+
+        // Must skip validation_blocked, banned, forbidden, and 0%-depleted accounts.
+        let chosen = select_round_robin_candidate_with_accounts(&summaries, &map, now).unwrap();
+        assert_eq!(chosen.id, "id-good");
+
+        // When only the 0%-depleted account is left, it must still be chosen over blocked ones.
+        let mut only_blocked_and_zero = summaries.clone();
+        only_blocked_and_zero.pop();
+        let fallback_zero =
+            select_round_robin_candidate_with_accounts(&only_blocked_and_zero, &map, now).unwrap();
+        assert_eq!(fallback_zero.id, "id-zero");
+
+        // When every account is blocked/banned/forbidden, return an explicit error.
+        let all_blocked = summaries[..3].to_vec();
+        let err = select_round_robin_candidate_with_accounts(&all_blocked, &map, now)
+            .expect_err("all blocked accounts must fail instead of selecting blocked #1");
+        assert!(err.contains("没有可用的健康账号"));
+        assert!(err.contains("No eligible healthy account"));
+
+        // Index ordering prefers live active email over stale current_agy_account_id.
+        let index = crate::models::AccountIndex {
+            version: "2.0".to_string(),
+            accounts: summaries.clone(),
+            current_account_id: Some("id-val".to_string()),
+            current_target_ide: Some("agy".to_string()),
+            current_classic_account_id: None,
+            current_ide_account_id: None,
+            current_agy_account_id: Some("id-val".to_string()),
+            current_acp_account_id: None,
+        };
+        let ordered =
+            ordered_round_robin_candidates_in_index(&index, Some("agy"), Some("zero@test.com"));
+        assert_eq!(ordered[0].id, "id-good");
+        assert_eq!(ordered.last().unwrap().id, "id-zero");
     }
 
     #[test]
@@ -4443,13 +4563,299 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
     Ok(status)
 }
 
-/// 智能解析目标账号：支持 UUID、邮箱（完整或前缀）、账号名称、1-based 序号，或 None 时顺延下一个未禁用账号
+/// Resolve the active email for a target IDE from live client state.
+pub fn active_email_for_target_ide(
+    status: &crate::models::ActiveClientsStatus,
+    target_ide: Option<&str>,
+) -> Option<String> {
+    match target_ide {
+        Some("agy") => status.agy_email.clone(),
+        Some("acp" | "plugin" | "ide-plugin") => status.acp_email.clone(),
+        Some("ide") => status.ide_email.clone(),
+        Some("classic") => status.classic_email.clone(),
+        _ => status
+            .agy_email
+            .clone()
+            .or_else(|| status.classic_email.clone()),
+    }
+}
+
+/// Return true if an account is hard-blocked (disabled, banned, active validation challenge, or 403 forbidden).
+pub fn is_account_hard_blocked(account: &Account, now: i64) -> bool {
+    account.disabled
+        || account.banned
+        || account.is_validation_block_active(now)
+        || account.quota.as_ref().is_some_and(|q| q.is_forbidden)
+}
+
+/// Return true if an account is eligible for automatic CLI round-robin selection.
+pub fn is_account_cli_switch_eligible(account: &Account, now: i64, allow_depleted: bool) -> bool {
+    if is_account_hard_blocked(account, now) || account.proxy_disabled {
+        return false;
+    }
+    if !allow_depleted && crate::modules::auto_switch::is_account_depleted(account, 0, &[]) {
+        return false;
+    }
+    true
+}
+
+/// Build the round-robin candidate list starting right after the active account.
+pub fn ordered_round_robin_candidates_in_index(
+    index: &crate::models::AccountIndex,
+    target_ide: Option<&str>,
+    active_email_override: Option<&str>,
+) -> Vec<crate::models::AccountSummary> {
+    let total = index.accounts.len();
+    if total == 0 {
+        return Vec::new();
+    }
+
+    let current_id = match target_ide {
+        Some("agy") => index
+            .current_agy_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("acp" | "plugin" | "ide-plugin") => index
+            .current_acp_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("ide") => index
+            .current_ide_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("classic") => index
+            .current_classic_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        _ => index.current_account_id.as_deref(),
+    };
+
+    let active_pos = active_email_override
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .and_then(|email| {
+            index
+                .accounts
+                .iter()
+                .position(|a| a.email.eq_ignore_ascii_case(email))
+        })
+        .or_else(|| current_id.and_then(|id| index.accounts.iter().position(|a| a.id == id)));
+
+    match active_pos {
+        Some(pos) => (1..=total)
+            .map(|offset| index.accounts[(pos + offset) % total].clone())
+            .collect(),
+        None => index.accounts.clone(),
+    }
+}
+
+/// Pick the best CLI round-robin candidate from pre-ordered summaries and loaded full account records.
+pub fn select_round_robin_candidate_with_accounts(
+    candidates: &[crate::models::AccountSummary],
+    full_accounts: &HashMap<String, Account>,
+    now: i64,
+) -> Result<crate::models::AccountSummary, String> {
+    if candidates.is_empty() {
+        return Err("当前无可用账号 / No accounts available".to_string());
+    }
+
+    // Pass 1: healthy, non-proxy-disabled, and non-depleted accounts
+    if let Some(chosen) = candidates.iter().find(|c| {
+        full_accounts.get(&c.id).map_or_else(
+            || !c.disabled && !c.proxy_disabled,
+            |acc| is_account_cli_switch_eligible(acc, now, false),
+        )
+    }) {
+        return Ok(chosen.clone());
+    }
+
+    // Pass 2: non-blocked fallback even if quota is at 0%
+    if let Some(chosen) = candidates.iter().find(|c| {
+        full_accounts.get(&c.id).map_or_else(
+            || !c.disabled && !c.proxy_disabled,
+            |acc| is_account_cli_switch_eligible(acc, now, true),
+        )
+    }) {
+        return Ok(chosen.clone());
+    }
+
+    // Pass 3: proxy_disabled fallback as long as account is not disabled, banned, validation-blocked, or 403 forbidden
+    if let Some(chosen) = candidates.iter().find(|c| {
+        full_accounts
+            .get(&c.id)
+            .map_or_else(|| !c.disabled, |acc| !is_account_hard_blocked(acc, now))
+    }) {
+        return Ok(chosen.clone());
+    }
+
+    Err("当前没有可用的健康账号（所有账号均已禁用、需验证、403 受限或已封禁），请运行 `antigravity-tools list` 查看详情 / No eligible healthy account available (all accounts are disabled, require verification, 403-restricted, or banned); run `antigravity-tools list` for details".to_string())
+}
+
+/// Live-probe a single account's quota and eligibility before CLI auto-switch.
+///
+/// Uses a fast 8s path (`ensure_fresh_token` + `fetch_quota_with_cache`, with one 401 refresh retry),
+/// intentionally skipping `probe_account_ban` (`generateContent`) so CLI round-robin preflight
+/// remains bounded even on large pools. Persists any `invalid_grant`, `VALIDATION_REQUIRED`,
+/// or `403` state and returns `Ok(account)` so callers can skip newly blocked accounts; transient
+/// offline/network/timeout errors return `Err(...)` to allow offline fallback.
+pub async fn preflight_account_for_cli_switch(account_id: &str) -> Result<Account, String> {
+    use crate::error::AppError;
+    use crate::modules::oauth;
+
+    let mut account = load_account(account_id)?;
+
+    let probe = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
+            Ok(t) => t,
+            Err(e) => {
+                if e.contains("invalid_grant") {
+                    account.disabled = true;
+                    account.disabled_at = Some(chrono::Utc::now().timestamp());
+                    account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                    let _ = save_account(&account);
+                    crate::proxy::server::trigger_account_reload(&account.id);
+                }
+                return Err(AppError::OAuth(e));
+            }
+        };
+
+        if token.access_token != account.token.access_token {
+            account.token = token.clone();
+            let _ = upsert_account(account.email.clone(), account.name.clone(), token);
+        }
+
+        let mut res = modules::fetch_quota_with_cache(
+            &account.token.access_token,
+            &account.email,
+            account.token.project_id.as_deref(),
+            Some(&account.id),
+        )
+        .await;
+
+        if matches!(res, Err(AppError::Network(_, Some(401)))) {
+            let refreshed = oauth::refresh_access_token_with_client(
+                &account.token.refresh_token,
+                Some(&account.id),
+                account.token.oauth_client_key.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                if e.contains("invalid_grant") {
+                    account.disabled = true;
+                    account.disabled_at = Some(chrono::Utc::now().timestamp());
+                    account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                    let _ = save_account(&account);
+                    crate::proxy::server::trigger_account_reload(&account.id);
+                }
+                AppError::OAuth(e)
+            })?;
+
+            let is_gcp_tos = oauth::is_gcp_enterprise_client(
+                refreshed
+                    .oauth_client_key
+                    .as_deref()
+                    .or(account.token.oauth_client_key.as_deref()),
+            ) || account.token.is_gcp_tos;
+
+            let new_token = TokenData::new(
+                refreshed.access_token,
+                account.token.refresh_token.clone(),
+                refreshed.expires_in,
+                account.token.email.clone(),
+                account.token.project_id.clone(),
+                None,
+                is_gcp_tos,
+                refreshed.id_token,
+            )
+            .with_oauth_client_key(
+                refreshed
+                    .oauth_client_key
+                    .or_else(|| account.token.oauth_client_key.clone()),
+            );
+
+            account.token = new_token.clone();
+            let _ = upsert_account(account.email.clone(), account.name.clone(), new_token);
+
+            res = modules::fetch_quota_with_cache(
+                &account.token.access_token,
+                &account.email,
+                account.token.project_id.as_deref(),
+                Some(&account.id),
+            )
+            .await;
+        }
+
+        match res {
+            Ok((q, project_id)) => {
+                if project_id.is_some() && project_id != account.token.project_id {
+                    account.token.project_id = project_id;
+                    let _ = upsert_account(
+                        account.email.clone(),
+                        account.name.clone(),
+                        account.token.clone(),
+                    );
+                }
+                let q = demote_model_scoped_quota(&mut account, q);
+                Ok(q)
+            }
+            Err(e) => {
+                if is_validation_required_error(&e) {
+                    mark_validation_blocked(&mut account, &e.to_string());
+                }
+                Err(e)
+            }
+        }
+    })
+    .await;
+
+    match probe {
+        Ok(Ok(quota)) => update_account_quota_internal(account_id, quota, true),
+        Ok(Err(e)) => {
+            if let Ok(reloaded) = load_account(account_id) {
+                if is_account_hard_blocked(&reloaded, chrono::Utc::now().timestamp()) {
+                    return Ok(reloaded);
+                }
+            }
+            Err(e.to_string())
+        }
+        Err(_) => {
+            if let Ok(reloaded) = load_account(account_id) {
+                if is_account_hard_blocked(&reloaded, chrono::Utc::now().timestamp()) {
+                    return Ok(reloaded);
+                }
+            }
+            Err("配额预检超时 / Quota preflight timed out".to_string())
+        }
+    }
+}
+
+/// 智能解析目标账号：支持 UUID、邮箱（完整或前缀）、账号名称、1-based 序号，或 None 时顺延下一个健康可用账号
 pub fn resolve_account_summary(
     query: Option<&str>,
     target_ide: Option<&str>,
 ) -> Result<crate::models::AccountSummary, String> {
     let index = load_account_index()?;
-    resolve_account_summary_in_index(&index, query, target_ide)
+    if query.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        return resolve_account_summary_in_index(&index, query, target_ide);
+    }
+
+    let active_email = detect_active_clients_status()
+        .ok()
+        .and_then(|s| active_email_for_target_ide(&s, target_ide));
+    let candidates =
+        ordered_round_robin_candidates_in_index(&index, target_ide, active_email.as_deref());
+    let mut full_accounts = HashMap::new();
+    for c in &candidates {
+        if let Ok(acc) = load_account(&c.id) {
+            full_accounts.insert(c.id.clone(), acc);
+        }
+    }
+
+    select_round_robin_candidate_with_accounts(
+        &candidates,
+        &full_accounts,
+        chrono::Utc::now().timestamp(),
+    )
 }
 
 /// 基于传入的 AccountIndex 内部解析目标账号（纯函数，便于单元测试）
@@ -4459,7 +4865,7 @@ pub fn resolve_account_summary_in_index(
     target_ide: Option<&str>,
 ) -> Result<crate::models::AccountSummary, String> {
     if index.accounts.is_empty() {
-        return Err("当前无可用账号".to_string());
+        return Err("当前无可用账号 / No accounts available".to_string());
     }
 
     let trimmed = query.map(str::trim).filter(|s| !s.is_empty());
@@ -4511,7 +4917,10 @@ pub fn resolve_account_summary_in_index(
             return Ok(acc.clone());
         }
 
-        return Err(format!("未找到匹配的账号: '{}'", q));
+        return Err(format!(
+            "未找到匹配的账号 / No matching account found: '{}'",
+            q
+        ));
     }
 
     // 无参时：环形顺延轮换（Round-Robin）

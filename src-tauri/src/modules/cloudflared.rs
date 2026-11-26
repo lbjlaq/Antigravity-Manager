@@ -82,6 +82,15 @@ impl Default for CloudflaredStatus {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BinaryVersionCacheEntry {
+    path: PathBuf,
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+    installed: bool,
+    version: Option<String>,
+}
+
 /// Cloudflared管理器状态
 pub struct CloudflaredManager {
     process: Arc<RwLock<Option<Child>>>,
@@ -89,6 +98,7 @@ pub struct CloudflaredManager {
     bin_path: PathBuf,
     /// 用于通知进程监控任务停止
     shutdown_tx: RwLock<Option<tokio::sync::oneshot::Sender<()>>>,
+    version_cache: RwLock<Option<BinaryVersionCacheEntry>>,
 }
 
 impl CloudflaredManager {
@@ -114,22 +124,33 @@ impl CloudflaredManager {
             status: Arc::new(RwLock::new(CloudflaredStatus::default())),
             bin_path,
             shutdown_tx: RwLock::new(None),
+            version_cache: RwLock::new(None),
         }
     }
 
-    /// 检查是否已安装
-    pub async fn check_installed(&self) -> (bool, Option<String>) {
-        let bin_path = self.current_bin_path();
-        if !bin_path.exists() {
+    async fn check_installed_at_path(&self, bin_path: &PathBuf) -> (bool, Option<String>) {
+        let Ok(meta) = std::fs::metadata(bin_path) else {
+            *self.version_cache.write().await = None;
             return (false, None);
+        };
+        let modified = meta.modified().ok();
+        let len = meta.len();
+
+        {
+            let cache = self.version_cache.read().await;
+            if let Some(entry) = cache.as_ref() {
+                if &entry.path == bin_path && entry.modified == modified && entry.len == len {
+                    return (entry.installed, entry.version.clone());
+                }
+            }
         }
 
-        let mut cmd = Command::new(&bin_path);
+        let mut cmd = Command::new(bin_path);
         cmd.arg("--version");
         #[cfg(target_os = "windows")]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        match cmd.output().await {
+        let result = match cmd.output().await {
             Ok(output) => {
                 if output.status.success() {
                     let version = String::from_utf8_lossy(&output.stdout)
@@ -142,7 +163,29 @@ impl CloudflaredManager {
                 }
             }
             Err(_) => (false, None),
+        };
+
+        if result.0 {
+            *self.version_cache.write().await = Some(BinaryVersionCacheEntry {
+                path: bin_path.clone(),
+                modified,
+                len,
+                installed: true,
+                version: result.1.clone(),
+            });
+        } else {
+            // Do not cache transient failures (e.g. missing +x or macOS quarantine xattr)
+            // because fixing permissions/xattrs preserves metadata mtime and len.
+            *self.version_cache.write().await = None;
         }
+
+        result
+    }
+
+    /// 检查是否已安装
+    pub async fn check_installed(&self) -> (bool, Option<String>) {
+        let bin_path = self.current_bin_path();
+        self.check_installed_at_path(&bin_path).await
     }
 
     /// 获取当前状态
@@ -220,6 +263,7 @@ impl CloudflaredManager {
                 .map_err(|e| format!("Failed to set permissions: {}", e))?;
         }
 
+        *self.version_cache.write().await = None;
         let (installed, version) = self.check_installed().await;
         self.update_status(|s| {
             s.installed = installed;
@@ -486,4 +530,96 @@ fn extract_tunnel_url(line: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_installed_caches_version_until_binary_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("cf_cache_test_{}", uuid::Uuid::new_v4()));
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let bin_path = bin_dir.join("cloudflared");
+        let counter_path = dir.join("invocations.txt");
+
+        let write_script = |version_label: &str| {
+            let script = format!(
+                "#!/bin/sh\necho 1 >> \"{}\"\necho \"{}\"\n",
+                counter_path.display(),
+                version_label
+            );
+            std::fs::write(&bin_path, script).unwrap();
+            std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+
+        write_script("cloudflared version 2026.1.0");
+        let mgr = CloudflaredManager::new(&dir);
+
+        let first = mgr.check_installed_at_path(&bin_path).await;
+        assert_eq!(
+            first,
+            (true, Some("cloudflared version 2026.1.0".to_string()))
+        );
+        let second = mgr.check_installed_at_path(&bin_path).await;
+        assert_eq!(second, first);
+
+        let count_after_two = std::fs::read_to_string(&counter_path)
+            .unwrap()
+            .lines()
+            .count();
+        assert_eq!(count_after_two, 1, "second check must hit metadata cache");
+
+        // Update binary with different length -> invalidates cache and re-probes
+        write_script("cloudflared version 2026.2.0-extended");
+        let third = mgr.check_installed_at_path(&bin_path).await;
+        assert_eq!(
+            third,
+            (
+                true,
+                Some("cloudflared version 2026.2.0-extended".to_string())
+            )
+        );
+        let count_after_update = std::fs::read_to_string(&counter_path)
+            .unwrap()
+            .lines()
+            .count();
+        assert_eq!(count_after_update, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_installed_does_not_cache_negative_result_after_chmod() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("cf_neg_cache_test_{}", uuid::Uuid::new_v4()));
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let bin_path = bin_dir.join("cloudflared");
+
+        std::fs::write(
+            &bin_path,
+            "#!/bin/sh\necho \"cloudflared version 2026.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mgr = CloudflaredManager::new(&dir);
+        assert_eq!(mgr.check_installed_at_path(&bin_path).await, (false, None));
+
+        // Grant +x without modifying file contents or mtime -> must re-probe and succeed.
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            mgr.check_installed_at_path(&bin_path).await,
+            (true, Some("cloudflared version 2026.1.0".to_string()))
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

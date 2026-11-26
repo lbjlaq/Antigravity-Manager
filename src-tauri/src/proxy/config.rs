@@ -1379,6 +1379,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub allow_lan_access: bool,
 
+    /// 可选显式绑定地址（如 `::1`、`100.64.0.5`，仅作用于当次 Headless `--host` / `ABV_HOST` 启动）
+    #[serde(skip)]
+    pub bind_host: Option<String>,
+
     /// Authorization policy for the proxy.
     /// - off: no auth required
     /// - strict: auth required for all routes
@@ -1668,6 +1672,7 @@ impl Default for ProxyConfig {
         Self {
             enabled: false,
             allow_lan_access: false, // 默认仅本机访问，隐私优先
+            bind_host: None,
             auth_mode: ProxyAuthMode::default(),
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
@@ -1712,10 +1717,29 @@ fn default_request_timeout() -> u64 {
 }
 
 impl ProxyConfig {
+    /// 判断给定主机名或 IP 是否属于本机回环地址（含 `127.0.0.1`、`localhost`、`::1`、`[::1]`）
+    pub fn is_loopback_host(host: &str) -> bool {
+        let trimmed = host.trim().trim_matches('[').trim_matches(']');
+        if trimmed.eq_ignore_ascii_case("localhost") {
+            return true;
+        }
+        trimmed
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+    }
+
     /// 获取实际的监听地址
+    /// - 若显式指定非空 `bind_host`，优先返回该精确地址
     /// - allow_lan_access = false: 返回 "127.0.0.1"（默认，隐私优先）
     /// - allow_lan_access = true: 返回 "0.0.0.0"（通配监听：底层自动启用 IPv6/IPv4 双栈监听，允许局域网与外部公网 IPv4/IPv6 访问）
     pub fn get_bind_address(&self) -> &str {
+        if let Some(ref host) = self.bind_host {
+            let trimmed = host.trim();
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
+        }
         if self.allow_lan_access {
             "0.0.0.0"
         } else {
@@ -1908,5 +1932,31 @@ mod tests {
             None => std::env::remove_var("ANTIGRAVITY_HTTP2_KEEPALIVE"),
         }
         update_upload_timeout_config(prev_global.unwrap_or_default());
+    }
+
+    #[test]
+    fn proxy_config_get_bind_address_and_loopback_detection() {
+        assert!(ProxyConfig::is_loopback_host("127.0.0.1"));
+        assert!(ProxyConfig::is_loopback_host("localhost"));
+        assert!(ProxyConfig::is_loopback_host("::1"));
+        assert!(ProxyConfig::is_loopback_host("[::1]"));
+        assert!(ProxyConfig::is_loopback_host("127.0.0.2"));
+        assert!(!ProxyConfig::is_loopback_host("0.0.0.0"));
+        assert!(!ProxyConfig::is_loopback_host("100.64.0.5"));
+
+        let mut cfg = ProxyConfig::default();
+        assert_eq!(cfg.get_bind_address(), "127.0.0.1");
+
+        cfg.allow_lan_access = true;
+        assert_eq!(cfg.get_bind_address(), "0.0.0.0");
+
+        cfg.bind_host = Some("::1".to_string());
+        assert_eq!(cfg.get_bind_address(), "::1");
+
+        cfg.bind_host = Some(" 100.64.0.5 ".to_string());
+        assert_eq!(cfg.get_bind_address(), "100.64.0.5");
+
+        cfg.bind_host = Some("   ".to_string());
+        assert_eq!(cfg.get_bind_address(), "0.0.0.0");
     }
 }

@@ -113,13 +113,15 @@ fn apply_upstream_proxy(builder: rquest::ClientBuilder, label: &str) -> rquest::
     if let Ok(config) = load_app_config() {
         let proxy_config = config.proxy.upstream_proxy;
         if proxy_config.enabled && !proxy_config.url.is_empty() {
+            let redacted =
+                crate::proxy::proxy_pool::ProxyPoolManager::redact_proxy_url(&proxy_config.url);
             match Proxy::all(&proxy_config.url) {
                 Ok(proxy) => {
-                    tracing::info!("{} enabled upstream proxy: {}", label, proxy_config.url);
+                    tracing::info!("{} enabled upstream proxy: {}", label, redacted);
                     return builder.proxy(proxy);
                 }
                 Err(e) => {
-                    tracing::error!("invalid_proxy_url: {}, error: {}", proxy_config.url, e);
+                    tracing::error!("invalid_proxy_url: {}, error: {}", redacted, e);
                 }
             }
         }

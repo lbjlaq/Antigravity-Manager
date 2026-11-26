@@ -77,21 +77,20 @@ function Accounts() {
 
   // [NEW #3726] 监听后端批量导入流式进度事件
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    if (isTauri()) {
-      import('@tauri-apps/api/event').then(({ listen }) => {
-        listen<{ current: number; total: number; success: number; failed: number; current_email?: string }>(
-          'accounts://import-progress',
-          (event) => {
-            setImportProgress(event.payload);
-          }
-        ).then((unsub) => {
-          unlisten = unsub;
-        });
-      });
-    }
+    if (!isTauri()) return;
+    let disposed = false;
+    const unlistenPromise = import('@tauri-apps/api/event').then(({ listen }) =>
+      listen<{ current: number; total: number; success: number; failed: number; current_email?: string }>(
+        'accounts://import-progress',
+        (event) => {
+          if (disposed) return;
+          setImportProgress(event.payload);
+        }
+      )
+    );
     return () => {
-      if (unlisten) unlisten();
+      disposed = true;
+      void unlistenPromise.then((fn) => fn()).catch(() => {});
     };
   }, []);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);

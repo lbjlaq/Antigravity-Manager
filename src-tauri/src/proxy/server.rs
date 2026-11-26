@@ -458,6 +458,7 @@ pub struct AxumServer {
     #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
     pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
     pub is_running: Arc<RwLock<bool>>,
+    pub host: String,
     pub port: u16,
     pub token_manager: Arc<TokenManager>, // [NEW] 暴露出 TokenManager 供反代服务复用
     pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>, // [NEW] 代理池配置状态
@@ -567,9 +568,9 @@ impl AxumServer {
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
         let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
-        let proxy_pool_state = Arc::new(tokio::sync::RwLock::new(proxy_pool_config));
         let proxy_pool_manager =
-            crate::proxy::proxy_pool::init_global_proxy_pool(proxy_pool_state.clone());
+            crate::proxy::proxy_pool::init_or_update_global_proxy_pool(proxy_pool_config).await;
+        let proxy_pool_state = proxy_pool_manager.config_state();
 
         // Start health check loop
         proxy_pool_manager.clone().start_health_check_loop();
@@ -1207,6 +1208,7 @@ impl AxumServer {
             debug_logging: debug_logging_state.clone(),
             cloudflared_state,
             is_running: is_running_state,
+            host,
             port,
             token_manager: token_manager.clone(),
             proxy_pool_state,
@@ -1294,7 +1296,14 @@ impl AxumServer {
     /// 停止服务器
     pub fn stop(&self) {
         self.cancel_token.cancel();
+        self.proxy_pool_manager.stop_health_check_loop();
         tracing::info!("Axum server 停止信号已发送");
+    }
+
+    /// 仅停止当前监听任务，保留共享的全局代理池健康检查后台任务
+    pub fn stop_listener_only(&self) {
+        self.cancel_token.cancel();
+        tracing::info!("Axum server 监听已停止（保留全局代理池健康检查循环）");
     }
 
     /// 检查服务器是否已被停止

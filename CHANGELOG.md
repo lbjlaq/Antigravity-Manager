@@ -3,6 +3,20 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.4 (2026-11-26)**:
+        -   **[原生 `tieredModelIds` 后台任务模型动态推导、`gemini-3.1-flash-lite-preview` 默认映射与四协议门禁复用] (Fixes #4084, PR #4085, Thanks to @fPip98)**:
+            -   **原生 `tieredModelIds` 驱动与缓存优先号池调度**: 从官方 `fetchAvailableModels` 实时按账号覆盖持久化 `accountTieredModels`（`flashLite` → `flash`）与 `deprecatedModelIds`，按 `(官方顺位, 支持账号数, id)` 确定性生成候选链（跳过 `disabled`/已下线、优先非 `Leaving Soon`、校验磁盘 LKG），兼容无 `orchestrator` 条目的纯 FREE/PRO 账号；新增 `auto:background`（兼容 `auto:gemini-flash-low`）与 `TokenManager::has_available_model_scoped`，在保留用户手动「后台任务模型」最高优先级的前提下，优先锁定全档位共享且有正配额的首选模型以保护主会话粘性与多轮子代理 Prompt Cache，受限号池无 `flashLite` 时自动顺延至号池支持的 `flash` 候选，均不支持时返回 HTTP 503 并提示手动配置。(Fixes #4084, PR #4085, Thanks to @fPip98)
+            -   **内置 `gemini-3.1-flash-lite-preview` 防复活映射与四协议单次解析修复**: 默认新增不对外暴露的 `gemini-3.1-flash-lite-preview -> auto:background` 映射并将 `builtin_mapping_version` 升至 `2`（老配置自动补写一次、保留用户自定义、删除不复活），同步更新前端默认预设与 12 国多语言说明；四协议（Gemini 含 `:countTokens` 与独立 `handle_count_tokens`、Claude、OpenAI Chat/Responses）统一复用 `ModelGate` 零克隆单次解析结果，修复 `claude.rs` 写回 `"auto:..."` 字面量泄漏，同时保留原始请求名以完整维持 `-online` 联网探测及「自定义映射裸模型在未传 effort 时不改写默认档位」契约。(Fixes #4084, PR #4085, Thanks to @fPip98)
+        -   **[密文鉴权拦截、凭据文件私有权限、宿主机 FS 接口回环限制与清理废弃 `http_api`] (Ref #4039, Ref #4065, PR #4086, Thanks to @zainulhasan)**:
+            -   **鉴权与 IP 过滤 Fail-Closed 收紧**: 新增 `crypto::is_undecrypted_ciphertext` 并在 `auth_middleware_internal` 校验前直接拦截未解密的 `ag_enc_*` / `ag_enc_v2_*` 密文返回 HTTP 401；将 `ip_filter::extract_client_ip` 缺失 `ConnectInfo` 时的转发头信任回退收紧为 `cfg!(test)`，生产环境严格 Fail-Closed。(Ref #4039, Ref #4065, PR #4086, Thanks to @zainulhasan)
+            -   **私有文件/目录权限与调试日志文件名净化**: Unix 下 `utils::fs::write_atomic` 改用 `create_new(true)` + `0600` 创建私有临时文件，`modules::account` 新建数据目录与账号目录设为 `0700`；`debug_logger::build_filename` 对 `trace_id` 执行字符白名单净化与长度截断，消除路径穿越风险。(Ref #4039, PR #4086, Thanks to @zainulhasan)
+            -   **宿主机文件系统管理路由回环门禁与清理未鉴权死模块**: 为 `POST /api/system/data-dir`、`POST /api/system/open-folder`、`POST /api/accounts/import/db-custom` 增加 `require_unproxied_loopback` 校验（非本机直连或携带转发头返回 HTTP 403）；移除从未启用的未鉴权遗留模块 `modules/http_api.rs`、对应命令/路由及未使用字段 `AppState.thought_signature_map`。(Ref #4039, Ref #4065, PR #4086, Thanks to @zainulhasan)
+        -   **[CLI 与 Factory Droid 凭据写入权限、Shell 转义、并发锁与版本探测超时加固] (Ref #4039, Ref #4065, PR #4091, Thanks to @UnnamedPeople-Chin)**:
+            -   **原子受限写入与安全恢复**: 在 `utils::fs` 新增 `write_atomic_restricted`（支持显式 `0600`/`0700` 权限与自动创建父目录，保留 `write_atomic` 默认 `0600`）及 `replace_file_atomic`（修复 Windows `MoveFileExW` 失败误删源文件隐患，保护 `.antigravity.bak` 备份与 `agy` 二进制），在 `cli_sync.rs` 与 `droid_sync.rs` 全面替换可预测 `.tmp` 明文写入。(Ref #4039, Ref #4065, PR #4091, Thanks to @UnnamedPeople-Chin)
+            -   **Shell/Batch/Env 转义、并发互斥与有界版本探测**: 新增 `utils::command::output_with_timeout`（5 秒硬超时、`Stdio::null()` 及超时分离管道线程防孙进程挂死）覆盖 CLI/Droid 的 `which`/`where`/`--version` 探测；为 `cli_sync.rs` 与 `droid_sync.rs` 补齐全局配置互斥锁（抽离 `sync_config_unlocked` 防恢复死锁）与 Droid 路径字符校验；对 `agy`/`agy.sh`（POSIX 单引号转义）、`agy.cmd`、`.env` 及 `.credentials.yaml` 消除命令/换行注入风险。(Ref #4039, Ref #4065, PR #4091, Thanks to @UnnamedPeople-Chin)
+        -   **[修复 Linux/macOS 轻量模式单实例唤起跨线程死锁] (Fixes #4093, PR #4094, Thanks to @fPip98)**:
+            -   **全桌面端主线程异步投递单实例唤起**: 将 `lightweight::defer_on_main_thread` 条件编译扩展至全部桌面平台（`not(target_os = "android")`），在 `tauri_plugin_single_instance::init` 中移除平台分叉并统一异步投递 `exit_lightweight_mode` 到 UI 主线程执行，彻底消除 Linux `zbus` 与 macOS Tokio 非主线程同步建窗触发 `WindowStateCache` AB-BA 死锁及启动进程堆积问题，同时保持 Windows `#3993` 语义不变。(Fixes #4093, PR #4094, Thanks to @fPip98)
+
     *   **v5.0.5-beta.3 (2026-11-26)**:
         -   **[添加账号预选代理节点、自动绑定与严格代理模式] (Fixes #4077)**:
             -   **前置选代理与自动绑定闭环**: 在 `AddAccountDialog` 中支持添加账号前（覆盖 OAuth 与 Refresh Token 导入全路径）预选代理节点；支持无头/CLI 参数透传 `AddAccountProxyOptions`，在首次配额探测之前即完成账号与代理节点的持久化绑定 (`bind_account_proxy_persistent`) 并使用该节点客户端发起配额探测；同时修复节点达 `max_accounts` 上限时重复绑定已属该节点账号被误拒的问题，并补充代理池配置离线回退。(Fixes #4077)

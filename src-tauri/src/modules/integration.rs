@@ -8,17 +8,17 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// macOS Keychain passive read cache & denial-cooldown coordinator.
+/// System Keychain/Secret-Service passive read cache & denial-suppression coordinator.
 ///
 /// Kept cross-platform so its state-machine and failure-classification logic are unit-tested
-/// across Ubuntu/Windows/macOS CI while macOS uses it to serialize `security find-generic-password`
-/// calls, avoid concurrent Keychain password dialog storms, and back off when the user cancels
-/// or denies a prompt. Active writes still use `delete-generic-password` + `add-generic-password -A`
-/// and call `invalidate()` so ACL self-healing and post-switch verification stay authoritative.
+/// across Ubuntu/Windows/macOS CI while macOS and Linux use it to serialize credential
+/// lookups (`security find-generic-password` / `secret-tool lookup`), avoid concurrent Keychain
+/// password dialog storms, and suppress passive re-probes once the user cancels or denies
+/// a prompt until an explicit write/switch calls `invalidate()`. Active writes on macOS use
+/// native `Security.framework` FFI (`SecItemAdd` with unrestricted `SecAccessRef`) so credentials
+/// never appear in process `argv` and aren't limited by `security -i`'s 4KB line buffer.
 #[allow(dead_code)]
-const MACOS_KEYCHAIN_CACHE_TTL: Duration = Duration::from_secs(30);
-#[allow(dead_code)]
-const MACOS_KEYCHAIN_DENIED_COOLDOWN: Duration = Duration::from_secs(300);
+const KEYCHAIN_PASSIVE_CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -40,12 +40,13 @@ type KeychainSlotMap = HashMap<(String, String), Arc<Mutex<KeychainCacheSlot>>>;
 pub(crate) struct KeychainReadCoordinator {
     slots: Mutex<KeychainSlotMap>,
     success_ttl: Duration,
-    denied_cooldown: Duration,
+    /// `None` suppresses passive retries after `Denied` indefinitely until `invalidate()`.
+    denied_cooldown: Option<Duration>,
 }
 
 #[allow(dead_code)]
 impl KeychainReadCoordinator {
-    fn new(success_ttl: Duration, denied_cooldown: Duration) -> Self {
+    fn new(success_ttl: Duration, denied_cooldown: Option<Duration>) -> Self {
         Self {
             slots: Mutex::new(HashMap::new()),
             success_ttl,
@@ -62,8 +63,8 @@ impl KeychainReadCoordinator {
 
     /// Execute a single-flight Keychain lookup for `(service, account)`.
     /// Concurrent readers for the same item serialize on the per-item mutex; when `bypass_cache`
-    /// is false, recent `Found`/`NotFound` results (30s) and `Denied` results (5m cooldown) are
-    /// served without re-invoking `/usr/bin/security`.
+    /// is false, recent `Found`/`NotFound` results (60s) and `Denied` results (sticky until
+    /// `invalidate()`) are served without re-invoking external keychain tools.
     pub(crate) fn read_with<F>(
         &self,
         service: &str,
@@ -79,13 +80,16 @@ impl KeychainReadCoordinator {
 
         if !bypass_cache {
             if let Some((ref cached, at)) = guard.outcome {
-                let ttl = match cached {
-                    KeychainLookupOutcome::Denied(_) => self.denied_cooldown,
+                let still_valid = match cached {
+                    KeychainLookupOutcome::Denied(_) => match self.denied_cooldown {
+                        Some(ttl) => at.elapsed() < ttl,
+                        None => true,
+                    },
                     KeychainLookupOutcome::Found(_) | KeychainLookupOutcome::NotFound => {
-                        self.success_ttl
+                        at.elapsed() < self.success_ttl
                     }
                 };
-                if at.elapsed() < ttl {
+                if still_valid {
                     return cached.clone();
                 }
             }
@@ -141,17 +145,553 @@ pub(crate) fn classify_macos_security_failure(
     KeychainLookupOutcome::NotFound
 }
 
-#[cfg(target_os = "macos")]
-fn macos_keychain_coordinator() -> &'static KeychainReadCoordinator {
+#[allow(dead_code)]
+pub(crate) fn classify_linux_secret_tool_failure(
+    exit_code: Option<i32>,
+    stderr: &str,
+) -> KeychainLookupOutcome {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        return KeychainLookupOutcome::NotFound;
+    }
+
+    let lower = trimmed.to_lowercase();
+    if lower.contains("not found") || lower.contains("no matching item") {
+        return KeychainLookupOutcome::NotFound;
+    }
+
+    // Only back off with Denied when secret-tool reports an explicit permission/unlock/prompt
+    // rejection or Secret Service / D-Bus failure, not benign GTK/GLib/dbind warnings.
+    if lower.contains("denied")
+        || lower.contains("locked")
+        || lower.contains("unlock")
+        || lower.contains("canceled")
+        || lower.contains("cancelled")
+        || lower.contains("dismissed")
+        || lower.contains("authentication failed")
+        || lower.contains("permission")
+        || lower.contains("unauthorized")
+        || lower.contains("not allowed")
+        || lower.contains("org.freedesktop.secrets")
+        || lower.contains("secret service")
+        || lower.contains("d-bus")
+        || lower.contains("dbus")
+        || lower.contains("cannot autolaunch")
+        || lower.contains("daemon")
+    {
+        return KeychainLookupOutcome::Denied(trimmed.to_string());
+    }
+
+    let _ = exit_code;
+    KeychainLookupOutcome::NotFound
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn system_keychain_coordinator() -> &'static KeychainReadCoordinator {
     static COORDINATOR: OnceLock<KeychainReadCoordinator> = OnceLock::new();
-    COORDINATOR.get_or_init(|| {
-        KeychainReadCoordinator::new(MACOS_KEYCHAIN_CACHE_TTL, MACOS_KEYCHAIN_DENIED_COOLDOWN)
-    })
+    COORDINATOR.get_or_init(|| KeychainReadCoordinator::new(KEYCHAIN_PASSIVE_CACHE_TTL, None))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn invalidate_system_keychain_cache(service: &str, account: &str) {
+    system_keychain_coordinator().invalidate(service, account);
 }
 
 #[cfg(target_os = "macos")]
-fn invalidate_macos_keychain_cache(service: &str, account: &str) {
-    macos_keychain_coordinator().invalidate(service, account);
+mod macos_keychain_ffi {
+    use std::ffi::c_void;
+
+    type CFTypeRef = *const c_void;
+    type CFStringRef = *const c_void;
+    type CFDataRef = *const c_void;
+    type CFBooleanRef = *const c_void;
+    type CFArrayRef = *const c_void;
+    type CFDictionaryRef = *const c_void;
+    type CFAllocatorRef = *const c_void;
+    type SecAccessRef = *const c_void;
+    type SecACLRef = *const c_void;
+    type CFIndex = isize;
+    type CFStringEncoding = u32;
+    type Boolean = u8;
+    type OSStatus = i32;
+    type SecKeychainPromptSelector = u16;
+
+    const K_CF_STRING_ENCODING_UTF8: CFStringEncoding = 0x0800_0100;
+    const ERR_SEC_SUCCESS: OSStatus = 0;
+    const ERR_SEC_USER_CANCELED: OSStatus = -128;
+    const ERR_SEC_AUTH_FAILED: OSStatus = -25293;
+    const ERR_SEC_ITEM_NOT_FOUND: OSStatus = -25300;
+    const ERR_SEC_INTERACTION_NOT_ALLOWED: OSStatus = -25308;
+    pub(super) const ERR_SEC_DUPLICATE_ITEM: OSStatus = -25299;
+
+    pub(super) struct CfGuard(CFTypeRef);
+
+    impl CfGuard {
+        unsafe fn from_create(ptr: CFTypeRef) -> Option<Self> {
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Self(ptr))
+            }
+        }
+
+        fn as_ptr(&self) -> CFTypeRef {
+            self.0
+        }
+    }
+
+    impl Drop for CfGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { CFRelease(self.0) };
+            }
+        }
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFTypeDictionaryKeyCallBacks: c_void;
+        static kCFTypeDictionaryValueCallBacks: c_void;
+        static kCFTypeArrayCallBacks: c_void;
+        static kCFBooleanTrue: CFBooleanRef;
+
+        fn CFRelease(cf: CFTypeRef);
+        fn CFStringCreateWithBytes(
+            alloc: CFAllocatorRef,
+            bytes: *const u8,
+            num_bytes: CFIndex,
+            encoding: CFStringEncoding,
+            is_external_representation: Boolean,
+        ) -> CFStringRef;
+        fn CFDataCreate(alloc: CFAllocatorRef, bytes: *const u8, length: CFIndex) -> CFDataRef;
+        fn CFDataGetLength(the_data: CFDataRef) -> CFIndex;
+        fn CFDataGetBytePtr(the_data: CFDataRef) -> *const u8;
+        fn CFArrayCreate(
+            allocator: CFAllocatorRef,
+            values: *const *const c_void,
+            num_values: CFIndex,
+            callbacks: *const c_void,
+        ) -> CFArrayRef;
+        fn CFDictionaryCreate(
+            allocator: CFAllocatorRef,
+            keys: *const CFTypeRef,
+            values: *const CFTypeRef,
+            num_values: CFIndex,
+            key_callbacks: *const c_void,
+            value_callbacks: *const c_void,
+        ) -> CFDictionaryRef;
+        fn CFArrayGetCount(the_array: CFArrayRef) -> CFIndex;
+        fn CFArrayGetValueAtIndex(the_array: CFArrayRef, idx: CFIndex) -> CFTypeRef;
+    }
+
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        static kSecClass: CFStringRef;
+        static kSecClassGenericPassword: CFStringRef;
+        static kSecAttrService: CFStringRef;
+        static kSecAttrAccount: CFStringRef;
+        static kSecAttrLabel: CFStringRef;
+        static kSecValueData: CFStringRef;
+        static kSecAttrAccess: CFStringRef;
+        static kSecReturnData: CFStringRef;
+        static kSecUseAuthenticationUI: CFStringRef;
+        static kSecUseAuthenticationUIFail: CFStringRef;
+
+        fn SecItemCopyMatching(query: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
+        fn SecItemDelete(query: CFDictionaryRef) -> OSStatus;
+        fn SecItemAdd(attributes: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
+        static kSecACLAuthorizationDecrypt: CFStringRef;
+        static kSecACLAuthorizationPartitionID: CFStringRef;
+        fn SecAccessCreate(
+            descriptor: CFStringRef,
+            trustedlist: CFArrayRef,
+            access_ref: *mut SecAccessRef,
+        ) -> OSStatus;
+        fn SecAccessCopyMatchingACLList(
+            access_ref: SecAccessRef,
+            authorization_tag: CFTypeRef,
+        ) -> CFArrayRef;
+        fn SecACLCopyContents(
+            acl: SecACLRef,
+            application_list: *mut CFArrayRef,
+            description: *mut CFStringRef,
+            prompt_selector: *mut SecKeychainPromptSelector,
+        ) -> OSStatus;
+        fn SecACLSetContents(
+            acl: SecACLRef,
+            application_list: CFArrayRef,
+            description: CFStringRef,
+            prompt_selector: SecKeychainPromptSelector,
+        ) -> OSStatus;
+        fn SecACLCreateWithSimpleContents(
+            access: SecAccessRef,
+            application_list: CFArrayRef,
+            description: CFStringRef,
+            prompt_selector: SecKeychainPromptSelector,
+            new_acl: *mut SecACLRef,
+        ) -> OSStatus;
+        fn SecACLUpdateAuthorizations(acl: SecACLRef, authorizations: CFArrayRef) -> OSStatus;
+    }
+
+    fn make_cf_string(s: &str) -> Result<CfGuard, String> {
+        let len = CFIndex::try_from(s.len()).map_err(|_| "Keychain string too long".to_string())?;
+        let ptr = unsafe {
+            CFStringCreateWithBytes(
+                std::ptr::null(),
+                s.as_ptr(),
+                len,
+                K_CF_STRING_ENCODING_UTF8,
+                0,
+            )
+        };
+        unsafe { CfGuard::from_create(ptr) }
+            .ok_or_else(|| "CFStringCreateWithBytes failed".to_string())
+    }
+
+    fn make_cf_data(bytes: &[u8]) -> Result<CfGuard, String> {
+        let len =
+            CFIndex::try_from(bytes.len()).map_err(|_| "Keychain payload too long".to_string())?;
+        let ptr = unsafe { CFDataCreate(std::ptr::null(), bytes.as_ptr(), len) };
+        unsafe { CfGuard::from_create(ptr) }.ok_or_else(|| "CFDataCreate failed".to_string())
+    }
+
+    fn make_cf_dict(keys: &[CFTypeRef], values: &[CFTypeRef]) -> Result<CfGuard, String> {
+        debug_assert_eq!(keys.len(), values.len());
+        let dict = unsafe {
+            CFDictionaryCreate(
+                std::ptr::null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                keys.len() as CFIndex,
+                &kCFTypeDictionaryKeyCallBacks as *const c_void,
+                &kCFTypeDictionaryValueCallBacks as *const c_void,
+            )
+        };
+        unsafe { CfGuard::from_create(dict) }.ok_or_else(|| "CFDictionaryCreate failed".to_string())
+    }
+
+    /// Build a permissive `SecAccessRef` (equivalent to `security add-generic-password -A`)
+    /// so external signed binaries (`agy`, `Antigravity.app`, `agy_acp_server`) can read
+    /// the credential without triggering macOS Keychain password prompts.
+    fn create_unrestricted_access(
+        descriptor: &CfGuard,
+        include_partition_acl: bool,
+    ) -> Result<CfGuard, String> {
+        let mut access_raw: SecAccessRef = std::ptr::null();
+        let status =
+            unsafe { SecAccessCreate(descriptor.as_ptr(), std::ptr::null(), &mut access_raw) };
+        if status != ERR_SEC_SUCCESS || access_raw.is_null() {
+            return Err(format!("SecAccessCreate failed (OSStatus {})", status));
+        }
+        let access = unsafe { CfGuard::from_create(access_raw) }
+            .ok_or_else(|| "SecAccessCreate returned null".to_string())?;
+
+        // Target only the decrypt ACL so the written Keychain item requires no
+        // per-app ACL prompt when Antigravity IDE or helper tools read it later.
+        let acl_list_raw: CFArrayRef = unsafe {
+            SecAccessCopyMatchingACLList(access.as_ptr(), kSecACLAuthorizationDecrypt as CFTypeRef)
+        };
+        let acl_list = unsafe { CfGuard::from_create(acl_list_raw) }
+            .ok_or_else(|| "SecAccessCopyMatchingACLList returned null".to_string())?;
+
+        let count = unsafe { CFArrayGetCount(acl_list.as_ptr()) };
+        let mut updated_count = 0isize;
+        for idx in 0..count {
+            let acl = unsafe { CFArrayGetValueAtIndex(acl_list.as_ptr(), idx) };
+            if acl.is_null() {
+                continue;
+            }
+            let mut app_list_raw: CFArrayRef = std::ptr::null();
+            let mut desc_raw: CFStringRef = std::ptr::null();
+            let mut prompt_selector: SecKeychainPromptSelector = 0;
+            let acl_status = unsafe {
+                SecACLCopyContents(acl, &mut app_list_raw, &mut desc_raw, &mut prompt_selector)
+            };
+            if acl_status != ERR_SEC_SUCCESS {
+                return Err(format!(
+                    "SecACLCopyContents failed (OSStatus {})",
+                    acl_status
+                ));
+            }
+            let _app_list_guard = unsafe { CfGuard::from_create(app_list_raw) };
+            let desc_guard = unsafe { CfGuard::from_create(desc_raw) };
+            let set_status = unsafe {
+                SecACLSetContents(
+                    acl,
+                    std::ptr::null(),
+                    desc_guard
+                        .as_ref()
+                        .map(|d| d.as_ptr())
+                        .unwrap_or(descriptor.as_ptr()),
+                    0,
+                )
+            };
+            if set_status != ERR_SEC_SUCCESS {
+                return Err(format!(
+                    "SecACLSetContents failed (OSStatus {})",
+                    set_status
+                ));
+            }
+            updated_count += 1;
+        }
+
+        if updated_count == 0 {
+            return Err(
+                "SecAccessCopyMatchingACLList returned no decrypt ACLs to relax".to_string(),
+            );
+        }
+
+        if include_partition_acl {
+            const PARTITION_PLIST: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Partitions</key>\n\t<array>\n\t\t<string>apple-tool:</string>\n\t\t<string>apple:</string>\n\t\t<string>unsigned:</string>\n\t\t<string>teamid:EQHXZ8M8AV</string>\n\t</array>\n</dict>\n</plist>\n";
+            let mut hex_plist = String::with_capacity(PARTITION_PLIST.len() * 2);
+            for b in PARTITION_PLIST.as_bytes() {
+                use std::fmt::Write as _;
+                let _ = write!(&mut hex_plist, "{:02x}", b);
+            }
+            let partition_desc = make_cf_string(&hex_plist)?;
+            let mut partition_acl_raw: SecACLRef = std::ptr::null();
+            let create_acl_status = unsafe {
+                SecACLCreateWithSimpleContents(
+                    access.as_ptr(),
+                    std::ptr::null(),
+                    partition_desc.as_ptr(),
+                    0,
+                    &mut partition_acl_raw,
+                )
+            };
+            if create_acl_status != ERR_SEC_SUCCESS || partition_acl_raw.is_null() {
+                return Err(format!(
+                    "SecACLCreateWithSimpleContents failed (OSStatus {})",
+                    create_acl_status
+                ));
+            }
+            let partition_acl = unsafe { CfGuard::from_create(partition_acl_raw) }
+                .ok_or_else(|| "SecACLCreateWithSimpleContents returned null".to_string())?;
+            let tag = unsafe { kSecACLAuthorizationPartitionID };
+            let auth_tags_raw = unsafe {
+                CFArrayCreate(
+                    std::ptr::null(),
+                    &tag as *const CFStringRef,
+                    1,
+                    &kCFTypeArrayCallBacks as *const c_void,
+                )
+            };
+            let auth_tags = unsafe { CfGuard::from_create(auth_tags_raw) }
+                .ok_or_else(|| "CFArrayCreate returned null".to_string())?;
+            let update_status =
+                unsafe { SecACLUpdateAuthorizations(partition_acl.as_ptr(), auth_tags.as_ptr()) };
+            if update_status != ERR_SEC_SUCCESS {
+                return Err(format!(
+                    "SecACLUpdateAuthorizations failed (OSStatus {})",
+                    update_status
+                ));
+            }
+        }
+
+        Ok(access)
+    }
+
+    fn try_add_generic_password(
+        service: &str,
+        account: &str,
+        service_cf: &CfGuard,
+        account_cf: &CfGuard,
+        secret_cf: &CfGuard,
+        access_cf: &CfGuard,
+    ) -> Result<(), (OSStatus, String)> {
+        let attrs = unsafe {
+            make_cf_dict(
+                &[
+                    kSecClass,
+                    kSecAttrService,
+                    kSecAttrAccount,
+                    kSecAttrLabel,
+                    kSecValueData,
+                    kSecAttrAccess,
+                ],
+                &[
+                    kSecClassGenericPassword,
+                    service_cf.as_ptr(),
+                    account_cf.as_ptr(),
+                    service_cf.as_ptr(),
+                    secret_cf.as_ptr(),
+                    access_cf.as_ptr(),
+                ],
+            )
+        }
+        .map_err(|e| (0, e))?;
+
+        let mut status = unsafe { SecItemAdd(attrs.as_ptr(), std::ptr::null_mut()) };
+        if status == ERR_SEC_DUPLICATE_ITEM {
+            let _ = std::process::Command::new("security")
+                .args(["delete-generic-password", "-s", service, "-a", account])
+                .output();
+            status = unsafe { SecItemAdd(attrs.as_ptr(), std::ptr::null_mut()) };
+        }
+
+        if status != ERR_SEC_SUCCESS {
+            return Err((
+                status,
+                format!("macOS Keychain SecItemAdd failed (OSStatus {})", status),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn write_generic_password(
+        service: &str,
+        account: &str,
+        secret: &str,
+    ) -> Result<(), String> {
+        let service_cf = make_cf_string(service)?;
+        let account_cf = make_cf_string(account)?;
+        let secret_cf = make_cf_data(secret.as_bytes())?;
+
+        let delete_query = unsafe {
+            make_cf_dict(
+                &[kSecClass, kSecAttrService, kSecAttrAccount],
+                &[
+                    kSecClassGenericPassword,
+                    service_cf.as_ptr(),
+                    account_cf.as_ptr(),
+                ],
+            )?
+        };
+        let del_status = unsafe { SecItemDelete(delete_query.as_ptr()) };
+        if del_status != ERR_SEC_SUCCESS && del_status != ERR_SEC_ITEM_NOT_FOUND {
+            tracing::debug!(
+                "SecItemDelete returned OSStatus {} for {}:{}",
+                del_status,
+                service,
+                account
+            );
+        }
+
+        if let Ok(access_cf) = create_unrestricted_access(&service_cf, true) {
+            match try_add_generic_password(
+                service,
+                account,
+                &service_cf,
+                &account_cf,
+                &secret_cf,
+                &access_cf,
+            ) {
+                Ok(()) => return Ok(()),
+                Err((status, _)) => {
+                    tracing::debug!(
+                        "SecItemAdd with explicit PartitionID ACL returned OSStatus {} for {}:{}; falling back to default decrypt ACL",
+                        status,
+                        service,
+                        account
+                    );
+                }
+            }
+        }
+
+        let fallback_access = create_unrestricted_access(&service_cf, false)?;
+        try_add_generic_password(
+            service,
+            account,
+            &service_cf,
+            &account_cf,
+            &secret_cf,
+            &fallback_access,
+        )
+        .map_err(|(_, msg)| msg)
+    }
+
+    pub(super) enum SilentKeychainRead {
+        Found(String),
+        NotFound,
+        NeedsSubprocessFallback,
+        Denied(OSStatus),
+    }
+
+    pub(super) fn read_generic_password_silent(service: &str, account: &str) -> SilentKeychainRead {
+        let Ok(service_cf) = make_cf_string(service) else {
+            return SilentKeychainRead::NeedsSubprocessFallback;
+        };
+        let Ok(account_cf) = make_cf_string(account) else {
+            return SilentKeychainRead::NeedsSubprocessFallback;
+        };
+        let Ok(query) = (unsafe {
+            make_cf_dict(
+                &[
+                    kSecClass,
+                    kSecAttrService,
+                    kSecAttrAccount,
+                    kSecReturnData,
+                    kSecUseAuthenticationUI,
+                ],
+                &[
+                    kSecClassGenericPassword,
+                    service_cf.as_ptr(),
+                    account_cf.as_ptr(),
+                    kCFBooleanTrue,
+                    kSecUseAuthenticationUIFail,
+                ],
+            )
+        }) else {
+            return SilentKeychainRead::NeedsSubprocessFallback;
+        };
+
+        let mut result_raw: CFTypeRef = std::ptr::null();
+        let status = unsafe { SecItemCopyMatching(query.as_ptr(), &mut result_raw) };
+        match status {
+            ERR_SEC_SUCCESS => {
+                let Some(data_guard) = (unsafe { CfGuard::from_create(result_raw) }) else {
+                    return SilentKeychainRead::NotFound;
+                };
+                let len = unsafe { CFDataGetLength(data_guard.as_ptr()) };
+                if len <= 0 {
+                    return SilentKeychainRead::Found(String::new());
+                }
+                let ptr = unsafe { CFDataGetBytePtr(data_guard.as_ptr()) };
+                if ptr.is_null() {
+                    return SilentKeychainRead::NeedsSubprocessFallback;
+                }
+                let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+                SilentKeychainRead::Found(String::from_utf8_lossy(bytes).trim().to_string())
+            }
+            ERR_SEC_ITEM_NOT_FOUND => SilentKeychainRead::NotFound,
+            ERR_SEC_INTERACTION_NOT_ALLOWED => SilentKeychainRead::NeedsSubprocessFallback,
+            ERR_SEC_AUTH_FAILED | ERR_SEC_USER_CANCELED => SilentKeychainRead::Denied(status),
+            _ => SilentKeychainRead::NeedsSubprocessFallback,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn delete_generic_password(service: &str, account: &str) {
+        let (Ok(service_cf), Ok(account_cf)) = (make_cf_string(service), make_cf_string(account))
+        else {
+            return;
+        };
+        if let Ok(query) = unsafe {
+            make_cf_dict(
+                &[kSecClass, kSecAttrService, kSecAttrAccount],
+                &[
+                    kSecClassGenericPassword,
+                    service_cf.as_ptr(),
+                    account_cf.as_ptr(),
+                ],
+            )
+        } {
+            let _ = unsafe { SecItemDelete(query.as_ptr()) };
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_macos_keychain_generic_password(
+    service: &str,
+    account: &str,
+    secret: &str,
+) -> Result<(), String> {
+    let res = macos_keychain_ffi::write_generic_password(service, account, secret);
+    // Invalidate even if writing fails (e.g. after SecItemDelete) so the coordinator does
+    // not serve a stale cached credential.
+    invalidate_system_keychain_cache(service, account);
+    res
 }
 
 #[cfg(target_os = "macos")]
@@ -160,7 +700,30 @@ fn read_macos_keychain_generic_password(
     account: &str,
     bypass_cache: bool,
 ) -> KeychainLookupOutcome {
-    macos_keychain_coordinator().read_with(service, account, bypass_cache, || {
+    system_keychain_coordinator().read_with(service, account, bypass_cache, || {
+        match macos_keychain_ffi::read_generic_password_silent(service, account) {
+            macos_keychain_ffi::SilentKeychainRead::Found(secret) => {
+                return KeychainLookupOutcome::Found(secret);
+            }
+            macos_keychain_ffi::SilentKeychainRead::NotFound => {
+                return KeychainLookupOutcome::NotFound;
+            }
+            macos_keychain_ffi::SilentKeychainRead::Denied(status) => {
+                let reason = format!(
+                    "macOS Keychain SecItemCopyMatching denied (OSStatus {})",
+                    status
+                );
+                crate::modules::logger::log_warn(&format!(
+                    "[Keychain] macOS Keychain read denied/canceled for {}:{}; suppressing passive probes until explicit switch/write ({})",
+                    service,
+                    account,
+                    reason
+                ));
+                return KeychainLookupOutcome::Denied(reason);
+            }
+            macos_keychain_ffi::SilentKeychainRead::NeedsSubprocessFallback => {}
+        }
+
         match Command::new("security")
             .args(["find-generic-password", "-s", service, "-a", account, "-w"])
             .output()
@@ -173,10 +736,9 @@ fn read_macos_keychain_generic_password(
                 let outcome = classify_macos_security_failure(output.status.code(), &stderr);
                 if let KeychainLookupOutcome::Denied(ref reason) = outcome {
                     crate::modules::logger::log_warn(&format!(
-                        "[Keychain] macOS Keychain read denied/canceled for {}:{}; entering {}s cooldown ({})",
+                        "[Keychain] macOS Keychain read denied/canceled for {}:{}; suppressing passive probes until explicit switch/write ({})",
                         service,
                         account,
-                        MACOS_KEYCHAIN_DENIED_COOLDOWN.as_secs(),
                         reason
                     ));
                 }
@@ -524,267 +1086,286 @@ fn apply_account_credentials(
     Ok(())
 }
 
+fn execute_desktop_account_switch(
+    app_handle: &tauri::AppHandle,
+    account: &crate::models::Account,
+    target_ide: Option<&str>,
+) -> Result<(), String> {
+    crate::modules::logger::log_info(&format!(
+        "[Desktop] Executing system switch for: {} (target_ide: {:?})",
+        account.email, target_ide
+    ));
+
+    if target_ide == Some("agy") {
+        write_to_system_keyring(account)?;
+        let _ = write_to_file_credentials(account, true);
+        // A successful write (or a file fallback) is not proof that the CLI
+        // will read this account from the system credential store.
+        let stored = read_from_system_keyring_only()?;
+        verify_agy_credentials(&account.token.refresh_token, &stored.refresh_token)?;
+
+        if let Ok(storage_path) = device::get_storage_path(target_ide) {
+            if let Some(ref profile) = account.device_profile {
+                let _ = device::write_profile(&storage_path, profile);
+            }
+        }
+
+        let is_running = process::is_process_running_by_name("agy");
+        let msg = if is_running {
+            format!(
+                "Credentials for {} saved and verified. Running agy sessions may still use and write back their previous credentials.",
+                account.email
+            )
+        } else {
+            format!(
+                "Credentials for {} saved and verified for the next CLI command.",
+                account.email
+            )
+        };
+        crate::modules::logger::log_info(&format!("[Notification] Antigravity CLI: {}", msg));
+        let _ = crate::modules::tray::update_tray_menus(app_handle);
+
+        return Ok(());
+    }
+
+    if is_acp_target(target_ide) {
+        let killed = switch_acp_account(account)?;
+        let msg = if killed > 0 {
+            format!(
+                "Credentials for {} saved and verified. Restarted {} running agy_acp_server process(es).",
+                account.email, killed
+            )
+        } else {
+            format!(
+                "Credentials for {} saved and verified for the Antigravity IDE Plugin (ACP).",
+                account.email
+            )
+        };
+        crate::modules::logger::log_info(&format!(
+            "[Notification] Antigravity IDE Plugin: {}",
+            msg
+        ));
+        let _ = crate::modules::tray::update_tray_menus(app_handle);
+
+        return Ok(());
+    }
+
+    // 1. 智能决策：判断目标是 Antigravity IDE (VS Code 定制版) 还是 Antigravity 经典版 (原生桌面端)
+    let classic_running = process::is_antigravity_running(None);
+    let ide_running = process::is_antigravity_running(Some("ide"));
+    let classic_exe = process::get_antigravity_executable_path(Some("classic"));
+    let ide_exe = process::get_antigravity_executable_path(Some("ide"));
+    let ide_exe_str = ide_exe.as_ref().map(|p| p.to_string_lossy().to_string());
+
+    let (is_ide, effective_target) = resolve_effective_target(
+        target_ide,
+        classic_running,
+        ide_running,
+        classic_exe.is_some(),
+        ide_exe_str.as_deref(),
+    );
+
+    if is_ide {
+        crate::modules::logger::log_info(
+            "[Desktop] Determined target environment is Antigravity IDE, using IDE account switch logic.",
+        );
+    } else {
+        crate::modules::logger::log_info(
+            "[Desktop] Determined target environment is Antigravity classic, using classic account switch logic.",
+        );
+    }
+
+    // 0. 在关闭外部进程前，预先快照捕获正在运行的客户端可执行文件路径与启动参数
+    // 彻底防止杀死进程后由于安装在非标准路径而丢失路径导致启动失败 (Unable to start)
+    let active_exe_path = process::get_antigravity_executable_path(effective_target);
+    let active_args = process::get_args_from_running_process(effective_target);
+
+    // 2. 决定切换模式（热切号 / 完整重启）并处理进程与凭据
+    //
+    //    · 热切号（原生经典版与 Antigravity IDE 统一支持，issue #3503 / issue #3637）：
+    //      主窗口进程（无论是 Standalone 还是 VS Code 架构的 IDE）与后台 language_server/agy 解耦，
+    //      只要客户端运行中且能定位到语言服务子进程，先将凭据双写至 SQLite/Keyring/本地文件，
+    //      然后仅终止后台 language_server/agy 子进程。宿主内置的 supervisor 会在约 1.5~2 秒内原地
+    //      重建子进程并重新挂载新凭据，完美保留主窗口和未保存内容，无需重启 IDE。
+    //      顺序是**先写凭据 → 再杀子进程 →（best-effort）再补写一次**。
+    //    · 完整重启 —— 客户端未运行、未定位到语言服务子进程或杀死/拉起失败：
+    //      兜底保持「终止主进程 → 干净写入凭据 → 重新启动客户端」的稳健流程。
+    let running = process::is_antigravity_running(effective_target);
+    let mut hot_switch = false;
+    let mut credentials_applied = false;
+    let mut killed_subprocesses = Vec::new();
+
+    // 只要目标客户端正在运行，统一优先尝试无感热切号
+    if running {
+        apply_account_credentials(
+            account,
+            effective_target,
+            is_ide,
+            active_exe_path.as_deref(),
+        )?;
+        credentials_applied = true;
+
+        // 热切号保障（Fixes #4026）：在终止 language_server 子进程前，
+        // 验证文件级凭据回退（~/.gemini/jetski-standalone-oauth-token）已持久化到磁盘。
+        // 背景：Linux D-Bus/Keyring 存在异步延迟（尤其是 Wayland/AppImage 沙箱），
+        // 当 Keyring 在 10s 窗口内返回 has_token=false 时，前端 authActor 会切换到
+        // signedOut 状态并将 URL 污染为 /onboarding?login=true，而 Electron 的
+        // buildLsRestartWindowUrl 会将此污染 URL 传播给新启动的 language_server。
+        // 通过确保文件凭据在杀死子进程前真实可读，supervisor 重建的 language_server
+        // 始终能从文件回退路径获取 has_token=true，彻底阻断 URL 污染链。
+        // 此验证不阻塞 macOS/Windows（它们的凭据路径始终同步可用）。
+        ensure_file_credentials_flushed(account);
+
+        match process::kill_language_server_subprocesses_and_get_pids(effective_target) {
+            Ok(pids) if !pids.is_empty() => {
+                hot_switch = true;
+                let n = pids.len();
+                killed_subprocesses = pids;
+                crate::modules::logger::log_info(&format!(
+                    "[Desktop] Hot switch: terminated {} language_server/agy subprocess(es) for {:?}; \
+                     main window kept alive, supervisor will respawn the child with the new credentials.",
+                    n, effective_target
+                ));
+
+                // 补写一次凭据（best-effort）：子进程已被终止，此时数据库不存在竞争写者，
+                // 这次写入即为权威值 —— 用于覆盖"写凭据 → 杀子进程"这几十毫秒窗口内
+                // 旧语言服务可能把旧 token 回写进 Keyring 的情况，
+                // 确保 supervisor 约 2s 后重新拉起的子进程读到的一定是新凭据。
+                // 失败只告警，不使整个切号失败：第一次写入已经就位。
+                if let Err(e) = apply_account_credentials(
+                    account,
+                    effective_target,
+                    is_ide,
+                    active_exe_path.as_deref(),
+                ) {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Desktop] Hot switch: post-kill credential re-assert failed ({}); \
+                         the pre-kill write is already in place, continuing.",
+                        e
+                    ));
+                }
+            }
+            Ok(_) => crate::modules::logger::log_info(
+                "[Desktop] Hot switch unavailable: no language_server subprocess found; falling back to full restart.",
+            ),
+            Err(e) => crate::modules::logger::log_warn(&format!(
+                "[Desktop] Hot switch failed ({}); falling back to full restart.",
+                e
+            )),
+        }
+    }
+
+    if !hot_switch && running {
+        process::close_antigravity(20, effective_target)?;
+        // 完整重启路径必须在彻底终止主进程之后重新断言写入凭据，
+        // 消除外部客户端退出钩子在关机瞬间回写陈旧 Session Token 的竞态
+        apply_account_credentials(
+            account,
+            effective_target,
+            is_ide,
+            active_exe_path.as_deref(),
+        )?;
+        credentials_applied = true;
+    }
+    if effective_target != target_ide
+        && target_ide.is_some()
+        && process::is_antigravity_running(target_ide)
+    {
+        process::close_antigravity(20, target_ide)?;
+    }
+
+    // 若此前从未写入凭据（例如客户端未处于运行状态）：此时写入凭据
+    if !credentials_applied {
+        apply_account_credentials(
+            account,
+            effective_target,
+            is_ide,
+            active_exe_path.as_deref(),
+        )?;
+    }
+
+    // 3. 重启外部进程（优先使用预快照路径与启动参数）
+    //    热切号路径下主窗口仍然存活：只需等 supervisor 把 language_server 拉起即可，
+    //    绝不能再去启动一次主窗口（否则会变成双实例）。
+    if hot_switch {
+        if process::wait_for_language_server_respawn_excluding(
+            effective_target,
+            15,
+            &killed_subprocesses,
+        ) {
+            #[cfg(target_os = "windows")]
+            crate::modules::wsl_sync::sync_account_to_wsl_blocking(
+                account,
+                std::time::Duration::from_secs(5),
+            );
+            crate::modules::logger::log_info(&format!(
+                "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
+                account.email
+            ));
+            let _ = crate::modules::tray::update_tray_menus(app_handle);
+            return Ok(());
+        }
+
+        // 子进程迟迟未恢复 → 降级为完整重启，避免留下"窗口活着但 AI 引擎已死"的残状态
+        crate::modules::logger::log_warn(
+            "[Desktop] Hot switch degraded: language_server did not respawn within timeout; performing a full restart.",
+        );
+        process::close_antigravity(20, effective_target)?;
+        // 彻底杀死主窗口后重新断言写入凭据，消除退出钩子回写旧 token
+        let _ = apply_account_credentials(
+            account,
+            effective_target,
+            is_ide,
+            active_exe_path.as_deref(),
+        );
+    }
+
+    // 在 Windows 宿主机重新拉起 IDE 之前先有界同步 WSL 凭据（Ref #4032），
+    // 避免 Remote-WSL 窗口启动瞬间抢先连接并使用旧凭据。
+    #[cfg(target_os = "windows")]
+    crate::modules::wsl_sync::sync_account_to_wsl_blocking(
+        account,
+        std::time::Duration::from_secs(5),
+    );
+
+    if let Err(e) = process::start_antigravity_with_fallback_path(
+        effective_target,
+        active_exe_path.as_deref(),
+        active_args.as_deref(),
+    ) {
+        // 若切号前外部客户端原本就没有处于运行状态，且启动失败原因是找不到客户端可执行文件
+        // （例如纯反代服务模式、未安装 GUI 客户端或无头环境）：
+        // 此时凭据和配置已经写入成功，降级处理并记录信息，避免让整个切号操作报错中断。
+        if !running && process::is_client_executable_missing(&e) {
+            crate::modules::logger::log_info(
+                "[Desktop] Client executable not found and was not running before switch; credentials applied successfully.",
+            );
+        } else {
+            return Err(e);
+        }
+    }
+
+    // 4. 更新托盘
+    let _ = crate::modules::tray::update_tray_menus(app_handle);
+
+    Ok(())
+}
+
 impl SystemIntegration for DesktopIntegration {
     async fn on_account_switch(
         &self,
         account: &crate::models::Account,
         target_ide: Option<&str>,
     ) -> Result<(), String> {
-        crate::modules::logger::log_info(&format!(
-            "[Desktop] Executing system switch for: {} (target_ide: {:?})",
-            account.email, target_ide
-        ));
+        let app_handle = self.app_handle.clone();
+        let account_owned = account.clone();
+        let target_owned = target_ide.map(str::to_string);
 
-        if target_ide == Some("agy") {
-            write_to_system_keyring(account)?;
-            let _ = write_to_file_credentials(account, true);
-            // A successful write (or a file fallback) is not proof that the CLI
-            // will read this account from the system credential store.
-            let stored = read_from_system_keyring_only()?;
-            verify_agy_credentials(&account.token.refresh_token, &stored.refresh_token)?;
-
-            if let Ok(storage_path) = device::get_storage_path(target_ide) {
-                if let Some(ref profile) = account.device_profile {
-                    let _ = device::write_profile(&storage_path, profile);
-                }
-            }
-
-            let is_running = process::is_process_running_by_name("agy");
-            let msg = if is_running {
-                format!(
-                    "Credentials for {} saved and verified. Running agy sessions may still use and write back their previous credentials.",
-                    account.email
-                )
-            } else {
-                format!(
-                    "Credentials for {} saved and verified for the next CLI command.",
-                    account.email
-                )
-            };
-            self.show_notification("Antigravity CLI", &msg);
-            self.update_tray();
-
-            return Ok(());
-        }
-
-        if is_acp_target(target_ide) {
-            let killed = switch_acp_account(account)?;
-            let msg = if killed > 0 {
-                format!(
-                    "Credentials for {} saved and verified. Restarted {} running agy_acp_server process(es).",
-                    account.email, killed
-                )
-            } else {
-                format!(
-                    "Credentials for {} saved and verified for the Antigravity IDE Plugin (ACP).",
-                    account.email
-                )
-            };
-            self.show_notification("Antigravity IDE Plugin", &msg);
-            self.update_tray();
-
-            return Ok(());
-        }
-
-        // 1. 智能决策：判断目标是 Antigravity IDE (VS Code 定制版) 还是 Antigravity 经典版 (原生桌面端)
-        let classic_running = process::is_antigravity_running(None);
-        let ide_running = process::is_antigravity_running(Some("ide"));
-        let classic_exe = process::get_antigravity_executable_path(Some("classic"));
-        let ide_exe = process::get_antigravity_executable_path(Some("ide"));
-        let ide_exe_str = ide_exe.as_ref().map(|p| p.to_string_lossy().to_string());
-
-        let (is_ide, effective_target) = resolve_effective_target(
-            target_ide,
-            classic_running,
-            ide_running,
-            classic_exe.is_some(),
-            ide_exe_str.as_deref(),
-        );
-
-        if is_ide {
-            crate::modules::logger::log_info(
-                "[Desktop] Determined target environment is Antigravity IDE, using IDE account switch logic.",
-            );
-        } else {
-            crate::modules::logger::log_info(
-                "[Desktop] Determined target environment is Antigravity classic, using classic account switch logic.",
-            );
-        }
-
-        // 0. 在关闭外部进程前，预先快照捕获正在运行的客户端可执行文件路径与启动参数
-        // 彻底防止杀死进程后由于安装在非标准路径而丢失路径导致启动失败 (Unable to start)
-        let active_exe_path = process::get_antigravity_executable_path(effective_target);
-        let active_args = process::get_args_from_running_process(effective_target);
-
-        // 2. 决定切换模式（热切号 / 完整重启）并处理进程与凭据
-        //
-        //    · 热切号（原生经典版与 Antigravity IDE 统一支持，issue #3503 / issue #3637）：
-        //      主窗口进程（无论是 Standalone 还是 VS Code 架构的 IDE）与后台 language_server/agy 解耦，
-        //      只要客户端运行中且能定位到语言服务子进程，先将凭据双写至 SQLite/Keyring/本地文件，
-        //      然后仅终止后台 language_server/agy 子进程。宿主内置的 supervisor 会在约 1.5~2 秒内原地
-        //      重建子进程并重新挂载新凭据，完美保留主窗口和未保存内容，无需重启 IDE。
-        //      顺序是**先写凭据 → 再杀子进程 →（best-effort）再补写一次**。
-        //    · 完整重启 —— 客户端未运行、未定位到语言服务子进程或杀死/拉起失败：
-        //      兜底保持「终止主进程 → 干净写入凭据 → 重新启动客户端」的稳健流程。
-        let running = process::is_antigravity_running(effective_target);
-        let mut hot_switch = false;
-        let mut credentials_applied = false;
-        let mut killed_subprocesses = Vec::new();
-
-        // 只要目标客户端正在运行，统一优先尝试无感热切号
-        if running {
-            apply_account_credentials(
-                account,
-                effective_target,
-                is_ide,
-                active_exe_path.as_deref(),
-            )?;
-            credentials_applied = true;
-
-            // 热切号保障（Fixes #4026）：在终止 language_server 子进程前，
-            // 验证文件级凭据回退（~/.gemini/jetski-standalone-oauth-token）已持久化到磁盘。
-            // 背景：Linux D-Bus/Keyring 存在异步延迟（尤其是 Wayland/AppImage 沙箱），
-            // 当 Keyring 在 10s 窗口内返回 has_token=false 时，前端 authActor 会切换到
-            // signedOut 状态并将 URL 污染为 /onboarding?login=true，而 Electron 的
-            // buildLsRestartWindowUrl 会将此污染 URL 传播给新启动的 language_server。
-            // 通过确保文件凭据在杀死子进程前真实可读，supervisor 重建的 language_server
-            // 始终能从文件回退路径获取 has_token=true，彻底阻断 URL 污染链。
-            // 此验证不阻塞 macOS/Windows（它们的凭据路径始终同步可用）。
-            ensure_file_credentials_flushed(account);
-
-            match process::kill_language_server_subprocesses_and_get_pids(effective_target) {
-                Ok(pids) if !pids.is_empty() => {
-                    hot_switch = true;
-                    let n = pids.len();
-                    killed_subprocesses = pids;
-                    crate::modules::logger::log_info(&format!(
-                        "[Desktop] Hot switch: terminated {} language_server/agy subprocess(es) for {:?}; \
-                         main window kept alive, supervisor will respawn the child with the new credentials.",
-                        n, effective_target
-                    ));
-
-                    // 补写一次凭据（best-effort）：子进程已被终止，此时数据库不存在竞争写者，
-                    // 这次写入即为权威值 —— 用于覆盖"写凭据 → 杀子进程"这几十毫秒窗口内
-                    // 旧语言服务可能把旧 token 回写进 Keyring 的情况，
-                    // 确保 supervisor 约 2s 后重新拉起的子进程读到的一定是新凭据。
-                    // 失败只告警，不使整个切号失败：第一次写入已经就位。
-                    if let Err(e) = apply_account_credentials(
-                        account,
-                        effective_target,
-                        is_ide,
-                        active_exe_path.as_deref(),
-                    ) {
-                        crate::modules::logger::log_warn(&format!(
-                            "[Desktop] Hot switch: post-kill credential re-assert failed ({}); \
-                             the pre-kill write is already in place, continuing.",
-                            e
-                        ));
-                    }
-                }
-                Ok(_) => crate::modules::logger::log_info(
-                    "[Desktop] Hot switch unavailable: no language_server subprocess found; falling back to full restart.",
-                ),
-                Err(e) => crate::modules::logger::log_warn(&format!(
-                    "[Desktop] Hot switch failed ({}); falling back to full restart.",
-                    e
-                )),
-            }
-        }
-
-        if !hot_switch && running {
-            process::close_antigravity(20, effective_target)?;
-            // 完整重启路径必须在彻底终止主进程之后重新断言写入凭据，
-            // 消除外部客户端退出钩子在关机瞬间回写陈旧 Session Token 的竞态
-            apply_account_credentials(
-                account,
-                effective_target,
-                is_ide,
-                active_exe_path.as_deref(),
-            )?;
-            credentials_applied = true;
-        }
-        if effective_target != target_ide
-            && target_ide.is_some()
-            && process::is_antigravity_running(target_ide)
-        {
-            process::close_antigravity(20, target_ide)?;
-        }
-
-        // 若此前从未写入凭据（例如客户端未处于运行状态）：此时写入凭据
-        if !credentials_applied {
-            apply_account_credentials(
-                account,
-                effective_target,
-                is_ide,
-                active_exe_path.as_deref(),
-            )?;
-        }
-
-        // 3. 重启外部进程（优先使用预快照路径与启动参数）
-        //    热切号路径下主窗口仍然存活：只需等 supervisor 把 language_server 拉起即可，
-        //    绝不能再去启动一次主窗口（否则会变成双实例）。
-        if hot_switch {
-            if process::wait_for_language_server_respawn_excluding(
-                effective_target,
-                15,
-                &killed_subprocesses,
-            ) {
-                #[cfg(target_os = "windows")]
-                crate::modules::wsl_sync::sync_account_to_wsl_blocking(
-                    account,
-                    std::time::Duration::from_secs(5),
-                );
-                crate::modules::logger::log_info(&format!(
-                    "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
-                    account.email
-                ));
-                let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
-                return Ok(());
-            }
-
-            // 子进程迟迟未恢复 → 降级为完整重启，避免留下"窗口活着但 AI 引擎已死"的残状态
-            crate::modules::logger::log_warn(
-                "[Desktop] Hot switch degraded: language_server did not respawn within timeout; performing a full restart.",
-            );
-            process::close_antigravity(20, effective_target)?;
-            // 彻底杀死主窗口后重新断言写入凭据，消除退出钩子回写旧 token
-            let _ = apply_account_credentials(
-                account,
-                effective_target,
-                is_ide,
-                active_exe_path.as_deref(),
-            );
-        }
-
-        // 在 Windows 宿主机重新拉起 IDE 之前先有界同步 WSL 凭据（Ref #4032），
-        // 避免 Remote-WSL 窗口启动瞬间抢先连接并使用旧凭据。
-        #[cfg(target_os = "windows")]
-        crate::modules::wsl_sync::sync_account_to_wsl_blocking(
-            account,
-            std::time::Duration::from_secs(5),
-        );
-
-        if let Err(e) = process::start_antigravity_with_fallback_path(
-            effective_target,
-            active_exe_path.as_deref(),
-            active_args.as_deref(),
-        ) {
-            // 若切号前外部客户端原本就没有处于运行状态，且启动失败原因是找不到客户端可执行文件
-            // （例如纯反代服务模式、未安装 GUI 客户端或无头环境）：
-            // 此时凭据和配置已经写入成功，降级处理并记录信息，避免让整个切号操作报错中断。
-            if !running && process::is_client_executable_missing(&e) {
-                crate::modules::logger::log_info(
-                    "[Desktop] Client executable not found and was not running before switch; credentials applied successfully.",
-                );
-            } else {
-                return Err(e);
-            }
-        }
-
-        // 4. 更新托盘
-        let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
-
-        Ok(())
+        tokio::task::spawn_blocking(move || {
+            execute_desktop_account_switch(&app_handle, &account_owned, target_owned.as_deref())
+        })
+        .await
+        .map_err(|e| format!("Account switch blocking task failed: {}", e))?
     }
 
     fn update_tray(&self) {
@@ -859,40 +1440,8 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
         let encoded_payload = STANDARD.encode(&payload_json);
         let full_keyring_value = format!("go-keyring-base64:{}", encoded_payload);
 
-        // 2.1 macOS Keychain Access
-        // 删除旧的
-        let _ = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity",
-            ])
-            .output();
-
-        // 写入新的 (-A 参数允许所有本地应用免密码、无感直接读取凭据)
-        let output = Command::new("security")
-            .args([
-                "add-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity",
-                "-w",
-                &full_keyring_value,
-                "-A",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to execute security command: {}", e))?;
-
-        if !output.status.success() {
-            let err_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("macOS security command failed: {}", err_msg.trim()));
-        }
-
-        // Clear any cached read or prior denial cooldown after active ACL-repaired write.
-        invalidate_macos_keychain_cache("gemini", "antigravity");
+        // 2.1 macOS Keychain Access (via native Security.framework FFI so tokens never hit argv or 4KB stdin limits)
+        write_macos_keychain_generic_password("gemini", "antigravity", &full_keyring_value)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -1065,6 +1614,9 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
 
         // 尝试优先同步写入本地文件凭据 (~/.gemini/oauth_creds.json)
         let _ = write_to_file_credentials(account, false);
+
+        // Regardless of write outcome, clear any cached lookup so subsequent reads re-probe Secret Service.
+        invalidate_system_keychain_cache("gemini", "antigravity");
 
         // 若两者均失败，则返回错误；若至少一个成功，则记录并继续
         if login_res.is_err() && default_res.is_err() {
@@ -1441,10 +1993,10 @@ pub fn read_antigravity_cli_credentials() -> Vec<crate::modules::migration::Impo
                     if !state.refresh_token.is_empty()
                         && seen_tokens.insert(state.refresh_token.clone())
                     {
-                        crate::modules::logger::log_info(&format!(
+                        tracing::debug!(
                             "[CLI-Scan] Discovered Antigravity CLI OAuth state in {:?}",
                             path
-                        ));
+                        );
                         states.push(state);
                     }
                 }
@@ -1489,7 +2041,7 @@ fn read_system_credentials(
     allow_file_fallback: bool,
     bypass_cache: bool,
 ) -> Result<crate::modules::migration::ImportedOAuthState, String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     let _ = bypass_cache;
 
     #[cfg(target_os = "macos")]
@@ -1591,42 +2143,59 @@ fn read_system_credentials(
 
     #[cfg(target_os = "linux")]
     {
-        let output = match Command::new("secret-tool")
-            .args(["lookup", "service", "gemini", "username", "antigravity"])
-            .output()
-        {
-            Ok(out) => out,
-            Err(e) => {
-                if allow_file_fallback {
-                    if let Ok(file_state) = read_from_file_credentials() {
-                        return Ok(file_state);
-                    }
+        let outcome = system_keychain_coordinator().read_with(
+            "gemini",
+            "antigravity",
+            bypass_cache,
+            || match Command::new("secret-tool")
+                .args(["lookup", "service", "gemini", "username", "antigravity"])
+                .output()
+            {
+                Ok(out) if out.status.success() => {
+                    KeychainLookupOutcome::Found(String::from_utf8_lossy(&out.stdout).trim().to_string())
                 }
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    return Err(
-                        "Linux Secret Service utility 'secret-tool' not found (未检测到 secret-tool 工具)。\n\
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    classify_linux_secret_tool_failure(out.status.code(), &stderr)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    KeychainLookupOutcome::Denied(
+                        "Linux Secret Service utility 'secret-tool' not found (未检测到 secret-tool 工具).\n\
                          Please install libsecret-tools to enable Keyring storage:\n\
                          • Ubuntu / Debian: sudo apt install -y libsecret-tools\n\
                          • Fedora / RHEL: sudo dnf install -y libsecret\n\
                          • Arch Linux: sudo pacman -S libsecret"
                             .to_string(),
-                    );
+                    )
                 }
-                return Err(format!("Failed to execute secret-tool: {}", e));
-            }
-        };
+                Err(e) => KeychainLookupOutcome::Denied(format!(
+                    "Failed to execute secret-tool: {}",
+                    e
+                )),
+            },
+        );
 
-        if !output.status.success() {
-            if allow_file_fallback {
-                if let Ok(file_state) = read_from_file_credentials() {
-                    return Ok(file_state);
-                }
+        match outcome {
+            KeychainLookupOutcome::Found(payload_str) => {
+                return parse_keyring_payload(&payload_str)
             }
-            return Err("No credential found in Linux secret-tool".to_string());
+            KeychainLookupOutcome::NotFound => {
+                if allow_file_fallback {
+                    if let Ok(file_state) = read_from_file_credentials() {
+                        return Ok(file_state);
+                    }
+                }
+                return Err("No credential found in Linux secret-tool".to_string());
+            }
+            KeychainLookupOutcome::Denied(reason) => {
+                if allow_file_fallback {
+                    if let Ok(file_state) = read_from_file_credentials() {
+                        return Ok(file_state);
+                    }
+                }
+                return Err(reason);
+            }
         }
-
-        let payload_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        return parse_keyring_payload(&payload_str);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
@@ -1807,42 +2376,15 @@ pub fn write_to_acp_credentials(account: &crate::models::Account) -> Result<(), 
     // storing the raw JSON string (via ctypes Security framework).
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity-acp",
-            ])
-            .output();
-
-        let output = Command::new("security")
-            .args([
-                "add-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity-acp",
-                "-w",
-                &acp_json,
-                "-A",
-            ])
-            .output();
-
-        if let Ok(out) = output {
-            if !out.status.success() {
-                let err_msg = String::from_utf8_lossy(&out.stderr);
-                crate::modules::logger::log_warn(&format!(
-                    "[ACP] macOS Keychain update for antigravity-acp returned non-zero ({}); file store at {:?} is updated.",
-                    err_msg.trim(),
-                    token_path
-                ));
-            }
+        if let Err(err_msg) =
+            write_macos_keychain_generic_password("gemini", "antigravity-acp", &acp_json)
+        {
+            crate::modules::logger::log_warn(&format!(
+                "[ACP] macOS Keychain update for antigravity-acp returned non-zero ({}); file store at {:?} is updated.",
+                err_msg,
+                token_path
+            ));
         }
-
-        // Clear cached read / denial cooldown after active ACL-repaired ACP write.
-        invalidate_macos_keychain_cache("gemini", "antigravity-acp");
     }
 
     crate::modules::logger::log_info(&format!(
@@ -1943,10 +2485,10 @@ pub fn read_antigravity_acp_credentials() -> Vec<crate::modules::migration::Impo
                         if !state.refresh_token.is_empty()
                             && seen_tokens.insert(state.refresh_token.clone())
                         {
-                            crate::modules::logger::log_info(&format!(
+                            tracing::debug!(
                                 "[ACP-Scan] Discovered Antigravity ACP OAuth state in {:?}",
                                 path
-                            ));
+                            );
                             states.push(state);
                         }
                     }
@@ -2753,7 +3295,7 @@ mod tests {
                         ])
                         .output();
                 }
-                invalidate_macos_keychain_cache(self.service, self.account);
+                invalidate_system_keychain_cache(self.service, self.account);
             }
         }
     }
@@ -2898,8 +3440,7 @@ mod tests {
     fn test_keychain_read_coordinator_caches_coalesces_cooldowns_and_invalidates() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let coordinator =
-            KeychainReadCoordinator::new(Duration::from_secs(60), Duration::from_secs(300));
+        let coordinator = KeychainReadCoordinator::new(Duration::from_secs(60), None);
         let calls = AtomicUsize::new(0);
 
         // First call populates the cache
@@ -2918,7 +3459,7 @@ mod tests {
         assert_eq!(second, KeychainLookupOutcome::Found("token-v1".to_string()));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        // Denial triggers cooldown so passive readers stop re-prompting
+        // Denial stays suppressed for passive readers until explicit invalidate() or bypass_cache
         coordinator.invalidate("gemini", "antigravity");
         let denied = coordinator.read_with("gemini", "antigravity", false, || {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -2927,14 +3468,25 @@ mod tests {
         assert!(matches!(denied, KeychainLookupOutcome::Denied(_)));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        let during_cooldown = coordinator.read_with("gemini", "antigravity", false, || {
+        let during_suppression = coordinator.read_with("gemini", "antigravity", false, || {
             calls.fetch_add(1, Ordering::SeqCst);
             KeychainLookupOutcome::Found("should-not-run".to_string())
         });
-        assert!(matches!(during_cooldown, KeychainLookupOutcome::Denied(_)));
+        assert!(matches!(
+            during_suppression,
+            KeychainLookupOutcome::Denied(_)
+        ));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        // Active write invalidation clears cooldown and bypass_cache reads fresh state
+        // Explicit bypass_cache=true still probes and updates the slot even when sticky
+        let forced = coordinator.read_with("gemini", "antigravity", true, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Found("token-v2".to_string())
+        });
+        assert_eq!(forced, KeychainLookupOutcome::Found("token-v2".to_string()));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        // Active write invalidation clears prior state
         coordinator.invalidate("gemini", "antigravity");
         let refreshed = coordinator.read_with("gemini", "antigravity", true, || {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -2944,7 +3496,21 @@ mod tests {
             refreshed,
             KeychainLookupOutcome::Found("token-v3".to_string())
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+
+        // Finite cooldown mode suppresses during TTL=0? Verify finite Duration(0) allows retry
+        let finite =
+            KeychainReadCoordinator::new(Duration::from_secs(60), Some(Duration::from_secs(0)));
+        let _ = finite.read_with("gemini", "antigravity", false, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Denied("transient".to_string())
+        });
+        let retried = finite.read_with("gemini", "antigravity", false, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            KeychainLookupOutcome::Found("ok".to_string())
+        });
+        assert_eq!(retried, KeychainLookupOutcome::Found("ok".to_string()));
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
     }
 
     #[test]
@@ -3069,5 +3635,61 @@ mod tests {
         assert!(!desktop_handles_wsl_sync(Some("acp")));
         assert!(!desktop_handles_wsl_sync(Some("plugin")));
         assert!(!desktop_handles_wsl_sync(Some("ide-plugin")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_macos_keychain_large_payload_over_4kb_roundtrip() {
+        let service = format!("antigravity-test-large-payload-{}", uuid::Uuid::new_v4());
+        let account = "large-oauth-blob";
+        let payload = format!("go-keyring-base64:{}", "A".repeat(10_000));
+
+        write_macos_keychain_generic_password(&service, account, &payload)
+            .expect("native Keychain write > 4KB should succeed");
+
+        let outcome = read_macos_keychain_generic_password(&service, account, true);
+        macos_keychain_ffi::delete_generic_password(&service, account);
+
+        assert_eq!(outcome, KeychainLookupOutcome::Found(payload));
+    }
+
+    #[test]
+    fn test_classify_linux_secret_tool_failure_distinguishes_not_found_warnings_from_denied() {
+        assert_eq!(
+            classify_linux_secret_tool_failure(Some(1), ""),
+            KeychainLookupOutcome::NotFound
+        );
+        assert_eq!(
+            classify_linux_secret_tool_failure(
+                Some(1),
+                "(secret-tool:4210): dbind-WARNING **: 03:10:00.000: Couldn't connect to accessibility bus\nGtk-WARNING **: cannot open display"
+            ),
+            KeychainLookupOutcome::NotFound
+        );
+        assert_eq!(
+            classify_linux_secret_tool_failure(Some(1), "secret-tool: Item not found"),
+            KeychainLookupOutcome::NotFound
+        );
+        assert!(matches!(
+            classify_linux_secret_tool_failure(
+                Some(1),
+                "secret-tool: Cannot unlock keyring: user cancelled prompt"
+            ),
+            KeychainLookupOutcome::Denied(_)
+        ));
+        assert!(matches!(
+            classify_linux_secret_tool_failure(
+                Some(1),
+                "The name org.freedesktop.secrets was not provided by any .service files"
+            ),
+            KeychainLookupOutcome::Denied(_)
+        ));
+        assert!(matches!(
+            classify_linux_secret_tool_failure(
+                Some(1),
+                "secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY"
+            ),
+            KeychainLookupOutcome::Denied(_)
+        ));
     }
 }
