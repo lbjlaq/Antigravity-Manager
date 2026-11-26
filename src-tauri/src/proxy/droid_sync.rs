@@ -1,20 +1,52 @@
+use crate::utils::command::{output_with_timeout, CommandExtWrapper};
+use crate::utils::fs::{replace_file_atomic, write_atomic_restricted};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const DROID_DIR: &str = ".factory";
 const DROID_CONFIG_FILE: &str = "settings.json";
 const BACKUP_SUFFIX: &str = ".antigravity.bak";
 const AG_ID_PREFIX: &str = "custom:AG-";
+
+static DROID_CONFIG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn acquire_droid_config_lock() -> std::sync::MutexGuard<'static, ()> {
+    DROID_CONFIG_MUTEX.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("DROID_CONFIG_MUTEX was poisoned, recovering lock");
+        poisoned.into_inner()
+    })
+}
+
+fn is_safe_droid_path(path: &Path) -> bool {
+    if !path.exists() || !path.is_file() || !path.is_absolute() {
+        return false;
+    }
+    let path_str = path.to_string_lossy();
+    if path_str.chars().any(|c| matches!(c, '\0' | '\r' | '\n')) {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        const DANGEROUS_CHARS: &[char] = &[
+            '&', '|', ';', '<', '>', '(', ')', '`', '$', '^', '%', '!', '"',
+        ];
+        if path_str.chars().any(|c| DANGEROUS_CHARS.contains(&c)) {
+            tracing::warn!(
+                "[Droid-Sync] Executable path contains dangerous characters: {}",
+                path_str
+            );
+            return false;
+        }
+    }
+    true
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DroidStatus {
@@ -154,12 +186,15 @@ pub fn check_droid_installed() -> (bool, Option<String>) {
         }
     };
 
+    if !is_safe_droid_path(&droid_path) {
+        return (true, Some("unknown".to_string()));
+    }
+
     let mut cmd = Command::new(&droid_path);
     cmd.arg("--version");
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.creation_flags_windows();
 
-    match cmd.output() {
+    match output_with_timeout(&mut cmd, VERSION_PROBE_TIMEOUT) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -199,20 +234,26 @@ fn count_synced_models(json: &Value) -> (usize, Option<String>) {
     (count, first_url)
 }
 
-pub fn get_sync_status(_proxy_url: &str) -> (bool, bool, Option<String>, usize) {
-    let config_path = match get_config_path() {
-        Some(p) => p,
-        None => return (false, false, None, 0),
-    };
+fn backup_path_for(config_path: &Path) -> PathBuf {
+    config_path.with_file_name(format!(
+        "{}{}",
+        config_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        BACKUP_SUFFIX
+    ))
+}
 
-    let backup_path = config_path.with_file_name(format!("{}{}", DROID_CONFIG_FILE, BACKUP_SUFFIX));
+fn get_sync_status_at(config_path: &Path) -> (bool, bool, Option<String>, usize) {
+    let backup_path = backup_path_for(config_path);
     let has_backup = backup_path.exists();
 
     if !config_path.exists() {
         return (false, has_backup, None, 0);
     }
 
-    let content = match fs::read_to_string(&config_path) {
+    let content = match fs::read_to_string(config_path) {
         Ok(c) => c,
         Err(_) => return (false, has_backup, None, 0),
     };
@@ -222,37 +263,43 @@ pub fn get_sync_status(_proxy_url: &str) -> (bool, bool, Option<String>, usize) 
     (synced_count > 0, has_backup, first_url, synced_count)
 }
 
-fn create_backup(path: &PathBuf) -> Result<(), String> {
+pub fn get_sync_status(_proxy_url: &str) -> (bool, bool, Option<String>, usize) {
+    let _lock = acquire_droid_config_lock();
+    let config_path = match get_config_path() {
+        Some(p) => p,
+        None => return (false, false, None, 0),
+    };
+    get_sync_status_at(&config_path)
+}
+
+fn create_backup(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
     }
-    let backup_path = path.with_file_name(format!(
-        "{}{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        BACKUP_SUFFIX
-    ));
+    let backup_path = backup_path_for(path);
     if backup_path.exists() {
         return Ok(());
     }
-    fs::copy(path, &backup_path).map_err(|e| format!("Failed to create backup: {}", e))?;
+    let original = fs::read(path).map_err(|e| format!("Failed to read file for backup: {}", e))?;
+    write_atomic_restricted(&backup_path, &original, 0o600)
+        .map_err(|e| format!("Failed to create backup: {}", e))?;
     tracing::info!("Created backup: {:?}", backup_path);
     Ok(())
 }
 
-/// 接收前端 preview 里完整的 customModels 数组，直接替换写入
-pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String> {
-    let config_path =
-        get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
-
+fn sync_droid_config_at(
+    config_path: &Path,
+    full_custom_models: Vec<Value>,
+) -> Result<usize, String> {
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    create_backup(&config_path)?;
+    create_backup(config_path)?;
 
     let mut config: Value = if config_path.exists() {
-        let content = fs::read_to_string(&config_path)
-            .map_err(|e| format!("Failed to read config: {}", e))?;
+        let content =
+            fs::read_to_string(config_path).map_err(|e| format!("Failed to read config: {}", e))?;
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?
     } else {
         serde_json::json!({})
@@ -277,22 +324,25 @@ pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String
         .unwrap()
         .insert("customModels".to_string(), Value::Array(full_custom_models));
 
-    let tmp_path = config_path.with_extension("tmp");
-    fs::write(&tmp_path, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| format!("Failed to write temp file: {}", e))?;
-    fs::rename(&tmp_path, &config_path)
-        .map_err(|e| format!("Failed to rename config file: {}", e))?;
+    let serialized = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    write_atomic_restricted(config_path, serialized.as_bytes(), 0o600)?;
 
     Ok(ag_count)
 }
 
-pub fn restore_droid_config() -> Result<(), String> {
+/// 接收前端 preview 里完整的 customModels 数组，直接替换写入
+pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String> {
+    let _lock = acquire_droid_config_lock();
     let config_path =
         get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
+    sync_droid_config_at(&config_path, full_custom_models)
+}
 
-    let backup_path = config_path.with_file_name(format!("{}{}", DROID_CONFIG_FILE, BACKUP_SUFFIX));
+fn restore_droid_config_at(config_path: &Path) -> Result<(), String> {
+    let backup_path = backup_path_for(config_path);
     if backup_path.exists() {
-        fs::rename(&backup_path, &config_path)
+        replace_file_atomic(&backup_path, config_path)
             .map_err(|e| format!("Failed to restore config: {}", e))?;
         Ok(())
     } else {
@@ -300,15 +350,26 @@ pub fn restore_droid_config() -> Result<(), String> {
     }
 }
 
-pub fn read_droid_config_content() -> Result<String, String> {
+pub fn restore_droid_config() -> Result<(), String> {
+    let _lock = acquire_droid_config_lock();
     let config_path =
         get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
+    restore_droid_config_at(&config_path)
+}
 
+fn read_droid_config_content_at(config_path: &Path) -> Result<String, String> {
     if !config_path.exists() {
         return Ok("{}".to_string());
     }
 
-    fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))
+    fs::read_to_string(config_path).map_err(|e| format!("Failed to read config: {}", e))
+}
+
+pub fn read_droid_config_content() -> Result<String, String> {
+    let _lock = acquire_droid_config_lock();
+    let config_path =
+        get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
+    read_droid_config_content_at(&config_path)
 }
 
 // Tauri Commands
@@ -356,4 +417,102 @@ pub async fn get_droid_config_content() -> Result<String, String> {
     tokio::task::spawn_blocking(move || read_droid_config_content())
         .await
         .unwrap_or_else(|_| Err("Task panicked".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_is_safe_droid_path_rejects_relative_and_metacharacters() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_droid_path_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let safe_file = temp_dir.join("droid.exe");
+        fs::write(&safe_file, b"").unwrap();
+        assert!(is_safe_droid_path(&safe_file));
+        assert!(!is_safe_droid_path(Path::new("droid.exe")));
+        assert!(!is_safe_droid_path(&temp_dir.join("missing.exe")));
+
+        #[cfg(target_os = "windows")]
+        {
+            let unsafe_file = temp_dir.join("droid&calc.cmd");
+            fs::write(&unsafe_file, b"").unwrap();
+            assert!(!is_safe_droid_path(&unsafe_file));
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sync_and_restore_droid_config_preserves_backup_and_restricts_permissions() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_droid_sync_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let config_path = temp_dir.join("settings.json");
+
+        let original_content = "{\n  \"theme\": \"dark\",\n  \"customModels\": []\n}\n";
+        fs::write(&config_path, original_content).unwrap();
+
+        let models_v1 = vec![json!({
+            "id": "custom:AG-gemini-3.8-flash",
+            "model": "gemini-3.8-flash",
+            "baseUrl": "http://127.0.0.1:8045",
+            "apiKey": "sk-secret-v1"
+        })];
+        let count1 = sync_droid_config_at(&config_path, models_v1).expect("first sync succeeds");
+        assert_eq!(count1, 1);
+
+        let backup_path = backup_path_for(&config_path);
+        assert!(backup_path.exists());
+        assert_eq!(fs::read_to_string(&backup_path).unwrap(), original_content);
+
+        // Second sync must not overwrite the original backup
+        let models_v2 = vec![json!({
+            "id": "custom:AG-claude-sonnet-4-6",
+            "model": "claude-sonnet-4-6",
+            "baseUrl": "http://127.0.0.1:9000",
+            "apiKey": "sk-secret-v2"
+        })];
+        let count2 = sync_droid_config_at(&config_path, models_v2).expect("second sync succeeds");
+        assert_eq!(count2, 1);
+        assert_eq!(fs::read_to_string(&backup_path).unwrap(), original_content);
+
+        let (synced, has_backup, base_url, synced_count) = get_sync_status_at(&config_path);
+        assert!(synced);
+        assert!(has_backup);
+        assert_eq!(base_url.as_deref(), Some("http://127.0.0.1:9000"));
+        assert_eq!(synced_count, 1);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&config_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&backup_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        restore_droid_config_at(&config_path).expect("restore succeeds");
+        assert!(!backup_path.exists());
+        assert_eq!(
+            read_droid_config_content_at(&config_path).unwrap(),
+            original_content
+        );
+
+        let entries: Vec<_> = fs::read_dir(&temp_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!entries.iter().any(|name| name.contains(".tmp")));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }

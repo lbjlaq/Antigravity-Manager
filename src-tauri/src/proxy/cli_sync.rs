@@ -1,14 +1,46 @@
+use crate::utils::command::output_with_timeout;
+use crate::utils::fs::{replace_file_atomic, write_atomic_restricted};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use std::path::Path;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+static CLI_CONFIG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn acquire_cli_config_lock() -> std::sync::MutexGuard<'static, ()> {
+    CLI_CONFIG_MUTEX.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("CLI_CONFIG_MUTEX was poisoned, recovering lock");
+        poisoned.into_inner()
+    })
+}
+
+/// Safely quote an arbitrary string as a single-quoted POSIX shell literal.
+fn shell_single_quote(value: &str) -> String {
+    let cleaned = value.replace('\0', "");
+    format!("'{}'", cleaned.replace('\'', "'\\''"))
+}
+
+/// Strip line breaks from `.env` values to prevent key/line injection.
+fn sanitize_env_line_value(value: &str) -> String {
+    value.replace(['\0', '\r', '\n'], "")
+}
+
+/// Strip batch control/quote/expansion characters from Windows `.cmd` values.
+fn sanitize_cmd_value(value: &str) -> String {
+    value.replace(['\0', '\r', '\n', '"', '%'], "")
+}
 
 /// Windows 常见 CLI 安装路径扫描
 #[cfg(target_os = "windows")]
@@ -118,7 +150,7 @@ fn detect_fallback_binary(name: &str) -> Option<PathBuf> {
         let mut c = Command::new("where");
         c.arg(name);
         c.creation_flags(CREATE_NO_WINDOW);
-        if let Ok(out) = c.output() {
+        if let Ok(out) = output_with_timeout(&mut c, VERSION_PROBE_TIMEOUT) {
             if out.status.success() {
                 return parse_where_output(&out.stdout);
             }
@@ -127,7 +159,9 @@ fn detect_fallback_binary(name: &str) -> Option<PathBuf> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        if let Ok(out) = Command::new("which").arg(name).output() {
+        let mut c = Command::new("which");
+        c.arg(name);
+        if let Ok(out) = output_with_timeout(&mut c, VERSION_PROBE_TIMEOUT) {
             if out.status.success() {
                 return Some(PathBuf::from(name));
             }
@@ -138,7 +172,7 @@ fn detect_fallback_binary(name: &str) -> Option<PathBuf> {
 
 /// 检查路径是否是 .cmd/.bat 文件
 #[cfg(target_os = "windows")]
-fn is_cmd_file(path: &PathBuf) -> bool {
+fn is_cmd_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
@@ -147,7 +181,7 @@ fn is_cmd_file(path: &PathBuf) -> bool {
 
 /// 验证路径是否安全（防止命令注入）
 #[cfg(target_os = "windows")]
-fn is_safe_path(path: &PathBuf) -> bool {
+fn is_safe_path(path: &Path) -> bool {
     // 检查路径是否存在且是文件
     if !path.exists() || !path.is_file() {
         return false;
@@ -160,7 +194,9 @@ fn is_safe_path(path: &PathBuf) -> bool {
 
     // 检查路径是否包含危险字符
     let path_str = path.to_string_lossy();
-    let dangerous_chars = ['&', '|', ';', '<', '>', '(', ')', '`', '$', '^', '%', '!'];
+    let dangerous_chars = [
+        '&', '|', ';', '<', '>', '(', ')', '`', '$', '^', '%', '!', '"', '\r', '\n', '\0',
+    ];
     if path_str.chars().any(|c| dangerous_chars.contains(&c)) {
         tracing::warn!(
             "[CLI-Sync] Path contains dangerous characters: {}",
@@ -174,7 +210,7 @@ fn is_safe_path(path: &PathBuf) -> bool {
 
 /// 执行版本命令（Windows 特殊处理 .cmd/.bat）
 #[cfg(target_os = "windows")]
-fn run_version_command(executable_path: &PathBuf) -> Option<String> {
+fn run_version_command(executable_path: &Path) -> Option<String> {
     // 安全校验：验证路径不包含危险字符
     if !is_safe_path(executable_path) {
         return None;
@@ -183,17 +219,17 @@ fn run_version_command(executable_path: &PathBuf) -> Option<String> {
     let output = if is_cmd_file(executable_path) {
         // 使用引号包裹路径防止注入，使用 /S 开关确保安全解析
         let quoted_path = format!("\"{}\"", executable_path.to_string_lossy());
-        Command::new("cmd.exe")
-            .arg("/C")
+        let mut cmd = Command::new("cmd.exe");
+        cmd.arg("/C")
             .arg(&quoted_path)
             .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
+            .creation_flags(CREATE_NO_WINDOW);
+        output_with_timeout(&mut cmd, VERSION_PROBE_TIMEOUT)
     } else {
         let mut cmd = Command::new(executable_path);
         cmd.arg("--version");
         cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.output()
+        output_with_timeout(&mut cmd, VERSION_PROBE_TIMEOUT)
     };
 
     match output {
@@ -420,9 +456,11 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
             c.arg(cmd);
             #[cfg(target_os = "windows")]
             c.creation_flags(CREATE_NO_WINDOW);
-            c.output()
+            output_with_timeout(&mut c, VERSION_PROBE_TIMEOUT)
         } else {
-            Command::new("which").arg(cmd).output()
+            let mut c = Command::new("which");
+            c.arg(cmd);
+            output_with_timeout(&mut c, VERSION_PROBE_TIMEOUT)
         };
 
         if let Ok(out) = &which_output {
@@ -589,7 +627,7 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
     let version = {
         let mut ver_cmd = Command::new(&executable_path);
         ver_cmd.arg("--version");
-        let version_output = ver_cmd.output();
+        let version_output = output_with_timeout(&mut ver_cmd, VERSION_PROBE_TIMEOUT);
         match version_output {
             Ok(out) if out.status.success() => {
                 let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -614,6 +652,7 @@ pub fn get_sync_status(
     app: &CliApp,
     proxy_url: &str,
 ) -> (bool, bool, Option<String>, Option<String>) {
+    let _lock = acquire_cli_config_lock();
     let files = app.config_files();
     if files.is_empty() {
         return (false, false, None, None);
@@ -939,49 +978,21 @@ pub fn get_sync_status(
     (all_synced, has_backup, current_base_url, current_model)
 }
 
-/// 为 Antigravity CLI 创建或更新 Shell Wrapper 脚本
-/// 将真实二进制安全更名为 agy_cli，并在原 agy 位置写入自动注入环境变量并 exec agy_cli 的包装脚本
-pub fn sync_agy_binary_wrapper(
-    proxy_url: &str,
-    api_key: &str,
-    model: Option<&str>,
-) -> Result<(), String> {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return Ok(()),
-    };
+fn build_agy_wrapper_script(proxy_url: &str, api_key: &str, target_model: &str) -> String {
+    let quoted_key = shell_single_quote(api_key);
+    let quoted_url = shell_single_quote(proxy_url);
+    let quoted_model = shell_single_quote(target_model);
 
-    // 检查常见安装路径 ~/.local/bin
-    let local_bin = home.join(".local/bin");
-    let agy_path = local_bin.join("agy");
-    let agy_cli_path = local_bin.join("agy_cli");
-
-    if !local_bin.exists() {
-        let _ = fs::create_dir_all(&local_bin);
-    }
-
-    let target_model = match model {
-        Some(m) if !m.is_empty() => m,
-        _ => "gemini-3.8-flash-high",
-    };
-
-    // 隔离历史 Google OAuth token，彻底阻断打向 daily-cloudcode-pa.googleapis.com
-    let token_file = home.join(".gemini/antigravity-cli/antigravity-oauth-token");
-    if token_file.exists() {
-        let bak = home.join(".gemini/antigravity-cli/antigravity-oauth-token.antigravity.bak");
-        let _ = fs::rename(&token_file, &bak);
-    }
-
-    let wrapper_content = format!(
+    format!(
         "#!/bin/zsh\n\
          # Generated by Antigravity-Manager (Native Resilience & Auto-Continue)\n\
-         export GEMINI_API_KEY=\"{}\"\n\
-         export GOOGLE_GEMINI_BASE_URL=\"{}\"\n\
-         export GOOGLE_GEMINI_MODEL=\"{}\"\n\
+         export GEMINI_API_KEY={}\n\
+         export GOOGLE_GEMINI_BASE_URL={}\n\
+         export GOOGLE_GEMINI_MODEL={}\n\
          export DO_NOT_TRACK=1\n\
          export GEMINI_TELEMETRY_ENABLED=false\n\n\
          # 智能拆分 base model 与 thinking effort (如 gemini-3.8-flash-low -> --model gemini-3.8-flash --effort low)\n\
-         RAW_MODEL=\"{}\"\n\
+         RAW_MODEL={}\n\
          MODEL_ARGS=()\n\
          if [[ ! \"$*\" =~ \"--model\" ]]; then\n\
              EFFORT=\"${{RAW_MODEL##*-}}\"\n\
@@ -1013,17 +1024,76 @@ pub fn sync_agy_binary_wrapper(
              fi\n\
              exit $EXIT_CODE\n\
          done\n",
-        api_key, proxy_url, target_model, target_model
-    );
+        quoted_key, quoted_url, quoted_model, quoted_model
+    )
+}
+
+fn build_agy_sh_script(proxy_url: &str, api_key: &str, target_model: &str) -> String {
+    let quoted_key = shell_single_quote(api_key);
+    let quoted_url = shell_single_quote(proxy_url);
+    let quoted_model = shell_single_quote(target_model);
+
+    format!(
+        "#!/bin/zsh\n\
+         # Generated by Antigravity-Manager\n\
+         export GEMINI_API_KEY={}\n\
+         export GOOGLE_GEMINI_BASE_URL={}\n\
+         export GOOGLE_GEMINI_MODEL={}\n\
+         export DO_NOT_TRACK=1\n\
+         export GEMINI_TELEMETRY_ENABLED=false\n\n\
+         MODEL_ARG=()\n\
+         if [[ ! \"$*\" =~ \"--model\" ]]; then\n\
+             MODEL_ARG=(--model {})\n\
+         fi\n\n\
+         exec agy \"${{MODEL_ARG[@]}}\" \"$@\"\n",
+        quoted_key, quoted_url, quoted_model, quoted_model
+    )
+}
+
+/// 为 Antigravity CLI 创建或更新 Shell Wrapper 脚本
+/// 将真实二进制安全更名为 agy_cli，并在原 agy 位置写入自动注入环境变量并 exec agy_cli 的包装脚本
+pub fn sync_agy_binary_wrapper(
+    proxy_url: &str,
+    api_key: &str,
+    model: Option<&str>,
+) -> Result<(), String> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Ok(()),
+    };
+
+    // 检查常见安装路径 ~/.local/bin
+    let local_bin = home.join(".local/bin");
+    let agy_path = local_bin.join("agy");
+    let agy_cli_path = local_bin.join("agy_cli");
+
+    if !local_bin.exists() {
+        let _ = fs::create_dir_all(&local_bin);
+    }
+
+    let target_model = match model {
+        Some(m) if !m.is_empty() => m,
+        _ => "gemini-3.8-flash-high",
+    };
+
+    // 隔离历史 Google OAuth token，彻底阻断打向 daily-cloudcode-pa.googleapis.com
+    let token_file = home.join(".gemini/antigravity-cli/antigravity-oauth-token");
+    if token_file.exists() {
+        let bak = home.join(".gemini/antigravity-cli/antigravity-oauth-token.antigravity.bak");
+        if replace_file_atomic(&token_file, &bak).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&bak, fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+
+    let wrapper_content = build_agy_wrapper_script(proxy_url, api_key, target_model);
 
     // 情况 1: 如果已经存在 agy_cli（已经被包装过）
     if agy_cli_path.exists() {
-        let _ = fs::write(&agy_path, &wrapper_content);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&agy_path, fs::Permissions::from_mode(0o755));
-        }
+        write_atomic_restricted(&agy_path, wrapper_content.as_bytes(), 0o700)?;
         return Ok(());
     }
 
@@ -1033,28 +1103,18 @@ pub fn sync_agy_binary_wrapper(
             let is_script = bytes.starts_with(b"#!");
             if !is_script {
                 // 是二进制文件，重命名为 agy_cli
-                if let Err(e) = fs::rename(&agy_path, &agy_cli_path) {
+                if let Err(e) = replace_file_atomic(&agy_path, &agy_cli_path) {
                     tracing::warn!("[CLI-Sync] Failed to rename agy to agy_cli: {}", e);
                     return Ok(());
                 }
                 // 写入 wrapper 脚本到 agy_path
-                let _ = fs::write(&agy_path, &wrapper_content);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&agy_path, fs::Permissions::from_mode(0o755));
-                }
+                write_atomic_restricted(&agy_path, wrapper_content.as_bytes(), 0o700)?;
                 tracing::info!(
                     "[CLI-Sync] Successfully converted agy binary to agy_cli and installed wrapper"
                 );
             } else {
                 // 是脚本，直接更新内容
-                let _ = fs::write(&agy_path, &wrapper_content);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&agy_path, fs::Permissions::from_mode(0o755));
-                }
+                write_atomic_restricted(&agy_path, wrapper_content.as_bytes(), 0o700)?;
             }
         }
     }
@@ -1085,8 +1145,7 @@ pub fn restore_agy_binary_wrapper() -> Result<(), String> {
         };
 
         if should_restore {
-            let _ = fs::remove_file(&agy_path);
-            if let Err(e) = fs::rename(&agy_cli_path, &agy_path) {
+            if let Err(e) = replace_file_atomic(&agy_cli_path, &agy_path) {
                 return Err(format!("恢复 agy 二进制失败: {}", e));
             }
             tracing::info!("[CLI-Sync] Restored agy_cli back to agy");
@@ -1098,6 +1157,16 @@ pub fn restore_agy_binary_wrapper() -> Result<(), String> {
 
 /// 执行同步逻辑
 pub fn sync_config(
+    app: &CliApp,
+    proxy_url: &str,
+    api_key: &str,
+    model: Option<&str>,
+) -> Result<(), String> {
+    let _lock = acquire_cli_config_lock();
+    sync_config_unlocked(app, proxy_url, api_key, model)
+}
+
+fn sync_config_unlocked(
     app: &CliApp,
     proxy_url: &str,
     api_key: &str,
@@ -1125,10 +1194,17 @@ pub fn sync_config(
                 .path
                 .with_file_name(format!("{}.antigravity.bak", file.name));
             if !backup_path.exists() {
-                if let Err(e) = fs::copy(&file.path, &backup_path) {
-                    tracing::warn!("Failed to create backup for {}: {}", file.name, e);
-                } else {
-                    tracing::info!("Created backup for {}: {:?}", file.name, backup_path);
+                match fs::read(&file.path) {
+                    Ok(original) => {
+                        if let Err(e) = write_atomic_restricted(&backup_path, &original, 0o600) {
+                            tracing::warn!("Failed to create backup for {}: {}", file.name, e);
+                        } else {
+                            tracing::info!("Created backup for {}: {:?}", file.name, backup_path);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to read {} for backup: {}", file.name, e);
+                    }
                 }
             }
         }
@@ -1310,6 +1386,8 @@ pub fn sync_config(
             }
             CliApp::Gemini => {
                 if file.name == ".env" {
+                    let safe_url = sanitize_env_line_value(proxy_url);
+                    let safe_key = sanitize_env_line_value(api_key);
                     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
                     let mut found_url = false;
                     let mut found_key = false;
@@ -1317,10 +1395,10 @@ pub fn sync_config(
                     let mut found_telemetry = false;
                     for line in lines.iter_mut() {
                         if line.starts_with("GOOGLE_GEMINI_BASE_URL=") {
-                            *line = format!("GOOGLE_GEMINI_BASE_URL={}", proxy_url);
+                            *line = format!("GOOGLE_GEMINI_BASE_URL={}", safe_url);
                             found_url = true;
                         } else if line.trim().starts_with("GEMINI_API_KEY=") {
-                            *line = format!("GEMINI_API_KEY={}", api_key);
+                            *line = format!("GEMINI_API_KEY={}", safe_key);
                             found_key = true;
                         } else if line.trim().starts_with("DO_NOT_TRACK=") {
                             *line = "DO_NOT_TRACK=1".to_string();
@@ -1331,10 +1409,10 @@ pub fn sync_config(
                         }
                     }
                     if !found_url {
-                        lines.push(format!("GOOGLE_GEMINI_BASE_URL={}", proxy_url));
+                        lines.push(format!("GOOGLE_GEMINI_BASE_URL={}", safe_url));
                     }
                     if !found_key {
-                        lines.push(format!("GEMINI_API_KEY={}", api_key));
+                        lines.push(format!("GEMINI_API_KEY={}", safe_key));
                     }
                     if !found_dnt {
                         lines.push("DO_NOT_TRACK=1".to_string());
@@ -1343,15 +1421,16 @@ pub fn sync_config(
                         lines.push("GEMINI_TELEMETRY_ENABLED=false".to_string());
                     }
                     if let Some(m) = model {
+                        let safe_model = sanitize_env_line_value(m);
                         let mut found_model = false;
                         for line in lines.iter_mut() {
                             if line.starts_with("GOOGLE_GEMINI_MODEL=") {
-                                *line = format!("GOOGLE_GEMINI_MODEL={}", m);
+                                *line = format!("GOOGLE_GEMINI_MODEL={}", safe_model);
                                 found_model = true;
                             }
                         }
                         if !found_model {
-                            lines.push(format!("GOOGLE_GEMINI_MODEL={}", m));
+                            lines.push(format!("GOOGLE_GEMINI_MODEL={}", safe_model));
                         }
                     }
                     content = lines.join("\n");
@@ -1360,26 +1439,15 @@ pub fn sync_config(
                         Some(m) if !m.is_empty() => m,
                         _ => "gemini-3.8-flash-high",
                     };
-                    content = format!(
-                        "#!/bin/zsh\n\
-                         # Generated by Antigravity-Manager\n\
-                         export GEMINI_API_KEY=\"{}\"\n\
-                         export GOOGLE_GEMINI_BASE_URL=\"{}\"\n\
-                         export GOOGLE_GEMINI_MODEL=\"{}\"\n\
-                         export DO_NOT_TRACK=1\n\
-                         export GEMINI_TELEMETRY_ENABLED=false\n\n\
-                         MODEL_ARG=()\n\
-                         if [[ ! \"$*\" =~ \"--model\" ]]; then\n\
-                             MODEL_ARG=(--model \"{}\")\n\
-                         fi\n\n\
-                         exec agy \"${{MODEL_ARG[@]}}\" \"$@\"\n",
-                        api_key, proxy_url, target_model, target_model
-                    );
+                    content = build_agy_sh_script(proxy_url, api_key, target_model);
                 } else if file.name == "agy.cmd" {
                     let target_model = match model {
                         Some(m) if !m.is_empty() => m,
                         _ => "gemini-3.8-flash-high",
                     };
+                    let safe_key = sanitize_cmd_value(api_key);
+                    let safe_url = sanitize_cmd_value(proxy_url);
+                    let safe_model = sanitize_cmd_value(target_model);
                     content = format!(
                         "@echo off\r\n\
                          REM Generated by Antigravity-Manager\r\n\
@@ -1388,8 +1456,8 @@ pub fn sync_config(
                          set \"GOOGLE_GEMINI_MODEL={}\"\r\n\
                          set \"DO_NOT_TRACK=1\"\r\n\
                          set \"GEMINI_TELEMETRY_ENABLED=false\"\r\n\r\n\
-                         agy --model {} %*\r\n",
-                        api_key, proxy_url, target_model, target_model
+                         agy --model \"{}\" %*\r\n",
+                        safe_key, safe_url, safe_model, safe_model
                     );
                 } else if file.name == "settings.json"
                     || file.name == "config.json"
@@ -1542,20 +1610,14 @@ pub fn sync_config(
             }
         }
 
-        // 使用临时文件原子写入
-        let tmp_path = file.path.with_extension("tmp");
-        fs::write(&tmp_path, &content).map_err(|e| format!("写入临时文件失败: {}", e))?;
-        fs::rename(&tmp_path, &file.path).map_err(|e| format!("重命名配置文件失败: {}", e))?;
-
-        #[cfg(unix)]
-        if file.name.ends_with(".sh") {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = fs::metadata(&file.path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755);
-                let _ = fs::set_permissions(&file.path, perms);
-            }
-        }
+        // 使用临时文件原子写入并限制凭据文件权限
+        let unix_mode = if file.name.ends_with(".sh") {
+            0o700
+        } else {
+            0o600
+        };
+        write_atomic_restricted(&file.path, content.as_bytes(), unix_mode)
+            .map_err(|e| format!("写入配置文件失败: {}", e))?;
     }
 
     if app == &CliApp::Gemini {
@@ -1612,6 +1674,7 @@ pub async fn execute_cli_sync(
 #[tauri::command]
 pub async fn execute_cli_restore(app_type: CliApp) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
+        let _lock = acquire_cli_config_lock();
         let files = app_type.config_files();
         let mut restored_count = 0;
 
@@ -1626,7 +1689,7 @@ pub async fn execute_cli_restore(app_type: CliApp) -> Result<(), String> {
                 .with_file_name(format!("{}.antigravity.bak", file.name));
             if backup_path.exists() {
                 // 还原：覆盖原文件
-                if let Err(e) = fs::rename(&backup_path, &file.path) {
+                if let Err(e) = replace_file_atomic(&backup_path, &file.path) {
                     return Err(format!("恢复备份失败 {}: {}", file.name, e));
                 }
                 restored_count += 1;
@@ -1641,7 +1704,7 @@ pub async fn execute_cli_restore(app_type: CliApp) -> Result<(), String> {
         // 如果没有备份，则执行原来的逻辑：恢复为默认配置
         let default_url = app_type.default_url();
         // 恢复默认时清空 API Key，让用户重新授权或使用官方 Key
-        sync_config(&app_type, default_url, "", None)
+        sync_config_unlocked(&app_type, default_url, "", None)
     })
     .await
     .unwrap_or_else(|_| Err("Task panicked".to_string()))
@@ -1653,6 +1716,7 @@ pub async fn get_cli_config_content(
     file_name: Option<String>,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
+        let _lock = acquire_cli_config_lock();
         let files = app_type.config_files();
         let file = if let Some(name) = file_name {
             files
@@ -2142,6 +2206,8 @@ pub fn sync_jeikcode_toml_content(
 
 /// 同步 DeepSeek Harness 的 .credentials.yaml 密钥文件
 fn sync_dsh_credentials_content(content: &str, api_key: &str) -> String {
+    let safe_key = sanitize_env_line_value(api_key);
+    let api_key = safe_key.as_str();
     if content.trim().is_empty() {
         return format!("version: 1\nrefs:\n  ANTIGRAVITY_API_KEY: {}\n", api_key);
     }
@@ -2630,5 +2696,47 @@ refs:
         assert!(res3.contains("baseURL: http://127.0.0.1:9000/v1"));
         assert!(!res3.contains("baseURL: http://127.0.0.1:8045/v1"));
         assert!(res3.contains("kimi-k3:"));
+    }
+
+    #[test]
+    fn test_shell_single_quote_and_sanitizers_neutralize_injection() {
+        assert_eq!(shell_single_quote("sk-abc123"), "'sk-abc123'");
+        assert_eq!(
+            shell_single_quote("$(touch /tmp/pwn)`id`\"$HOME\"\\"),
+            "'$(touch /tmp/pwn)`id`\"$HOME\"\\'"
+        );
+        assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
+        assert_eq!(sanitize_env_line_value("sk-1\r\nEVIL=1\0"), "sk-1EVIL=1");
+        assert_eq!(
+            sanitize_cmd_value("sk-1\" & calc.exe\r\n%PATH%"),
+            "sk-1 & calc.exePATH"
+        );
+    }
+
+    #[test]
+    fn test_build_agy_scripts_prevent_shell_injection_and_preserve_model_parsing() {
+        let injected_key = "sk-\"$(touch /tmp/pwn)\"`id`'q'";
+        let url = "http://127.0.0.1:8045";
+        let model = "gemini-4-neon-high";
+
+        let wrapper = build_agy_wrapper_script(url, injected_key, model);
+        assert!(wrapper.contains("export GEMINI_API_KEY='sk-\"$(touch /tmp/pwn)\"`id`'\\''q'\\'''"));
+        assert!(wrapper.contains("export GOOGLE_GEMINI_BASE_URL='http://127.0.0.1:8045'"));
+        assert!(wrapper.contains("export GOOGLE_GEMINI_MODEL='gemini-4-neon-high'"));
+        assert!(wrapper.contains("RAW_MODEL='gemini-4-neon-high'"));
+        assert!(!wrapper.contains("export GEMINI_API_KEY=\""));
+
+        // Verify get_sync_status regex still extracts GOOGLE_GEMINI_MODEL from single-quoted exports
+        let re = regex::Regex::new(
+            r#"(?m)^\s*export\s+GOOGLE_GEMINI_MODEL\s*=\s*['"]?([^'"\r\n]+)['"]?"#,
+        )
+        .unwrap();
+        let caps = re.captures(&wrapper).expect("model regex should match");
+        assert_eq!(caps[1].trim(), model);
+
+        let agy_sh = build_agy_sh_script(url, injected_key, model);
+        assert!(agy_sh.contains("export GEMINI_API_KEY='sk-\"$(touch /tmp/pwn)\"`id`'\\''q'\\'''"));
+        assert!(agy_sh.contains("MODEL_ARG=(--model 'gemini-4-neon-high')"));
+        assert!(agy_sh.contains(url));
     }
 }
