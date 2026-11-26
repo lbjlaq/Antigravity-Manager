@@ -136,6 +136,8 @@ pub(crate) struct LiveCatalogCacheFile {
     accounts: HashMap<String, Vec<String>>,
     #[serde(default)]
     models: HashMap<String, OfficialModelInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resolved_background_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -143,6 +145,20 @@ struct LiveCatalogState {
     accounts: HashMap<String, std::collections::HashSet<String>>,
     live_models: HashMap<String, OfficialModelInfo>,
 }
+
+static RESOLVED_BACKGROUND_MODEL: Lazy<RwLock<Option<String>>> = Lazy::new(|| {
+    let from_disk = initial_disk_cache()
+        .as_ref()
+        .and_then(|c| c.resolved_background_model.clone())
+        .filter(|s| !s.trim().is_empty());
+    let initial = from_disk.or_else(|| {
+        DYNAMIC_CATALOG
+            .read()
+            .ok()
+            .and_then(|cat| OfficialModelCatalog::derive_background_model_from_catalog(&cat))
+    });
+    RwLock::new(initial)
+});
 
 static INITIAL_DISK_CACHE: std::sync::OnceLock<Option<LiveCatalogCacheFile>> =
     std::sync::OnceLock::new();
@@ -409,7 +425,87 @@ impl OfficialModelCatalog {
             updated_at: chrono::Utc::now().timestamp(),
             accounts,
             models: state.live_models.clone(),
+            resolved_background_model: Self::resolved_background_model(),
         }
+    }
+
+    fn newest_with_suffix(
+        models: &HashMap<String, OfficialModelInfo>,
+        suffix: &str,
+    ) -> Option<String> {
+        models
+            .iter()
+            .filter(|(id, info)| {
+                !info.is_disabled()
+                    && !info
+                        .tag_title
+                        .as_deref()
+                        .is_some_and(|t| t.eq_ignore_ascii_case("Leaving Soon"))
+                    && !crate::proxy::common::model_gate::is_retired_model_id(id)
+            })
+            .filter_map(|(id, _)| {
+                let lower = id.to_lowercase();
+                let ver_str = lower.strip_prefix("gemini-")?.strip_suffix(suffix)?;
+                if ver_str.contains('-') {
+                    return None;
+                }
+                let ver = crate::proxy::common::model_mapping::parse_version_tuple(ver_str)?;
+                Some((ver, id.clone()))
+            })
+            .max()
+            .map(|(_, id)| id)
+    }
+
+    /// 从官方 `*orchestrator*` 模型说明中提取 `offload ... to <Codename>`，所有解析结果一致时
+    /// 依次匹配最新 `gemini-<ver>-<codename>-low` 或裸 `gemini-<ver>-<codename>`。
+    pub fn derive_background_model_from_catalog(
+        models: &HashMap<String, OfficialModelInfo>,
+    ) -> Option<String> {
+        static OFFLOAD_RE: Lazy<regex::Regex> = Lazy::new(|| {
+            regex::Regex::new(r"(?i)\boffload\b.{0,40}?\bto\s+([A-Za-z][A-Za-z0-9._-]*)")
+                .expect("valid offload regex")
+        });
+
+        let mut codename: Option<String> = None;
+        for (id, info) in models {
+            if !id.to_lowercase().contains("orchestrator") || info.is_disabled() {
+                continue;
+            }
+            let Some(extracted) = info
+                .tag_description
+                .as_deref()
+                .and_then(|d| OFFLOAD_RE.captures(d))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim_end_matches('.').to_lowercase())
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            match &codename {
+                None => codename = Some(extracted),
+                Some(prev) if *prev != extracted => {
+                    tracing::warn!(
+                        "[OfficialCatalog] Conflicting orchestrator offload codenames ('{}' vs '{}'); keeping last-known-good",
+                        prev,
+                        extracted
+                    );
+                    return None;
+                }
+                Some(_) => {}
+            }
+        }
+
+        let code = codename?;
+        Self::newest_with_suffix(models, &format!("-{code}-low"))
+            .or_else(|| Self::newest_with_suffix(models, &format!("-{code}")))
+    }
+
+    /// 获取当前由官方 orchestrator 元数据解析出的后台轻量模型（含内存/磁盘 last-known-good）。
+    pub fn resolved_background_model() -> Option<String> {
+        RESOLVED_BACKGROUND_MODEL
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     fn is_excluded_internal_model(id: &str) -> bool {
@@ -520,6 +616,24 @@ impl OfficialModelCatalog {
             state.accounts.insert(key, recommended);
             for (id, info) in compacted_models {
                 state.live_models.insert(id, info);
+            }
+            let derived = Self::derive_background_model_from_catalog(&state.live_models);
+            if let Ok(mut bg_lock) = RESOLVED_BACKGROUND_MODEL.write() {
+                if let Some(next_bg) = derived {
+                    if bg_lock.as_deref() != Some(next_bg.as_str()) {
+                        tracing::info!(
+                            "[OfficialCatalog] Background model resolved from orchestrator metadata: {:?} -> {}",
+                            *bg_lock,
+                            next_bg
+                        );
+                    }
+                    *bg_lock = Some(next_bg);
+                } else if let Some(lkg) = bg_lock.as_deref() {
+                    tracing::warn!(
+                        "[OfficialCatalog] Failed to derive background model from orchestrator metadata; keeping last-known-good '{}'",
+                        lkg
+                    );
+                }
             }
             Some(Self::build_cache_snapshot(state))
         } else {
@@ -940,5 +1054,82 @@ mod tests {
         assert!(!cache_path.exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    fn make_model_info(tag_title: Option<&str>, tag_desc: Option<&str>) -> OfficialModelInfo {
+        let mut info = OfficialModelCatalog::default_model();
+        info.tag_title = tag_title.map(str::to_string);
+        info.tag_description = tag_desc.map(str::to_string);
+        info.is_internal = None;
+        info.disabled = None;
+        info
+    }
+
+    fn make_catalog(
+        entries: &[(&str, Option<&str>, Option<&str>)],
+    ) -> HashMap<String, OfficialModelInfo> {
+        entries
+            .iter()
+            .map(|(id, title, desc)| ((*id).to_string(), make_model_info(*title, *desc)))
+            .collect()
+    }
+
+    #[test]
+    fn derives_background_model_from_orchestrators_and_handles_edge_cases() {
+        // 1. Embedded catalog resolves to gemini-4-hydrogen-low
+        assert_eq!(
+            OfficialModelCatalog::resolved_background_model().as_deref(),
+            Some("gemini-4-hydrogen-low")
+        );
+
+        // 2. Changed wording or conflicting orchestrators -> None (caller keeps LKG)
+        let changed = make_catalog(&[
+            (
+                "gemini-pro-orchestrator",
+                Some("New"),
+                Some("Smart multi-step assistant."),
+            ),
+            ("gemini-4-hydrogen-low", Some("New"), None),
+        ]);
+        assert_eq!(
+            OfficialModelCatalog::derive_background_model_from_catalog(&changed),
+            None
+        );
+
+        let conflicting = make_catalog(&[
+            (
+                "gemini-pro-orchestrator",
+                Some("New"),
+                Some("Carbon that may offload routine steps to Hydrogen."),
+            ),
+            (
+                "gemini-pro-orchestrator-neon",
+                Some("New"),
+                Some("Neon that may offload routine steps to Helium."),
+            ),
+            ("gemini-4-hydrogen-low", Some("New"), None),
+            ("gemini-4-helium-low", Some("New"), None),
+        ]);
+        assert_eq!(
+            OfficialModelCatalog::derive_background_model_from_catalog(&conflicting),
+            None
+        );
+
+        // 3. Falls back to bare codename when no -low exists, ignoring -medium / -sonar / -tiered
+        let bare = make_catalog(&[
+            (
+                "gemini-pro-orchestrator",
+                Some("New"),
+                Some("Carbon that may offload routine steps to Helium."),
+            ),
+            ("gemini-4-helium-sonar", None, None),
+            ("gemini-4-helium-tiered-high", None, None),
+            ("gemini-4-helium-medium", Some("New"), None),
+            ("gemini-4-helium", Some("New"), None),
+        ]);
+        assert_eq!(
+            OfficialModelCatalog::derive_background_model_from_catalog(&bare).as_deref(),
+            Some("gemini-4-helium")
+        );
     }
 }

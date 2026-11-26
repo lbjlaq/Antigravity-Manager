@@ -385,8 +385,13 @@ pub async fn gate_inbound_model_scoped(
         resolve_requested_model(requested, &mapping)
     };
     let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
-    let final_model =
-        model_mapping::resolve_adaptive_target(&raw_target, lookup_base, None, Some(token_manager));
+    let final_model = model_mapping::resolve_adaptive_target(
+        &raw_target,
+        lookup_base,
+        None,
+        None,
+        Some(token_manager),
+    );
 
     // 已下线模型族硬门禁：检查 **映射后的真实出站模型**，
     // 允许用户把已下线的旧名作为别名键映射到合规模型。
@@ -602,8 +607,13 @@ pub async fn gate_inbound_model_exists_scoped(
         resolve_requested_model(requested, &mapping)
     };
     let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
-    let final_model =
-        model_mapping::resolve_adaptive_target(&raw_target, lookup_base, None, Some(token_manager));
+    let final_model = model_mapping::resolve_adaptive_target(
+        &raw_target,
+        lookup_base,
+        None,
+        None,
+        Some(token_manager),
+    );
 
     // 检查映射后的真实出站模型，允许旧名作为自定义别名键。
     if is_retired_model_id(&final_model) {
@@ -968,9 +978,14 @@ mod tests {
     fn test_adaptive_dark_routing_bypasses_retired_check() {
         let default_custom = crate::proxy::config::default_custom_mapping();
         let raw_target = resolve_requested_model("claude-haiku-4-5", &default_custom);
-        let final_model =
-            model_mapping::resolve_adaptive_target(&raw_target, "claude-haiku-4-5", None, None);
-        assert_eq!(final_model, "gemini-3.8-flash-low");
+        let final_model = model_mapping::resolve_adaptive_target(
+            &raw_target,
+            "claude-haiku-4-5",
+            None,
+            None,
+            None,
+        );
+        assert_eq!(final_model, "gemini-4-hydrogen-low");
         assert!(!is_retired_model_id(&final_model));
     }
 
