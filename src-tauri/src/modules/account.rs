@@ -20,7 +20,7 @@ static ACCOUNT_FILE_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn get_account_lock(account_id: &str) -> Arc<Mutex<()>> {
-    let mut locks = ACCOUNT_FILE_LOCKS.lock().unwrap();
+    let mut locks = ACCOUNT_FILE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     locks
         .entry(account_id.to_string())
         .or_insert_with(|| Arc::new(Mutex::new(())))

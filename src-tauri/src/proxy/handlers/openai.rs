@@ -7586,6 +7586,7 @@ use std::collections::HashMap;
 
 const WEBSOCKET_TOOL_CALL_CACHE_MAX_ENTRIES: usize = 2048;
 const WEBSOCKET_TOOL_CALL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+const WEBSOCKET_SESSION_TOOL_CACHE_MAX: usize = 512;
 
 static WEBSOCKET_TOOL_CALL_CACHE: OnceLock<
     TokioRwLock<HashMap<String, (Value, std::time::Instant)>>,
@@ -7637,13 +7638,31 @@ pub fn insert_cached_tool_call(call_id: String, item: Value) {
 }
 
 #[derive(Debug, Clone)]
-
 struct WebsocketSessionState {
     last_request: Option<Value>,
     last_response_output: Value,
     last_response_id: String,
     last_response_pending_tool_call_ids: Vec<String>,
     tool_call_cache: std::collections::HashMap<String, Value>,
+    tool_call_cache_order: std::collections::VecDeque<String>,
+}
+
+impl WebsocketSessionState {
+    fn insert_tool_call(&mut self, call_id: String, item: Value) {
+        if call_id.is_empty() {
+            return;
+        }
+        let is_new = self.tool_call_cache.insert(call_id.clone(), item).is_none();
+        if is_new {
+            self.tool_call_cache_order.push_back(call_id);
+        }
+        while self.tool_call_cache.len() > WEBSOCKET_SESSION_TOOL_CACHE_MAX {
+            let Some(oldest) = self.tool_call_cache_order.pop_front() else {
+                break;
+            };
+            self.tool_call_cache.remove(&oldest);
+        }
+    }
 }
 
 pub async fn handle_responses_websocket(
@@ -7672,6 +7691,7 @@ async fn handle_websocket_session(
         last_response_id: String::new(),
         last_response_pending_tool_call_ids: Vec::new(),
         tool_call_cache: std::collections::HashMap::new(),
+        tool_call_cache_order: std::collections::VecDeque::new(),
     };
 
     while let Some(msg_result) = socket.recv().await {
@@ -8799,9 +8819,7 @@ async fn finalize_ws_events(
 
             let tc_val = item_obj.clone();
 
-            session_state
-                .tool_call_cache
-                .insert(call_id.clone(), tc_val.clone());
+            session_state.insert_tool_call(call_id.clone(), tc_val.clone());
             insert_cached_tool_call(call_id.clone(), tc_val.clone());
             output_items.push(tc_val);
         }
@@ -8872,4 +8890,34 @@ async fn finalize_ws_events(
     send_ws_event(socket, ws_events, &completed_ev).await;
 
     json!(output_items)
+}
+
+#[cfg(test)]
+mod ws_session_cache_tests {
+    use super::*;
+
+    #[test]
+    fn websocket_session_tool_call_cache_enforces_fifo_cap() {
+        let mut session_state = WebsocketSessionState {
+            last_request: None,
+            last_response_output: json!([]),
+            last_response_id: String::new(),
+            last_response_pending_tool_call_ids: Vec::new(),
+            tool_call_cache: std::collections::HashMap::new(),
+            tool_call_cache_order: std::collections::VecDeque::new(),
+        };
+
+        for i in 0..1000 {
+            session_state.insert_tool_call(format!("call_{i}"), json!({ "idx": i }));
+        }
+
+        assert_eq!(
+            session_state.tool_call_cache.len(),
+            WEBSOCKET_SESSION_TOOL_CACHE_MAX
+        );
+        assert!(!session_state.tool_call_cache.contains_key("call_0"));
+        assert!(!session_state.tool_call_cache.contains_key("call_487"));
+        assert!(session_state.tool_call_cache.contains_key("call_488"));
+        assert!(session_state.tool_call_cache.contains_key("call_999"));
+    }
 }
