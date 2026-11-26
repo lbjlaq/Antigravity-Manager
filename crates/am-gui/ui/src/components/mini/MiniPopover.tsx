@@ -919,7 +919,7 @@ export const MiniPopover: React.FC<MiniPopoverProps> = ({ lang, theme, onToggleT
               <span className="truncate">{tUi(lang, 'mini_quick_pool')}</span>
               <span className="font-mono shrink-0">G / C</span>
             </div>
-            <div className="mini-scroll flex-1 overflow-y-auto space-y-1 pr-0.5">
+            <div className="mini-scroll fade-mask-bottom-soft flex-1 overflow-y-auto space-y-1 pr-0.5 pb-2">
               {healthyCandidates.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-[11px] text-gray-400 text-center px-2">
                   {tUi(lang, 'mini_empty_pool')}
@@ -1200,7 +1200,7 @@ export const MiniPopover: React.FC<MiniPopoverProps> = ({ lang, theme, onToggleT
                 <span className="truncate">{tUi(lang, 'mini_top_models')}</span>
                 <span className="font-mono shrink-0">{tUi(lang, 'mini_model_metric_col')}</span>
               </div>
-              <div className="mini-scroll flex-1 overflow-y-auto space-y-1 pr-0.5">
+              <div className="mini-scroll fade-mask-bottom-soft flex-1 overflow-y-auto space-y-1 pr-0.5 pb-2">
                 {todayStats.topModels.map((m) => (
                   <div
                     key={m.name}

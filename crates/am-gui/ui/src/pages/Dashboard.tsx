@@ -845,7 +845,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
                   <DropdownMenu.Content
                     align="end"
                     sideOffset={6}
-                    className="w-64 p-1.5 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 animate-in fade-in-0 zoom-in-95 duration-100 max-h-72 overflow-y-auto"
+                    className="mini-scroll w-64 p-1.5 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 animate-in fade-in-0 zoom-in-95 duration-100 max-h-72 overflow-y-auto"
                   >
                     <div className="px-2.5 py-1 text-[10px] font-semibold text-gray-400">
                       {tUi(lang, 'dash_avail_accounts')}
@@ -1062,6 +1062,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
                   <div
                     key={idx}
                     onMouseEnter={() => setHoveredBarIdx(idx)}
+                    title={
+                      bar.tokens > 0
+                        ? `${bar.time} · ${(bar.tokens / 1000).toFixed(1)}K tokens · ${bar.tps.toFixed(0)} tok/s`
+                        : bar.time
+                    }
                     className="flex-1 h-full flex flex-col justify-end items-center cursor-pointer"
                   >
                     <div
@@ -1077,9 +1082,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
           <div className="flex items-center justify-between text-[8.5px] font-mono text-gray-400 pt-1 border-t border-gray-100 dark:border-white/5">
             <span>{pulseBars[0]?.time || '00:00'}</span>
             <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />{tUi(lang, 'equalizer_fast')}</span>
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" />{tUi(lang, 'equalizer_med')}</span>
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" />{tUi(lang, 'equalizer_slow')}</span>
+              <span className="flex items-center gap-1" title="≥ 120 tok/s"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />{tUi(lang, 'equalizer_fast')}</span>
+              <span className="flex items-center gap-1" title="60–119 tok/s"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" />{tUi(lang, 'equalizer_med')}</span>
+              <span className="flex items-center gap-1" title="< 60 tok/s"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" />{tUi(lang, 'equalizer_slow')}</span>
             </div>
             <span>{pulseBars[pulseBars.length - 1]?.time || tUi(lang, 'dash_now')}</span>
           </div>
@@ -1092,8 +1097,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
               <Clock className="w-3.5 h-3.5 text-emerald-500" />
               <span>{tUi(lang, 'dash_reserve_accounts')}</span>
             </span>
-            <div className="flex flex-wrap items-center gap-1">
-              <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06]">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06] border border-gray-200/50 dark:border-white/[0.04]">
                 {([
                   { id: 'max-quota', key: 'strategy_max_quota_short' },
                   { id: 'expiring-soon', key: 'strategy_expiring_soon_short' },
@@ -1105,7 +1110,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
                     onClick={() => handleSelectPickStrategy(s.id)}
                     className={`px-1.5 py-0.5 rounded-md text-[9px] font-semibold transition-all cursor-pointer ${
                       pickStrategy === s.id
-                        ? 'bg-blue-600 text-white shadow-2xs'
+                        ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-2xs dark:ring-1 dark:ring-white/[0.08]'
                         : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                     }`}
                   >
@@ -1113,7 +1118,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
                   </button>
                 ))}
               </div>
-              <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06]">
+              <div className="inline-flex p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.06] border border-gray-200/50 dark:border-white/[0.04]">
                 {([
                   { id: 'balanced', label: tUi(lang, 'pool_balanced') },
                   { id: 'claude', label: 'Claude' },
@@ -1124,7 +1129,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
                     onClick={() => handleSelectPoolPreference(s.id)}
                     className={`px-1.5 py-0.5 rounded-md text-[9px] font-semibold transition-all cursor-pointer ${
                       recommendStrategy === s.id
-                        ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-950 shadow-2xs'
+                        ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs dark:ring-1 dark:ring-white/[0.08]'
                         : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                     }`}
                   >

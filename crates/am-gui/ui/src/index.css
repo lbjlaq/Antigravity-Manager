@@ -92,6 +92,7 @@ button:focus-visible {
 /* 精致窄滚动条 (适配悬浮小窗与列表) */
 .mini-scroll::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 .mini-scroll::-webkit-scrollbar-track {
   background: transparent;
@@ -100,8 +101,36 @@ button:focus-visible {
   background: rgba(148, 163, 184, 0.35);
   border-radius: 9999px;
 }
+.mini-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
+}
 .dark .mini-scroll::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.16);
+}
+.dark .mini-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* 主画布轻盈细滚动条 (避免 macOS 默认粗灰轨道破坏 Bento 轻盈感) */
+.app-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.app-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border-radius: 9999px;
+}
+.app-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.52);
+}
+.dark .app-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+}
+.dark .app-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 /* 隐藏原生滚动条轨道但保留顺滑滚动能力 */
@@ -117,4 +146,16 @@ button:focus-visible {
 .fade-mask-bottom {
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+}
+
+/* 悬浮小窗列表底部极轻渐隐，避免露出 2px 卡片硬边同时保持末项清晰 */
+.fade-mask-bottom-soft {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 88%, transparent 100%);
+}
+
+/* 横向胶囊条右侧柔和渐隐遮罩，避免滚动标签被硬裁切 */
+.fade-mask-right {
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 20px), transparent 100%);
 }

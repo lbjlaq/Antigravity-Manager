@@ -2131,7 +2131,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                           className="w-full bg-transparent text-[11px] text-gray-800 dark:text-zinc-100 placeholder-gray-400 focus:outline-none"
                         />
                       </div>
-                      <div className="max-h-60 overflow-y-auto p-1.5 flex flex-col gap-0.5">
+                      <div className="mini-scroll max-h-60 overflow-y-auto p-1.5 flex flex-col gap-0.5">
                         {selectableProjects
                           .filter((p) => {
                             const label = p.workspaceName === '__ALL__' ? tUi(lang, 'stats_all_projects_agg') : p.workspaceName;
@@ -2171,7 +2171,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => setShareModalOpen(true)}
-                className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-[10.5px] font-semibold shadow-xs flex items-center gap-1.5"
+                className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[10.5px] font-semibold shadow-xs flex items-center gap-1.5 transition-all"
               >
                 <Share2 className="w-3 h-3" />
                 <span>{tUi(lang, 'stats_share_poster')}</span>
@@ -2490,15 +2490,51 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             const activeWeekdays = dayTotals.filter((v) => v > 0).length;
             const useSessionSliceMatrix = rangeBounds.isSingleDay || activeWeekdays <= 1;
 
+            const splitModelVariant = (name: string) => {
+              const m = name.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+              if (!m) return { base: name, variant: '', compactVariant: '' };
+              const rawV = m[2].trim();
+              const compactMap: Record<string, string> = {
+                xhigh: 'XHigh',
+                high: 'High',
+                medium: 'Med',
+                low: 'Low',
+                minimal: 'Min',
+                thinking: 'Think',
+              };
+              const compact = compactMap[rawV.toLowerCase()] ?? (rawV.length > 6 ? rawV.slice(0, 5) : rawV);
+              return { base: m[1].trim(), variant: `(${rawV})`, compactVariant: `(${compact})` };
+            };
+
             const shortenModelLabel = (name: string) => {
-              return name
-                .replace(/^gemini-/i, 'g')
-                .replace(/^Gemini\s+/i, 'G')
-                .replace(/^claude-/i, 'c-')
-                .replace(/hydrogen/i, 'hydro')
-                .replace(/Carbon\s*\(([^)]+)\)/i, (_, g) => `Carb·${g.slice(0, 1)}`)
-                .replace(/Neon\s*\(([^)]+)\)/i, (_, g) => `Neon·${g.slice(0, 1)}`)
-                .slice(0, 11);
+              const { base, variant } = splitModelVariant(name);
+              const rawV = variant.replace(/[()]/g, '').trim();
+              const shortTagMap: Record<string, string> = {
+                xhigh: 'XH',
+                high: 'H',
+                medium: 'M',
+                low: 'L',
+                minimal: 'Min',
+                thinking: 'T',
+              };
+              const suffix = rawV
+                ? `·${shortTagMap[rawV.toLowerCase()] ?? rawV.slice(0, 2).toUpperCase()}`
+                : '';
+
+              let shortBase = base
+                .replace(/^gemini[-\s]+/i, 'G')
+                .replace(/^claude[-\s]+/i, '')
+                .replace(/\bhydrogen\b/i, 'Hydro')
+                .replace(/\bcarbon\b/i, 'Carb')
+                .replace(/\bpreview\b/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+              const maxBaseLen = suffix ? Math.max(5, 11 - suffix.length) : 11;
+              if (shortBase.length > maxBaseLen) {
+                shortBase = `${shortBase.slice(0, maxBaseLen - 1)}…`;
+              }
+              return `${shortBase}${suffix}`;
             };
 
             const adaptiveMatrix = (() => {
@@ -2741,22 +2777,28 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                           </div>
 
                           <div className="flex flex-col gap-1 max-h-[86px] overflow-y-auto no-scrollbar fade-mask-bottom pb-2 text-[9px] font-mono text-zinc-300">
-                            {projModelRows.map((row, idx) => (
-                              <div
-                                key={row.model}
-                                title={`${row.model} · ${fmtTok(row.tot)} (${row.pct.toFixed(1)}%)`}
-                                className="flex items-center justify-between gap-1.5 shrink-0"
-                              >
-                                <span className="flex items-center gap-1.5 min-w-0">
-                                  <span
-                                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                                    style={{ backgroundColor: wavePalette[idx % wavePalette.length] }}
-                                  />
-                                  <span className="truncate">{row.model}</span>
-                                </span>
-                                <span className="text-[8.5px] text-zinc-400 tabular-nums shrink-0">{row.pct.toFixed(0)}%</span>
-                              </div>
-                            ))}
+                            {projModelRows.map((row, idx) => {
+                              const { base, compactVariant } = splitModelVariant(row.model);
+                              return (
+                                <div
+                                  key={row.model}
+                                  title={`${row.model} · ${fmtTok(row.tot)} (${row.pct.toFixed(1)}%)`}
+                                  className="flex items-center justify-between gap-1 shrink-0"
+                                >
+                                  <span className="flex items-center gap-1 min-w-0 flex-1">
+                                    <span
+                                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                                      style={{ backgroundColor: wavePalette[idx % wavePalette.length] }}
+                                    />
+                                    <span className="truncate">{base}</span>
+                                    {compactVariant && (
+                                      <span className="text-[8px] text-zinc-400 shrink-0">{compactVariant}</span>
+                                    )}
+                                  </span>
+                                  <span className="text-[8.5px] text-zinc-400 tabular-nums shrink-0">{row.pct.toFixed(0)}%</span>
+                                </div>
+                              );
+                            })}
                           </div>
 
                           <div className="flex flex-col gap-1.5">
@@ -2879,7 +2921,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       </div>
 
                       {/* 全模型明细行 (极细透明滚动条 + 右侧留白绝不压数字) */}
-                      <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto mini-scroll pr-1.5 max-h-[144px]">
+                      <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto mini-scroll fade-mask-bottom pr-1.5 pb-2 max-h-[144px]">
                         {projModelRows.map((row, idx) => {
                           const dotColors = [
                             'bg-emerald-500',
@@ -3078,14 +3120,14 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       return (
                         <div className="flex-1 flex flex-col gap-1.5 min-h-0">
                           {/* 项目内全模型微筛选条 */}
-                          <div className="flex items-center justify-between gap-1.5">
-                            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                          <div className="flex items-center justify-between gap-2 min-w-0">
+                            <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto no-scrollbar fade-mask-right pr-4">
                               <button
                                 onClick={() => setProjPerfModel('__ALL__')}
                                 className={`px-1.5 py-0.5 rounded text-[8.5px] font-semibold shrink-0 transition-all ${
                                   activeProjModel === '__ALL__'
                                     ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
-                                    : 'bg-gray-100 dark:bg-white/[0.06] text-gray-500 dark:text-zinc-400'
+                                    : 'bg-gray-100 dark:bg-white/[0.06] text-gray-500 dark:text-zinc-400 hover:bg-gray-200/70 dark:hover:bg-white/[0.1]'
                                 }`}
                               >
                                 {`${tUi(lang, 'all')} (${projModelsList.length})`}
@@ -3096,8 +3138,8 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                                   onClick={() => setProjPerfModel(m)}
                                   className={`px-1.5 py-0.5 rounded text-[8.5px] font-mono font-semibold shrink-0 transition-all ${
                                     activeProjModel === m
-                                      ? 'bg-indigo-600 text-white'
-                                      : 'bg-gray-100 dark:bg-white/[0.06] text-gray-600 dark:text-zinc-300'
+                                      ? 'bg-blue-600 text-white shadow-2xs'
+                                      : 'bg-gray-100 dark:bg-white/[0.06] text-gray-600 dark:text-zinc-300 hover:bg-gray-200/70 dark:hover:bg-white/[0.1]'
                                   }`}
                                 >
                                   {m}
@@ -3270,11 +3312,15 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                             {posterTopModels.map((row, idx) => {
                               const color = wavePalette[idx % wavePalette.length];
                               const barW = Math.max(10, Math.round((row.pct / topMaxPct) * 100));
+                              const { base, compactVariant } = splitModelVariant(row.model);
                               return (
-                                <div key={row.model} className="flex items-center justify-between gap-2">
-                                  <span className="flex items-center gap-1.5 min-w-0 flex-1 text-zinc-200">
+                                <div key={row.model} className="flex items-center justify-between gap-2" title={row.model}>
+                                  <span className="flex items-center gap-1 min-w-0 flex-1 text-zinc-200">
                                     <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                                    <span className="truncate">{row.model}</span>
+                                    <span className="truncate">{base}</span>
+                                    {compactVariant && (
+                                      <span className="text-[8.5px] text-zinc-400 shrink-0">{compactVariant}</span>
+                                    )}
                                   </span>
                                   {showBar && (
                                     <span className="w-9 h-1 rounded-full bg-white/[0.07] overflow-hidden shrink-0 hidden sm:inline-block">
@@ -3563,17 +3609,17 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                                   </svg>
                                 </div>
 
-                                <div className="w-[272px] shrink-0 flex flex-col justify-between h-full py-1.5 min-h-0 gap-2">
-                                  <div className="grid grid-cols-2 gap-4 pb-2.5 border-b border-white/10 shrink-0">
-                                    <div>
+                                <div className="w-[292px] shrink-0 flex flex-col justify-between h-full py-1.5 min-h-0 gap-2">
+                                  <div className="grid grid-cols-2 gap-3 pb-2.5 border-b border-white/10 shrink-0">
+                                    <div className="min-w-0">
                                       <div className="text-[9.5px] text-emerald-400 font-mono mb-0.5">✦ {tUi(lang, 'stats_total_tokens_upper')}</div>
                                       <div className="text-2xl font-black font-mono text-white leading-none">{fmtTok(currentProject.totalTokens)}</div>
-                                      <div className="text-[9px] text-emerald-400 font-mono mt-1">↑{projCacheRate.toFixed(1)}% {tUi(lang, 'stats_cache')}</div>
+                                      <div className="text-[8.5px] text-emerald-400 font-mono mt-1 whitespace-nowrap">↑{projCacheRate.toFixed(1)}% {tUi(lang, 'stats_cache')}</div>
                                     </div>
-                                    <div>
+                                    <div className="min-w-0">
                                       <div className="text-[9.5px] text-amber-400 font-mono mb-0.5">● {tUi(lang, 'stats_active_time')}</div>
                                       <div className="text-2xl font-black font-mono text-white leading-none">{estHrsInt}h {estMinsInt}m</div>
-                                      <div className="text-[9px] text-zinc-400 font-mono mt-1">{currentProject.conversationCount} {tUi(lang, 'stats_unit_sessions')} · {currentProject.totalSteps.toLocaleString()} {tUi(lang, 'stats_unit_steps')}</div>
+                                      <div className="text-[8.5px] text-zinc-400 font-mono mt-1 whitespace-nowrap truncate">{currentProject.conversationCount} {tUi(lang, 'stats_unit_sessions')} · {currentProject.totalSteps.toLocaleString()} {tUi(lang, 'stats_unit_steps')}</div>
                                     </div>
                                   </div>
 
@@ -3697,105 +3743,442 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                             const ctx = canvas.getContext('2d');
                             if (!ctx) return resolve(null);
 
-                            // 深空背景
-                            ctx.fillStyle = '#07080c';
+                            const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif';
+                            const MONO = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+
+                            const drawRoundRect = (x: number, y: number, w: number, h: number, r: number) => {
+                              const rr = Math.min(r, w / 2, h / 2);
+                              ctx.beginPath();
+                              if (typeof ctx.roundRect === 'function') {
+                                ctx.roundRect(x, y, w, h, rr);
+                              } else {
+                                ctx.moveTo(x + rr, y);
+                                ctx.arcTo(x + w, y, x + w, y + h, rr);
+                                ctx.arcTo(x + w, y + h, x, y + h, rr);
+                                ctx.arcTo(x, y + h, x, y, rr);
+                                ctx.arcTo(x, y, x + w, y, rr);
+                                ctx.closePath();
+                              }
+                            };
+
+                            const fitText = (text: string, maxW: number) => {
+                              if (ctx.measureText(text).width <= maxW) return text;
+                              let s = text;
+                              while (s.length > 1 && ctx.measureText(`${s}…`).width > maxW) {
+                                s = s.slice(0, -1);
+                              }
+                              return `${s}…`;
+                            };
+
+                            const fitModelName = (name: string, maxW: number) => {
+                              if (ctx.measureText(name).width <= maxW) return name;
+                              const { base, compactVariant } = splitModelVariant(name);
+                              if (!compactVariant) return fitText(name, maxW);
+                              const suffix = ` ${compactVariant}`;
+                              const suffixW = ctx.measureText(suffix).width;
+                              if (suffixW >= maxW - 24) return fitText(name, maxW);
+                              return `${fitText(base, maxW - suffixW)}${suffix}`;
+                            };
+
+                            // 1:1 深空渐变背景 + 柔和描边
+                            const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+                            bgGrad.addColorStop(0, '#1f2432');
+                            bgGrad.addColorStop(0.5, '#151822');
+                            bgGrad.addColorStop(1, '#0f1118');
+                            ctx.fillStyle = bgGrad;
                             ctx.fillRect(0, 0, W, H);
-                            ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                            ctx.strokeStyle = 'rgba(165, 180, 252, 0.16)';
                             ctx.lineWidth = 2;
                             ctx.strokeRect(1, 1, W - 2, H - 2);
 
-                            // 顶部真实标题与时段标签
-                            ctx.fillStyle = '#34d399';
-                            ctx.beginPath();
-                            ctx.arc(58, 62, 7, 0, Math.PI * 2);
-                            ctx.fill();
-                            ctx.fillStyle = '#ffffff';
-                            ctx.font = '800 30px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
-                            ctx.fillText(displayProjectTitle, 78, 68);
-                            ctx.fillStyle = '#71717a';
-                            ctx.font = '500 18px ui-monospace, SFMono-Regular, Menlo, monospace';
-                            ctx.fillText(currentProject.path, 78, 94);
-
-                            const tagLabel = `${posterRangeBadge} · ${shareTemplate.toUpperCase()}`;
-                            ctx.font = '600 16px ui-monospace, SFMono-Regular, Menlo, monospace';
-                            const tagW = ctx.measureText(tagLabel).width + 32;
-                            ctx.fillStyle = 'rgba(255,255,255,0.08)';
-                            ctx.beginPath();
-                            ctx.roundRect(W - 52 - tagW, 44, tagW, 34, 17);
-                            ctx.fill();
-                            ctx.fillStyle = '#6ee7b7';
-                            ctx.fillText(tagLabel, W - 52 - tagW + 16, 67);
-
-                            // 左侧核心数据
-                            ctx.fillStyle = '#34d399';
-                            ctx.font = '600 18px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`● ${tUi(lang, 'stats_total_tokens_upper')}`, 56, 168);
-                            ctx.fillStyle = '#ffffff';
-                            ctx.font = '900 46px ui-monospace, Menlo, monospace';
-                            ctx.fillText(fmtTok(currentProject.totalTokens), 56, 220);
-                            ctx.fillStyle = '#34d399';
-                            ctx.font = '700 19px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`↑${projCacheRate.toFixed(1)}% ${tUi(lang, 'stats_cache')}`, 56, 250);
-
-                            // Top 5 模型精选 + 剩余汇总胶囊（与预览视觉 1:1 对齐）
-                            const showRows = projModelRows.slice(0, 5);
-                            const restRows = projModelRows.slice(5);
-                            showRows.forEach((row, idx) => {
-                              const y = 304 + idx * 36;
-                              ctx.fillStyle = wavePalette[idx % wavePalette.length];
+                            // 顶部标题与模板专属徽标 (1:1 对齐 4 套模板预览)
+                            const titleStartX = shareTemplate === 'polar' ? 78 : 56;
+                            if (shareTemplate === 'polar') {
+                              ctx.save();
+                              ctx.fillStyle = '#34d399';
+                              ctx.shadowColor = '#34d399';
+                              ctx.shadowBlur = 12;
                               ctx.beginPath();
-                              ctx.arc(64, y - 5, 5, 0, Math.PI * 2);
+                              ctx.arc(60, 64, 6.5, 0, Math.PI * 2);
                               ctx.fill();
-                              ctx.fillStyle = '#e4e4e7';
-                              ctx.font = '500 17px ui-monospace, Menlo, monospace';
-                              const shortM = row.model.length > 22 ? `${row.model.slice(0, 21)}…` : row.model;
-                              ctx.fillText(shortM, 80, y);
-                              ctx.fillStyle = '#a1a1aa';
-                              ctx.textAlign = 'right';
-                              ctx.fillText(`${row.pct.toFixed(0)}%`, 362, y);
-                              ctx.textAlign = 'left';
-                            });
-                            if (restRows.length > 0) {
-                              const y = 304 + showRows.length * 36 + 6;
-                              const restPct = restRows.reduce((s, r) => s + r.pct, 0);
-                              ctx.fillStyle = 'rgba(255,255,255,0.06)';
-                              ctx.beginPath();
-                              ctx.roundRect(56, y - 22, 314, 30, 8);
-                              ctx.fill();
-                              ctx.fillStyle = '#a1a1aa';
-                              ctx.font = '500 15px ui-monospace, Menlo, monospace';
-                              ctx.fillText(`✦ +${restRows.length} ${tUi(lang, 'stats_more_models')}`, 68, y - 2);
-                              ctx.textAlign = 'right';
-                              ctx.fillStyle = '#e4e4e7';
-                              ctx.fillText(`${restPct.toFixed(1)}%`, 358, y - 2);
-                              ctx.textAlign = 'left';
+                              ctx.restore();
                             }
 
-                            // 左下输入/输出
-                            ctx.fillStyle = '#71717a';
-                            ctx.font = '500 16px -apple-system, sans-serif';
-                            ctx.fillText(tUi(lang, 'stats_net_input'), 56, 568);
-                            ctx.fillText(tUi(lang, 'stats_answer_output'), 196, 568);
-                            ctx.fillStyle = '#ffffff';
-                            ctx.font = '700 24px ui-monospace, Menlo, monospace';
-                            ctx.fillText(fmtTok(projIn), 56, 598);
-                            ctx.fillText(fmtTok(projOut), 196, 598);
+                            const badgeMeta =
+                              shareTemplate === 'radial'
+                                ? {
+                                    text: `${posterRangeBadge} · RADIAL BURST`,
+                                    bg: 'rgba(245, 158, 11, 0.16)',
+                                    border: 'rgba(251, 191, 36, 0.34)',
+                                    color: '#fcd34d',
+                                    footer: `360° Session Pulse · ${posterRangeBadge}`,
+                                  }
+                                : shareTemplate === 'hexcore'
+                                ? {
+                                    text: `${posterRangeBadge} · HEX CORE`,
+                                    bg: 'rgba(244, 63, 94, 0.16)',
+                                    border: 'rgba(251, 113, 133, 0.34)',
+                                    color: '#fda4af',
+                                    footer: `Thermal Fusion Telemetry · ${posterRangeBadge}`,
+                                  }
+                                : shareTemplate === 'matrix'
+                                ? {
+                                    text: `${posterRangeBadge} · ${adaptiveMatrix.modeTag}`,
+                                    bg: 'rgba(99, 102, 241, 0.16)',
+                                    border: 'rgba(129, 140, 248, 0.34)',
+                                    color: '#a5b4fc',
+                                    footer: `Antigravity Telemetry · ${posterRangeBadge}`,
+                                  }
+                                : {
+                                    text: `${posterRangeBadge} · POLAR WAVE`,
+                                    bg: 'rgba(255, 255, 255, 0.08)',
+                                    border: 'rgba(255, 255, 255, 0.14)',
+                                    color: '#6ee7b7',
+                                    footer: `6-Axis Telemetry · ${posterRangeBadge}`,
+                                  };
 
-                            // 中央主视觉图形 (与 4 套饱满升级版预览完全一致)
-                            const cx = 640;
-                            const cy = 365;
-                            if (shareTemplate === 'radial') {
-                              ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+                            ctx.font = `600 16px ${MONO}`;
+                            const tagW = ctx.measureText(badgeMeta.text).width + 34;
+                            const tagX = W - 56 - tagW;
+                            drawRoundRect(tagX, 46, tagW, 34, 17);
+                            ctx.fillStyle = badgeMeta.bg;
+                            ctx.fill();
+                            ctx.strokeStyle = badgeMeta.border;
+                            ctx.lineWidth = 1.2;
+                            ctx.stroke();
+                            ctx.fillStyle = badgeMeta.color;
+                            ctx.textAlign = 'left';
+                            ctx.fillText(badgeMeta.text, tagX + 17, 68);
+
+                            const titleMaxW = Math.max(240, tagX - titleStartX - 24);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = `800 30px ${SANS}`;
+                            ctx.fillText(fitText(displayProjectTitle, titleMaxW), titleStartX, 70);
+                            ctx.fillStyle = '#71717a';
+                            ctx.font = `500 17px ${MONO}`;
+                            ctx.fillText(fitText(currentProject.path, titleMaxW), titleStartX, 96);
+
+                            // 共享 Top 5 模型榜单绘制器（与预览 1:1 保持颜色点、可选进度条、数值、其余汇总胶囊）
+                            const showRows = projModelRows.slice(0, 5);
+                            const restRows = projModelRows.slice(5);
+                            const topMaxPct = Math.max(1, showRows[0]?.pct || 100);
+                            const drawModelList = (
+                              x: number,
+                              startY: number,
+                              width: number,
+                              valMode: 'pct' | 'tok',
+                              showBar: boolean
+                            ) => {
+                              const rowGap = 36;
+                              const valColW = valMode === 'tok' ? 88 : 58;
+                              const barW = showBar ? 74 : 0;
+                              const barGap = showBar ? 16 : 0;
+                              const nameMaxW = Math.max(110, width - 24 - valColW - barW - barGap - 12);
+
+                              showRows.forEach((row, idx) => {
+                                const y = startY + idx * rowGap;
+                                const color = wavePalette[idx % wavePalette.length];
+                                ctx.fillStyle = color;
+                                ctx.beginPath();
+                                ctx.arc(x + 6, y - 5, 4.5, 0, Math.PI * 2);
+                                ctx.fill();
+
+                                ctx.fillStyle = '#e4e4e7';
+                                ctx.font = `500 16px ${MONO}`;
+                                ctx.textAlign = 'left';
+                                ctx.fillText(fitModelName(row.model, nameMaxW), x + 20, y);
+
+                                if (showBar) {
+                                  const bx = x + width - valColW - barW - 14;
+                                  const by = y - 8;
+                                  drawRoundRect(bx, by, barW, 6, 3);
+                                  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+                                  ctx.fill();
+                                  const fillW = Math.max(8, Math.round((row.pct / topMaxPct) * barW));
+                                  drawRoundRect(bx, by, fillW, 6, 3);
+                                  ctx.fillStyle = color;
+                                  ctx.fill();
+                                }
+
+                                ctx.fillStyle = '#d4d4d8';
+                                ctx.font = `700 16px ${MONO}`;
+                                ctx.textAlign = 'right';
+                                ctx.fillText(
+                                  valMode === 'tok' ? fmtTok(row.tot) : `${row.pct.toFixed(0)}%`,
+                                  x + width,
+                                  y
+                                );
+                                ctx.textAlign = 'left';
+                              });
+
+                              if (restRows.length > 0) {
+                                const y = startY + showRows.length * rowGap + 4;
+                                const restPct = restRows.reduce((s, r) => s + r.pct, 0);
+                                const restTok = restRows.reduce((s, r) => s + r.tot, 0);
+                                drawRoundRect(x, y - 22, width, 30, 8);
+                                ctx.fillStyle = 'rgba(255, 255, 255, 0.055)';
+                                ctx.fill();
+                                ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+                                ctx.lineWidth = 1;
+                                ctx.stroke();
+
+                                ctx.fillStyle = '#a1a1aa';
+                                ctx.font = `500 14.5px ${MONO}`;
+                                ctx.textAlign = 'left';
+                                ctx.fillText(`✦ +${restRows.length} ${tUi(lang, 'stats_more_models')}`, x + 12, y - 2);
+                                ctx.fillStyle = '#e4e4e7';
+                                ctx.font = `600 14.5px ${MONO}`;
+                                ctx.textAlign = 'right';
+                                ctx.fillText(
+                                  valMode === 'tok' ? fmtTok(restTok) : `${restPct.toFixed(1)}%`,
+                                  x + width - 12,
+                                  y - 2
+                                );
+                                ctx.textAlign = 'left';
+                              }
+                            };
+
+                            if (shareTemplate === 'matrix') {
+                              // ========================================================
+                              // 模板 4：暗夜矩阵 (1:1 双栏布局 + 完整时间段列头 + 右侧 2x2 KPI & 榜单)
+                              // ========================================================
+                              const rowCnt = Math.max(1, adaptiveMatrix.heat.length);
+                              const colCnt = Math.max(1, adaptiveMatrix.colLabels.length || 6);
+                              const labelW = useSessionSliceMatrix ? 132 : 76;
+                              const gap = 10;
+                              const gridX = 56 + labelW + 12;
+                              const gridAvailW = 772 - gridX;
+                              const cellW = Math.floor((gridAvailW - (colCnt - 1) * gap) / colCnt);
+                              const cellH = rowCnt <= 6 ? 50 : 42;
+                              const headerH = 30;
+                              const totalGridH = headerH + rowCnt * cellH + (rowCnt - 1) * gap;
+                              const gridTopY = Math.round(376 - totalGridH / 2);
+
+                              // 顶部时间段 / 时序切片列头 (00:00, 01:15, ... 或 00h, 04h, ...)
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.font = `600 15px ${MONO}`;
+                              ctx.textAlign = 'center';
+                              adaptiveMatrix.colLabels.forEach((colLabel, cIdx) => {
+                                const cxCell = gridX + cIdx * (cellW + gap) + cellW / 2;
+                                ctx.fillText(fitText(colLabel, cellW + 4), cxCell, gridTopY + 14);
+                              });
+
+                              // 矩阵每行标签与热力格
+                              adaptiveMatrix.heat.forEach((row, rIdx) => {
+                                const ry = gridTopY + headerH + rIdx * (cellH + gap);
+                                ctx.textAlign = 'right';
+                                ctx.fillStyle = '#a1a1aa';
+                                ctx.font = `500 15px ${MONO}`;
+                                ctx.fillText(
+                                  fitText(adaptiveMatrix.rowLabels[rIdx] || '', labelW),
+                                  gridX - 12,
+                                  ry + cellH / 2 + 5
+                                );
+
+                                ctx.textAlign = 'center';
+                                row.forEach((val, cIdx) => {
+                                  const x = gridX + cIdx * (cellW + gap);
+                                  ctx.fillStyle =
+                                    val >= 80
+                                      ? '#fbbf24'
+                                      : val >= 60
+                                      ? '#a3e635'
+                                      : val >= 40
+                                      ? '#34d399'
+                                      : val >= 15
+                                      ? '#6366f1'
+                                      : 'rgba(255, 255, 255, 0.06)';
+                                  drawRoundRect(x, ry, cellW, cellH, 10);
+                                  ctx.fill();
+
+                                  ctx.fillStyle = val >= 40 ? '#09090b' : val >= 15 ? '#ffffff' : '#52525b';
+                                  ctx.font = `700 17px ${MONO}`;
+                                  ctx.fillText(
+                                    val > 0 ? String(val).padStart(2, '0') : '·',
+                                    x + cellW / 2,
+                                    ry + cellH / 2 + 6
+                                  );
+                                });
+                              });
+                              ctx.textAlign = 'left';
+
+                              // 右侧 2×2 核心 KPI（上下细分割线）+ 模型占比榜单
+                              const rx = 812;
+                              const rw = W - 56 - rx;
+                              const col2X = rx + Math.round(rw * 0.52);
+
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                              ctx.lineWidth = 1.2;
+                              ctx.beginPath();
+                              ctx.moveTo(rx, 148);
+                              ctx.lineTo(W - 56, 148);
+                              ctx.moveTo(rx, 336);
+                              ctx.lineTo(W - 56, 336);
+                              ctx.stroke();
+
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `600 15px ${MONO}`;
+                              ctx.fillText(`✦ ${tUi(lang, 'stats_total_power')}`, rx, 178);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 34px ${MONO}`;
+                              ctx.fillText(fmtTok(currentProject.totalTokens), rx, 218);
+
+                              ctx.fillStyle = '#fbbf24';
+                              ctx.font = `600 15px ${MONO}`;
+                              ctx.fillText(`● ${tUi(lang, 'stats_cache_rate_short')}`, col2X, 178);
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `900 34px ${MONO}`;
+                              ctx.fillText(`${projCacheRate.toFixed(1)}%`, col2X, 218);
+
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.font = `500 15px ${MONO}`;
+                              ctx.fillText(tUi(lang, 'stats_active_time'), rx, 268);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `700 23px ${MONO}`;
+                              ctx.fillText(`${estHrsInt}h ${estMinsInt}m`, rx, 300);
+
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.font = `500 15px ${MONO}`;
+                              ctx.fillText(tUi(lang, 'stats_sess_and_steps'), col2X, 268);
+                              ctx.fillStyle = '#a5b4fc';
+                              ctx.font = `700 23px ${MONO}`;
+                              ctx.fillText(
+                                `${currentProject.conversationCount} · ${currentProject.totalSteps.toLocaleString()}`,
+                                col2X,
+                                300
+                              );
+
+                              drawModelList(rx, 376, rw, 'pct', false);
+                            } else if (shareTemplate === 'hexcore') {
+                              // ========================================================
+                              // 模板 3：蜂巢热核 (1:1 双栏布局 + 大蜂巢描边 + 右侧双 KPI & Token 条)
+                              // ========================================================
+                              const hcx = 340;
+                              const hcy = 376;
+                              const hexR = 25;
+                              const dx = hexR * 1.78;
+                              const dy = hexR * 1.54;
+                              for (let row = -4; row <= 4; row++) {
+                                for (let col = -4; col <= 4; col++) {
+                                  const hx = hcx + col * dx + (Math.abs(row) % 2 === 1 ? dx / 2 : 0);
+                                  const hy = hcy + row * dy;
+                                  const dist = Math.hypot(hx - hcx, hy - hcy);
+                                  if (dist > 218) continue;
+                                  const ang = (Math.atan2(hy - hcy, hx - hcx) + Math.PI * 2.5) % (Math.PI * 2);
+                                  const distRatio = dist / 218;
+                                  const sec32 = Math.floor((ang / (Math.PI * 2)) * PULSE_COUNT) % PULSE_COUNT;
+                                  const prev32 = (sec32 + PULSE_COUNT - 1) % PULSE_COUNT;
+                                  const pNorm = pulseBars32[sec32].norm * 0.65 + pulseBars32[prev32].norm * 0.35;
+                                  const cFac = 0.62 + 0.38 * Math.min(1, projCacheRate / 100);
+                                  const rDec = Math.pow(Math.max(0, 1 - distRatio * 0.94), 0.85);
+                                  const heat = Math.min(1, rDec * cFac * (0.68 + 0.54 * pNorm));
+
+                                  let fill = '#181c30';
+                                  let alpha = 0.55;
+                                  if (heat >= 0.7) {
+                                    fill = '#facc15';
+                                    alpha = 0.98;
+                                  } else if (heat >= 0.52) {
+                                    fill = '#ef4444';
+                                    alpha = 0.93;
+                                  } else if (heat >= 0.34) {
+                                    fill = '#9f1239';
+                                    alpha = 0.86;
+                                  } else if (heat >= 0.18) {
+                                    fill = '#312e81';
+                                    alpha = 0.78;
+                                  }
+
+                                  ctx.save();
+                                  ctx.globalAlpha = alpha;
+                                  ctx.fillStyle = fill;
+                                  ctx.beginPath();
+                                  for (let k = 0; k < 6; k++) {
+                                    const a = ((60 * k - 30) * Math.PI) / 180;
+                                    const px = hx + (hexR - 2.2) * Math.cos(a);
+                                    const py = hy + (hexR - 2.2) * Math.sin(a);
+                                    if (k === 0) ctx.moveTo(px, py);
+                                    else ctx.lineTo(px, py);
+                                  }
+                                  ctx.closePath();
+                                  ctx.fill();
+                                  ctx.globalAlpha = 1;
+                                  ctx.strokeStyle = '#07080c';
+                                  ctx.lineWidth = 3;
+                                  ctx.stroke();
+                                  ctx.restore();
+                                }
+                              }
+
+                              const rx = 656;
+                              const rw = W - 56 - rx;
+                              const col2X = rx + Math.round(rw * 0.5);
+
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `600 16px ${MONO}`;
+                              ctx.fillText(`✦ ${tUi(lang, 'stats_total_tokens_upper')}`, rx, 174);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(fmtTok(currentProject.totalTokens), rx, 226);
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `600 16px ${MONO}`;
+                              ctx.fillText(`↑${projCacheRate.toFixed(1)}% ${tUi(lang, 'stats_cache')}`, rx, 256);
+
+                              ctx.fillStyle = '#fbbf24';
+                              ctx.font = `600 16px ${MONO}`;
+                              ctx.fillText(`● ${tUi(lang, 'stats_active_time')}`, col2X, 174);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(`${estHrsInt}h ${estMinsInt}m`, col2X, 226);
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.font = `500 15.5px ${MONO}`;
+                              const sessStepsText = `${currentProject.conversationCount} ${tUi(lang, 'stats_unit_sessions')} · ${currentProject.totalSteps.toLocaleString()} ${tUi(lang, 'stats_unit_steps')}`;
+                              ctx.fillText(fitText(sessStepsText, W - 56 - col2X), col2X, 256);
+
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                              ctx.lineWidth = 1.2;
+                              ctx.beginPath();
+                              ctx.moveTo(rx, 290);
+                              ctx.lineTo(W - 56, 290);
+                              ctx.stroke();
+
+                              drawModelList(rx, 338, rw, 'tok', true);
+                            } else if (shareTemplate === 'radial') {
+                              // ========================================================
+                              // 模板 2：放射光谱 (1:1 左 Cache Hit + 进度条榜单 / 中 32 束光谱 / 右耗时与步数)
+                              // ========================================================
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `600 17px ${MONO}`;
+                              ctx.fillText(`● ${tUi(lang, 'stats_cache_hit_upper')}`, 56, 170);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 46px ${MONO}`;
+                              ctx.fillText(`${projCacheRate.toFixed(1)}%`, 56, 224);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 16px ${MONO}`;
+                              ctx.fillText(`${tUi(lang, 'stats_reused')} ${fmtTok(projCache)}`, 56, 252);
+
+                              drawModelList(56, 316, 380, 'pct', true);
+
+                              const rcx = 664;
+                              const rcy = 376;
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
                               ctx.lineWidth = 1.5;
                               ctx.setLineDash([4, 8]);
                               ctx.beginPath();
-                              ctx.arc(cx, cy, 198, 0, Math.PI * 2);
+                              ctx.arc(rcx, rcy, 194, 0, Math.PI * 2);
                               ctx.stroke();
                               ctx.setLineDash([]);
+
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+                              ctx.lineWidth = 1.2;
+                              ctx.beginPath();
+                              ctx.arc(rcx, rcy, 135, 0, Math.PI * 2);
+                              ctx.stroke();
+
                               pulseBars32.forEach((bar, i) => {
                                 const ang = (((i * 360) / PULSE_COUNT - 90) * Math.PI) / 180;
-                                const r1 = 90;
-                                const r2 = r1 + bar.norm * 102;
+                                const r1 = 88;
+                                const r2 = r1 + bar.norm * 98;
                                 ctx.strokeStyle = bar.color;
                                 ctx.shadowColor = bar.color;
                                 ctx.shadowBlur = 10;
@@ -3803,98 +4186,124 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                                 ctx.lineCap = 'round';
                                 ctx.globalAlpha = 0.72 + bar.norm * 0.28;
                                 ctx.beginPath();
-                                ctx.moveTo(cx + r1 * Math.cos(ang), cy + r1 * Math.sin(ang));
-                                ctx.lineTo(cx + r2 * Math.cos(ang), cy + r2 * Math.sin(ang));
+                                ctx.moveTo(rcx + r1 * Math.cos(ang), rcy + r1 * Math.sin(ang));
+                                ctx.lineTo(rcx + r2 * Math.cos(ang), rcy + r2 * Math.sin(ang));
                                 ctx.stroke();
                               });
                               ctx.shadowBlur = 0;
                               ctx.globalAlpha = 1;
+
                               ctx.fillStyle = '#07080c';
                               ctx.beginPath();
-                              ctx.arc(cx, cy, 74, 0, Math.PI * 2);
+                              ctx.arc(rcx, rcy, 74, 0, Math.PI * 2);
                               ctx.fill();
-                              ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
                               ctx.lineWidth = 2;
                               ctx.stroke();
+
                               ctx.fillStyle = '#ffffff';
                               ctx.textAlign = 'center';
-                              ctx.font = '900 30px ui-monospace, Menlo, monospace';
-                              ctx.fillText(fmtTok(currentProject.totalTokens), cx, cy + 4);
+                              ctx.font = `900 30px ${MONO}`;
+                              ctx.fillText(fmtTok(currentProject.totalTokens), rcx, rcy + 4);
                               ctx.fillStyle = '#71717a';
-                              ctx.font = '600 15px ui-monospace, Menlo, monospace';
-                              ctx.fillText('TOKENS', cx, cy + 28);
-                              ctx.textAlign = 'left';
-                            } else if (shareTemplate === 'hexcore') {
-                              const hexR = 20;
-                              const dx = hexR * 1.78;
-                              const dy = hexR * 1.54;
-                              for (let row = -4; row <= 4; row++) {
-                                for (let col = -4; col <= 4; col++) {
-                                  const hx = cx + col * dx + (Math.abs(row) % 2 === 1 ? dx / 2 : 0);
-                                  const hy = cy + row * dy;
-                                  const dist = Math.hypot(hx - cx, hy - cy);
-                                  if (dist > 175) continue;
-                                  const ang = (Math.atan2(hy - cy, hx - cx) + Math.PI * 2.5) % (Math.PI * 2);
-                                  const distRatio = dist / 175;
-                                  const sec32 = Math.floor((ang / (Math.PI * 2)) * PULSE_COUNT) % PULSE_COUNT;
-                                  const prev32 = (sec32 + PULSE_COUNT - 1) % PULSE_COUNT;
-                                  const pNorm = pulseBars32[sec32].norm * 0.65 + pulseBars32[prev32].norm * 0.35;
-                                  const cFac = 0.62 + 0.38 * Math.min(1, projCacheRate / 100);
-                                  const rDec = Math.pow(Math.max(0, 1 - distRatio * 0.94), 0.85);
-                                  const heat = Math.min(1, rDec * cFac * (0.68 + 0.54 * pNorm));
-                                  ctx.fillStyle =
-                                    heat >= 0.70 ? '#facc15' : heat >= 0.52 ? '#ef4444' : heat >= 0.34 ? '#9f1239' : heat >= 0.18 ? '#312e81' : '#181c30';
-                                  ctx.beginPath();
-                                  for (let k = 0; k < 6; k++) {
-                                    const a = ((60 * k - 30) * Math.PI) / 180;
-                                    const px = hx + (hexR - 2) * Math.cos(a);
-                                    const py = hy + (hexR - 2) * Math.sin(a);
-                                    if (k === 0) ctx.moveTo(px, py);
-                                    else ctx.lineTo(px, py);
-                                  }
-                                  ctx.closePath();
-                                  ctx.fill();
-                                }
-                              }
-                            } else if (shareTemplate === 'matrix') {
-                              const rowCnt = Math.max(1, adaptiveMatrix.heat.length);
-                              const cellW = 54;
-                              const cellH = rowCnt <= 6 ? 42 : 36;
-                              const gap = 8;
-                              const startX = cx - (6 * cellW + 5 * gap) / 2 + 24;
-                              const startY = cy - (rowCnt * cellH + (rowCnt - 1) * gap) / 2;
-                              adaptiveMatrix.heat.forEach((row, rIdx) => {
-                                const ry = startY + rIdx * (cellH + gap);
-                                ctx.textAlign = 'right';
-                                ctx.fillStyle = '#71717a';
-                                ctx.font = '500 13px ui-monospace, Menlo, monospace';
-                                ctx.fillText(adaptiveMatrix.rowLabels[rIdx] || '', startX - 10, ry + cellH / 2 + 5);
-                                ctx.textAlign = 'center';
-                                row.forEach((val, cIdx) => {
-                                  const x = startX + cIdx * (cellW + gap);
-                                  ctx.fillStyle =
-                                    val >= 80 ? '#fbbf24' : val >= 60 ? '#a3e635' : val >= 40 ? '#34d399' : val >= 15 ? '#6366f1' : 'rgba(255,255,255,0.06)';
-                                  ctx.beginPath();
-                                  ctx.roundRect(x, ry, cellW, cellH, 8);
-                                  ctx.fill();
-                                  ctx.fillStyle = val >= 40 ? '#09090b' : val >= 15 ? '#ffffff' : '#52525b';
-                                  ctx.font = '700 16px ui-monospace, Menlo, monospace';
-                                  ctx.fillText(val > 0 ? String(val).padStart(2, '0') : '·', x + cellW / 2, ry + cellH / 2 + 6);
-                                });
-                              });
+                              ctx.font = `600 15px ${MONO}`;
+                              ctx.fillText('TOKENS', rcx, rcy + 28);
+
+                              ctx.textAlign = 'right';
+                              ctx.fillStyle = '#fbbf24';
+                              ctx.font = `600 17px ${MONO}`;
+                              ctx.fillText(`✦ ${tUi(lang, 'stats_active_time_upper')}`, W - 56, 212);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(`${estHrsInt}h ${estMinsInt}m`, W - 56, 264);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 16px ${MONO}`;
+                              ctx.fillText(
+                                tUi(lang, 'stats_archived_sessions_count', { count: currentProject.conversationCount }),
+                                W - 56,
+                                294
+                              );
+
+                              ctx.fillStyle = '#38bdf8';
+                              ctx.font = `600 17px ${MONO}`;
+                              ctx.fillText(`◆ ${tUi(lang, 'stats_steps_label')}`, W - 56, 434);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(currentProject.totalSteps.toLocaleString(), W - 56, 486);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 16px ${MONO}`;
+                              ctx.fillText(tUi(lang, 'stats_avg_steps_fmt', { count: avgStepsPerSession }), W - 56, 516);
                               ctx.textAlign = 'left';
                             } else {
-                              // 6 维实测遥测极坐标谐波玫瑰
-                              [168, 114, 62].forEach((r) => {
-                                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                              // ========================================================
+                              // 模板 1：极坐标波纹 (1:1 补齐 6 维径向轴线 + TOK/HIT/CTX/TPS/OUT/REQ 标签)
+                              // ========================================================
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `600 17px ${MONO}`;
+                              ctx.fillText(`● ${tUi(lang, 'stats_total_tokens_upper')}`, 56, 162);
+                              const totalTokStr = fmtTok(currentProject.totalTokens);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(totalTokStr, 56, 212);
+                              const totalTokW = ctx.measureText(totalTokStr).width;
+                              ctx.fillStyle = '#34d399';
+                              ctx.font = `700 18px ${MONO}`;
+                              ctx.fillText(`↑${projCacheRate.toFixed(0)}%`, 56 + totalTokW + 12, 210);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 16px ${MONO}`;
+                              ctx.fillText(`${tUi(lang, 'stats_reused')} ${fmtTok(projCache)}`, 56, 240);
+
+                              drawModelList(56, 290, 372, 'pct', false);
+
+                              // 左下 Input / Output
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 15px ${SANS}`;
+                              ctx.fillText(tUi(lang, 'stats_net_input'), 56, 566);
+                              ctx.fillText(tUi(lang, 'stats_answer_output'), 196, 566);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `700 23px ${MONO}`;
+                              ctx.fillText(fmtTok(projIn), 56, 596);
+                              ctx.fillText(fmtTok(projOut), 196, 596);
+
+                              // 中央 6 维极坐标雷达 + 径向轴线 + 6 轴标签
+                              const pcx = 654;
+                              const pcy = 374;
+                              [166, 114, 62].forEach((r, idx) => {
+                                ctx.strokeStyle =
+                                  idx === 0
+                                    ? 'rgba(255, 255, 255, 0.14)'
+                                    : idx === 1
+                                    ? 'rgba(255, 255, 255, 0.08)'
+                                    : 'rgba(255, 255, 255, 0.12)';
                                 ctx.lineWidth = 1.5;
                                 ctx.beginPath();
-                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.arc(pcx, pcy, r, 0, Math.PI * 2);
                                 ctx.stroke();
                               });
+
+                              [0, 60, 120, 180, 240, 300].forEach((deg, idx) => {
+                                const rad = ((deg - 90) * Math.PI) / 180;
+                                ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+                                ctx.lineWidth = 1.2;
+                                ctx.beginPath();
+                                ctx.moveTo(pcx + 62 * Math.cos(rad), pcy + 62 * Math.sin(rad));
+                                ctx.lineTo(pcx + 166 * Math.cos(rad), pcy + 166 * Math.sin(rad));
+                                ctx.stroke();
+
+                                ctx.fillStyle = '#71717a';
+                                ctx.font = `600 15px ${MONO}`;
+                                ctx.textAlign = 'center';
+                                ctx.fillText(
+                                  polarAxisLabels[idx],
+                                  pcx + 190 * Math.cos(rad),
+                                  pcy + 190 * Math.sin(rad) + 5
+                                );
+                              });
+                              ctx.textAlign = 'left';
+
                               [...projModelRows.slice(0, 6)].reverse().forEach((row, revIdx, arr) => {
                                 const mIdx = arr.length - 1 - revIdx;
-                                const pts = buildPolarWavePoints(row, mIdx, cx, cy, 56, 166);
+                                const pts = buildPolarWavePoints(row, mIdx, pcx, pcy, 56, 164);
                                 const N = pts.length;
                                 ctx.strokeStyle = wavePalette[mIdx % wavePalette.length];
                                 ctx.lineWidth = mIdx < 3 ? 4.8 : 3.4;
@@ -3914,62 +4323,77 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                                 ctx.shadowBlur = 0;
                                 ctx.globalAlpha = 1;
                               });
-                              ctx.strokeStyle = 'rgba(251,191,36,0.24)';
+
+                              ctx.strokeStyle = 'rgba(251, 191, 36, 0.24)';
                               ctx.lineWidth = 2;
                               ctx.beginPath();
-                              ctx.arc(cx, cy, 48, 0, Math.PI * 2);
+                              ctx.arc(pcx, pcy, 48, 0, Math.PI * 2);
                               ctx.stroke();
 
                               ctx.fillStyle = '#050507';
                               ctx.beginPath();
-                              ctx.arc(cx, cy, 43, 0, Math.PI * 2);
+                              ctx.arc(pcx, pcy, 43, 0, Math.PI * 2);
                               ctx.fill();
 
                               if (logoImg) {
                                 ctx.save();
                                 ctx.beginPath();
-                                ctx.arc(cx, cy, 42, 0, Math.PI * 2);
+                                ctx.arc(pcx, pcy, 42, 0, Math.PI * 2);
                                 ctx.clip();
-                                ctx.drawImage(logoImg, cx - 44, cy - 44, 88, 88);
+                                ctx.drawImage(logoImg, pcx - 44, pcy - 44, 88, 88);
                                 ctx.restore();
                               }
 
-                              ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
                               ctx.lineWidth = 2;
                               ctx.beginPath();
-                              ctx.arc(cx, cy, 42.5, 0, Math.PI * 2);
+                              ctx.arc(pcx, pcy, 42.5, 0, Math.PI * 2);
                               ctx.stroke();
+
+                              // 右侧数据列
+                              ctx.textAlign = 'right';
+                              ctx.fillStyle = '#fbbf24';
+                              ctx.font = `600 17px ${MONO}`;
+                              ctx.fillText(`✦ ${tUi(lang, 'stats_active_time_upper')}`, W - 56, 166);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(`${estHrsInt}h ${estMinsInt}m`, W - 56, 216);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 16px ${MONO}`;
+                              ctx.fillText(tUi(lang, 'stats_session_span'), W - 56, 244);
+
+                              ctx.fillStyle = '#c084fc';
+                              ctx.font = `600 17px ${MONO}`;
+                              ctx.fillText(`◆ ${tUi(lang, 'stats_steps_label')}`, W - 56, 344);
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `900 44px ${MONO}`;
+                              ctx.fillText(currentProject.totalSteps.toLocaleString(), W - 56, 394);
+                              ctx.fillStyle = '#71717a';
+                              ctx.font = `500 16px ${MONO}`;
+                              ctx.fillText(tUi(lang, 'stats_avg_steps_fmt', { count: avgStepsPerSession }), W - 56, 422);
+
+                              ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                              ctx.lineWidth = 1.2;
+                              ctx.beginPath();
+                              ctx.moveTo(944, 510);
+                              ctx.lineTo(W - 56, 510);
+                              ctx.stroke();
+
+                              ctx.textAlign = 'left';
+                              ctx.fillStyle = '#a1a1aa';
+                              ctx.font = `500 17px ${MONO}`;
+                              ctx.fillText(tUi(lang, 'stats_archived_sessions'), 944, 548);
+                              ctx.fillText(tUi(lang, 'stats_used_models'), 944, 584);
+                              ctx.textAlign = 'right';
+                              ctx.fillStyle = '#ffffff';
+                              ctx.font = `700 17px ${MONO}`;
+                              ctx.fillText(String(currentProject.conversationCount), W - 56, 548);
+                              ctx.fillText(String(projModelRows.length), W - 56, 584);
+                              ctx.textAlign = 'left';
                             }
 
-                            // 右侧数据列
-                            ctx.textAlign = 'right';
-                            ctx.fillStyle = '#fbbf24';
-                            ctx.font = '600 18px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`✦ ${tUi(lang, 'stats_active_time_upper')}`, W - 56, 178);
-                            ctx.fillStyle = '#ffffff';
-                            ctx.font = '900 44px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`${estHrsInt}h ${estMinsInt}m`, W - 56, 228);
-                            ctx.fillStyle = '#71717a';
-                            ctx.font = '500 16px ui-monospace, Menlo, monospace';
-                            ctx.fillText(tUi(lang, 'stats_session_span'), W - 56, 256);
-
-                            ctx.fillStyle = '#c084fc';
-                            ctx.font = '600 18px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`◆ ${tUi(lang, 'stats_steps_label')}`, W - 56, 354);
-                            ctx.fillStyle = '#ffffff';
-                            ctx.font = '900 44px ui-monospace, Menlo, monospace';
-                            ctx.fillText(currentProject.totalSteps.toLocaleString(), W - 56, 404);
-                            ctx.fillStyle = '#71717a';
-                            ctx.font = '500 16px ui-monospace, Menlo, monospace';
-                            ctx.fillText(tUi(lang, 'stats_avg_steps_fmt', { count: avgStepsPerSession }), W - 56, 432);
-
-                            ctx.fillStyle = '#a1a1aa';
-                            ctx.font = '500 18px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`${tUi(lang, 'stats_archived_sessions')}   ${currentProject.conversationCount}`, W - 56, 558);
-                            ctx.fillText(`${tUi(lang, 'stats_used_models')}   ${projModelRows.length}`, W - 56, 594);
-
-                            // 底部水印条
-                            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                            // 底部水印条（与当前模板预览 1:1 对齐）
+                            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
                             ctx.lineWidth = 1.5;
                             ctx.beginPath();
                             ctx.moveTo(56, H - 64);
@@ -3977,8 +4401,8 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                             ctx.stroke();
                             ctx.textAlign = 'left';
                             ctx.fillStyle = '#71717a';
-                            ctx.font = '500 17px ui-monospace, Menlo, monospace';
-                            ctx.fillText(`Antigravity Local Telemetry · ${posterRangeBadge}`, 56, H - 30);
+                            ctx.font = `500 17px ${MONO}`;
+                            ctx.fillText(badgeMeta.footer, 56, H - 30);
                             ctx.textAlign = 'right';
                             ctx.fillStyle = '#d4d4d8';
                             ctx.fillText('Antigravity Manager', W - 56, H - 30);
@@ -4038,7 +4462,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                               </button>
                               <button
                                 onClick={handleCopyImage}
-                                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+                                className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
                               >
                                 {copiedShare ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                                 <span>{copiedShare ? tUi(lang, 'stats_image_copied') : tUi(lang, 'stats_copy_poster')}</span>
@@ -4093,8 +4517,8 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
         return (
           <div className="flex flex-col gap-3 animate-in fade-in-30 duration-200">
             {/* 模型筛选 Pill 条：支持「全部模型」或单个模型按时段查看缓存率与 tok/s 曲线 */}
-            <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-x-auto no-scrollbar fade-mask-right pr-5">
                 <button
                   onClick={() => setSelectedModelFilter('__ALL__')}
                   className={`px-2.5 py-1 rounded-lg text-[10.5px] font-semibold shrink-0 transition-all ${
@@ -4114,7 +4538,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       onClick={() => setSelectedModelFilter(m.requestedModel)}
                       className={`px-2.5 py-1 rounded-lg text-[10.5px] font-mono font-semibold shrink-0 flex items-center gap-1.5 transition-all ${
                         isSel
-                          ? 'bg-indigo-600 text-white shadow-xs'
+                          ? 'bg-blue-600 text-white shadow-xs'
                           : 'bg-gray-100/80 dark:bg-white/[0.04] text-gray-700 dark:text-zinc-300 hover:bg-gray-200/70 dark:hover:bg-white/[0.08]'
                       }`}
                     >
@@ -4317,7 +4741,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                   ))}
                 </div>
 
-                <div className="flex flex-col gap-1.5 max-h-[168px] overflow-y-auto pr-0.5">
+                <div className="mini-scroll fade-mask-bottom flex flex-col gap-1.5 max-h-[168px] overflow-y-auto pr-1 pb-3">
                   {models.map((m, idx) => {
                     const color = palette[idx % palette.length];
                     const isSel = selectedModelFilter === m.requestedModel;
@@ -4674,12 +5098,12 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
             <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-xl p-2 px-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 {/* 视图粒度切换：单步请求流 | 按会话分组 */}
-                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.05] border border-gray-200/50 dark:border-white/[0.04]">
                   <button
                     onClick={() => setLedgerMode('requests')}
                     className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
                       ledgerMode === 'requests'
-                        ? 'bg-blue-600 text-white shadow-2xs'
+                        ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-2xs dark:ring-1 dark:ring-white/[0.08]'
                         : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                     }`}
                   >
@@ -4689,7 +5113,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                     onClick={() => setLedgerMode('sessions')}
                     className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
                       ledgerMode === 'sessions'
-                        ? 'bg-blue-600 text-white shadow-2xs'
+                        ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-2xs dark:ring-1 dark:ring-white/[0.08]'
                         : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                     }`}
                   >
@@ -4697,7 +5121,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                   </button>
                 </div>
 
-                <div className="relative w-48">
+                <div className="relative w-56">
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
                     type="text"
@@ -4714,11 +5138,13 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 </div>
 
                 {/* 状态筛选：全部状态 | 掉缓存 */}
-                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.05] border border-gray-200/50 dark:border-white/[0.04]">
                   <button
                     onClick={() => setLedgerCacheFilter('all')}
                     className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
-                      ledgerCacheFilter === 'all' ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                      ledgerCacheFilter === 'all'
+                        ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs dark:ring-1 dark:ring-white/[0.08]'
+                        : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                     }`}
                   >
                     {tUi(lang, 'stats_ledger_all_status')}
@@ -4726,7 +5152,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                   <button
                     onClick={() => setLedgerCacheFilter('miss')}
                     className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
-                      ledgerCacheFilter === 'miss' ? 'bg-amber-500 text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                      ledgerCacheFilter === 'miss' ? 'bg-amber-500 text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-amber-600 dark:hover:text-amber-400'
                     }`}
                   >
                     {tUi(lang, 'stats_ledger_cache_miss')}
@@ -4734,11 +5160,11 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                 </div>
 
                 {/* 按真实工作区筛选 */}
-                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-white/[0.04]">
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-gray-100/90 dark:bg-white/[0.05] border border-gray-200/50 dark:border-white/[0.04]">
                   <button
                     onClick={() => setWorkspaceFilter('all')}
                     className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
-                      workspaceFilter === 'all' ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                      workspaceFilter === 'all' ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs dark:ring-1 dark:ring-white/[0.08]' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                     }`}
                   >
                     {tUi(lang, 'stats_ledger_all_workspaces')}
@@ -4748,7 +5174,7 @@ export const Stats: React.FC<StatsProps> = ({ lang }) => {
                       key={p.workspaceName}
                       onClick={() => setWorkspaceFilter(p.workspaceName)}
                       className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
-                        workspaceFilter === p.workspaceName ? 'bg-white dark:bg-[#202126] text-blue-600 dark:text-blue-400 font-semibold shadow-2xs' : 'text-gray-500 dark:text-zinc-400'
+                        workspaceFilter === p.workspaceName ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs dark:ring-1 dark:ring-white/[0.08]' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800 dark:hover:text-zinc-200'
                       }`}
                     >
                       {p.workspaceName}

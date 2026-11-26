@@ -141,7 +141,7 @@ const QuotaPoolDisplay: React.FC<QuotaPoolDisplayProps> = React.memo(({
   }
 
   return (
-    <div className="flex flex-col justify-center gap-2 px-3 py-2 min-h-[48px] h-full rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.06] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+    <div className="flex flex-col justify-center gap-2 px-3 py-2 min-h-[48px] h-full rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
       {rows.length === 0 ? (
         <div className="flex items-center gap-2.5">
           <div className="w-[72px] shrink-0 flex items-center gap-1.5 leading-none">
@@ -1841,7 +1841,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                                 }
                               >
                                 {isSwitching ? (
-                                  <RefreshCw className="w-2.5 h-2.5 animate-spin text-blue-500" />
+                                  <RefreshCw className="w-2.5 h-2.5 animate-spin text-white" />
                                 ) : (
                                   <span className="flex items-center gap-0.5">
                                     {isActive && (
@@ -2029,8 +2029,8 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   </div>
                 </div>
 
-                {/* 卡片中部：数码像素晶格胶囊配额池 或 异常告警 */}
-                <div className="flex flex-col gap-1 py-0.5">
+                {/* 卡片中部：数码像素晶格胶囊配额池 或 异常告警（flex-1 + grid-rows-2 确保同行单/双窗口卡片等高对称） */}
+                <div className="flex-1 flex flex-col justify-center gap-1 py-0.5">
                   {acc.isForbidden ? (
                     <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 flex flex-col gap-1.5">
                       <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-[11px] font-semibold">
@@ -2077,7 +2077,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex-1 grid grid-rows-2 gap-1.5">
                       <QuotaPoolDisplay pool="gemini" quota={acc.geminiQuota} lang={lang} />
                       <QuotaPoolDisplay pool="claude" quota={acc.claudeQuota} lang={lang} />
                     </div>
@@ -2118,7 +2118,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                           }
                         >
                           {isSwitching ? (
-                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-blue-500" />
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-white" />
                           ) : (
                             <span className="flex items-center gap-0.5">
                               {isActive && (
@@ -2356,7 +2356,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   </div>
                 </div>
 
-                <div className="p-3 bg-gray-50 dark:bg-zinc-900 rounded-xl text-xs font-mono text-gray-600 dark:text-zinc-400 max-h-40 overflow-y-auto">
+                <div className="mini-scroll p-3 bg-gray-50 dark:bg-zinc-900 rounded-xl text-xs font-mono text-gray-600 dark:text-zinc-400 max-h-40 overflow-y-auto">
                   {JSON.stringify(accounts.map((a) => ({ id: a.id, email: a.email, alias: a.alias, tier: a.tier, tags: a.tags })), null, 2)}
                 </div>
 
@@ -2508,7 +2508,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   {activeModal.account.rawError && (
                     <div className="space-y-1">
                       <span className="text-[10px] text-gray-400 font-mono">{tUi(lang, 'acc_diag_raw')}</span>
-                      <pre className="p-2.5 rounded-lg bg-gray-900 text-gray-200 text-[10px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                      <pre className="mini-scroll p-2.5 rounded-lg bg-gray-900 text-gray-200 text-[10px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
                         {activeModal.account.rawError}
                       </pre>
                     </div>
