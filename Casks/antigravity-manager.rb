@@ -14,10 +14,10 @@ cask "antigravity-manager" do
     app "Antigravity Manager.app"
     binary "#{appdir}/Antigravity Manager.app/Contents/MacOS/am"
 
-    postflight do
-      system_command "/usr/bin/xattr",
-                     args:         ["-rd", "com.apple.quarantine", "#{appdir}/Antigravity Manager.app"],
-                     must_succeed: false
+    postflight_steps do
+      run "/usr/bin/xattr",
+          args:         ["-rd", "com.apple.quarantine", "{{appdir}}/Antigravity Manager.app"],
+          must_succeed: false
     end
 
     zap trash: [
@@ -34,8 +34,8 @@ cask "antigravity-manager" do
     url "https://github.com/lbjlaq/Antigravity-Manager/releases/download/antigravity-manager/Antigravity.Manager_#{arch}.AppImage"
     binary "Antigravity.Manager_#{arch}.AppImage", target: "antigravity-manager"
 
-    preflight do
-      set_permissions "#{staged_path}/Antigravity.Manager_#{arch}.AppImage", "0755"
+    preflight_steps do
+      set_permissions "Antigravity.Manager_{{arch}}.AppImage", "0755"
     end
   end
 end
