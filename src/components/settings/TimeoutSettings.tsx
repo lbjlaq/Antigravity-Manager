@@ -27,6 +27,8 @@ const DEFAULT_STREAM: Required<StreamTimeoutConfig> = {
     initial_ttft_secs: 180,
     transition_secs: 180,
     streaming_sliding_secs: 120,
+    gateway_request_budget_secs: 270,
+    allow_extended_ttft_budget: false,
 };
 
 type DefaultUpload = Omit<Required<UploadTimeoutConfig>, "header_wait_secs" | "http2_keepalive_enabled">;
@@ -59,7 +61,11 @@ type UploadField =
     | "large_body_threshold_mb"
     | "large_body_endpoint_attempts";
 
-type StreamField = "initial_ttft_secs" | "transition_secs" | "streaming_sliding_secs";
+type StreamField =
+    | "initial_ttft_secs"
+    | "transition_secs"
+    | "streaming_sliding_secs"
+    | "gateway_request_budget_secs";
 
 export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
     streamConfig,
@@ -85,6 +91,9 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         initial_ttft_secs: String(streamConfig?.initial_ttft_secs ?? DEFAULT_STREAM.initial_ttft_secs),
         transition_secs: String(streamConfig?.transition_secs ?? DEFAULT_STREAM.transition_secs),
         streaming_sliding_secs: String(streamConfig?.streaming_sliding_secs ?? DEFAULT_STREAM.streaming_sliding_secs),
+        gateway_request_budget_secs: String(
+            streamConfig?.gateway_request_budget_secs ?? DEFAULT_STREAM.gateway_request_budget_secs,
+        ),
     }));
 
     useEffect(() => {
@@ -110,8 +119,16 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
             initial_ttft_secs: String(streamConfig?.initial_ttft_secs ?? DEFAULT_STREAM.initial_ttft_secs),
             transition_secs: String(streamConfig?.transition_secs ?? DEFAULT_STREAM.transition_secs),
             streaming_sliding_secs: String(streamConfig?.streaming_sliding_secs ?? DEFAULT_STREAM.streaming_sliding_secs),
+            gateway_request_budget_secs: String(
+                streamConfig?.gateway_request_budget_secs ?? DEFAULT_STREAM.gateway_request_budget_secs,
+            ),
         });
-    }, [streamConfig?.initial_ttft_secs, streamConfig?.transition_secs, streamConfig?.streaming_sliding_secs]);
+    }, [
+        streamConfig?.initial_ttft_secs,
+        streamConfig?.transition_secs,
+        streamConfig?.streaming_sliding_secs,
+        streamConfig?.gateway_request_budget_secs,
+    ]);
 
     const parseUpload = (field: UploadField): number => {
         const raw = uploadRaw[field];
@@ -128,6 +145,8 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
     };
 
     const http2KeepaliveEnabled = uploadConfig?.http2_keepalive_enabled ?? true;
+    const allowExtendedTtftBudget =
+        streamConfig?.allow_extended_ttft_budget ?? DEFAULT_STREAM.allow_extended_ttft_budget;
 
     const mergedUpload = (overrides: Partial<UploadTimeoutConfig> = {}): UploadTimeoutConfig => ({
         connect_secs: parseUpload("connect_secs"),
@@ -146,6 +165,8 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         initial_ttft_secs: parseStream("initial_ttft_secs"),
         transition_secs: parseStream("transition_secs"),
         streaming_sliding_secs: parseStream("streaming_sliding_secs"),
+        gateway_request_budget_secs: parseStream("gateway_request_budget_secs"),
+        allow_extended_ttft_budget: allowExtendedTtftBudget,
         ...overrides,
     });
 
@@ -172,7 +193,11 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [streamConfig?.initial_ttft_secs]);
+    }, [
+        streamConfig?.initial_ttft_secs,
+        streamConfig?.gateway_request_budget_secs,
+        streamConfig?.allow_extended_ttft_budget,
+    ]);
 
     type EffectiveTimeoutSample = {
         label: string;
@@ -215,6 +240,8 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         streamConfig?.initial_ttft_secs,
         streamConfig?.transition_secs,
         streamConfig?.streaming_sliding_secs,
+        streamConfig?.gateway_request_budget_secs,
+        streamConfig?.allow_extended_ttft_budget,
     ]);
 
     const handleUploadInput = (field: UploadField, text: string) => {
@@ -262,9 +289,16 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
     };
 
     const handleStreamBlur = (field: StreamField) => {
-        if (streamRaw[field] === "" || parseInt(streamRaw[field], 10) <= 0) {
+        const parsed = parseInt(streamRaw[field], 10);
+        if (streamRaw[field] === "" || Number.isNaN(parsed) || parsed <= 0) {
             setStreamRaw((prev) => ({ ...prev, [field]: String(DEFAULT_STREAM[field]) }));
             onStreamChange(mergedStream({ [field]: DEFAULT_STREAM[field] } as Partial<StreamTimeoutConfig>));
+            return;
+        }
+        if (field === "gateway_request_budget_secs") {
+            const clamped = Math.min(Math.max(parsed, 60), 3600);
+            setStreamRaw((prev) => ({ ...prev, [field]: String(clamped) }));
+            onStreamChange(mergedStream({ gateway_request_budget_secs: clamped }));
         }
     };
 
@@ -297,6 +331,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
             initial_ttft_secs: String(DEFAULT_STREAM.initial_ttft_secs),
             transition_secs: String(DEFAULT_STREAM.transition_secs),
             streaming_sliding_secs: String(DEFAULT_STREAM.streaming_sliding_secs),
+            gateway_request_budget_secs: String(DEFAULT_STREAM.gateway_request_budget_secs),
         });
         onUploadChange({ ...DEFAULT_UPLOAD, http2_keepalive_enabled: true });
         onStreamChange({ ...DEFAULT_STREAM });
@@ -603,6 +638,88 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                         (text) => handleStreamInput("streaming_sliding_secs", text),
                         () => handleStreamBlur("streaming_sliding_secs"),
                     ),
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {fieldCard(
+                    <Timer size={14} className="text-amber-500" />,
+                    t("proxy.stream_timeouts.gateway_budget_title", {
+                        defaultValue: "全局请求总预算",
+                    }),
+                    t("proxy.stream_timeouts.gateway_budget_desc", {
+                        defaultValue:
+                            "单条客户端请求在网关内的最大端到端预算（默认 270 秒，抢在 300 秒客户端看门狗前返回结构化 504；范围 60–3600 秒）。",
+                    }),
+                    <>
+                        {numberField(
+                            streamRaw.gateway_request_budget_secs,
+                            DEFAULT_STREAM.gateway_request_budget_secs,
+                            seconds,
+                            (text) => handleStreamInput("gateway_request_budget_secs", text),
+                            () => handleStreamBlur("gateway_request_budget_secs"),
+                        )}
+                        {parseStream("gateway_request_budget_secs") > 270 && !allowExtendedTtftBudget && (
+                            <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-normal">
+                                {t("proxy.stream_timeouts.gateway_budget_capped_hint", {
+                                    defaultValue:
+                                        "超过 270 秒的预算需开启右侧“放开 180s/270s 安全上限”开关才会对运行时与首字等待生效。",
+                                })}
+                            </p>
+                        )}
+                    </>,
+                )}
+                {fieldCard(
+                    <Sparkles size={14} className="text-indigo-500" />,
+                    t("proxy.stream_timeouts.extended_ceiling_title", {
+                        defaultValue: "允许突破 180s/270s 首字安全上限",
+                    }),
+                    t("proxy.stream_timeouts.extended_ceiling_desc", {
+                        defaultValue:
+                            "默认关闭以保护普通 IDE/CLI 客户端免于 180s/300s 看门狗静默断连；仅建议在自建 SSE 保活反代或超长工具调用网关环境下开启。",
+                    }),
+                    <>
+                        <div className="flex items-center justify-between gap-2">
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={allowExtendedTtftBudget}
+                                onClick={() =>
+                                    onStreamChange(
+                                        mergedStream({
+                                            allow_extended_ttft_budget: !allowExtendedTtftBudget,
+                                        }),
+                                    )
+                                }
+                                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer border ${
+                                    allowExtendedTtftBudget
+                                        ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
+                                        : "bg-gray-200/70 dark:bg-base-300/60 text-gray-600 dark:text-gray-400 border-gray-300/70 dark:border-base-300 hover:bg-gray-200 dark:hover:bg-base-300"
+                                }`}
+                            >
+                                <span
+                                    className={`w-2 h-2 rounded-full ${
+                                        allowExtendedTtftBudget
+                                            ? "bg-amber-500"
+                                            : "bg-gray-400 dark:bg-gray-500"
+                                    }`}
+                                />
+                                {allowExtendedTtftBudget
+                                    ? t("proxy.stream_timeouts.extended_ceiling_on", {
+                                          defaultValue: "已放宽（随全局预算生效）",
+                                      })
+                                    : t("proxy.stream_timeouts.extended_ceiling_off", {
+                                          defaultValue: "已关闭（默认 180s/270s 安全线）",
+                                      })}
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-normal">
+                            {t("proxy.stream_timeouts.extended_ceiling_hint", {
+                                defaultValue:
+                                    "保存后立即生效；也可通过 ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS 环境变量覆盖。",
+                            })}
+                        </p>
+                    </>,
                 )}
             </div>
 

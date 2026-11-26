@@ -1041,12 +1041,16 @@ impl UpstreamClient {
             return 15;
         }
 
+        let (base_cap, ceiling_cap) = crate::proxy::pipeline::budget::effective_first_byte_caps_for(
+            stream_cfg,
+            crate::proxy::pipeline::budget::env_gateway_request_budget_secs(),
+        );
         let estimated_tokens = crate::proxy::pipeline::budget::estimated_tokens()
             .unwrap_or_else(|| estimate_payload_tokens(body_len));
         let base = stream_cfg
             .initial_ttft_secs
             .max(adaptive_ttft_secs(estimated_tokens))
-            .clamp(15, MAX_FIRST_BYTE_BUDGET_SECS);
+            .clamp(15, base_cap.max(15));
 
         let offset = media_kind.first_byte_offset_secs();
         // 次要端点增量减半（仅对“加时”方向）；负增量保持原值，
@@ -1056,8 +1060,7 @@ impl UpstreamClient {
         } else {
             offset / 2
         };
-        let value =
-            (base as i64 + scaled_offset).clamp(15, MAX_FIRST_BYTE_CEILING_SECS as i64) as u64;
+        let value = (base as i64 + scaled_offset).clamp(15, ceiling_cap.max(15) as i64) as u64;
         value
     }
 
@@ -1322,20 +1325,29 @@ impl UpstreamClient {
         };
 
         let stream_cfg = crate::proxy::config::get_stream_timeout_config();
+        let env_override = crate::proxy::pipeline::budget::env_gateway_request_budget_secs();
+        let (_, ceiling_cap) = crate::proxy::pipeline::budget::effective_first_byte_caps_for(
+            &stream_cfg,
+            env_override,
+        );
+        let safe_total_cap = crate::proxy::pipeline::budget::effective_gateway_budget_secs_for(
+            &stream_cfg,
+            env_override,
+        );
         let primary =
             Self::calculate_first_byte_wait_secs(media_kind, 0, cfg, &stream_cfg, body_len, false);
         let fallback =
             Self::calculate_first_byte_wait_secs(media_kind, 1, cfg, &stream_cfg, body_len, false);
-        // 首字预算在端点之间共享（不再逐端点相乘），并受含媒体增量后的硬上限约束
-        let first_byte_total_secs = primary.max(fallback).min(MAX_FIRST_BYTE_CEILING_SECS);
+        // 首字预算在端点之间共享（不再逐端点相乘），并受当前生效首字天花板约束
+        let first_byte_total_secs = primary.max(fallback).min(ceiling_cap);
 
         // 每个端点尝试都包含完整上传阶段；首字预算全链只计一份
-        // 关键防护：total_budget_secs 必须严格受客户端绝对安全上限约束，
-        // 彻底杜绝上传预算乘以多端点叠加首字超时后击穿 180s 看门狗！
+        // 关键防护：total_budget_secs 必须受全局预算上限约束，
+        // 默认 270s 保护看门狗；开启扩展开关/环境覆写后按配置总预算放行。
         let total_budget_secs = upload_budget_secs
             .saturating_mul(endpoint_attempt_limit as u64)
             .saturating_add(first_byte_total_secs)
-            .min(MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS);
+            .min(safe_total_cap);
 
         // 停滞超时：上传阶段单次持续无进展超时。不随 body 体积估算结果被挤压到极小值，
         // 至少给足建连与握手宽限（max connect_secs）。
@@ -3187,5 +3199,56 @@ mod tests {
             "samples below the 4KB/s floor must stay ignored"
         );
         reset_upload_throughput_estimate();
+    }
+
+    #[test]
+    fn first_byte_wait_respects_extended_ttft_opt_in() {
+        let cfg = default_upload_cfg();
+        let capped = crate::proxy::config::StreamTimeoutConfig {
+            initial_ttft_secs: 600,
+            gateway_request_budget_secs: 900,
+            allow_extended_ttft_budget: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            UpstreamClient::calculate_first_byte_wait_secs(
+                PayloadMediaKind::TextChat,
+                0,
+                &cfg,
+                &capped,
+                1024,
+                false,
+            ),
+            MAX_FIRST_BYTE_BUDGET_SECS
+        );
+
+        let extended = crate::proxy::config::StreamTimeoutConfig {
+            initial_ttft_secs: 600,
+            gateway_request_budget_secs: 900,
+            allow_extended_ttft_budget: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            UpstreamClient::calculate_first_byte_wait_secs(
+                PayloadMediaKind::TextChat,
+                0,
+                &cfg,
+                &extended,
+                1024,
+                false,
+            ),
+            600
+        );
+        assert_eq!(
+            UpstreamClient::calculate_first_byte_wait_secs(
+                PayloadMediaKind::Video,
+                0,
+                &cfg,
+                &extended,
+                1024,
+                false,
+            ),
+            660
+        );
     }
 }
