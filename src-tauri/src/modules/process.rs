@@ -185,10 +185,28 @@ fn get_ide_exe_paths(system: &System) -> std::collections::HashSet<String> {
     immune_exe_paths
 }
 
+/// Refresh process table names/PIDs/parents only, skipping CPU, memory, disk I/O, cmd, and exe reads.
+pub(crate) fn refresh_process_names(system: &mut System) {
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new(),
+    );
+}
+
+/// Refresh process identity (`name`, `exe`, `cmd`) without CPU, memory, or disk I/O collection (Refs #4073).
+pub(crate) fn refresh_process_identity(system: &mut System) {
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new()
+            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
+            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
+}
+
 /// Check if a process with the given name is running (case-insensitive, strips .exe on Windows).
 pub fn is_process_running_by_name(target_name: &str) -> bool {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_names(&mut system);
     let target_lower = target_name.to_lowercase();
     for (_pid, process) in system.processes() {
         let mut name = process.name().to_string_lossy().to_lowercase();
@@ -205,7 +223,7 @@ pub fn is_process_running_by_name(target_name: &str) -> bool {
 /// Check if an Antigravity ACP server (`agy_acp_server`) process is currently running.
 pub fn is_acp_server_running() -> bool {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
     for (_pid, process) in system.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
         if name.contains("agy_acp_server") {
@@ -235,7 +253,7 @@ pub fn is_acp_server_running() -> bool {
 /// Terminate running `agy_acp_server` processes so the host IDE plugin respawns them with new credentials.
 pub fn kill_acp_server_processes() -> usize {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
     let current_pid = std::process::id();
     let mut killed = 0;
 
@@ -325,7 +343,7 @@ pub(crate) fn sanitize_restart_args(args: &[String]) -> Vec<String> {
 /// Check if Antigravity is running
 pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
     let ide_exe_paths = get_ide_exe_paths(&system);
 
     let current_exe = get_current_exe_path();
@@ -490,7 +508,7 @@ fn get_self_family_pids(system: &sysinfo::System) -> std::collections::HashSet<u
 /// Get PIDs of all Antigravity processes (including main and helper processes)
 fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
     let ide_exe_paths = get_ide_exe_paths(&system);
 
     // Linux: Enable family process tree exclusion
@@ -681,7 +699,7 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
 /// 也不会误伤名称含 `language_server` 的无关进程（可执行文件必须属于 Antigravity 安装）。
 pub fn sweep_orphan_language_servers(target_ide: Option<&str>) {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
 
     for (pid, process) in system.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
@@ -903,7 +921,7 @@ pub fn kill_language_server_subprocesses_and_get_pids(
     target_ide: Option<&str>,
 ) -> Result<Vec<u32>, String> {
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
 
     let pids = language_server_subprocess_pids(&system, target_ide);
     for pid_u32 in &pids {
@@ -936,7 +954,7 @@ pub fn wait_for_language_server_respawn_excluding(
 ) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    refresh_process_identity(&mut system);
 
     // 预先捕获主窗口 root PIDs，热切号保持主窗口存活，因此 roots 不变，避免循环中重复全系统探测
     let roots = get_antigravity_root_pids(&system, target_ide);
@@ -945,7 +963,7 @@ pub fn wait_for_language_server_respawn_excluding(
     while std::time::Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
 
-        system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+        refresh_process_identity(&mut system);
         let current_pids = if !roots.is_empty() {
             language_server_subprocess_pids_from_roots(&system, &roots)
         } else {
@@ -998,7 +1016,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
         if !pids.is_empty() {
             // 1. Identify main process (PID)
             let mut system = System::new();
-            system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+            refresh_process_identity(&mut system);
 
             let mut main_pid = None;
 
@@ -1169,7 +1187,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
         let pids = get_antigravity_pids(target_ide);
         if !pids.is_empty() {
             let mut system = System::new();
-            system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+            refresh_process_identity(&mut system);
 
             let mut main_pid = None;
 
@@ -1666,12 +1684,7 @@ fn get_process_info(target_ide: Option<&str>) -> (Option<std::path::PathBuf>, Op
     // Discovery only needs process identity. Avoid two full-system refreshes
     // and CPU/memory collection on every client discovery lookup.
     let mut system = System::new();
-    system.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        sysinfo::ProcessRefreshKind::new()
-            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
-            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-    );
+    refresh_process_identity(&mut system);
 
     let current_exe = get_current_exe_path();
     let current_pid = std::process::id();
@@ -2650,5 +2663,25 @@ mod tests {
             ),
             ClientKind::Classic
         );
+    }
+
+    #[test]
+    fn targeted_process_refresh_populates_current_process_identity() {
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+
+        let mut names_only = System::new();
+        refresh_process_names(&mut names_only);
+        assert!(
+            names_only.process(pid).is_some(),
+            "refresh_process_names should discover current test process"
+        );
+
+        let mut with_identity = System::new();
+        refresh_process_identity(&mut with_identity);
+        let current = with_identity
+            .process(pid)
+            .expect("refresh_process_identity should discover current test process");
+        assert!(current.exe().is_some());
+        assert!(!current.cmd().is_empty());
     }
 }

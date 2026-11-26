@@ -914,7 +914,7 @@ fn is_claude_running_internal(file_path: Option<&str>) -> bool {
 
         // 2. 深度扫描系统进程列表，匹配 Claude 路径及子进程
         let mut sys = sysinfo::System::new();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+        crate::modules::process::refresh_process_identity(&mut sys);
         let target_bundle = file_path
             .map(std::path::PathBuf::from)
             .and_then(|p| find_enclosing_app_bundle(&p))
@@ -976,7 +976,7 @@ pub async fn close_claude_desktop(file_path: Option<String>) -> Result<bool, Str
 
             // 2. 超时未完全退出的，定位残留 PIDs 并发送 SIGTERM/SIGKILL 强制终止
             let mut sys = sysinfo::System::new();
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+            crate::modules::process::refresh_process_identity(&mut sys);
             let target_bundle = file_path
                 .as_ref()
                 .map(|p| std::path::PathBuf::from(p))
