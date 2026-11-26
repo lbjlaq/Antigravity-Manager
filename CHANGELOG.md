@@ -3,6 +3,19 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.5 (2026-11-27)**:
+        -   **[Keychain 原生 FFI 写入与防弹窗抑制、`cloudflared` 探测缓存及前端可见性门控] (Fixes #4043, Ref #3726, Ref #4073, PR #4087, Thanks to @zainulhasan)**:
+            -   **macOS Keychain 原生 FFI 与 Linux 凭据抑制**: macOS 端改用 `Security.framework` / `CoreFoundation` 原生 FFI（`SecItemAdd` + `SecAccessCreate`）写入大体积 OAuth JSON（突破 4KB 管道限制且不暴露 `argv`）；将 `KeychainReadCoordinator` 扩展至 Linux，被动缓存 TTL 设为 60s 并在拒绝后持久抑制被动重试，同时修复 Linux `secret-tool` 良性 GTK/GLib 警告误判。(Fixes #4043, Ref #3726, PR #4087, Thanks to @zainulhasan)
+            -   **`cloudflared` 正向缓存与前端可见性门控**: `CloudflaredManager` 仅缓存成功的 `--version` 探测结果（不缓存权限/quarantine 导致的失败）；`ApiProxy` 与 `Dashboard` 轮询增加 `document.visibilityState === 'visible'` 门控并降低后台轮询频率。(Ref #3726, Ref #4073, PR #4087, Thanks to @zainulhasan)
+        -   **[代理监听精确 `--host` 绑定、端口/LAN 变更热重绑与代理池策略修复] (Ref #4064, Ref #4054, Ref #4039, PR #4088, Thanks to @zainulhasan)**:
+            -   **精确 `--host` 绑定与动态重绑**: 严格尊重 CLI `--host` 绑定地址，支持端口或 LAN 开关变更时热重绑管理与代理监听，并修复代理池脑裂与调度策略问题。(Ref #4064, Ref #4054, Ref #4039, PR #4088, Thanks to @zainulhasan)
+        -   **[非阻塞切号、OAuth 回调循环健壮性、有界 WS 工具缓存与前端竞态修复] (Fixes #931, Ref #1099, Ref #3726, Ref #4054, PR #4089, PR #4090, Thanks to @zainulhasan)**:
+            -   **非阻塞切号与回调/缓存加固**: 账号切换改为非阻塞调度，增强 OAuth 回调服务循环容错，并为 Responses WebSocket 工具缓存增加有界容量限制；前端修复 `ProxyPoolSettings` 轮询覆盖编辑、异步 `listen()` 清理竞态及 `App.tsx` 无效 MiniView 守卫。(Fixes #931, Ref #1099, Ref #3726, Ref #4054, PR #4089, PR #4090, Thanks to @zainulhasan)
+        -   **[配额 403 拦截传播、CLI 切号跳过不可用账号、调度器时间解析与静默模式] (Fixes #3910, Ref #2050, Ref #2362, Ref #3630, Ref #3632, Ref #3737, Ref #3958, Ref #3989, Ref #4048, PR #4092, PR #4095, PR #4096, Thanks to @zainulhasan, @UnnamedPeople-Chin)**:
+            -   **配额 403 传播与 CLI 切号过滤**: 传播 `retrieveUserQuotaSummary` 403 拦截状态并在 CLI 切号时跳过不可用账号。(Ref #2050, Ref #2362, Ref #3630, Ref #3632, Ref #3737, Ref #3989, PR #4092, Thanks to @zainulhasan)
+            -   **调度器时间解析与原子持久化**: 支持非 RFC3339 `reset_time` 格式解析，防止不可解析格式触发冷启动误预热，并改用 `write_atomic` 原子持久化预热历史。(Ref #4048, Ref #3958, PR #4095, Thanks to @UnnamedPeople-Chin)
+            -   **静默模式（Silent Mode）与空闲外发探测抑制**: 新增前后端静默模式配置与 12 国多语言支持，并在代理关闭时停止 `TokenManager` 空闲外发探测。(Fixes #3910, PR #4096, Thanks to @UnnamedPeople-Chin)
+
     *   **v5.0.5-beta.4 (2026-11-26)**:
         -   **[原生 `tieredModelIds` 后台任务模型动态推导、`gemini-3.1-flash-lite-preview` 默认映射与四协议门禁复用] (Fixes #4084, PR #4085, Thanks to @fPip98)**:
             -   **原生 `tieredModelIds` 驱动与缓存优先号池调度**: 从官方 `fetchAvailableModels` 实时按账号覆盖持久化 `accountTieredModels`（`flashLite` → `flash`）与 `deprecatedModelIds`，按 `(官方顺位, 支持账号数, id)` 确定性生成候选链（跳过 `disabled`/已下线、优先非 `Leaving Soon`、校验磁盘 LKG），兼容无 `orchestrator` 条目的纯 FREE/PRO 账号；新增 `auto:background`（兼容 `auto:gemini-flash-low`）与 `TokenManager::has_available_model_scoped`，在保留用户手动「后台任务模型」最高优先级的前提下，优先锁定全档位共享且有正配额的首选模型以保护主会话粘性与多轮子代理 Prompt Cache，受限号池无 `flashLite` 时自动顺延至号池支持的 `flash` 候选，均不支持时返回 HTTP 503 并提示手动配置。(Fixes #4084, PR #4085, Thanks to @fPip98)
