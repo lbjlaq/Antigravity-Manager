@@ -288,9 +288,25 @@ pub async fn ensure_admin_server(
     cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
 ) -> Result<(), String> {
     let mut admin_lock = state.admin_server.write().await;
-    if admin_lock.is_some() {
-        return Ok(());
-    }
+    let desired_host = config.get_bind_address().to_string();
+    let reused_token_manager = if let Some(existing) = admin_lock.as_ref() {
+        if existing.axum_server.port == config.port && existing.axum_server.host == desired_host {
+            return Ok(());
+        }
+        tracing::info!(
+            "Admin server listener config changed ({}:{} -> {}:{}), rebinding...",
+            existing.axum_server.host,
+            existing.axum_server.port,
+            desired_host,
+            config.port
+        );
+        let old = admin_lock.take().expect("admin_lock checked Some");
+        let tm = old.axum_server.token_manager.clone();
+        old.stop().await;
+        Some(tm)
+    } else {
+        None
+    };
 
     crate::proxy::config::update_global_audit_config(
         config.experimental.payload_storage_mode.clone(),
@@ -318,12 +334,17 @@ pub async fn ensure_admin_server(
         monitor_lock.as_ref().unwrap().clone()
     };
 
-    // 默认空 TokenManager 用于管理界面
-    let app_data_dir = crate::modules::account::get_data_dir()?;
-    let token_manager = Arc::new(TokenManager::new(app_data_dir));
-    token_manager.set_qos_auto_jail(config.qos_auto_jail);
-    // [NEW] 加载账号数据，否则管理界面统计为 0
-    let _ = token_manager.load_accounts().await;
+    let token_manager = if let Some(existing_tm) = reused_token_manager {
+        existing_tm
+    } else {
+        // 默认空 TokenManager 用于管理界面
+        let app_data_dir = crate::modules::account::get_data_dir()?;
+        let tm = Arc::new(TokenManager::new(app_data_dir));
+        tm.set_qos_auto_jail(config.qos_auto_jail);
+        // [NEW] 加载账号数据，否则管理界面统计为 0
+        let _ = tm.load_accounts().await;
+        tm
+    };
 
     // 恢复持久化的固定账号模式设置，确保管理界面在代理未启动时也能读到一致状态
     if let Some(ref account_id) = config.preferred_account_id {
@@ -336,7 +357,7 @@ pub async fn ensure_admin_server(
     }
 
     let (axum_server, server_handle) = match crate::proxy::AxumServer::start(
-        config.get_bind_address().to_string(),
+        desired_host,
         config.port,
         token_manager,
         config.custom_mapping.clone(),
@@ -1301,5 +1322,61 @@ mod tests {
             admin.stop().await;
         }
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn ensure_admin_server_rebinds_when_port_changes() {
+        let l1 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port1 = l1.local_addr().unwrap().port();
+        drop(l1);
+
+        let l2 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port2 = l2.local_addr().unwrap().port();
+        drop(l2);
+
+        let state = ProxyServiceState::new();
+        let cf_state = Arc::new(crate::commands::cloudflared::CloudflaredState::new());
+
+        let mut cfg = ProxyConfig::default();
+        cfg.port = port1;
+        ensure_admin_server(
+            cfg.clone(),
+            &state,
+            crate::modules::integration::SystemManager::Headless,
+            cf_state.clone(),
+        )
+        .await
+        .expect("start admin server on port1");
+
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port1))
+            .await
+            .is_ok());
+
+        // Rebind to port2
+        cfg.port = port2;
+        ensure_admin_server(
+            cfg,
+            &state,
+            crate::modules::integration::SystemManager::Headless,
+            cf_state,
+        )
+        .await
+        .expect("rebind admin server to port2");
+
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", port2))
+                .await
+                .is_ok(),
+            "new port2 must accept connections"
+        );
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", port1)).is_ok(),
+            "old port1 must be released after rebind"
+        );
+
+        let admin_opt = state.admin_server.write().await.take();
+        if let Some(admin) = admin_opt {
+            admin.stop().await;
+        }
     }
 }

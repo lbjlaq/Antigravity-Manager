@@ -460,6 +460,7 @@ pub struct AxumServer {
     #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
     pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
     pub is_running: Arc<RwLock<bool>>,
+    pub host: String,
     pub port: u16,
     pub token_manager: Arc<TokenManager>, // [NEW] 暴露出 TokenManager 供反代服务复用
     pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>, // [NEW] 代理池配置状态
@@ -1219,6 +1220,7 @@ impl AxumServer {
             debug_logging: debug_logging_state.clone(),
             cloudflared_state,
             is_running: is_running_state,
+            host,
             port,
             token_manager: token_manager.clone(),
             proxy_pool_state,
