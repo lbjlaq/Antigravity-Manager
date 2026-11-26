@@ -2001,6 +2001,57 @@ pub fn validate_and_sanitize_inline_data(
     Some((final_mime, clean_b64.to_string()))
 }
 
+pub const MAX_LOCAL_MEDIA_BYTES: usize = 20 * 1024 * 1024;
+
+/// Normalize a `file://` URI (including `file://localhost/...`) into a local path string.
+pub(crate) fn strip_file_scheme(src: &str) -> String {
+    let rest = src
+        .strip_prefix("file://localhost")
+        .or_else(|| src.strip_prefix("file://"))
+        .unwrap_or(src);
+
+    #[cfg(target_os = "windows")]
+    {
+        rest.trim_start_matches('/').replace('/', "\\")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        rest.to_string()
+    }
+}
+
+/// Read a local regular file with a strict pre-read metadata and bounded-read cap.
+pub(crate) fn read_bounded_local_file(path: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let meta = std::fs::metadata(path).map_err(|e| format!("metadata failed: {e}"))?;
+    if !meta.is_file() {
+        return Err("target is not a regular file".to_string());
+    }
+    if meta.len() == 0 {
+        return Err("file is empty".to_string());
+    }
+    if meta.len() > max_bytes as u64 {
+        return Err(format!(
+            "file exceeds max size ({} > {} bytes)",
+            meta.len(),
+            max_bytes
+        ));
+    }
+
+    let file = std::fs::File::open(path).map_err(|e| format!("open failed: {e}"))?;
+    let mut buf = Vec::with_capacity(meta.len().min(max_bytes as u64) as usize);
+    file.take((max_bytes + 1) as u64)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read failed: {e}"))?;
+
+    if buf.is_empty() || buf.len() > max_bytes {
+        return Err(format!("read size out of bounds: {} bytes", buf.len()));
+    }
+
+    Ok(buf)
+}
+
 /// Helper to create a Gemini inlineData part or fallback text if invalid
 pub fn create_gemini_inline_part(
     mime_type: Option<&str>,

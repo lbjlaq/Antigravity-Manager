@@ -1131,10 +1131,14 @@ impl AxumServer {
             )
             // OAuth (Web) - Admin 接口
             .route("/auth/url", get(admin_prepare_oauth_url_web))
-            // 应用管理特定鉴权层 (强制校验)
+            // 应用管理特定鉴权层与 IP 黑白名单层 (洋葱模型外层先经过 ip_filter)
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 admin_auth_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                ip_filter_middleware,
             ));
 
         // 3. 整合并应用全局层
