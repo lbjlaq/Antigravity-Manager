@@ -305,11 +305,27 @@ export default function ApiProxy() {
         loadCustomPresets();
         loadRecentModelStatuses();
         loadHubFingerprintInfo();
-        const interval = setInterval(loadStatus, 3000);
-        const cfInterval = setInterval(loadCfStatus, 5000);
+        const interval = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                loadStatus();
+            }
+        }, 3000);
+        const cfInterval = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                loadCfStatus();
+            }
+        }, 5000);
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                loadStatus();
+                loadCfStatus();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
         return () => {
             clearInterval(interval);
             clearInterval(cfInterval);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, []);
 

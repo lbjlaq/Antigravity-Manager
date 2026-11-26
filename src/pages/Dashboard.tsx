@@ -70,20 +70,29 @@ function Dashboard() {
         fetchCurrentAccount();
         fetchActiveClients();
 
-        // 保持 5 秒轮询三大客户端（经典款 / IDE / CLI）当前生效账号状态
+        // 低频保底轮询三大客户端当前生效账号状态，仅在窗口可见时触发，主要依赖 focus/visibilitychange 即时感知
         const intervalId = setInterval(() => {
-            fetchActiveClients();
-        }, 5000);
+            if (document.visibilityState === 'visible') {
+                fetchActiveClients();
+            }
+        }, 60000);
 
-        // 窗口聚焦时即刻拉取最新客户端状态
+        // 窗口聚焦或恢复可见时即刻拉取最新客户端状态
         const handleFocus = () => {
             fetchActiveClients();
         };
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                fetchActiveClients();
+            }
+        };
         window.addEventListener('focus', handleFocus);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
             clearInterval(intervalId);
             window.removeEventListener('focus', handleFocus);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, []);
 
