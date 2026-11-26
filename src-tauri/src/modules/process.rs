@@ -13,6 +13,51 @@ fn get_current_exe_path() -> Option<std::path::PathBuf> {
         .and_then(|p| p.canonicalize().ok())
 }
 
+/// Refresh profile for process-identity lookups that inspect `name`, `exe`, and `cmd`.
+///
+/// NOTE: In `sysinfo 0.31`, `System::refresh_processes` refreshes `memory`/`cpu`/`disk_usage`/`exe`
+/// and omits `cmd` (`UpdateKind::Never`). Always use an explicit `ProcessRefreshKind` so callers
+/// receive `cmd()` reliably while avoiding unnecessary CPU/memory/disk I/O collection.
+fn process_identity_refresh_kind() -> sysinfo::ProcessRefreshKind {
+    sysinfo::ProcessRefreshKind::new()
+        .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+        .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
+}
+
+/// Snapshot all processes with `name`, `parent`, `exe`, and `cmd` populated.
+fn snapshot_processes_with_identity() -> System {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        process_identity_refresh_kind(),
+    );
+    system
+}
+
+/// Snapshot all processes with only basic kernel metadata (`pid`, `parent`, `name`, `start_time`).
+fn snapshot_processes_basic() -> System {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new(),
+    );
+    system
+}
+
+/// Split `process.cmd()` into lowercase `(argv0, args_joined)` (excluding `argv[0]` from args).
+fn split_process_cmd_lower(process: &sysinfo::Process) -> (String, String) {
+    let mut args = process.cmd().iter();
+    let argv0 = args
+        .next()
+        .map(|arg| arg.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let args_str = args
+        .map(|arg| arg.to_string_lossy().to_lowercase())
+        .collect::<Vec<String>>()
+        .join(" ");
+    (argv0, args_str)
+}
+
 /// 判断字符串是否匹配 Antigravity IDE 特征（兼容空格、中划线、下划线、紧凑连写与点号变体）。
 ///
 /// 铁律：只用**命名变体**判定 IDE 身份，绝不使用「同时出现 antigravity 与 vscode/code-oss」这类弱特征组合：
@@ -167,46 +212,30 @@ fn get_ide_exe_paths(system: &System) -> std::collections::HashSet<String> {
         }
     }
 
-    // Fallback: scan process cmd() args (works on macOS/Linux, may be empty on Windows)
+    // Fallback: reuse unified `classify_process` (exe/name + `--user-data-dir` only)
+    // so workspace/folder arguments mentioning "antigravity-ide" never poison classic detection.
     for (_pid, process) in system.processes() {
-        let args = process.cmd();
-        let args_str = args
-            .iter()
-            .map(|arg| arg.to_string_lossy().to_lowercase())
-            .collect::<Vec<String>>()
-            .join(" ");
+        let name = process.name().to_string_lossy().to_lowercase();
+        let exe_path = process
+            .exe()
+            .and_then(|p| p.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if exe_path.is_empty() {
+            continue;
+        }
+        let (argv0, args_str) = split_process_cmd_lower(process);
 
-        if is_antigravity_ide_str(&args_str) {
-            if let Some(exe_path) = process.exe().and_then(|p| p.to_str()) {
-                immune_exe_paths.insert(exe_path.to_lowercase());
-            }
+        if classify_process(&name, &exe_path, &argv0, &args_str) == ClientKind::Ide {
+            immune_exe_paths.insert(exe_path);
         }
     }
     immune_exe_paths
 }
 
-/// Refresh process table names/PIDs/parents only, skipping CPU, memory, disk I/O, cmd, and exe reads.
-pub(crate) fn refresh_process_names(system: &mut System) {
-    system.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        sysinfo::ProcessRefreshKind::new(),
-    );
-}
-
-/// Refresh process identity (`name`, `exe`, `cmd`) without CPU, memory, or disk I/O collection (Refs #4073).
-pub(crate) fn refresh_process_identity(system: &mut System) {
-    system.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        sysinfo::ProcessRefreshKind::new()
-            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
-            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-    );
-}
-
 /// Check if a process with the given name is running (case-insensitive, strips .exe on Windows).
 pub fn is_process_running_by_name(target_name: &str) -> bool {
-    let mut system = System::new();
-    refresh_process_names(&mut system);
+    let system = snapshot_processes_basic();
     let target_lower = target_name.to_lowercase();
     for (_pid, process) in system.processes() {
         let mut name = process.name().to_string_lossy().to_lowercase();
@@ -222,8 +251,7 @@ pub fn is_process_running_by_name(target_name: &str) -> bool {
 
 /// Check if an Antigravity ACP server (`agy_acp_server`) process is currently running.
 pub fn is_acp_server_running() -> bool {
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let system = snapshot_processes_with_identity();
     for (_pid, process) in system.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
         if name.contains("agy_acp_server") {
@@ -252,8 +280,7 @@ pub fn is_acp_server_running() -> bool {
 
 /// Terminate running `agy_acp_server` processes so the host IDE plugin respawns them with new credentials.
 pub fn kill_acp_server_processes() -> usize {
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let system = snapshot_processes_with_identity();
     let current_pid = std::process::id();
     let mut killed = 0;
 
@@ -342,8 +369,7 @@ pub(crate) fn sanitize_restart_args(args: &[String]) -> Vec<String> {
 
 /// Check if Antigravity is running
 pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let system = snapshot_processes_with_identity();
     let ide_exe_paths = get_ide_exe_paths(&system);
 
     let current_exe = get_current_exe_path();
@@ -382,20 +408,16 @@ pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
             }
         }
 
+        let (argv0, args_str) = split_process_cmd_lower(process);
+
         // Exclude manager / tools processes
-        if is_manager_or_tools_process(&name, &exe_path, "") {
+        if is_manager_or_tools_process(&name, &exe_path, &argv0) {
             continue;
         }
 
         // Common helper process exclusion logic
-        let args = process.cmd();
-        let args_str = args
-            .iter()
-            .map(|arg| arg.to_string_lossy().to_lowercase())
-            .collect::<Vec<String>>()
-            .join(" ");
-
-        let is_helper = is_helper_process(&name, &args_str, &exe_path);
+        let is_helper = is_helper_process(&name, &args_str, &exe_path)
+            || is_helper_process(&name, &args_str, &argv0);
 
         if is_helper {
             continue;
@@ -459,7 +481,7 @@ pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
         }
 
         // Check if the process matches target_ide
-        let kind = classify_process(&name, &exe_path, "", &args_str);
+        let kind = classify_process(&name, &exe_path, &argv0, &args_str);
         let is_ide_match = kind_matches_target(kind, target_ide, &exe_path, &ide_exe_paths);
 
         if is_ide_match {
@@ -505,15 +527,13 @@ fn get_self_family_pids(system: &sysinfo::System) -> std::collections::HashSet<u
     family_pids
 }
 
-/// Get PIDs of all Antigravity processes (including main and helper processes)
-fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
-    let ide_exe_paths = get_ide_exe_paths(&system);
+/// Get PIDs of all Antigravity processes from an already-refreshed process snapshot.
+fn get_antigravity_pids_from_system(system: &System, target_ide: Option<&str>) -> Vec<u32> {
+    let ide_exe_paths = get_ide_exe_paths(system);
 
     // Linux: Enable family process tree exclusion
     #[cfg(target_os = "linux")]
-    let family_pids = get_self_family_pids(&system);
+    let family_pids = get_self_family_pids(system);
 
     let mut pids = Vec::new();
     let current_pid = std::process::id();
@@ -553,9 +573,10 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
             .and_then(|p| p.to_str())
             .unwrap_or("")
             .to_lowercase();
+        let (argv0, args_str) = split_process_cmd_lower(process);
 
         // Exclude manager / tools processes
-        if is_manager_or_tools_process(&name, &exe_path, "") {
+        if is_manager_or_tools_process(&name, &exe_path, &argv0) {
             continue;
         }
 
@@ -615,10 +636,7 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
                 if matches {
                     #[cfg(target_os = "macos")]
                     let is_main = {
-                        let args = process.cmd();
-                        let is_helper_by_args = args
-                            .iter()
-                            .any(|arg| arg.to_string_lossy().contains("--type="));
+                        let is_helper_by_args = args_str.contains("--type=");
                         let is_helper_by_name = name.contains("helper")
                             || name.contains("plugin")
                             || name.contains("renderer")
@@ -655,25 +673,12 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
             continue;
         }
 
-        // Get executable path
-        let exe_path = process
-            .exe()
-            .and_then(|p| p.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
         // Common helper process exclusion logic
-        let args = process.cmd();
-        let args_str = args
-            .iter()
-            .map(|arg| arg.to_string_lossy().to_lowercase())
-            .collect::<Vec<String>>()
-            .join(" ");
-
-        let is_helper = is_helper_process(&name, &args_str, &exe_path);
+        let is_helper = is_helper_process(&name, &args_str, &exe_path)
+            || is_helper_process(&name, &args_str, &argv0);
 
         // Check if the process matches target_ide
-        let kind = classify_process(&name, &exe_path, "", &args_str);
+        let kind = classify_process(&name, &exe_path, &argv0, &args_str);
         let is_ide_match = kind_matches_target(kind, target_ide, &exe_path, &ide_exe_paths);
 
         if is_ide_match && !is_helper {
@@ -693,13 +698,18 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
     pids
 }
 
+/// Get PIDs of all Antigravity processes (including main and helper processes)
+fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
+    let system = snapshot_processes_with_identity();
+    get_antigravity_pids_from_system(&system, target_ide)
+}
+
 /// 额外清理：终止 `target_ide` 对应的孤儿 `language_server` 进程，防止端口/互斥锁占有阻塞重启。
 ///
 /// 隔离铁律：先按客户端形态分类再杀 —— IDE 与经典版各自独立，绝不互相误杀，
 /// 也不会误伤名称含 `language_server` 的无关进程（可执行文件必须属于 Antigravity 安装）。
 pub fn sweep_orphan_language_servers(target_ide: Option<&str>) {
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let system = snapshot_processes_with_identity();
 
     for (pid, process) in system.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
@@ -708,19 +718,14 @@ pub fn sweep_orphan_language_servers(target_ide: Option<&str>) {
             .and_then(|p| p.to_str())
             .unwrap_or("")
             .to_lowercase();
-        let args_str = process
-            .cmd()
-            .iter()
-            .map(|arg| arg.to_string_lossy().to_lowercase())
-            .collect::<Vec<String>>()
-            .join(" ");
+        let (argv0, args_str) = split_process_cmd_lower(process);
 
-        if is_manager_or_tools_process(&name, &exe_path, "") {
+        if is_manager_or_tools_process(&name, &exe_path, &argv0) {
             continue;
         }
 
         if is_language_server_process(&name, &exe_path)
-            && matches_target_client(target_ide, &name, &exe_path, "", &args_str)
+            && matches_target_client(target_ide, &name, &exe_path, &argv0, &args_str)
         {
             let pid_u32 = pid.as_u32();
             crate::modules::logger::log_info(&format!(
@@ -779,89 +784,26 @@ fn force_kill_pid(pid: u32) {
 /// **非 helper 的主进程**作为根：若把 helper 也当根，`language_server` 自身会变成"根"而不是
 /// "后代"，就永远定位不到了。
 fn language_server_subprocess_pids(system: &System, target_ide: Option<&str>) -> Vec<u32> {
-    let roots: Vec<u32> = get_antigravity_pids(target_ide)
-        .into_iter()
-        .filter(|pid| {
-            system
-                .process(sysinfo::Pid::from_u32(*pid))
-                .map(|process| {
-                    let name = process.name().to_string_lossy().to_string();
-                    let args = process
-                        .cmd()
-                        .iter()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let exe = process
-                        .exe()
-                        .map(|e| e.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    !is_helper_process(&name, &args, &exe)
-                })
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if roots.is_empty() {
-        return Vec::new();
-    }
-
-    // 广度优先展开全部后代（Antigravity.exe → … → language_server.exe，可能多层嵌套）
-    let mut descendants: Vec<u32> = Vec::new();
-    let mut frontier: Vec<u32> = roots.clone();
-    let mut visited: std::collections::HashSet<u32> = roots.into_iter().collect();
-
-    while let Some(parent) = frontier.pop() {
-        for (pid, process) in system.processes() {
-            if process.parent().map(|p| p.as_u32()) != Some(parent) {
-                continue;
-            }
-            let pid_u32 = pid.as_u32();
-            if visited.insert(pid_u32) {
-                descendants.push(pid_u32);
-                frontier.push(pid_u32);
-            }
-        }
-    }
-
-    descendants
-        .into_iter()
-        .filter(|pid_u32| {
-            system
-                .process(sysinfo::Pid::from_u32(*pid_u32))
-                .map(|process| {
-                    let name = process.name().to_string_lossy().to_string();
-                    let exe = process
-                        .exe()
-                        .map(|e| e.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    is_language_server_process(&name, &exe)
-                })
-                .unwrap_or(false)
-        })
-        .collect()
+    let roots = get_antigravity_root_pids(system, target_ide);
+    language_server_subprocess_pids_from_roots(system, &roots)
 }
 
 /// 提取 target_ide 对应的 Antigravity 存活主进程 PID 列表（排除 helper 子进程）
 pub fn get_antigravity_root_pids(system: &System, target_ide: Option<&str>) -> Vec<u32> {
-    get_antigravity_pids(target_ide)
+    get_antigravity_pids_from_system(system, target_ide)
         .into_iter()
         .filter(|pid| {
             system
                 .process(sysinfo::Pid::from_u32(*pid))
                 .map(|process| {
-                    let name = process.name().to_string_lossy().to_string();
-                    let args = process
-                        .cmd()
-                        .iter()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    let name = process.name().to_string_lossy().to_lowercase();
+                    let (argv0, args) = split_process_cmd_lower(process);
                     let exe = process
                         .exe()
-                        .map(|e| e.to_string_lossy().to_string())
+                        .map(|e| e.to_string_lossy().to_lowercase())
                         .unwrap_or_default();
                     !is_helper_process(&name, &args, &exe)
+                        && !is_helper_process(&name, &args, &argv0)
                 })
                 .unwrap_or(false)
         })
@@ -920,8 +862,7 @@ pub fn language_server_subprocess_pids_from_roots(system: &System, roots: &[u32]
 pub fn kill_language_server_subprocesses_and_get_pids(
     target_ide: Option<&str>,
 ) -> Result<Vec<u32>, String> {
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let system = snapshot_processes_with_identity();
 
     let pids = language_server_subprocess_pids(&system, target_ide);
     for pid_u32 in &pids {
@@ -953,17 +894,22 @@ pub fn wait_for_language_server_respawn_excluding(
     killed_pids: &[u32],
 ) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let mut system = snapshot_processes_with_identity();
 
     // 预先捕获主窗口 root PIDs，热切号保持主窗口存活，因此 roots 不变，避免循环中重复全系统探测
     let roots = get_antigravity_root_pids(&system, target_ide);
+    let poll_refresh_kind = if !roots.is_empty() {
+        // 已知主进程根 PID 时，仅需 parent / name / exe 即可追踪 language_server 子进程
+        sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+    } else {
+        process_identity_refresh_kind()
+    };
 
     // 敏捷 100ms 快速轮询：第一时间感知 supervisor 重新拉起的 language_server，大幅压缩切号等待延迟
     while std::time::Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
 
-        refresh_process_identity(&mut system);
+        system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, poll_refresh_kind);
         let current_pids = if !roots.is_empty() {
             language_server_subprocess_pids_from_roots(&system, &roots)
         } else {
@@ -1012,12 +958,10 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
         // macOS: Optimize closing strategy to avoid "Window terminated unexpectedly" popups
         // Strategy: SEND SIGTERM to main process only, let it coordinate closing children
 
-        let pids = get_antigravity_pids(target_ide);
+        let system = snapshot_processes_with_identity();
+        let pids = get_antigravity_pids_from_system(&system, target_ide);
         if !pids.is_empty() {
             // 1. Identify main process (PID)
-            let mut system = System::new();
-            refresh_process_identity(&mut system);
-
             let mut main_pid = None;
 
             // Load manual configuration path as highest priority reference
@@ -1184,11 +1128,9 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
     #[cfg(target_os = "linux")]
     {
         // Linux: precise closing
-        let pids = get_antigravity_pids(target_ide);
+        let system = snapshot_processes_with_identity();
+        let pids = get_antigravity_pids_from_system(&system, target_ide);
         if !pids.is_empty() {
-            let mut system = System::new();
-            refresh_process_identity(&mut system);
-
             let mut main_pid = None;
 
             for pid_u32 in &pids {
@@ -1683,8 +1625,7 @@ fn app_bundle_root(exe: &std::path::Path) -> Option<std::path::PathBuf> {
 fn get_process_info(target_ide: Option<&str>) -> (Option<std::path::PathBuf>, Option<Vec<String>>) {
     // Discovery only needs process identity. Avoid two full-system refreshes
     // and CPU/memory collection on every client discovery lookup.
-    let mut system = System::new();
-    refresh_process_identity(&mut system);
+    let system = snapshot_processes_with_identity();
 
     let current_exe = get_current_exe_path();
     let current_pid = std::process::id();
@@ -1785,69 +1726,29 @@ pub fn get_args_from_running_process(target_ide: Option<&str>) -> Option<Vec<Str
     args
 }
 
-/// Get --user-data-dir argument value (if exists)
-pub fn get_user_data_dir_from_process(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
-    // Prefer getting startup arguments from config
-    if let Ok(config) = crate::modules::config::load_app_config() {
-        if let Some(args) = config.antigravity_args {
-            // Check arguments in config
-            for i in 0..args.len() {
-                if args[i] == "--user-data-dir" && i + 1 < args.len() {
-                    // Next argument is the path
-                    let path = std::path::PathBuf::from(&args[i + 1]);
-                    if path.exists() {
-                        return Some(path);
-                    }
-                } else if args[i].starts_with("--user-data-dir=") {
-                    // Argument and value in same string, e.g. --user-data-dir=/path/to/data
-                    let parts: Vec<&str> = args[i].splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        let path_str = parts[1];
-                        let path = std::path::PathBuf::from(path_str);
-                        if path.exists() {
-                            return Some(path);
-                        }
-                    }
-                }
+fn extract_user_data_dir_from_args(args: &[String]) -> Option<std::path::PathBuf> {
+    for i in 0..args.len() {
+        if args[i] == "--user-data-dir" && i + 1 < args.len() {
+            let path = std::path::PathBuf::from(&args[i + 1]);
+            if path.exists() {
+                return Some(path);
+            }
+        } else if let Some(path_str) = args[i].strip_prefix("--user-data-dir=") {
+            let path = std::path::PathBuf::from(path_str);
+            if path.exists() {
+                return Some(path);
             }
         }
     }
-
-    // If not in config, get arguments from running process
-    if let Some(args) = get_args_from_running_process(target_ide) {
-        for i in 0..args.len() {
-            if args[i] == "--user-data-dir" && i + 1 < args.len() {
-                // Next argument is the path
-                let path = std::path::PathBuf::from(&args[i + 1]);
-                if path.exists() {
-                    return Some(path);
-                }
-            } else if args[i].starts_with("--user-data-dir=") {
-                // Argument and value in same string, e.g. --user-data-dir=/path/to/data
-                let parts: Vec<&str> = args[i].splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    let path_str = parts[1];
-                    let path = std::path::PathBuf::from(path_str);
-                    if path.exists() {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-    }
-
     None
 }
 
-/// Get Antigravity executable path (cross-platform)
-///
-/// Search strategy (highest to lowest priority):
-/// 1. Get path from running process (most reliable, supports any location)
-/// 2. Iterate standard installation locations
-/// 3. Return None
-pub fn get_antigravity_executable_path(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
+fn resolve_executable_path_with_running(
+    target_ide: Option<&str>,
+    running_path: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
     // Strategy 1: Get from running process (supports any location)
-    if let Some(path) = get_path_from_running_process(target_ide) {
+    if let Some(path) = running_path {
         return Some(path);
     }
 
@@ -1876,6 +1777,57 @@ pub fn get_antigravity_executable_path(target_ide: Option<&str>) -> Option<std::
 
     // Strategy 3: Check standard installation locations
     check_standard_locations(target_ide)
+}
+
+/// Resolve both `--user-data-dir` and executable path using at most one running-process scan.
+pub fn get_user_data_dir_and_executable_path(
+    target_ide: Option<&str>,
+) -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>) {
+    let config_user_data_dir = crate::modules::config::load_app_config()
+        .ok()
+        .and_then(|config| config.antigravity_args)
+        .and_then(|args| extract_user_data_dir_from_args(&args));
+
+    let (running_path, running_args) = get_process_info(target_ide);
+    let user_data_dir = config_user_data_dir.or_else(|| {
+        running_args
+            .as_deref()
+            .and_then(extract_user_data_dir_from_args)
+    });
+    let executable_path = resolve_executable_path_with_running(target_ide, running_path);
+
+    (user_data_dir, executable_path)
+}
+
+/// Get --user-data-dir argument value (if exists)
+pub fn get_user_data_dir_from_process(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
+    // Prefer getting startup arguments from config
+    if let Ok(config) = crate::modules::config::load_app_config() {
+        if let Some(args) = config.antigravity_args {
+            if let Some(path) = extract_user_data_dir_from_args(&args) {
+                return Some(path);
+            }
+        }
+    }
+
+    // If not in config, get arguments from running process
+    if let Some(args) = get_args_from_running_process(target_ide) {
+        if let Some(path) = extract_user_data_dir_from_args(&args) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+/// Get Antigravity executable path (cross-platform)
+///
+/// Search strategy (highest to lowest priority):
+/// 1. Get path from running process (most reliable, supports any location)
+/// 2. Iterate standard installation locations
+/// 3. Return None
+pub fn get_antigravity_executable_path(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
+    resolve_executable_path_with_running(target_ide, get_path_from_running_process(target_ide))
 }
 
 /// Check standard installation locations and system PATH
@@ -2666,22 +2618,57 @@ mod tests {
     }
 
     #[test]
-    fn targeted_process_refresh_populates_current_process_identity() {
-        let pid = sysinfo::Pid::from_u32(std::process::id());
+    fn test_process_identity_refresh_kind_populates_cmd_and_exe_without_metrics() {
+        let kind = process_identity_refresh_kind();
+        assert_eq!(kind.exe(), sysinfo::UpdateKind::OnlyIfNotSet);
+        assert_eq!(kind.cmd(), sysinfo::UpdateKind::OnlyIfNotSet);
+        assert!(!kind.cpu());
+        assert!(!kind.memory());
+        assert!(!kind.disk_usage());
+        assert_eq!(kind.user(), sysinfo::UpdateKind::Never);
+        assert_eq!(kind.cwd(), sysinfo::UpdateKind::Never);
+        assert_eq!(kind.root(), sysinfo::UpdateKind::Never);
+        assert_eq!(kind.environ(), sysinfo::UpdateKind::Never);
 
-        let mut names_only = System::new();
-        refresh_process_names(&mut names_only);
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+        let mut system = System::new();
+        system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), kind);
+        let current = system
+            .process(pid)
+            .expect("current test process should be discoverable");
         assert!(
-            names_only.process(pid).is_some(),
-            "refresh_process_names should discover current test process"
+            !current.name().is_empty(),
+            "process_identity_refresh_kind must populate process.name()"
+        );
+        assert!(
+            !current.cmd().is_empty(),
+            "process_identity_refresh_kind must populate process.cmd()"
+        );
+        assert!(
+            current.exe().is_some(),
+            "process_identity_refresh_kind must populate process.exe()"
+        );
+    }
+
+    #[test]
+    fn test_extract_user_data_dir_from_args() {
+        let tmp = std::env::temp_dir();
+        let tmp_str = tmp.to_string_lossy().to_string();
+
+        let split_args = vec![
+            "--foo".to_string(),
+            "--user-data-dir".to_string(),
+            tmp_str.clone(),
+        ];
+        assert_eq!(
+            extract_user_data_dir_from_args(&split_args),
+            Some(tmp.clone())
         );
 
-        let mut with_identity = System::new();
-        refresh_process_identity(&mut with_identity);
-        let current = with_identity
-            .process(pid)
-            .expect("refresh_process_identity should discover current test process");
-        assert!(current.exe().is_some());
-        assert!(!current.cmd().is_empty());
+        let inline_args = vec![format!("--user-data-dir={tmp_str}")];
+        assert_eq!(extract_user_data_dir_from_args(&inline_args), Some(tmp));
+
+        let missing_args = vec!["--user-data-dir=/definitely/nonexistent/path/4074".to_string()];
+        assert_eq!(extract_user_data_dir_from_args(&missing_args), None);
     }
 }

@@ -16,8 +16,10 @@ fn get_data_dir() -> Result<PathBuf, String> {
 
 /// Find storage.json path (prefer custom/portable paths)
 pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
+    let (user_data_dir, exe_path) = process::get_user_data_dir_and_executable_path(target_ide);
+
     // 1) --user-data-dir flag
-    if let Some(user_data_dir) = process::get_user_data_dir_from_process(target_ide) {
+    if let Some(user_data_dir) = user_data_dir {
         let path = user_data_dir
             .join("User")
             .join("globalStorage")
@@ -28,7 +30,7 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
     }
 
     // 2) Portable mode (based on executable data/user-data)
-    if let Some(exe_path) = process::get_antigravity_executable_path(target_ide) {
+    if let Some(exe_path) = exe_path {
         if let Some(parent) = exe_path.parent() {
             let portable = parent
                 .join("data")
@@ -591,14 +593,15 @@ mod tests {
 /// 获取 Electron 经典版全局持久化配置 (app_storage.json) 的候选路径
 pub fn get_app_storage_candidate_paths(target_ide: Option<&str>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    let (user_data_dir, exe_path) = process::get_user_data_dir_and_executable_path(target_ide);
 
     // 1) --user-data-dir flag
-    if let Some(user_data_dir) = process::get_user_data_dir_from_process(target_ide) {
+    if let Some(user_data_dir) = user_data_dir {
         paths.push(user_data_dir.join("app_storage.json"));
     }
 
     // 2) Portable mode (based on executable data/user-data)
-    if let Some(exe_path) = process::get_antigravity_executable_path(target_ide) {
+    if let Some(exe_path) = exe_path {
         if let Some(parent) = exe_path.parent() {
             paths.push(
                 parent

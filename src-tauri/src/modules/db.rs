@@ -2,16 +2,13 @@ use crate::utils::protobuf;
 use rusqlite::Connection;
 use std::path::PathBuf;
 
-fn get_antigravity_path(target_ide: Option<&str>) -> Option<PathBuf> {
-    crate::modules::process::get_antigravity_executable_path(target_ide)
-}
-
 /// Get all possible Antigravity database candidate paths
 pub fn get_all_candidate_db_paths(target_ide: Option<&str>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    let (user_data_dir, antigravity_path) =
+        crate::modules::process::get_user_data_dir_and_executable_path(target_ide);
 
-    if let Some(user_data_dir) = crate::modules::process::get_user_data_dir_from_process(target_ide)
-    {
+    if let Some(user_data_dir) = user_data_dir {
         paths.push(
             user_data_dir
                 .join("User")
@@ -20,7 +17,7 @@ pub fn get_all_candidate_db_paths(target_ide: Option<&str>) -> Vec<PathBuf> {
         );
     }
 
-    if let Some(antigravity_path) = get_antigravity_path(target_ide) {
+    if let Some(antigravity_path) = antigravity_path {
         if let Some(parent_dir) = antigravity_path.parent() {
             paths.push(
                 PathBuf::from(parent_dir)

@@ -60,7 +60,7 @@ fn resolve_profile() -> CacheProfile {
         .unwrap_or(1);
     let total_memory_mb = {
         let mut sys = sysinfo::System::new();
-        sys.refresh_memory();
+        sys.refresh_memory_specifics(sysinfo::MemoryRefreshKind::new().with_ram());
         (sys.total_memory() / 1024 / 1024).max(1)
     };
 
