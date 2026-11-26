@@ -266,7 +266,10 @@ pub fn collect_process_memory_stats() -> ProcessMemoryStats {
 
     let pid = sysinfo::Pid::from_u32(pid_u32);
     let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]));
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        sysinfo::ProcessRefreshKind::new().with_memory(),
+    );
     let (rss_bytes, virtual_bytes) = sys
         .process(pid)
         .map(|p| (p.memory(), p.virtual_memory()))
