@@ -2,14 +2,17 @@ use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder};
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
-/// Queue `f` onto the Win32 event loop from a worker thread so it cannot
-/// run inline inside the current tao/Win32 callback.
+/// Queue `f` onto the desktop UI event loop from a short-lived worker thread
+/// so `f` neither runs inline inside a main-thread callback nor executes
+/// synchronously on a non-main thread (such as Linux zbus or macOS single-instance).
 ///
 /// `AppHandle::run_on_main_thread` in tauri-runtime-wry 2.10 executes the
-/// task immediately when the caller is already on the UI thread, which
-/// would not release a WindowManager/PluginStore `RwLock` still held by
-/// that callback (Fixes #3993).
-#[cfg(target_os = "windows")]
+/// task immediately when the caller is already on the UI thread (which would
+/// not release a WindowManager/PluginStore `RwLock` still held by a Win32
+/// callback, Fixes #3993), while calling window creation + `restore_state`
+/// directly from a non-main thread can deadlock `tauri-plugin-window-state`'s
+/// `WindowStateCache` against `on_window_ready`.
+#[cfg(not(target_os = "android"))]
 pub fn defer_on_main_thread<F>(app: &tauri::AppHandle, f: F)
 where
     F: FnOnce() + Send + 'static,
@@ -24,6 +27,10 @@ where
 
 /// 尝试获取或重新构建主窗口。
 /// 如果主窗口已被轻量模式销毁，将基于 tauri.conf.json 的配置动态重建，并恢复窗口位置和图标。
+///
+/// **必须在主线程（UI 线程）调用**：在非主线程调用时，`WebviewWindowBuilder::build()` 异步排入
+/// `on_window_ready`，随后的 `restore_state()` 会持 `WindowStateCache` 锁并阻塞等待主线程，
+/// 与 `on_window_ready` 形成 AB-BA 死锁。非主线程入口请使用 [`defer_on_main_thread`] 投递。
 pub fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     #[cfg(target_os = "android")]
     {
@@ -110,7 +117,10 @@ pub fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     }
 }
 
-/// 退出轻量模式：确保主窗口存在，并将其显示、聚焦
+/// 退出轻量模式：确保主窗口存在，并将其显示、聚焦。
+///
+/// **必须在主线程（UI 线程）调用**；非主线程入口（如 single-instance 回调）请通过
+/// [`defer_on_main_thread`] 或 `AppHandle::run_on_main_thread` 投递。
 pub fn exit_lightweight_mode(app: &AppHandle) -> Result<WebviewWindow, String> {
     #[cfg(target_os = "android")]
     {

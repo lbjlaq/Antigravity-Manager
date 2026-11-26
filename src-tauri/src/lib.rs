@@ -626,19 +626,13 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Fixes #3993: Windows 下该回调跑在 UI 线程，且可能仍持有 PluginStore 锁；
-            // 经工作线程再投递到主线程，等当前回调返回后再重建窗口。
-            #[cfg(target_os = "windows")]
-            {
-                let app_handle = app.clone();
-                modules::lightweight::defer_on_main_thread(app, move || {
-                    let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
-                });
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = modules::lightweight::exit_lightweight_mode(app);
-            }
+            // 统一经工作线程异步投递到主线程，回调立即返回：
+            // - Linux/macOS：避免在 zbus/Tokio 非主线程同步建窗触发 window-state 死锁并阻塞单实例 IPC；
+            // - Windows：保留 #3993 语义，避免在 WM_COPYDATA UI 回调内联重入。
+            let app_handle = app.clone();
+            modules::lightweight::defer_on_main_thread(app, move || {
+                let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
+            });
         }))
         .manage(commands::proxy::ProxyServiceState::new())
         .manage(commands::cloudflared::CloudflaredState::new())
