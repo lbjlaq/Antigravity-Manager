@@ -90,8 +90,6 @@ pub struct AppState {
     pub custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     pub request_timeout: u64, // API 请求超时(秒)
     #[allow(dead_code)]
-    pub thought_signature_map: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>, // 思维链签名映射 (ID -> Signature)
-    #[allow(dead_code)]
     pub upstream_proxy: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
@@ -603,9 +601,6 @@ impl AxumServer {
             token_manager: token_manager.clone(),
             custom_mapping: custom_mapping_state.clone(),
             request_timeout,
-            thought_signature_map: Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
             upstream_proxy: proxy_state.clone(),
             upstream: {
                 let u = Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
@@ -1084,10 +1079,6 @@ impl AxumServer {
                 get(admin_is_auto_launch_enabled),
             )
             .route("/system/autostart/toggle", post(admin_toggle_auto_launch))
-            .route(
-                "/system/http-api/settings",
-                get(admin_get_http_api_settings).post(admin_save_http_api_settings),
-            )
             .route("/system/antigravity/path", get(admin_get_antigravity_path))
             .route("/system/antigravity/args", get(admin_get_antigravity_args))
             .route("/system/cache/clear", post(admin_clear_antigravity_cache))
@@ -2919,9 +2910,29 @@ struct SetDataDirRequest {
     path: String,
 }
 
+fn require_unproxied_loopback(
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let addr = peer.map(|axum::extract::Extension(axum::extract::ConnectInfo(addr))| addr);
+    if crate::proxy::middleware::ip_filter::is_unproxied_direct_loopback_parts(addr, headers) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Host filesystem operation requires direct loopback access".to_string(),
+            }),
+        ))
+    }
+}
+
 async fn admin_set_data_dir(
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<SetDataDirRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    require_unproxied_loopback(peer, &headers)?;
     let path = payload.path;
     let new_path = tokio::task::spawn_blocking(move || {
         crate::modules::account::migrate_data_dir(std::path::PathBuf::from(path))
@@ -3568,10 +3579,6 @@ async fn admin_toggle_auto_launch(Json(_payload): Json<serde_json::Value>) -> im
     StatusCode::NOT_IMPLEMENTED
 }
 
-async fn admin_get_http_api_settings() -> impl IntoResponse {
-    Json(serde_json::json!({ "enabled": true, "port": 8045 }))
-}
-
 // [整合清理] 冗餘導入已移除
 
 #[derive(Deserialize)]
@@ -3907,18 +3914,6 @@ async fn admin_warm_up_account(
     Ok(Json(result))
 }
 
-async fn admin_save_http_api_settings(
-    Json(payload): Json<crate::modules::http_api::HttpApiSettings>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::http_api::save_settings(&payload).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(StatusCode::OK)
-}
-
 // Cloudflared Handlers
 async fn admin_cloudflared_get_status(
     State(state): State<AppState>,
@@ -4186,7 +4181,11 @@ async fn admin_delete_device_version(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+async fn admin_open_folder(
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    require_unproxied_loopback(peer, &headers)?;
     // Note: In Web mode, this may not actually open a local folder unless the backend handles it.
     // For ABV_Refactor, the backend should use opener to open it on the server (the desktop).
     crate::commands::open_data_folder().await.map_err(|e| {
@@ -4258,8 +4257,11 @@ struct CustomDbRequest {
 
 async fn admin_import_custom_db(
     State(state): State<AppState>,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<CustomDbRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    require_unproxied_loopback(peer, &headers)?;
     // [SECURITY] 禁止目录遍历
     if payload.path.contains("..") {
         return Err((
@@ -6175,5 +6177,45 @@ mod admin_parity_tests {
         }))
         .unwrap();
         assert_eq!(droid_sync.custom_models.len(), 1);
+    }
+
+    #[test]
+    fn host_fs_admin_guard_allows_only_unproxied_loopback() {
+        use axum::http::{HeaderMap, HeaderValue, StatusCode};
+
+        let loopback_peer = Some(axum::extract::Extension(axum::extract::ConnectInfo(
+            "127.0.0.1:51234".parse().unwrap(),
+        )));
+        let lan_peer = Some(axum::extract::Extension(axum::extract::ConnectInfo(
+            "192.168.1.50:51234".parse().unwrap(),
+        )));
+
+        let empty_headers = HeaderMap::new();
+        assert!(super::require_unproxied_loopback(loopback_peer, &empty_headers).is_ok());
+
+        let mut proxied_headers = HeaderMap::new();
+        proxied_headers.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+        let loopback_peer_proxied = Some(axum::extract::Extension(axum::extract::ConnectInfo(
+            "127.0.0.1:51234".parse().unwrap(),
+        )));
+        assert_eq!(
+            super::require_unproxied_loopback(loopback_peer_proxied, &proxied_headers)
+                .unwrap_err()
+                .0,
+            StatusCode::FORBIDDEN
+        );
+
+        assert_eq!(
+            super::require_unproxied_loopback(lan_peer, &empty_headers)
+                .unwrap_err()
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            super::require_unproxied_loopback(None, &empty_headers)
+                .unwrap_err()
+                .0,
+            StatusCode::FORBIDDEN
+        );
     }
 }

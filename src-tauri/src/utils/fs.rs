@@ -80,10 +80,26 @@ fn atomic_replace_file(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::rename(src, dst).map_err(|e| format!("rename failed: {}", e))
 }
 
+fn create_private_temp_file(path: &Path) -> std::io::Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+    }
+    #[cfg(not(unix))]
+    {
+        File::create(path)
+    }
+}
+
 /// Atomically write bytes to a file at `target_path`.
 ///
 /// Steps:
-/// 1. Create a unique temporary file in the same directory (`<file>.tmp.<uuid>`).
+/// 1. Create a unique temporary file in the same directory (`<file>.tmp.<uuid>`) with private 0600 permissions on Unix.
 /// 2. Write content and call `sync_all()` to flush buffers to physical disk.
 /// 3. Replace target file via atomic rename (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH` on Windows, `fs::rename` on POSIX).
 /// 4. If any step fails, remove the temporary file.
@@ -100,7 +116,7 @@ pub fn write_atomic<P: AsRef<Path>>(target_path: P, content: &[u8]) -> Result<()
     let temp_filename = format!("{}.tmp.{}", file_name, Uuid::new_v4());
     let temp_path: PathBuf = parent_dir.join(temp_filename);
 
-    let mut file = File::create(&temp_path)
+    let mut file = create_private_temp_file(&temp_path)
         .map_err(|e| format!("Failed to create temporary file {:?}: {}", temp_path, e))?;
 
     if let Err(e) = file.write_all(content) {
@@ -174,6 +190,25 @@ mod tests {
         let next_data = b"{\"valid\":true,\"generation\":2}";
         write_atomic(&target_file, next_data).expect("Subsequent write should succeed");
         assert_eq!(fs::read(&target_file).unwrap(), next_data);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_sets_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = std::env::temp_dir().join(format!("test_atomic_perms_{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let target_file = temp_dir.join("secret.json");
+        fs::write(&target_file, b"{}").unwrap();
+        fs::set_permissions(&target_file, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_atomic(&target_file, b"{\"refresh_token\":\"secret\"}").unwrap();
+        let mode = fs::metadata(&target_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

@@ -2456,9 +2456,22 @@ fn default_data_dir() -> Result<PathBuf, String> {
     }
 }
 
+fn set_private_dir_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
 fn ensure_dir(path: &Path) -> Result<(), String> {
     if !path.exists() {
         fs::create_dir_all(path).map_err(|e| format!("failed_to_create_data_dir: {}", e))?;
+        set_private_dir_permissions(path);
     }
     Ok(())
 }
@@ -2736,6 +2749,7 @@ pub fn get_accounts_dir() -> Result<PathBuf, String> {
     if !accounts_dir.exists() {
         fs::create_dir_all(&accounts_dir)
             .map_err(|e| format!("failed_to_create_accounts_dir: {}", e))?;
+        set_private_dir_permissions(&accounts_dir);
     }
 
     Ok(accounts_dir)
