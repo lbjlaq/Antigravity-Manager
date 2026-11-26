@@ -72,6 +72,7 @@ pub fn peek_budget_secs_with_config(
     is_thinking: bool,
     estimated_tokens: Option<u32>,
     stream_cfg: &crate::proxy::config::StreamTimeoutConfig,
+    env_override: Option<u64>,
 ) -> u64 {
     let floor = if is_compaction {
         180
@@ -91,8 +92,14 @@ pub fn peek_budget_secs_with_config(
         }
     };
 
-    if stream_cfg.allow_extended_ttft_budget {
-        floor.max(stream_cfg.initial_ttft_secs)
+    let (_, ceiling_cap) =
+        crate::proxy::pipeline::budget::effective_first_byte_caps_for(stream_cfg, env_override);
+    let extended = stream_cfg.allow_extended_ttft_budget
+        || env_override.is_some_and(|s| {
+            s > crate::proxy::pipeline::budget::DEFAULT_GATEWAY_REQUEST_BUDGET_SECS
+        });
+    if extended {
+        floor.max(stream_cfg.initial_ttft_secs.min(ceiling_cap))
     } else {
         floor
     }
@@ -110,6 +117,7 @@ pub fn peek_budget_secs(
         is_thinking,
         estimated_tokens,
         &crate::proxy::config::get_stream_timeout_config(),
+        crate::proxy::pipeline::budget::env_gateway_request_budget_secs(),
     )
 }
 
@@ -507,18 +515,29 @@ mod tests {
         assert_eq!(peek_budget_secs(false, false, false, Some(210_000)), 150);
         assert_eq!(peek_budget_secs(false, false, false, None), 30);
 
-        let extended = crate::proxy::config::StreamTimeoutConfig {
+        let mut cfg = crate::proxy::config::StreamTimeoutConfig {
             initial_ttft_secs: 600,
             gateway_request_budget_secs: 900,
             allow_extended_ttft_budget: true,
             ..Default::default()
         };
         assert_eq!(
-            peek_budget_secs_with_config(false, false, false, None, &extended),
+            peek_budget_secs_with_config(false, false, false, None, &cfg, None),
             600
         );
         assert_eq!(
-            peek_budget_secs_with_config(false, false, true, Some(120_000), &extended),
+            peek_budget_secs_with_config(false, false, true, Some(120_000), &cfg, None),
+            600
+        );
+
+        // Opt-in disabled: stays at floor unless env override exceeds 270s
+        cfg.allow_extended_ttft_budget = false;
+        assert_eq!(
+            peek_budget_secs_with_config(false, false, false, None, &cfg, None),
+            30
+        );
+        assert_eq!(
+            peek_budget_secs_with_config(false, false, false, None, &cfg, Some(900)),
             600
         );
     }

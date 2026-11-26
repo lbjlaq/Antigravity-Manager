@@ -1191,7 +1191,7 @@ pub fn get_effective_first_byte_timeouts() -> FirstByteTimeouts {
         &stream_cfg,
         crate::proxy::pipeline::budget::env_gateway_request_budget_secs(),
     )
-    .1;
+    .0;
 
     FirstByteTimeouts {
         text: calc(PayloadMediaKind::TextChat),
