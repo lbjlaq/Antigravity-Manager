@@ -293,6 +293,7 @@ mod tests {
         let err = select_round_robin_candidate_with_accounts(&all_blocked, &map, now)
             .expect_err("all blocked accounts must fail instead of selecting blocked #1");
         assert!(err.contains("没有可用的健康账号"));
+        assert!(err.contains("No eligible healthy account"));
 
         // Index ordering prefers live active email over stale current_agy_account_id.
         let index = crate::models::AccountIndex {
@@ -4641,7 +4642,7 @@ pub fn select_round_robin_candidate_with_accounts(
     now: i64,
 ) -> Result<crate::models::AccountSummary, String> {
     if candidates.is_empty() {
-        return Err("当前无可用账号".to_string());
+        return Err("当前无可用账号 / No accounts available".to_string());
     }
 
     // Pass 1: healthy, non-proxy-disabled, and non-depleted accounts
@@ -4673,20 +4674,124 @@ pub fn select_round_robin_candidate_with_accounts(
         return Ok(chosen.clone());
     }
 
-    Err("当前没有可用的健康账号（所有账号均已禁用、需验证、403 受限或已封禁），请运行 `antigravity-tools list` 查看详情".to_string())
+    Err("当前没有可用的健康账号（所有账号均已禁用、需验证、403 受限或已封禁），请运行 `antigravity-tools list` 查看详情 / No eligible healthy account available (all accounts are disabled, require verification, 403-restricted, or banned); run `antigravity-tools list` for details".to_string())
 }
 
 /// Live-probe a single account's quota and eligibility before CLI auto-switch.
 ///
-/// If the probe detects an upstream block (`VALIDATION_REQUIRED`, ban, 403, or `invalid_grant`),
-/// it persists and returns the updated `Account` as `Ok(account)`. Transient offline/network/timeout
-/// failures return `Err(...)` so callers can still fall back cleanly when offline.
+/// Uses a fast 8s path (`ensure_fresh_token` + `fetch_quota_with_cache`, with one 401 refresh retry),
+/// intentionally skipping `probe_account_ban` (`generateContent`) so CLI round-robin preflight
+/// remains bounded even on large pools. Persists any `invalid_grant`, `VALIDATION_REQUIRED`,
+/// or `403` state and returns `Ok(account)` so callers can skip newly blocked accounts; transient
+/// offline/network/timeout errors return `Err(...)` to allow offline fallback.
 pub async fn preflight_account_for_cli_switch(account_id: &str) -> Result<Account, String> {
+    use crate::error::AppError;
+    use crate::modules::oauth;
+
     let mut account = load_account(account_id)?;
-    let probe = tokio::time::timeout(
-        std::time::Duration::from_secs(12),
-        fetch_quota_with_retry(&mut account),
-    )
+
+    let probe = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
+            Ok(t) => t,
+            Err(e) => {
+                if e.contains("invalid_grant") {
+                    account.disabled = true;
+                    account.disabled_at = Some(chrono::Utc::now().timestamp());
+                    account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                    let _ = save_account(&account);
+                    crate::proxy::server::trigger_account_reload(&account.id);
+                }
+                return Err(AppError::OAuth(e));
+            }
+        };
+
+        if token.access_token != account.token.access_token {
+            account.token = token.clone();
+            let _ = upsert_account(account.email.clone(), account.name.clone(), token);
+        }
+
+        let mut res = modules::fetch_quota_with_cache(
+            &account.token.access_token,
+            &account.email,
+            account.token.project_id.as_deref(),
+            Some(&account.id),
+        )
+        .await;
+
+        if matches!(res, Err(AppError::Network(_, Some(401)))) {
+            let refreshed = oauth::refresh_access_token_with_client(
+                &account.token.refresh_token,
+                Some(&account.id),
+                account.token.oauth_client_key.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                if e.contains("invalid_grant") {
+                    account.disabled = true;
+                    account.disabled_at = Some(chrono::Utc::now().timestamp());
+                    account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                    let _ = save_account(&account);
+                    crate::proxy::server::trigger_account_reload(&account.id);
+                }
+                AppError::OAuth(e)
+            })?;
+
+            let is_gcp_tos = oauth::is_gcp_enterprise_client(
+                refreshed
+                    .oauth_client_key
+                    .as_deref()
+                    .or(account.token.oauth_client_key.as_deref()),
+            ) || account.token.is_gcp_tos;
+
+            let new_token = TokenData::new(
+                refreshed.access_token,
+                account.token.refresh_token.clone(),
+                refreshed.expires_in,
+                account.token.email.clone(),
+                account.token.project_id.clone(),
+                None,
+                is_gcp_tos,
+                refreshed.id_token,
+            )
+            .with_oauth_client_key(
+                refreshed
+                    .oauth_client_key
+                    .or_else(|| account.token.oauth_client_key.clone()),
+            );
+
+            account.token = new_token.clone();
+            let _ = upsert_account(account.email.clone(), account.name.clone(), new_token);
+
+            res = modules::fetch_quota_with_cache(
+                &account.token.access_token,
+                &account.email,
+                account.token.project_id.as_deref(),
+                Some(&account.id),
+            )
+            .await;
+        }
+
+        match res {
+            Ok((q, project_id)) => {
+                if project_id.is_some() && project_id != account.token.project_id {
+                    account.token.project_id = project_id;
+                    let _ = upsert_account(
+                        account.email.clone(),
+                        account.name.clone(),
+                        account.token.clone(),
+                    );
+                }
+                let q = demote_model_scoped_quota(&mut account, q);
+                Ok(q)
+            }
+            Err(e) => {
+                if is_validation_required_error(&e) {
+                    mark_validation_blocked(&mut account, &e.to_string());
+                }
+                Err(e)
+            }
+        }
+    })
     .await;
 
     match probe {
@@ -4705,7 +4810,7 @@ pub async fn preflight_account_for_cli_switch(account_id: &str) -> Result<Accoun
                     return Ok(reloaded);
                 }
             }
-            Err("配额预检超时".to_string())
+            Err("配额预检超时 / Quota preflight timed out".to_string())
         }
     }
 }
@@ -4746,7 +4851,7 @@ pub fn resolve_account_summary_in_index(
     target_ide: Option<&str>,
 ) -> Result<crate::models::AccountSummary, String> {
     if index.accounts.is_empty() {
-        return Err("当前无可用账号".to_string());
+        return Err("当前无可用账号 / No accounts available".to_string());
     }
 
     let trimmed = query.map(str::trim).filter(|s| !s.is_empty());
@@ -4798,7 +4903,10 @@ pub fn resolve_account_summary_in_index(
             return Ok(acc.clone());
         }
 
-        return Err(format!("未找到匹配的账号: '{}'", q));
+        return Err(format!(
+            "未找到匹配的账号 / No matching account found: '{}'",
+            q
+        ));
     }
 
     // 无参时：环形顺延轮换（Round-Robin）

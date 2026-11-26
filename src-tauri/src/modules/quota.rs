@@ -561,7 +561,11 @@ pub async fn fetch_quota_with_cache(
                             "Account unauthorized (403 Forbidden): {}",
                             text
                         ));
-                        let is_validation = is_validation_challenge_body(&text);
+                        // 封禁优先于验证锁，且地区不支持 403 不应走临时验证锁定 (#3995)
+                        let is_validation =
+                            crate::models::AccountBanInfo::classify_upstream(403, &text).is_none()
+                                && !crate::models::account::is_location_unsupported_error(&text)
+                                && is_validation_challenge_body(&text);
                         let q = record_quota_403_forbidden(
                             account_id,
                             &text,
@@ -1121,19 +1125,30 @@ fn is_validation_challenge_body(body: &str) -> bool {
         || lower.contains("validation_url")
         || lower.contains("verify your account")
         || lower.contains("further action is required")
-        || lower.contains("not eligible for antigravity")
+}
+
+fn is_account_ineligible_body(body: &str) -> bool {
+    let lower = body.to_lowercase();
+    lower.contains("not eligible for antigravity")
+        || lower.contains("not eligible for gemini code assist")
 }
 
 /// Classify a 403 response body from `retrieveUserQuotaSummary`.
 ///
-/// Returns `Some(true)` for validation/eligibility challenges, `Some(false)` for
-/// high-confidence ban/TOS violations, and `None` for generic non-validation
-/// permission errors (so GCP/Vertex projects without this auxiliary endpoint
-/// still degrade gracefully).
+/// Priority:
+/// 1. Region/location-unsupported 403 (`None`) so the `#3995` location guard stays intact;
+/// 2. High-confidence ban/TOS violations (`Some(false)`, enforcing `banned > validation`);
+/// 3. Explicit validation challenge (`Some(true)` -> 10m validation block + URL);
+/// 4. Account-level ineligibility (`Some(false)` -> `mark_account_forbidden`);
+/// 5. Generic permission error (`None` for GCP/Vertex fallback).
 pub(crate) fn classify_quota_summary_403(body: &str) -> Option<bool> {
-    if is_validation_challenge_body(body) {
-        Some(true)
+    if crate::models::account::is_location_unsupported_error(body) {
+        None
     } else if crate::models::AccountBanInfo::classify_upstream(403, body).is_some() {
+        Some(false)
+    } else if is_validation_challenge_body(body) {
+        Some(true)
+    } else if is_account_ineligible_body(body) {
         Some(false)
     } else {
         None
@@ -1673,13 +1688,12 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
             .await
             .map_err(|e| format!("Failed to fetch quota: {}", e))?;
 
-    // [FIX] 预热阶段检测到 403 时，区分是否属于临时验证并使用统一禁用逻辑
+    // [FIX] 预热阶段检测到 403 时，区分是否属于临时验证并使用统一禁用逻辑（封禁优先于验证锁）
     if fresh_quota.is_forbidden {
-        let is_validation = fresh_quota.forbidden_reason.as_deref().map_or(false, |r| {
-            let lower = r.to_lowercase();
-            lower.contains("validation_required")
-                || lower.contains("verify your account")
-                || lower.contains("validation_url")
+        let is_validation = fresh_quota.forbidden_reason.as_deref().is_some_and(|r| {
+            crate::models::AccountBanInfo::classify_upstream(403, r).is_none()
+                && !crate::models::account::is_location_unsupported_error(r)
+                && is_validation_challenge_body(r)
         });
 
         if is_validation {
@@ -2277,22 +2291,31 @@ mod tests {
         assert_eq!(classify_quota_summary_403(validation_body), Some(true));
 
         let eligibility_body = r#"{"error":{"code":403,"message":"Your current account is not eligible for Antigravity."}}"#;
-        assert_eq!(classify_quota_summary_403(eligibility_body), Some(true));
+        assert_eq!(classify_quota_summary_403(eligibility_body), Some(false));
 
-        let tos_ban_body = r#"{
+        let location_eligibility_body = r#"{"error":{"code":403,"message":"User location is not supported for the API use. Current account is not eligible for Antigravity."}}"#;
+        assert_eq!(classify_quota_summary_403(location_eligibility_body), None);
+
+        let tos_ban_with_validation_text = r#"{
             "error": {
                 "code": 403,
-                "message": "This account has been suspended for Terms of Service violations.",
+                "message": "This account has been suspended for Terms of Service violations. Verify your account to continue.",
                 "status": "PERMISSION_DENIED",
                 "details": [
                     {
                         "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                        "reason": "TOS_VIOLATION"
+                        "reason": "TOS_VIOLATION",
+                        "metadata": {
+                            "validation_url": "https://accounts.google.com/v3/signin/continue?plt=abc"
+                        }
                     }
                 ]
             }
         }"#;
-        assert_eq!(classify_quota_summary_403(tos_ban_body), Some(false));
+        assert_eq!(
+            classify_quota_summary_403(tos_ban_with_validation_text),
+            Some(false)
+        );
 
         let generic_body = r#"{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}"#;
         assert_eq!(classify_quota_summary_403(generic_body), None);

@@ -87,12 +87,23 @@ fn print_cli_help() {
     );
 }
 
+const MAX_CLI_PREFLIGHT_PROBES: usize = 6;
+const MAX_CLI_PREFLIGHT_TOTAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CandidateTier {
+    Fresh,
+    Depleted,
+    ProxyDisabled,
+    ExpiredValidation,
+}
+
 async fn resolve_switch_candidate_round_robin(
     target_ide: &str,
 ) -> Result<crate::models::AccountSummary, String> {
     let index = account::load_account_index()?;
     if index.accounts.is_empty() {
-        return Err("当前无可用账号".to_string());
+        return Err("当前无可用账号 / No accounts available".to_string());
     }
 
     let active_email = account::detect_active_clients_status()
@@ -105,10 +116,11 @@ async fn resolve_switch_candidate_round_robin(
     );
 
     let now = chrono::Utc::now().timestamp();
-    let mut tier_fresh: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
-    let mut tier_depleted: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
-    let mut tier_proxy_disabled: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
-    let mut tier_expired_validation: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
+    let mut tier_fresh: Vec<(crate::models::AccountSummary, CandidateTier)> = Vec::new();
+    let mut tier_depleted: Vec<(crate::models::AccountSummary, CandidateTier)> = Vec::new();
+    let mut tier_proxy_disabled: Vec<(crate::models::AccountSummary, CandidateTier)> = Vec::new();
+    let mut tier_expired_validation: Vec<(crate::models::AccountSummary, CandidateTier)> =
+        Vec::new();
 
     for summary in ordered {
         if summary.disabled {
@@ -119,36 +131,37 @@ async fn resolve_switch_candidate_round_robin(
                 if acc.disabled || acc.banned || acc.is_validation_block_active(now) {
                     continue;
                 }
+                let is_proxy_disabled = summary.proxy_disabled || acc.proxy_disabled;
                 let is_forbidden = acc.quota.as_ref().is_some_and(|q| q.is_forbidden);
                 if is_forbidden {
-                    // 验证锁已过冷却期的账号作为保底重探候选，其余 403 直接跳过
+                    // 验证锁已过冷却期且未停用反代的账号作为保底重探候选，其余 403 直接跳过
                     let has_expired_validation = acc.validation_blocked
                         && !acc.is_validation_block_active(now)
-                        && !summary.proxy_disabled;
+                        && !is_proxy_disabled;
                     if has_expired_validation {
-                        tier_expired_validation.push((summary, false));
+                        tier_expired_validation.push((summary, CandidateTier::ExpiredValidation));
                     }
                     continue;
                 }
-                if summary.proxy_disabled {
-                    tier_proxy_disabled.push((summary, true));
+                if is_proxy_disabled {
+                    tier_proxy_disabled.push((summary, CandidateTier::ProxyDisabled));
                 } else if crate::modules::auto_switch::is_account_depleted(&acc, 0, &[]) {
-                    tier_depleted.push((summary, true));
+                    tier_depleted.push((summary, CandidateTier::Depleted));
                 } else {
-                    tier_fresh.push((summary, false));
+                    tier_fresh.push((summary, CandidateTier::Fresh));
                 }
             }
             Err(_) => {
                 if summary.proxy_disabled {
-                    tier_proxy_disabled.push((summary, true));
+                    tier_proxy_disabled.push((summary, CandidateTier::ProxyDisabled));
                 } else {
-                    tier_fresh.push((summary, false));
+                    tier_fresh.push((summary, CandidateTier::Fresh));
                 }
             }
         }
     }
 
-    let queue: Vec<(crate::models::AccountSummary, bool)> = tier_fresh
+    let queue: Vec<(crate::models::AccountSummary, CandidateTier)> = tier_fresh
         .into_iter()
         .chain(tier_depleted)
         .chain(tier_proxy_disabled)
@@ -156,35 +169,65 @@ async fn resolve_switch_candidate_round_robin(
         .collect();
 
     if queue.is_empty() {
-        return Err("未找到可用的健康账号（所有账号均已禁用、需验证、403 受限或已封禁）。请运行 `antigravity-tools list` 查看详情。".to_string());
+        return Err("未找到可用的健康账号（所有账号均已禁用、需验证、403 受限或已封禁）。请运行 `antigravity-tools list` 查看详情。 / No eligible healthy account found (all accounts are disabled, require verification, 403-restricted, or banned). Run `antigravity-tools list` for details.".to_string());
     }
 
+    let started_at = std::time::Instant::now();
+    let mut probes_run = 0usize;
     let mut live_depleted_fallback: Option<crate::models::AccountSummary> = None;
 
-    for (candidate, allow_depleted) in queue {
+    for (candidate, tier) in queue {
+        // 一旦进入非 Fresh 分组且已有同轮先探测到的 0% 健康降级候选，直接返回它以保持顺延顺序
+        if tier != CandidateTier::Fresh {
+            if let Some(fallback) = live_depleted_fallback {
+                return Ok(fallback);
+            }
+        }
+
+        if probes_run >= MAX_CLI_PREFLIGHT_PROBES
+            || started_at.elapsed() >= MAX_CLI_PREFLIGHT_TOTAL_BUDGET
+        {
+            if tier == CandidateTier::ExpiredValidation {
+                // 过期验证锁账号仍带 is_forbidden 标记，预算耗尽时不盲切
+                break;
+            }
+            let chosen = live_depleted_fallback.unwrap_or(candidate);
+            println!(
+                "\x1b[33m[Antigravity CLI]\x1b[0m 在线预检已达上限 ({} 次 / {}s)，按本地状态切换账号 {} / Live preflight budget reached ({} probes / {}s), falling back to local candidate {}",
+                probes_run,
+                MAX_CLI_PREFLIGHT_TOTAL_BUDGET.as_secs(),
+                chosen.email,
+                probes_run,
+                MAX_CLI_PREFLIGHT_TOTAL_BUDGET.as_secs(),
+                chosen.email
+            );
+            return Ok(chosen);
+        }
+
+        probes_run += 1;
         match account::preflight_account_for_cli_switch(&candidate.id).await {
             Ok(refreshed) => {
                 let check_now = chrono::Utc::now().timestamp();
                 if let Some(reason) = describe_cli_account_ineligibility(&refreshed, check_now) {
                     println!(
-                        "\x1b[33m[Antigravity CLI]\x1b[0m 跳过不可用账号 {} ({})，继续顺延...",
-                        candidate.email, reason
+                        "\x1b[33m[Antigravity CLI]\x1b[0m 跳过不可用账号 {} ({})，继续顺延 / Skipping ineligible account {} ({}), trying next...",
+                        candidate.email, reason, candidate.email, reason
                     );
                     if let Some(url) = refreshed
                         .validation_url
                         .as_deref()
                         .or(refreshed.ban_appeal_url.as_deref())
                     {
-                        println!("  ↳ 验证/申诉链接: {}", url);
+                        println!("  ↳ 验证/申诉链接 / Verification or appeal URL: {}", url);
                     }
                     continue;
                 }
-                if !allow_depleted
+                if tier == CandidateTier::Fresh
                     && crate::modules::auto_switch::is_account_depleted(&refreshed, 0, &[])
                 {
                     println!(
-                        "\x1b[33m[Antigravity CLI]\x1b[0m 账号 {} 配额已耗尽，优先尝试其他有余量账号...",
-                        candidate.email
+                        "\x1b[33m[Antigravity CLI]\x1b[0m 账号 {} 配额已耗尽，优先尝试其他有余量账号 / Quota depleted for {}, trying other accounts...",
+                        candidate.email, candidate.email
                     );
                     if live_depleted_fallback.is_none() {
                         live_depleted_fallback = Some(candidate);
@@ -194,19 +237,31 @@ async fn resolve_switch_candidate_round_robin(
                 return Ok(candidate);
             }
             Err(err) => {
-                // 网络离线或超时时按本地状态放行，不阻断离线切换
+                if tier == CandidateTier::ExpiredValidation {
+                    // 仍带本地 is_forbidden=true 的账号在线重试失败时不得盲切回降级结果
+                    println!(
+                        "\x1b[33m[Antigravity CLI]\x1b[0m 跳过验证冷却期重探失败账号 {} ({}) / Skipping expired-validation candidate {} after failed probe ({})",
+                        candidate.email,
+                        truncate_str(&err, 60),
+                        candidate.email,
+                        truncate_str(&err, 60)
+                    );
+                    continue;
+                }
+                // 网络离线或超时时按本地状态放行（优先已验证过的实时耗尽健康账号），不阻断离线切换
+                let err_short = truncate_str(&err, 60);
+                let chosen = live_depleted_fallback.unwrap_or(candidate);
                 println!(
-                    "\x1b[33m[Antigravity CLI]\x1b[0m 在线预检未完成 ({})，按本地状态切换账号 {}",
-                    truncate_str(&err, 60),
-                    candidate.email
+                    "\x1b[33m[Antigravity CLI]\x1b[0m 在线预检未完成 ({})，按本地状态切换账号 {} / Live preflight skipped ({}), switching locally to {}",
+                    err_short, chosen.email, err_short, chosen.email
                 );
-                return Ok(candidate);
+                return Ok(chosen);
             }
         }
     }
 
     live_depleted_fallback.ok_or_else(|| {
-        "未找到可用的健康账号（所有候选账号均需验证、已封禁、403 受限或已禁用）。请运行 `antigravity-tools list` 查看详情。".to_string()
+        "未找到可用的健康账号（所有候选账号均需验证、已封禁、403 受限或已禁用）。请运行 `antigravity-tools list` 查看详情。 / No eligible healthy account found (all candidates require verification, are banned, 403-restricted, or disabled). Run `antigravity-tools list` for details.".to_string()
     })
 }
 
@@ -231,7 +286,7 @@ async fn handle_switch_command(args: &[String]) -> Result<(), String> {
         i += 1;
     }
 
-    println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在检索目标账号...");
+    println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在检索目标账号 / Resolving target account...");
 
     // 指定账号时按查询匹配；无参自动顺延时执行在线资格预检并跳过不可用账号
     let target_summary = if query
@@ -246,15 +301,15 @@ async fn handle_switch_command(args: &[String]) -> Result<(), String> {
                 describe_cli_account_ineligibility(&full, chrono::Utc::now().timestamp())
             {
                 println!(
-                    "\x1b[33m[Antigravity CLI]\x1b[0m 警告: 目标账号 {} 当前标记为 [{}]",
-                    resolved.email, reason
+                    "\x1b[33m[Antigravity CLI]\x1b[0m 警告: 目标账号 {} 当前标记为 [{}] / Warning: target account {} is marked [{}]",
+                    resolved.email, reason, resolved.email, reason
                 );
                 if let Some(url) = full
                     .validation_url
                     .as_deref()
                     .or(full.ban_appeal_url.as_deref())
                 {
-                    println!("  ↳ 验证/申诉链接: {}", url);
+                    println!("  ↳ 验证/申诉链接 / Verification or appeal URL: {}", url);
                 }
             }
         }
@@ -277,12 +332,14 @@ async fn handle_switch_command(args: &[String]) -> Result<(), String> {
         .map(|n| format!(" ({})", n))
         .unwrap_or_default();
     println!(
-        "\x1b[32m✔ 成功切换账号!\x1b[0m 目标: \x1b[1m{}\x1b[0m | 邮箱: \x1b[36m{}{}\x1b[0m",
+        "\x1b[32m✔ 成功切换账号 / Switched account!\x1b[0m 目标/Target: \x1b[1m{}\x1b[0m | 邮箱/Email: \x1b[36m{}{}\x1b[0m",
         target_ide, target_summary.email, name_str
     );
 
     if auto_continue {
-        println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在无缝接续会话 (`agy --continue`)...\n");
+        println!(
+            "\x1b[34m[Antigravity CLI]\x1b[0m 正在无缝接续会话 / Resuming session (`agy --continue`)...\n"
+        );
         execute_agy_continue();
     }
 
@@ -294,32 +351,34 @@ async fn handle_list_command() -> Result<(), String> {
     let status = account::detect_active_clients_status().unwrap_or_default();
     let now = chrono::Utc::now().timestamp();
 
-    println!("\n\x1b[1m当前激活账号状态:\x1b[0m");
+    println!("\n\x1b[1m当前激活账号状态 / Active Client Accounts:\x1b[0m");
     println!(
         "  • agy CLI (Keychain):  \x1b[36m{}\x1b[0m",
-        status.agy_email.as_deref().unwrap_or("未设置")
+        status.agy_email.as_deref().unwrap_or("未设置 / None")
     );
     println!(
         "  • IDE Plugin (ACP):    \x1b[36m{}\x1b[0m",
-        status.acp_email.as_deref().unwrap_or("未设置")
+        status.acp_email.as_deref().unwrap_or("未设置 / None")
     );
     println!(
         "  • Antigravity IDE:     \x1b[36m{}\x1b[0m",
-        status.ide_email.as_deref().unwrap_or("未设置")
+        status.ide_email.as_deref().unwrap_or("未设置 / None")
     );
     println!(
         "  • Antigravity Classic: \x1b[36m{}\x1b[0m\n",
-        status.classic_email.as_deref().unwrap_or("未设置")
+        status.classic_email.as_deref().unwrap_or("未设置 / None")
     );
 
-    println!("序号 | 激活 | 邮箱                         | 别名         | 状态");
-    println!("-----+------+------------------------------+--------------+---------");
+    println!("序号/# | 激活/Act | 邮箱 / Email                 | 别名 / Name  | 状态 / Status");
+    println!(
+        "-------+----------+------------------------------+--------------+------------------------"
+    );
 
     for (i, acc) in index.accounts.iter().enumerate() {
         let is_active = if status.agy_email.as_deref() == Some(&acc.email) {
-            "  👉 "
+            "    👉   "
         } else {
-            "     "
+            "         "
         };
         let email = format!("{:<28}", truncate_str(&acc.email, 28));
         let name = format!(
@@ -329,7 +388,7 @@ async fn handle_list_command() -> Result<(), String> {
         let full = account::load_account(&acc.id).ok();
         let state = format_cli_account_status_badge(acc, full.as_ref(), now);
         println!(
-            "{:<4} |{}| {} | {} | {}",
+            "{:<6} | {} | {} | {} | {}",
             i + 1,
             is_active,
             email,
@@ -338,7 +397,7 @@ async fn handle_list_command() -> Result<(), String> {
         );
     }
 
-    println!("\n提示: 运行 `antigravity-tools switch` 自动顺延，或 `antigravity-tools switch <序号/邮箱>`。\n");
+    println!("\n提示 / Tip: 运行 `antigravity-tools switch` 自动顺延 (auto round-robin)，或 `antigravity-tools switch <序号/邮箱 | index/email>`。\n");
     Ok(())
 }
 
@@ -347,13 +406,13 @@ fn describe_cli_account_ineligibility(
     now: i64,
 ) -> Option<&'static str> {
     if acc.banned {
-        Some("已封禁")
+        Some("已封禁 / Banned")
     } else if acc.is_validation_block_active(now) {
-        Some("需验证")
+        Some("需验证 / Verify Required")
     } else if acc.disabled {
-        Some("已禁用")
+        Some("已禁用 / Disabled")
     } else if acc.quota.as_ref().is_some_and(|q| q.is_forbidden) {
-        Some("403受限")
+        Some("403受限 / 403 Forbidden")
     } else {
         None
     }
@@ -365,19 +424,19 @@ fn format_cli_account_status_badge(
     now: i64,
 ) -> &'static str {
     if summary.disabled || full.is_some_and(|a| a.disabled) {
-        "\x1b[31m已禁用\x1b[0m"
+        "\x1b[31m已禁用 / Disabled\x1b[0m"
     } else if full.is_some_and(|a| a.banned) {
-        "\x1b[31m已封禁\x1b[0m"
+        "\x1b[31m已封禁 / Banned\x1b[0m"
     } else if full.is_some_and(|a| a.is_validation_block_active(now)) {
-        "\x1b[31m需验证\x1b[0m"
+        "\x1b[31m需验证 / Verify Required\x1b[0m"
     } else if full.is_some_and(|a| a.quota.as_ref().is_some_and(|q| q.is_forbidden)) {
-        "\x1b[31m403受限\x1b[0m"
+        "\x1b[31m403受限 / 403 Forbidden\x1b[0m"
     } else if summary.proxy_disabled || full.is_some_and(|a| a.proxy_disabled) {
-        "\x1b[33m代理停用\x1b[0m"
+        "\x1b[33m代理停用 / Proxy Off\x1b[0m"
     } else if full.is_some_and(|a| crate::modules::auto_switch::is_account_depleted(a, 0, &[])) {
-        "\x1b[33m配额耗尽\x1b[0m"
+        "\x1b[33m配额耗尽 / Quota Depleted\x1b[0m"
     } else {
-        "\x1b[32m正常\x1b[0m"
+        "\x1b[32m正常 / Normal\x1b[0m"
     }
 }
 
@@ -449,7 +508,7 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
     let proxy_url = format!("http://127.0.0.1:{}", port);
 
     println!(
-        "\x1b[34m[Antigravity CLI]\x1b[0m 正在一键同步 Agent 工具配置 (目标: \x1b[1m{}\x1b[0m)...",
+        "\x1b[34m[Antigravity CLI]\x1b[0m 正在一键同步 Agent 工具配置 / Syncing Agent config (目标/Target: \x1b[1m{}\x1b[0m)...",
         target_app
     );
 
@@ -465,11 +524,16 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
                 &api_key,
                 Some(&target_model),
             )?;
-            println!("\x1b[32m✔ 成功同步配置到 DeepSeek Harness!\x1b[0m");
-            println!("  • 适配模式: \x1b[36mWeb GUI (dsh web) & CLI (dsh)\x1b[0m");
-            println!("  • 接口地址 (Base URL): \x1b[36m{}/v1\x1b[0m", proxy_url);
-            println!("  • 默认模型: \x1b[36m{}\x1b[0m", target_model);
-            println!("  • 配置文件:");
+            println!(
+                "\x1b[32m✔ 成功同步配置到 DeepSeek Harness / Synced to DeepSeek Harness!\x1b[0m"
+            );
+            println!("  • 适配模式 / Mode: \x1b[36mWeb GUI (dsh web) & CLI (dsh)\x1b[0m");
+            println!("  • 接口地址 / Base URL: \x1b[36m{}/v1\x1b[0m", proxy_url);
+            println!(
+                "  • 默认模型 / Default Model: \x1b[36m{}\x1b[0m",
+                target_model
+            );
+            println!("  • 配置文件 / Config Files:");
             println!("    - ~/.dsh/profiles/desktop/cordis.patch.yml (CLI & Desktop)");
             println!("    - ~/.dsh/profiles/web/cordis.patch.yml (Web GUI)");
             println!("    - ~/.dsh/.credentials.yaml");
@@ -477,7 +541,7 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
         "claude" | "claude-code" | "claudecode" => {
             sync_config(&CliApp::Claude, &proxy_url, &api_key, Some(&target_model))?;
             println!(
-                "\x1b[32m✔ 成功同步配置到 Claude Code!\x1b[0m (模型: {})",
+                "\x1b[32m✔ 成功同步配置到 Claude Code / Synced to Claude Code!\x1b[0m (模型/Model: {})",
                 target_model
             );
         }
@@ -485,14 +549,14 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
             let codex_url = format!("{}/v1", proxy_url);
             sync_config(&CliApp::Codex, &codex_url, &api_key, Some(&target_model))?;
             println!(
-                "\x1b[32m✔ 成功同步配置到 Codex AI!\x1b[0m (模型: {})",
+                "\x1b[32m✔ 成功同步配置到 Codex AI / Synced to Codex AI!\x1b[0m (模型/Model: {})",
                 target_model
             );
         }
         "gemini" | "agy" => {
             sync_config(&CliApp::Gemini, &proxy_url, &api_key, Some(&target_model))?;
             println!(
-                "\x1b[32m✔ 成功同步配置到 Antigravity CLI (agy)!\x1b[0m (模型: {})",
+                "\x1b[32m✔ 成功同步配置到 Antigravity CLI (agy) / Synced to Antigravity CLI!\x1b[0m (模型/Model: {})",
                 target_model
             );
         }
@@ -504,13 +568,13 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
                 &api_key,
                 Some(&target_model),
             )?;
-            println!("\x1b[32m✔ 成功同步配置到 OpenCode!\x1b[0m");
+            println!("\x1b[32m✔ 成功同步配置到 OpenCode / Synced to OpenCode!\x1b[0m");
         }
         "jeikcode" => {
             let jeik_url = format!("{}/v1", proxy_url);
             sync_config(&CliApp::JeikCode, &jeik_url, &api_key, Some(&target_model))?;
             println!(
-                "\x1b[32m✔ 成功同步配置到 JeikCode!\x1b[0m (模型: {})",
+                "\x1b[32m✔ 成功同步配置到 JeikCode / Synced to JeikCode!\x1b[0m (模型/Model: {})",
                 target_model
             );
         }
@@ -518,7 +582,7 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
             let grok_url = format!("{}/v1", proxy_url);
             sync_config(&CliApp::GrokBuild, &grok_url, &api_key, Some(&target_model))?;
             println!(
-                "\x1b[32m✔ 成功同步配置到 Grok Build!\x1b[0m (模型: {})",
+                "\x1b[32m✔ 成功同步配置到 Grok Build / Synced to Grok Build!\x1b[0m (模型/Model: {})",
                 target_model
             );
         }
@@ -543,16 +607,19 @@ async fn handle_sync_command(args: &[String]) -> Result<(), String> {
                     proxy_url.clone()
                 };
                 if let Err(e) = sync_config(&app, &url, &api_key, Some(&target_model)) {
-                    eprintln!("  \x1b[31m✘\x1b[0m 同步 {} 失败: {}", name, e);
+                    eprintln!(
+                        "  \x1b[31m✘\x1b[0m 同步 {} 失败 / Failed to sync {}: {}",
+                        name, name, e
+                    );
                 } else {
-                    println!("  \x1b[32m✔\x1b[0m 已同步 {}", name);
+                    println!("  \x1b[32m✔\x1b[0m 已同步 / Synced {}", name);
                 }
             }
-            println!("\x1b[32m🎉 全部 Agent 工具配置同步完成!\x1b[0m");
+            println!("\x1b[32m🎉 全部 Agent 工具配置同步完成 / All Agent configs synced!\x1b[0m");
         }
         other => {
             return Err(format!(
-                "未知的 Agent 工具: '{}'。支持的工具: dsh, claude, codex, gemini, opencode, jeikcode, grok, all",
+                "未知的 Agent 工具 / Unknown Agent tool: '{}'。支持 / Supported: dsh, claude, codex, gemini, opencode, jeikcode, grok, all",
                 other
             ));
         }
@@ -598,7 +665,10 @@ fn execute_agy_continue() {
         // 查找可用的 agy 执行程序
         let agy_bin = find_agy_executable();
         let err = Command::new(&agy_bin).arg("--continue").exec();
-        eprintln!("启动 agy --continue 失败: {}", err);
+        eprintln!(
+            "启动 agy --continue 失败 / Failed to launch agy --continue: {}",
+            err
+        );
     }
 
     #[cfg(windows)]
@@ -625,35 +695,42 @@ fn find_agy_executable() -> String {
 /// [NEW #3726] CLI 批量高性能导入命令
 async fn handle_import_command(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
-        return Err("用法: antigravity-tools import <file.json>".to_string());
+        return Err("用法 / Usage: antigravity-tools import <file.json>".to_string());
     }
 
     let file_path = std::path::PathBuf::from(&args[0]);
     if !file_path.exists() {
-        return Err(format!("文件不存在: {:?}", file_path));
+        return Err(format!("文件不存在 / File not found: {:?}", file_path));
     }
 
-    let content =
-        std::fs::read_to_string(&file_path).map_err(|e| format!("读取导入文件失败: {}", e))?;
+    let content = std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("读取导入文件失败 / Failed to read import file: {}", e))?;
 
     // 自动为源文件创建 <filename>-backup 备份文件，确保失败随时可重新导入
     let backup_path = format!("{}-backup", file_path.to_string_lossy());
     if let Err(e) = std::fs::write(&backup_path, &content) {
-        eprintln!("\x1b[33m[Warning]\x1b[0m 无法创建源文件备份: {}", e);
+        eprintln!(
+            "\x1b[33m[Warning]\x1b[0m 无法创建源文件备份 / Failed to create backup: {}",
+            e
+        );
     } else {
         println!(
-            "\x1b[32m✔\x1b[0m 已自动备份源文件至: \x1b[1m{}\x1b[0m",
+            "\x1b[32m✔\x1b[0m 已自动备份源文件至 / Backed up source file to: \x1b[1m{}\x1b[0m",
             backup_path
         );
     }
 
     let entries = account::parse_import_entries_from_str(&content);
     if entries.is_empty() {
-        return Err("未从文件中解析出有效的 refresh_token 凭据".to_string());
+        return Err(
+            "未从文件中解析出有效的 refresh_token 凭据 / No valid refresh_token found in file"
+                .to_string(),
+        );
     }
 
     println!(
-        "\x1b[34m[Antigravity CLI]\x1b[0m 发现 {} 个有效账号凭据，正在以流式并发 (6路) 导入...",
+        "\x1b[34m[Antigravity CLI]\x1b[0m 发现 {} 个有效账号凭据，正在以流式并发 (6路) 导入 / Found {} credentials, importing concurrently...",
+        entries.len(),
         entries.len()
     );
 
@@ -662,19 +739,23 @@ async fn handle_import_command(args: &[String]) -> Result<(), String> {
     let duration = start.elapsed();
 
     println!(
-        "\x1b[32m🎉 批量导入完成!\x1b[0m 成功: \x1b[32m{}\x1b[0m | 失败: \x1b[31m{}\x1b[0m | 耗时: {:.2}s",
+        "\x1b[32m🎉 批量导入完成 / Import complete!\x1b[0m 成功/OK: \x1b[32m{}\x1b[0m | 失败/Failed: \x1b[31m{}\x1b[0m | 耗时/Elapsed: {:.2}s",
         result.success,
         result.failed,
         duration.as_secs_f64()
     );
 
     if !result.errors.is_empty() {
-        eprintln!("\n\x1b[33m部分失败明细:\x1b[0m");
+        eprintln!("\n\x1b[33m部分失败明细 / Failure details:\x1b[0m");
         for (i, err) in result.errors.iter().take(5).enumerate() {
             eprintln!("  {}. {}", i + 1, err);
         }
         if result.errors.len() > 5 {
-            eprintln!("  ... 其余 {} 条错误已忽略", result.errors.len() - 5);
+            eprintln!(
+                "  ... 其余 {} 条错误已忽略 / {} more errors omitted",
+                result.errors.len() - 5,
+                result.errors.len() - 5
+            );
         }
     }
 
@@ -689,16 +770,17 @@ async fn handle_export_command(args: &[String]) -> Result<(), String> {
         std::path::PathBuf::from("antigravity_accounts_export.json")
     };
 
-    println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在极速导出所有账号...");
+    println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在极速导出所有账号 / Exporting all accounts...");
     let response = account::export_accounts_by_ids(&[])?;
     let content = serde_json::to_string_pretty(&response.accounts)
-        .map_err(|e| format!("序列化失败: {}", e))?;
+        .map_err(|e| format!("序列化失败 / Serialization failed: {}", e))?;
 
     std::fs::write(&out_path, content.as_bytes())
-        .map_err(|e| format!("写入导出文件失败: {}", e))?;
+        .map_err(|e| format!("写入导出文件失败 / Failed to write export file: {}", e))?;
 
     println!(
-        "\x1b[32m✔ 成功导出 {} 个账号至: \x1b[1m{:?}\x1b[0m",
+        "\x1b[32m✔ 成功导出 {} 个账号至 / Exported {} accounts to: \x1b[1m{:?}\x1b[0m",
+        response.accounts.len(),
         response.accounts.len(),
         out_path
     );
@@ -762,15 +844,17 @@ mod tests {
         );
 
         assert_eq!(describe_cli_account_ineligibility(&acc, now), None);
-        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("正常"));
+        let badge_normal = format_cli_account_status_badge(&summary, Some(&acc), now);
+        assert!(badge_normal.contains("正常") && badge_normal.contains("Normal"));
 
         acc.validation_blocked = true;
         acc.validation_blocked_until = Some(now + 600);
         assert_eq!(
             describe_cli_account_ineligibility(&acc, now),
-            Some("需验证")
+            Some("需验证 / Verify Required")
         );
-        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("需验证"));
+        let badge_verify = format_cli_account_status_badge(&summary, Some(&acc), now);
+        assert!(badge_verify.contains("需验证") && badge_verify.contains("Verify Required"));
 
         acc.validation_blocked = false;
         acc.validation_blocked_until = None;
@@ -779,15 +863,17 @@ mod tests {
         acc.quota = Some(q_forb);
         assert_eq!(
             describe_cli_account_ineligibility(&acc, now),
-            Some("403受限")
+            Some("403受限 / 403 Forbidden")
         );
-        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("403受限"));
+        let badge_forbidden = format_cli_account_status_badge(&summary, Some(&acc), now);
+        assert!(badge_forbidden.contains("403受限") && badge_forbidden.contains("403 Forbidden"));
 
         acc.banned = true;
         assert_eq!(
             describe_cli_account_ineligibility(&acc, now),
-            Some("已封禁")
+            Some("已封禁 / Banned")
         );
-        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("已封禁"));
+        let badge_banned = format_cli_account_status_badge(&summary, Some(&acc), now);
+        assert!(badge_banned.contains("已封禁") && badge_banned.contains("Banned"));
     }
 }
