@@ -87,6 +87,129 @@ fn print_cli_help() {
     );
 }
 
+async fn resolve_switch_candidate_round_robin(
+    target_ide: &str,
+) -> Result<crate::models::AccountSummary, String> {
+    let index = account::load_account_index()?;
+    if index.accounts.is_empty() {
+        return Err("当前无可用账号".to_string());
+    }
+
+    let active_email = account::detect_active_clients_status()
+        .ok()
+        .and_then(|s| account::active_email_for_target_ide(&s, Some(target_ide)));
+    let ordered = account::ordered_round_robin_candidates_in_index(
+        &index,
+        Some(target_ide),
+        active_email.as_deref(),
+    );
+
+    let now = chrono::Utc::now().timestamp();
+    let mut tier_fresh: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
+    let mut tier_depleted: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
+    let mut tier_proxy_disabled: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
+    let mut tier_expired_validation: Vec<(crate::models::AccountSummary, bool)> = Vec::new();
+
+    for summary in ordered {
+        if summary.disabled {
+            continue;
+        }
+        match account::load_account(&summary.id) {
+            Ok(acc) => {
+                if acc.disabled || acc.banned || acc.is_validation_block_active(now) {
+                    continue;
+                }
+                let is_forbidden = acc.quota.as_ref().is_some_and(|q| q.is_forbidden);
+                if is_forbidden {
+                    // 验证锁已过冷却期的账号作为保底重探候选，其余 403 直接跳过
+                    let has_expired_validation = acc.validation_blocked
+                        && !acc.is_validation_block_active(now)
+                        && !summary.proxy_disabled;
+                    if has_expired_validation {
+                        tier_expired_validation.push((summary, false));
+                    }
+                    continue;
+                }
+                if summary.proxy_disabled {
+                    tier_proxy_disabled.push((summary, true));
+                } else if crate::modules::auto_switch::is_account_depleted(&acc, 0, &[]) {
+                    tier_depleted.push((summary, true));
+                } else {
+                    tier_fresh.push((summary, false));
+                }
+            }
+            Err(_) => {
+                if summary.proxy_disabled {
+                    tier_proxy_disabled.push((summary, true));
+                } else {
+                    tier_fresh.push((summary, false));
+                }
+            }
+        }
+    }
+
+    let queue: Vec<(crate::models::AccountSummary, bool)> = tier_fresh
+        .into_iter()
+        .chain(tier_depleted)
+        .chain(tier_proxy_disabled)
+        .chain(tier_expired_validation)
+        .collect();
+
+    if queue.is_empty() {
+        return Err("未找到可用的健康账号（所有账号均已禁用、需验证、403 受限或已封禁）。请运行 `antigravity-tools list` 查看详情。".to_string());
+    }
+
+    let mut live_depleted_fallback: Option<crate::models::AccountSummary> = None;
+
+    for (candidate, allow_depleted) in queue {
+        match account::preflight_account_for_cli_switch(&candidate.id).await {
+            Ok(refreshed) => {
+                let check_now = chrono::Utc::now().timestamp();
+                if let Some(reason) = describe_cli_account_ineligibility(&refreshed, check_now) {
+                    println!(
+                        "\x1b[33m[Antigravity CLI]\x1b[0m 跳过不可用账号 {} ({})，继续顺延...",
+                        candidate.email, reason
+                    );
+                    if let Some(url) = refreshed
+                        .validation_url
+                        .as_deref()
+                        .or(refreshed.ban_appeal_url.as_deref())
+                    {
+                        println!("  ↳ 验证/申诉链接: {}", url);
+                    }
+                    continue;
+                }
+                if !allow_depleted
+                    && crate::modules::auto_switch::is_account_depleted(&refreshed, 0, &[])
+                {
+                    println!(
+                        "\x1b[33m[Antigravity CLI]\x1b[0m 账号 {} 配额已耗尽，优先尝试其他有余量账号...",
+                        candidate.email
+                    );
+                    if live_depleted_fallback.is_none() {
+                        live_depleted_fallback = Some(candidate);
+                    }
+                    continue;
+                }
+                return Ok(candidate);
+            }
+            Err(err) => {
+                // 网络离线或超时时按本地状态放行，不阻断离线切换
+                println!(
+                    "\x1b[33m[Antigravity CLI]\x1b[0m 在线预检未完成 ({})，按本地状态切换账号 {}",
+                    truncate_str(&err, 60),
+                    candidate.email
+                );
+                return Ok(candidate);
+            }
+        }
+    }
+
+    live_depleted_fallback.ok_or_else(|| {
+        "未找到可用的健康账号（所有候选账号均需验证、已封禁、403 受限或已禁用）。请运行 `antigravity-tools list` 查看详情。".to_string()
+    })
+}
+
 async fn handle_switch_command(args: &[String]) -> Result<(), String> {
     let mut query: Option<String> = None;
     let mut target_ide: String = "agy".to_string();
@@ -110,8 +233,35 @@ async fn handle_switch_command(args: &[String]) -> Result<(), String> {
 
     println!("\x1b[34m[Antigravity CLI]\x1b[0m 正在检索目标账号...");
 
-    // 智能解析目标账号
-    let target_summary = account::resolve_account_summary(query.as_deref(), Some(&target_ide))?;
+    // 指定账号时按查询匹配；无参自动顺延时执行在线资格预检并跳过不可用账号
+    let target_summary = if query
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        let resolved = account::resolve_account_summary(query.as_deref(), Some(&target_ide))?;
+        if let Ok(full) = account::load_account(&resolved.id) {
+            if let Some(reason) =
+                describe_cli_account_ineligibility(&full, chrono::Utc::now().timestamp())
+            {
+                println!(
+                    "\x1b[33m[Antigravity CLI]\x1b[0m 警告: 目标账号 {} 当前标记为 [{}]",
+                    resolved.email, reason
+                );
+                if let Some(url) = full
+                    .validation_url
+                    .as_deref()
+                    .or(full.ban_appeal_url.as_deref())
+                {
+                    println!("  ↳ 验证/申诉链接: {}", url);
+                }
+            }
+        }
+        resolved
+    } else {
+        resolve_switch_candidate_round_robin(&target_ide).await?
+    };
 
     // 优先尝试通过本地运行的 Manager API 切换（同步刷新内存与全量状态）
     let switched_via_api = try_switch_via_local_api(&target_summary.id, &target_ide).await;
@@ -142,6 +292,7 @@ async fn handle_switch_command(args: &[String]) -> Result<(), String> {
 async fn handle_list_command() -> Result<(), String> {
     let index = account::load_account_index()?;
     let status = account::detect_active_clients_status().unwrap_or_default();
+    let now = chrono::Utc::now().timestamp();
 
     println!("\n\x1b[1m当前激活账号状态:\x1b[0m");
     println!(
@@ -175,13 +326,8 @@ async fn handle_list_command() -> Result<(), String> {
             "{:<12}",
             truncate_str(acc.name.as_deref().unwrap_or("-"), 12)
         );
-        let state = if acc.disabled {
-            "\x1b[31m已禁用\x1b[0m"
-        } else if acc.proxy_disabled {
-            "\x1b[33m代理停用\x1b[0m"
-        } else {
-            "\x1b[32m正常\x1b[0m"
-        };
+        let full = account::load_account(&acc.id).ok();
+        let state = format_cli_account_status_badge(acc, full.as_ref(), now);
         println!(
             "{:<4} |{}| {} | {} | {}",
             i + 1,
@@ -194,6 +340,45 @@ async fn handle_list_command() -> Result<(), String> {
 
     println!("\n提示: 运行 `antigravity-tools switch` 自动顺延，或 `antigravity-tools switch <序号/邮箱>`。\n");
     Ok(())
+}
+
+fn describe_cli_account_ineligibility(
+    acc: &crate::models::Account,
+    now: i64,
+) -> Option<&'static str> {
+    if acc.banned {
+        Some("已封禁")
+    } else if acc.is_validation_block_active(now) {
+        Some("需验证")
+    } else if acc.disabled {
+        Some("已禁用")
+    } else if acc.quota.as_ref().is_some_and(|q| q.is_forbidden) {
+        Some("403受限")
+    } else {
+        None
+    }
+}
+
+fn format_cli_account_status_badge(
+    summary: &crate::models::AccountSummary,
+    full: Option<&crate::models::Account>,
+    now: i64,
+) -> &'static str {
+    if summary.disabled || full.is_some_and(|a| a.disabled) {
+        "\x1b[31m已禁用\x1b[0m"
+    } else if full.is_some_and(|a| a.banned) {
+        "\x1b[31m已封禁\x1b[0m"
+    } else if full.is_some_and(|a| a.is_validation_block_active(now)) {
+        "\x1b[31m需验证\x1b[0m"
+    } else if full.is_some_and(|a| a.quota.as_ref().is_some_and(|q| q.is_forbidden)) {
+        "\x1b[31m403受限\x1b[0m"
+    } else if summary.proxy_disabled || full.is_some_and(|a| a.proxy_disabled) {
+        "\x1b[33m代理停用\x1b[0m"
+    } else if full.is_some_and(|a| crate::modules::auto_switch::is_account_depleted(a, 0, &[])) {
+        "\x1b[33m配额耗尽\x1b[0m"
+    } else {
+        "\x1b[32m正常\x1b[0m"
+    }
 }
 
 async fn handle_current_command() -> Result<(), String> {
@@ -546,5 +731,63 @@ mod tests {
             "--unknown-flag".to_string(),
         ];
         assert_eq!(try_handle_cli(&args).await.unwrap(), false);
+    }
+
+    #[test]
+    fn test_cli_account_status_badge_and_ineligibility_classification() {
+        let now = 1_700_000_000i64;
+        let summary = crate::models::AccountSummary {
+            id: "id-1".to_string(),
+            email: "u@test.com".to_string(),
+            name: None,
+            disabled: false,
+            proxy_disabled: false,
+            protected_models: std::collections::HashSet::new(),
+            created_at: 1,
+            last_used: 1,
+        };
+        let mut acc = crate::models::Account::new(
+            "id-1".to_string(),
+            "u@test.com".to_string(),
+            crate::models::TokenData::new(
+                "tok".to_string(),
+                "ref".to_string(),
+                3600,
+                Some("u@test.com".to_string()),
+                None,
+                None,
+                false,
+                None,
+            ),
+        );
+
+        assert_eq!(describe_cli_account_ineligibility(&acc, now), None);
+        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("正常"));
+
+        acc.validation_blocked = true;
+        acc.validation_blocked_until = Some(now + 600);
+        assert_eq!(
+            describe_cli_account_ineligibility(&acc, now),
+            Some("需验证")
+        );
+        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("需验证"));
+
+        acc.validation_blocked = false;
+        acc.validation_blocked_until = None;
+        let mut q_forb = crate::models::QuotaData::new();
+        q_forb.is_forbidden = true;
+        acc.quota = Some(q_forb);
+        assert_eq!(
+            describe_cli_account_ineligibility(&acc, now),
+            Some("403受限")
+        );
+        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("403受限"));
+
+        acc.banned = true;
+        assert_eq!(
+            describe_cli_account_ineligibility(&acc, now),
+            Some("已封禁")
+        );
+        assert!(format_cli_account_status_badge(&summary, Some(&acc), now).contains("已封禁"));
     }
 }
