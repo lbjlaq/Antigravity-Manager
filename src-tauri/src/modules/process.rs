@@ -1663,8 +1663,15 @@ fn app_bundle_root(exe: &std::path::Path) -> Option<std::path::PathBuf> {
 }
 
 fn get_process_info(target_ide: Option<&str>) -> (Option<std::path::PathBuf>, Option<Vec<String>>) {
-    let mut system = System::new_all();
-    system.refresh_all();
+    // Discovery only needs process identity. Avoid two full-system refreshes
+    // and CPU/memory collection on every client discovery lookup.
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new()
+            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
+            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
 
     let current_exe = get_current_exe_path();
     let current_pid = std::process::id();
