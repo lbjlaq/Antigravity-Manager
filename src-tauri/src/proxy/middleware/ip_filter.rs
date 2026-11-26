@@ -228,8 +228,14 @@ pub fn is_direct_loopback(request: &Request) -> bool {
 /// Returns true only when the TCP peer is loopback AND no reverse-proxy forwarding
 /// headers are attached (prevents same-host tunnels like cloudflared/nginx from
 /// inheriting direct-loopback local-file privileges).
-pub fn is_unproxied_direct_loopback(request: &Request) -> bool {
-    if !is_direct_loopback(request) {
+pub fn is_unproxied_direct_loopback_parts(
+    peer: Option<std::net::SocketAddr>,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    let Some(addr) = peer else {
+        return false;
+    };
+    if !ip_is_loopback(addr.ip()) {
         return false;
     }
     const FORWARDING_HEADERS: &[&str] = &[
@@ -240,7 +246,18 @@ pub fn is_unproxied_direct_loopback(request: &Request) -> bool {
     ];
     !FORWARDING_HEADERS
         .iter()
-        .any(|name| request.headers().contains_key(*name))
+        .any(|name| headers.contains_key(*name))
+}
+
+/// Returns true only when the TCP peer is loopback AND no reverse-proxy forwarding
+/// headers are attached (prevents same-host tunnels like cloudflared/nginx from
+/// inheriting direct-loopback local-file privileges).
+pub fn is_unproxied_direct_loopback(request: &Request) -> bool {
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0);
+    is_unproxied_direct_loopback_parts(peer, request.headers())
 }
 
 fn ip_is_loopback(ip: std::net::IpAddr) -> bool {

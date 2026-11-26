@@ -8,8 +8,6 @@ pub mod cloudflared;
 pub mod config;
 pub mod db;
 pub mod device;
-#[allow(dead_code)]
-pub mod http_api;
 pub mod hub_version;
 pub mod i18n;
 pub mod integration;
