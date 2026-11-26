@@ -159,31 +159,41 @@ pub async fn run_headless_server(
     let proxy_state = commands::proxy::ProxyServiceState::new();
     let cf_state = Arc::new(commands::cloudflared::CloudflaredState::new());
 
-    // Load config
+    // Load config (ephemeral CLI/env overrides are applied in memory without mutating gui_config.json)
     let mut config = modules::config::load_app_config().unwrap_or_default();
-    let mut modified = false;
 
-    if let Some(port) = port_override {
+    let effective_port = port_override.or_else(|| {
+        std::env::var("ABV_PORT")
+            .or_else(|_| std::env::var("PORT"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u16>().ok())
+    });
+    if let Some(port) = effective_port {
         config.proxy.port = port;
-        modified = true;
     }
 
-    if let Some(host) = host_override {
-        if host == "127.0.0.1" || host == "localhost" {
-            config.proxy.allow_lan_access = false;
-        } else {
-            config.proxy.allow_lan_access = true;
-        }
-        modified = true;
+    let effective_host = host_override
+        .or_else(|| {
+            std::env::var("ABV_HOST")
+                .or_else(|_| std::env::var("HOST"))
+                .ok()
+        })
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty());
+
+    if let Some(host) = effective_host {
+        let is_loopback = crate::proxy::ProxyConfig::is_loopback_host(&host);
+        config.proxy.allow_lan_access = !is_loopback;
+        config.proxy.bind_host = Some(host);
     } else {
         // Headless/docker 默认允许 LAN 访问（绑定 0.0.0.0）
         // 若设置 ABV_BIND_LOCAL_ONLY，则仅绑定 127.0.0.1
         let bind_local_only = std::env::var("ABV_BIND_LOCAL_ONLY")
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
+        config.proxy.bind_host = None;
         if bind_local_only {
             config.proxy.allow_lan_access = false;
-            modified = true;
         } else {
             config.proxy.allow_lan_access = true;
         }
@@ -196,7 +206,6 @@ pub async fn run_headless_server(
     ) {
         info!("Headless mode: Forcing auth_mode to AllExceptHealth for Web UI security");
         config.proxy.auth_mode = crate::proxy::ProxyAuthMode::AllExceptHealth;
-        modified = true;
     }
 
     // Support API Key override from env
@@ -207,7 +216,6 @@ pub async fn run_headless_server(
         if !key.trim().is_empty() {
             info!("Using API Key from environment variable");
             config.proxy.api_key = key;
-            modified = true;
         }
     }
 
@@ -219,7 +227,6 @@ pub async fn run_headless_server(
         if !pwd.trim().is_empty() {
             info!("Using Web UI Password from environment variable");
             config.proxy.admin_password = Some(pwd);
-            modified = true;
         }
     }
 
@@ -241,7 +248,6 @@ pub async fn run_headless_server(
         if let Some(m) = mode {
             info!("Using Auth Mode from environment variable: {:?}", m);
             config.proxy.auth_mode = m;
-            modified = true;
         }
     }
 
@@ -262,16 +268,25 @@ pub async fn run_headless_server(
         env_hub_platform.as_deref(),
     ) {
         info!("Using Hub fingerprint configuration from environment variables");
-        modified = true;
     }
 
     let is_web_disabled = std::env::var("ABV_DISABLE_WEB")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false);
 
+    let display_host = match config.proxy.get_bind_address() {
+        "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+        h if h.contains(':') && !h.starts_with('[') => format!("[{}]", h),
+        h => h.to_string(),
+    };
+
     info!("--------------------------------------------------");
     info!("🚀 Headless mode proxy service starting...");
-    info!("📍 Port: {}", config.proxy.port);
+    info!(
+        "📍 Listen: {}:{}",
+        config.proxy.get_bind_address(),
+        config.proxy.port
+    );
     info!(
         "🔑 Current API Key: {}",
         credential_state(&config.proxy.api_key)
@@ -285,23 +300,15 @@ pub async fn run_headless_server(
             info!("🔐 Web UI Password: (Same as API Key)");
         }
         info!(
-            "💡 Tips: Access Web UI at http://127.0.0.1:{}",
-            config.proxy.port
+            "💡 Tips: Access Web UI at http://{}:{}",
+            display_host, config.proxy.port
         );
     }
     info!(
-        "🤖 API Endpoints: http://127.0.0.1:{}/v1",
-        config.proxy.port
+        "🤖 API Endpoints: http://{}:{}/v1",
+        display_host, config.proxy.port
     );
     info!("--------------------------------------------------");
-
-    if modified {
-        if let Err(e) = modules::config::save_app_config(&config) {
-            error!("Failed to persist environment overrides: {}", e);
-        } else {
-            info!("Environment overrides persisted to gui_config.json");
-        }
-    }
 
     crate::modules::hub_version::update_hub_fingerprint(
         config.proxy.hub_version.as_deref(),
