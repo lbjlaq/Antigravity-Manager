@@ -476,6 +476,12 @@ pub fn make_clean_empty_thought_stop_chunks(last_usage: Option<&Value>) -> (Byte
 const MAX_PENDING_EMPTY_FRAMES: usize = 8;
 const MAX_PREMATURE_EMPTY_RETRIES: usize = 2;
 const MIN_PREMATURE_EMPTY_RETRY_BUDGET_SECS: u64 = 10;
+const EMPTY_STOP_ERROR: &str =
+    "Upstream stream ended with STOP before emitting content or tool calls";
+
+fn is_empty_stop(saw_content: bool, saw_tool_call: bool, finish_reason: Option<&str>) -> bool {
+    !saw_content && !saw_tool_call && finish_reason == Some("STOP")
+}
 
 /// 解析并跟踪上游单条 SSE `data: <json>` 负载的思考 / 正文 / 工具 / 终结状态：
 /// - 若尚未产生任何实质内容或终结符（如 Issue #4055 的 `thoughtSignature + text: ""` 空壳帧），
@@ -492,9 +498,6 @@ fn inspect_and_buffer_sse_json(
     last_usage_val: &mut Option<Value>,
     pending_empty_frames: &mut Vec<Bytes>,
 ) -> Vec<Bytes> {
-    let was_before_real_output =
-        !*saw_thought && !*saw_content && !*saw_tool_call && !*saw_finish_reason;
-
     let mut json = match serde_json::from_str::<Value>(json_part) {
         Ok(v) => v,
         Err(_) => {
@@ -547,18 +550,22 @@ fn inspect_and_buffer_sse_json(
         return Vec::new();
     }
 
-    let mut out = if was_before_real_output && !pending_empty_frames.is_empty() {
-        pending_empty_frames.drain(..).collect()
-    } else {
-        Vec::new()
-    };
+    let is_suppressed_empty_stop =
+        !*saw_content && !*saw_tool_call && chunk_has_finish && chunk_finish_is_stop;
+
+    let mut out =
+        if !pending_empty_frames.is_empty() && !(is_suppressed_empty_stop && !*saw_thought) {
+            pending_empty_frames.drain(..).collect()
+        } else {
+            Vec::new()
+        };
 
     if *saw_content || *saw_tool_call {
         out.push(Bytes::from(format!("data: {}\n\n", json_part)));
-    } else if *saw_thought && chunk_has_finish && chunk_finish_is_stop {
+    } else if is_suppressed_empty_stop {
         // 思考空回复异常候选帧（仅限 finishReason == "STOP"）：
         // 若当前帧还包含思考部件，清洗剥离 finishReason 与 usageMetadata 后放行思考，不发射终止信号
-        if chunk_has_parts {
+        if *saw_thought && chunk_has_parts {
             if let Some(candidates) = inner.get_mut("candidates").and_then(|c| c.as_array_mut()) {
                 for cand in candidates.iter_mut() {
                     if let Some(obj) = cand.as_object_mut() {
@@ -589,7 +596,7 @@ fn inspect_and_buffer_sse_json(
 pub fn wrap_stream_with_empty_thinking_auto_heal<S, E>(
     stream: Pin<Box<S>>,
     ctx: ThinkingAutoHealContext,
-) -> Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display + Send + 'static,
@@ -644,7 +651,7 @@ fn wrap_stream_with_auto_heal_inner<S, E, F, Fut, S2, E2>(
     trace_id: String,
     budget: Option<Arc<crate::proxy::pipeline::budget::RequestContext>>,
     mut retry_call: F,
-) -> Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display + Send + 'static,
@@ -686,10 +693,9 @@ where
                             let json_part = line.trim_start_matches("data: ").trim();
                             if json_part == "[DONE]" {
                                 // 仅当确认属于思考空回复异常（无正文、无工具调用且以 STOP 结束）时才暂缓发射 [DONE] 以便进行自愈
-                                let is_empty_thought_stop_collapse = saw_thought
-                                    && !saw_content
-                                    && !saw_tool_call
-                                    && finish_reason_val.as_deref() == Some("STOP");
+                                let is_empty_thought_stop_collapse = is_empty_stop(
+                                    saw_content, saw_tool_call, finish_reason_val.as_deref(),
+                                );
                                 if !is_empty_thought_stop_collapse {
                                     for pending in pending_empty_frames.drain(..) {
                                         yield Ok(pending);
@@ -721,7 +727,7 @@ where
                     for pending in pending_empty_frames.drain(..) {
                         yield Ok(pending);
                     }
-                    yield Err(e);
+                    yield Err(e.to_string());
                     return;
                 }
             }
@@ -735,10 +741,9 @@ where
                     if line.starts_with("data: ") {
                         let json_part = line.trim_start_matches("data: ").trim();
                         if json_part == "[DONE]" {
-                            let is_empty_thought_stop_collapse = saw_thought
-                                && !saw_content
-                                && !saw_tool_call
-                                && finish_reason_val.as_deref() == Some("STOP");
+                            let is_empty_thought_stop_collapse = is_empty_stop(
+                                saw_content, saw_tool_call, finish_reason_val.as_deref(),
+                            );
                             if !is_empty_thought_stop_collapse {
                                 for pending in pending_empty_frames.drain(..) {
                                     yield Ok(pending);
@@ -766,6 +771,12 @@ where
             }
         }
 
+        if !saw_thought && is_empty_stop(saw_content, saw_tool_call, finish_reason_val.as_deref()) {
+            pending_empty_frames.clear();
+            yield Err(EMPTY_STOP_ERROR.to_string());
+            return;
+        }
+
         // 1. 早退空流 / signature-only EOF 自愈 (Fixes #4055)
         // 触发条件：上游在未产出任何思考、正文、工具调用或 finishReason 的情况下直接 EOF
         let is_premature_empty_eof =
@@ -786,6 +797,7 @@ where
 
             if has_budget {
                 let mut current_body = original_body.clone();
+                let mut last_retry_empty_stop = false;
                 for attempt in 1..=MAX_PREMATURE_EMPTY_RETRIES {
                     let (next_body, degraded) =
                         build_premature_empty_retry_body(&current_body, attempt);
@@ -852,7 +864,8 @@ where
                                                 let json_part =
                                                     line.trim_start_matches("data: ").trim();
                                                 if json_part == "[DONE]" {
-                                                    if r_thought || r_content || r_tool || r_finish
+                                                    if (r_thought || r_content || r_tool || r_finish)
+                                                        && !is_empty_stop(r_content, r_tool, r_finish_val.as_deref())
                                                     {
                                                         for p in r_pending.drain(..) {
                                                             yield Ok(p);
@@ -900,7 +913,8 @@ where
                                             let json_part =
                                                 line.trim_start_matches("data: ").trim();
                                             if json_part == "[DONE]" {
-                                                if r_thought || r_content || r_tool || r_finish {
+                                                if (r_thought || r_content || r_tool || r_finish)
+                                                    && !is_empty_stop(r_content, r_tool, r_finish_val.as_deref()) {
                                                     for p in r_pending.drain(..) {
                                                         yield Ok(p);
                                                     }
@@ -927,6 +941,23 @@ where
                                 }
                             }
 
+                            if is_empty_stop(r_content, r_tool, r_finish_val.as_deref()) {
+                                if r_thought {
+                                    // 思考帧已向客户端输出，无法在不拼接两段思考的前提下静默重放
+                                    yield Err(EMPTY_STOP_ERROR.to_string());
+                                    return;
+                                }
+                                tracing::warn!(
+                                    "[{}] [Stream-AutoHeal] Premature empty retry {}/{} returned empty STOP; continuing progressive retry if budget remains.",
+                                    trace_id,
+                                    attempt,
+                                    MAX_PREMATURE_EMPTY_RETRIES
+                                );
+                                last_retry_empty_stop = true;
+                                r_pending.clear();
+                                current_body = next_body;
+                                continue;
+                            }
                             if r_thought || r_content || r_tool || r_finish {
                                 tracing::info!(
                                     "[{}] [Stream-AutoHeal] ✓ Premature empty EOF healed on retry {}/{}",
@@ -939,6 +970,7 @@ where
                             if r_err {
                                 break;
                             }
+                            last_retry_empty_stop = false;
                             r_pending.clear();
                             current_body = next_body;
                         }
@@ -953,6 +985,10 @@ where
                             break;
                         }
                     }
+                }
+                if last_retry_empty_stop {
+                    yield Err(EMPTY_STOP_ERROR.to_string());
+                    return;
                 }
             }
             return;
@@ -1913,6 +1949,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_empty_stop_is_not_success_in_any_streaming_format() {
+        use crate::proxy::mappers::{claude, gemini, openai::streaming as openai};
+
+        let upstream = || {
+            wrap_stream_with_auto_heal_inner(
+                Box::pin(futures::stream::iter([Ok::<Bytes, String>(Bytes::from_static(
+                    b"data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n",
+                ))])),
+                json!({}),
+                "empty-stop-test".into(),
+                None,
+                |_| async { panic!("bare STOP should not replay the request"); #[allow(unreachable_code)] Ok(Box::pin(futures::stream::empty::<Result<Bytes, String>>())) },
+            )
+        };
+        let model = || "gemini-test".to_string();
+        let session = || "empty-stop-test".to_string();
+        let formats = [
+            (
+                "messages",
+                claude::create_claude_sse_stream(
+                    upstream(),
+                    session(),
+                    String::new(),
+                    None,
+                    false,
+                    1_000,
+                    None,
+                    1,
+                    None,
+                    vec![],
+                ),
+                "message_stop",
+            ),
+            (
+                "chat",
+                openai::create_openai_sse_stream(upstream(), model(), session(), 1, None, false),
+                "\"finish_reason\":\"stop\"",
+            ),
+            (
+                "responses",
+                openai::create_codex_sse_stream(
+                    upstream(),
+                    model(),
+                    session(),
+                    1,
+                    0,
+                    "resp_test".into(),
+                    None,
+                    false,
+                ),
+                "response.completed",
+            ),
+            (
+                "gemini",
+                crate::proxy::pipeline::run_stream_lifecycle(
+                    upstream(),
+                    gemini::streaming::GeminiStreamHandler::new(
+                        None,
+                        session(),
+                        model(),
+                        1,
+                        session(),
+                        false,
+                        None,
+                        String::new(),
+                        model(),
+                    ),
+                    crate::proxy::pipeline::StreamLifecycleConfig::new("gemini", "test", session()),
+                ),
+                "\"finishReason\":\"STOP\"",
+            ),
+        ];
+        for (format, mut stream, success_marker) in formats {
+            let mut frames = String::new();
+            let mut saw_error = false;
+            while let Some(frame) = stream.next().await {
+                match frame {
+                    Ok(bytes) => frames.push_str(&String::from_utf8_lossy(&bytes)),
+                    Err(_) => saw_error = true,
+                }
+            }
+            assert!(
+                saw_error || frames.contains("\"error\""),
+                "{format}: {frames}"
+            );
+            assert!(!frames.contains(success_marker), "{format}: {frames}");
+        }
+    }
+
+    #[tokio::test]
     async fn test_issue_4055_exhausted_premature_empty_eof_emits_openai_error_via_lifecycle() {
         let signature_only_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuIDFail\",\"text\":\"\"}]}}]}}\n\n";
 
@@ -1980,5 +2106,151 @@ mod tests {
             saw_err,
             "Must still propagate Err when retries are exhausted"
         );
+    }
+
+    #[tokio::test]
+    async fn test_empty_stop_after_signature_only_frame_does_not_leak_pending_frame() {
+        let stream = Box::pin(futures::stream::iter([Ok::<Bytes, String>(
+            Bytes::from_static(
+                b"data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuIDLeakGuard\",\"text\":\"\"}]}}]}}\n\ndata: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n",
+            ),
+        )]));
+
+        let mut healed = wrap_stream_with_auto_heal_inner(
+            stream,
+            json!({}),
+            "trace-empty-stop-pending".into(),
+            None,
+            |_| async {
+                panic!("bare STOP after signature-only frame should not replay");
+                #[allow(unreachable_code)]
+                Ok(Box::pin(futures::stream::empty::<Result<Bytes, String>>()))
+            },
+        );
+
+        let mut ok_frames = String::new();
+        let mut errors = Vec::new();
+        while let Some(item) = healed.next().await {
+            match item {
+                Ok(bytes) => ok_frames.push_str(&String::from_utf8_lossy(&bytes)),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        assert!(
+            ok_frames.is_empty(),
+            "Pending signature-only frames must NOT leak before empty STOP error; got: {ok_frames}"
+        );
+        assert_eq!(errors, vec![EMPTY_STOP_ERROR.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_issue_4055_retry_empty_stop_on_attempt_1_continues_to_attempt_2() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let signature_only_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuID4055\",\"text\":\"\"}]}}]}}\n\n";
+        let stream1 = Box::pin(async_stream::stream! {
+            yield Ok::<Bytes, String>(Bytes::from(signature_only_sse));
+        });
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+
+        let mut healed = wrap_stream_with_auto_heal_inner(
+            stream1,
+            json!({
+                "requestId": "req_4055_stop_retry",
+                "model": "gemini-4-hydrogen-high",
+                "request": {
+                    "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
+                    "generationConfig": { "thinkingConfig": { "thinkingLevel": "HIGH" } }
+                }
+            }),
+            "trace_4055_stop_retry".to_string(),
+            None,
+            move |_req_body| {
+                let n = calls_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                async move {
+                    let s: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> = match n {
+                        1 => Box::pin(futures::stream::iter([Ok::<Bytes, String>(
+                            Bytes::from_static(
+                                b"data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n",
+                            ),
+                        )])),
+                        _ => Box::pin(futures::stream::iter([Ok::<Bytes, String>(
+                            Bytes::from_static(
+                                b"data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"recovered on attempt 2\"}]},\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n",
+                            ),
+                        )])),
+                    };
+                    Ok(s)
+                }
+            },
+        );
+
+        let mut output = String::new();
+        let mut errors = Vec::new();
+        while let Some(item) = healed.next().await {
+            match item {
+                Ok(bytes) => output.push_str(&String::from_utf8_lossy(&bytes)),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(errors.is_empty(), "Unexpected errors: {errors:?}");
+        assert!(
+            output.contains("recovered on attempt 2"),
+            "Attempt 2 recovery should succeed; got: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_issue_4055_retry_empty_stop_exhausted_emits_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let signature_only_sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"EuID4055\",\"text\":\"\"}]}}]}}\n\n";
+        let stream1 = Box::pin(async_stream::stream! {
+            yield Ok::<Bytes, String>(Bytes::from(signature_only_sse));
+        });
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+
+        let mut healed = wrap_stream_with_auto_heal_inner(
+            stream1,
+            json!({
+                "requestId": "req_4055_stop_exhausted",
+                "model": "gemini-4-hydrogen-high",
+                "request": {
+                    "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
+                    "generationConfig": { "thinkingConfig": { "thinkingLevel": "HIGH" } }
+                }
+            }),
+            "trace_4055_stop_exhausted".to_string(),
+            None,
+            move |_req_body| {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    let s: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> =
+                        Box::pin(futures::stream::iter([Ok::<Bytes, String>(
+                            Bytes::from_static(
+                                b"data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\ndata: [DONE]\n\n",
+                            ),
+                        )]));
+                    Ok(s)
+                }
+            },
+        );
+
+        let mut errors = Vec::new();
+        while let Some(item) = healed.next().await {
+            if let Err(err) = item {
+                errors.push(err);
+            }
+        }
+
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_PREMATURE_EMPTY_RETRIES);
+        assert_eq!(errors, vec![EMPTY_STOP_ERROR.to_string()]);
     }
 }

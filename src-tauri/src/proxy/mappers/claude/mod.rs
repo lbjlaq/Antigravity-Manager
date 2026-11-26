@@ -341,9 +341,9 @@ fn process_sse_line(
         });
 
     if let Some(finish_reason) = finish_reason {
-        if state.has_thinking && !state.has_content {
+        if !state.has_content && (finish_reason == "STOP" || state.has_thinking) {
             tracing::warn!(
-                "[{}] Upstream emitted finishReason '{}' after thinking without content. Suppressing message_stop to allow native client retry.",
+                "[{}] Upstream emitted finishReason '{}' without content. Suppressing message_stop to allow native client retry.",
                 trace_id,
                 finish_reason
             );
@@ -1298,7 +1298,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clean_empty_response_with_finish_reason_stop_emits_valid_completion_triplet() {
+    async fn test_empty_stop_without_thinking_propagates_error() {
         use futures::StreamExt;
 
         // 模拟上游合法返回空回复候选集（带 finishReason: STOP 与真实 usageMetadata）
@@ -1321,9 +1321,11 @@ mod tests {
         );
 
         let mut all_chunks = Vec::new();
+        let mut saw_error = false;
         while let Some(result) = claude_stream.next().await {
-            if let Ok(bytes) = result {
-                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(_) => saw_error = true,
             }
         }
         let output = all_chunks.join("");
@@ -1337,20 +1339,9 @@ mod tests {
             output.contains("resp_clean_empty"),
             "Must contain genuine upstream response ID"
         );
-        let delta_count = output.matches("event: message_delta").count();
-        let stop_count = output.matches("event: message_stop").count();
-        assert_eq!(
-            delta_count, 1,
-            "Clean empty response must emit exactly one message_delta"
-        );
-        assert_eq!(
-            stop_count, 1,
-            "Clean empty response must emit exactly one message_stop"
-        );
-        assert!(
-            output.contains(r#""stop_reason":"end_turn""#),
-            "Must emit stop_reason: end_turn"
-        );
+        assert!(!output.contains("event: message_stop"));
+        assert!(!output.contains(r#""stop_reason":"end_turn""#));
+        assert!(saw_error, "Empty STOP must surface as a stream error");
     }
 
     #[tokio::test]
