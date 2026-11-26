@@ -89,7 +89,7 @@ pub async fn handle_generate(
     // [NEW] :countTokens 冒号语法，直接代理到上游 v1internal:countTokens
     if method == "countTokens" {
         // [MODEL GATE] 探测端点同样接入门禁（POST 也需要，不能只靠 GET 拦截）
-        let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
+        let gated = match crate::proxy::handlers::common::enforce_model_gate_resolved_scoped(
             &state,
             Some(model_name.as_str()),
             "gemini",
@@ -98,7 +98,7 @@ pub async fn handle_generate(
         )
         .await
         {
-            Ok(model) => model,
+            Ok(gated) => gated,
             Err(rejection) => return Ok(rejection),
         };
         return Ok(execute_count_tokens(
@@ -108,7 +108,8 @@ pub async fn handle_generate(
                 .as_ref()
                 .map(|identity| identity.token_id.clone()),
             allowed_accounts,
-            gated_model,
+            model_name,
+            gated,
             body,
         )
         .await);
@@ -148,8 +149,8 @@ pub async fn handle_generate(
 
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
     // 必须放在任何 `state.*` 字段被 move 之前，避免 borrow-after-partial-move。
-    // 门禁产出的 `gated_model` 直接供下方出站路由复用，单次请求只解析一次。
-    let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
+    // 门禁产出的 `gated` 直接供下方出站路由复用，单次请求只解析一次，同时保留 `model_name` 中的 `-online` 修饰符。
+    let gated = match crate::proxy::handlers::common::enforce_model_gate_resolved_scoped(
         &state,
         Some(model_name.as_str()),
         "gemini",
@@ -158,7 +159,7 @@ pub async fn handle_generate(
     )
     .await
     {
-        Ok(model) => model,
+        Ok(gated) => gated,
         Err(rejection) => return Ok(rejection),
     };
 
@@ -201,9 +202,9 @@ pub async fn handle_generate(
     let route_effort =
         crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref());
 
-    let initial_mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
-        &gated_model,
-        &std::collections::HashMap::new(),
+    let initial_mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
+        &gated.model,
+        gated.from_custom_route,
         route_effort,
     );
 
@@ -1506,7 +1507,7 @@ pub async fn handle_count_tokens(
         .cloned();
 
     // [MODEL GATE] POST /v1beta/models/:model/countTokens 探测端点同样接入门禁
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
+    let gated = match crate::proxy::handlers::common::enforce_model_gate_resolved_scoped(
         &state,
         Some(model_name.as_str()),
         "gemini",
@@ -1515,8 +1516,9 @@ pub async fn handle_count_tokens(
     )
     .await
     {
-        return rejection;
-    }
+        Ok(gated) => gated,
+        Err(rejection) => return rejection,
+    };
 
     execute_count_tokens(
         state,
@@ -1524,6 +1526,7 @@ pub async fn handle_count_tokens(
         user_identity.map(|identity| identity.token_id.clone()),
         allowed_accounts,
         model_name,
+        gated,
         body,
     )
     .await
@@ -1539,6 +1542,7 @@ pub async fn execute_count_tokens(
     tenant_id: Option<String>,
     allowed_accounts: Option<std::collections::HashSet<String>>,
     model_name: String,
+    gated: crate::proxy::handlers::common::GatedModel,
     mut body: Value,
 ) -> Response {
     // [DEFENSE] 净化 Gemini 原生请求体中的所有 inlineData (过滤或降级空数据/损坏图片)
@@ -1558,9 +1562,9 @@ pub async fn execute_count_tokens(
             || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
     });
 
-    let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
-        &model_name,
-        &std::collections::HashMap::new(),
+    let mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
+        &gated.model,
+        gated.from_custom_route,
         crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref()),
     );
 

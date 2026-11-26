@@ -939,8 +939,8 @@ pub async fn handle_messages(
         .cloned();
 
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
-    // 门禁已统一完成自定义映射、后台模型与 auto:* 自适应解析；协议层直接复用结果，不再二次解析。
-    let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
+    // 门禁已统一完成自定义映射、后台模型与 auto:* 自适应解析；保留原始请求名（含 -online）供联网探测与审计。
+    let gated = match crate::proxy::handlers::common::enforce_model_gate_resolved_scoped(
         &state,
         Some(request.model.as_str()),
         "claude",
@@ -949,17 +949,18 @@ pub async fn handle_messages(
     )
     .await
     {
-        Ok(model) => model,
+        Ok(gated) => gated,
         Err(rejection) => return rejection,
     };
-    if gated_model != request.model {
+    let original_requested_model = request.model.clone();
+    if gated.model != request.model {
         tracing::info!(
             "[{}] [ModelGate] 复用门禁解析结果: {} -> {}",
             trace_id,
             request.model,
-            gated_model
+            gated.model
         );
-        request.model = gated_model;
+        request.model = gated.model.clone();
     }
 
     // [Variant] Resolve canonical model + variant → real model + real params.
@@ -1027,9 +1028,9 @@ pub async fn handle_messages(
     let canonical_model = request.model.clone();
     // [ROUTE SINGLE ENTRY] 路由只由 router 决定；variant 仅根据已路由的物理模型
     // 解析 spec（budget / max / supports_thinking），不再做第二套档位选择。
-    request.model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+    request.model = crate::proxy::common::model_mapping::finalize_gated_model_route(
         &request.model,
-        &std::collections::HashMap::new(),
+        gated.from_custom_route,
         effort_hint.as_deref(),
     );
     if let Some(spec) = apply_routed_spec(&mut request, effective_budget_hint) {
@@ -1051,7 +1052,7 @@ pub async fn handle_messages(
             "kind": "original_request",
             "protocol": "anthropic",
             "trace_id": trace_id,
-            "original_model": request.model,
+            "original_model": original_requested_model,
             "request": crate::proxy::payload_audit::reorder_payload_fields(&original_body),  // 原始请求体（字段按关注度重排），不是结构体序列化
         });
         debug_logger::write_debug_payload(
@@ -1727,10 +1728,10 @@ pub async fn handle_messages(
             break;
         }
 
-        // 2. 模型路由解析（自定义/后台映射已由门禁单次完成，此处仅处理裸模型 effort）
-        let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+        // 2. 模型路由解析（自定义/后台映射已由门禁单次完成，此处保持自定义裸目标契约并处理思考档位）
+        let mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
             &request_for_body.model,
-            &std::collections::HashMap::new(),
+            gated.from_custom_route,
             effort_hint.as_deref(),
         );
         last_mapped_model = Some(mapped_model.clone());
@@ -1743,7 +1744,7 @@ pub async fn handle_messages(
         });
 
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
-            &request_for_body.model,
+            &original_requested_model,
             &mapped_model,
             &tools_val,
             request.size.as_deref(),    // [NEW] Pass size parameter
@@ -2027,7 +2028,7 @@ pub async fn handle_messages(
                 "kind": "v1internal_request",
                 "protocol": "anthropic",
                 "trace_id": trace_id,
-                "original_model": request.model,
+                "original_model": original_requested_model,
                 "mapped_model": request_with_mapped.model,
                 "request_type": config.request_type,
                 "attempt": attempt,
@@ -2263,7 +2264,7 @@ pub async fn handle_messages(
                 "kind": "endpoint_fallback",
                 "protocol": "anthropic",
                 "trace_id": trace_id,
-                "original_model": request.model,
+                "original_model": original_requested_model,
                 "mapped_model": request_with_mapped.model,
                 "attempt": attempt,
                 "account": mask_email(&email),
@@ -2311,7 +2312,7 @@ pub async fn handle_messages(
                 let meta = json!({
                     "protocol": "anthropic",
                     "trace_id": trace_id,
-                    "original_model": request.model,
+                    "original_model": original_requested_model,
                     "mapped_model": request_with_mapped.model,
                     "request_type": config.request_type,
                     "attempt": attempt,
@@ -2794,7 +2795,7 @@ pub async fn handle_messages(
                 "kind": "upstream_response_error",
                 "protocol": "anthropic",
                 "trace_id": trace_id,
-                "original_model": request.model,
+                "original_model": original_requested_model,
                 "mapped_model": request_with_mapped.model,
                 "request_type": config.request_type,
                 "attempt": attempt,

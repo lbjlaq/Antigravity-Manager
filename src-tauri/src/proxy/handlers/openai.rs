@@ -2221,7 +2221,7 @@ pub async fn handle_chat_completions(
 
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
     // 门禁已统一完成自定义映射、后台模型与 auto:* 解析；下方直接复用结果，避免二次解析。
-    let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
+    let gated = match crate::proxy::handlers::common::enforce_model_gate_resolved_scoped(
         &state,
         Some(body.get("model").and_then(|v| v.as_str()).unwrap_or("")),
         "openai",
@@ -2230,7 +2230,7 @@ pub async fn handle_chat_completions(
     )
     .await
     {
-        Ok(model) => model,
+        Ok(gated) => gated,
         Err(rejection) => return Ok(rejection),
     };
 
@@ -2264,10 +2264,9 @@ pub async fn handle_chat_completions(
     });
     let mut openai_req: OpenAIRequest = serde_json::from_value(body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid request: {}", e)))?;
-    // 复用门禁单次解析结果（保留 -online 后缀触发联网探测，其余直接复用 gated_model）
-    if !openai_req.model.ends_with("-online") {
-        openai_req.model = gated_model;
-    }
+    // 保留原始请求名（含 -online 后缀供联网探测与审计），同时无条件复用门禁单次解析结果
+    let original_requested_model = openai_req.model.clone();
+    openai_req.model = gated.model.clone();
 
     // Safety: Ensure messages is not empty
     if openai_req.messages.is_empty() {
@@ -2422,9 +2421,9 @@ pub async fn handle_chat_completions(
         .or_else(|| openai_req.thinking.as_ref().and_then(|t| t.effort.clone()));
     let canonical_model = openai_req.model.clone();
     // [ROUTE SINGLE ENTRY] 路由只由 router 决定；variant 仅根据已路由的物理模型解析 spec。
-    openai_req.model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+    openai_req.model = crate::proxy::common::model_mapping::finalize_gated_model_route(
         &openai_req.model,
-        &std::collections::HashMap::new(),
+        gated.from_custom_route,
         effort_hint.as_deref(),
     );
     let variant_spec = crate::proxy::common::variant_mapping::resolve_spec_exact(
@@ -2493,9 +2492,9 @@ pub async fn handle_chat_completions(
     // 归一为路由意图 "none"，由路由层按官方档位数组降为最低档。
     let route_effort =
         crate::proxy::pipeline::routing_effort(client_switch.is_disabled(), effort_hint.as_deref());
-    let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+    let mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
         &openai_req.model,
-        &std::collections::HashMap::new(),
+        gated.from_custom_route,
         route_effort,
     );
     let anchor = SessionManager::openai_content_anchor(&openai_req);
@@ -2535,7 +2534,7 @@ pub async fn handle_chat_completions(
             .as_ref()
             .map(|list| list.iter().cloned().collect());
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
-            &openai_req.model,
+            &original_requested_model,
             &mapped_model,
             &tools_val,
             None, // size (not used in handler, transform_openai_request handles it)
@@ -3832,7 +3831,7 @@ pub async fn handle_completions(
     // 两者均为网关自答：直接返回，不罚号、不解绑粘性、不进入上游重试。
     // 未携带 model 的请求不在此处拦截（交由协议自身校验）。
     let gated_model = if let Some(requested_model) = body.get("model").and_then(|v| v.as_str()) {
-        match crate::proxy::handlers::common::enforce_model_gate_scoped(
+        match crate::proxy::handlers::common::enforce_model_gate_resolved_scoped(
             &state,
             Some(requested_model),
             if is_responses_api {
@@ -3845,7 +3844,7 @@ pub async fn handle_completions(
         )
         .await
         {
-            Ok(model) => Some(model),
+            Ok(gated) => Some(gated),
             Err(rejection) => return rejection,
         }
     } else {
@@ -4601,16 +4600,21 @@ pub async fn handle_completions(
         .is_disabled(),
         effort_hint,
     );
-    if let Some(ref gated) = gated_model {
-        if !openai_req.model.ends_with("-online") {
-            openai_req.model = gated.clone();
-        }
-    }
-    let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
-        &openai_req.model,
-        &std::collections::HashMap::new(),
-        route_effort,
-    );
+    let original_requested_model = openai_req.model.clone();
+    let mapped_model = if let Some(ref gated) = gated_model {
+        openai_req.model = gated.model.clone();
+        crate::proxy::common::model_mapping::finalize_gated_model_route(
+            &openai_req.model,
+            gated.from_custom_route,
+            route_effort,
+        )
+    } else {
+        crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+            &openai_req.model,
+            &*state.custom_mapping.read().await,
+            route_effort,
+        )
+    };
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
     if debug_logger::is_enabled(&debug_cfg) {
         if let Some(ledger) = normalized_interaction_ledger {
@@ -4703,7 +4707,7 @@ pub async fn handle_completions(
             .as_ref()
             .map(|list| list.iter().cloned().collect());
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
-            &openai_req.model,
+            &original_requested_model,
             &mapped_model,
             &tools_val,
             None, // size
