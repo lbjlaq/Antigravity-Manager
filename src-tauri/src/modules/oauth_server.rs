@@ -62,11 +62,35 @@ async fn serve_oauth_callback_listener(
     expected_state: String,
     tx: mpsc::Sender<Result<String, String>>,
     cancel_tx: watch::Sender<bool>,
-    mut rx: watch::Receiver<bool>,
+    rx: watch::Receiver<bool>,
     app_handle: Option<tauri::AppHandle>,
     stack_label: &'static str,
 ) {
-    let deadline = tokio::time::Instant::now() + OAUTH_LISTENER_TIMEOUT;
+    serve_oauth_callback_listener_with_timeout(
+        listener,
+        expected_state,
+        tx,
+        cancel_tx,
+        rx,
+        app_handle,
+        stack_label,
+        OAUTH_LISTENER_TIMEOUT,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn serve_oauth_callback_listener_with_timeout(
+    listener: TcpListener,
+    expected_state: String,
+    tx: mpsc::Sender<Result<String, String>>,
+    cancel_tx: watch::Sender<bool>,
+    mut rx: watch::Receiver<bool>,
+    app_handle: Option<tauri::AppHandle>,
+    stack_label: &'static str,
+    timeout: std::time::Duration,
+) {
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let stream = tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
@@ -74,6 +98,16 @@ async fn serve_oauth_callback_listener(
                     "OAuth {} callback listener timed out waiting for authorization",
                     stack_label
                 ));
+                {
+                    let mut state = get_oauth_flow_state()
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if state.as_ref().is_some_and(|s| s.state == expected_state) {
+                        *state = None;
+                    }
+                }
+                let _ = tx.try_send(Err("OAuth callback listener timed out waiting for authorization".to_string()));
+                let _ = cancel_tx.send(true);
                 break;
             }
             _ = rx.changed() => {
@@ -87,6 +121,7 @@ async fn serve_oauth_callback_listener(
                             "OAuth {} callback accept error: {}",
                             stack_label, e
                         ));
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         continue;
                     }
                 }
@@ -131,7 +166,7 @@ async fn serve_oauth_callback_listener(
             None => (String::new(), None, None, None),
         };
 
-        if req_path != "/oauth-callback" && code.is_none() && oauth_error.is_none() {
+        if req_path != "/oauth-callback" {
             let _ = stream
                 .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
                 .await;
@@ -142,9 +177,9 @@ async fn serve_oauth_callback_listener(
         let state_valid = received_state.as_deref() == Some(expected_state.as_str());
 
         if let Some(err_val) = oauth_error {
-            if !state_valid && received_state.is_some() {
+            if !state_valid {
                 crate::modules::logger::log_warn(&format!(
-                    "Ignoring OAuth error callback with mismatched state ({})",
+                    "Ignoring OAuth error callback with missing/mismatched state ({} CSRF protection)",
                     stack_label
                 ));
                 let _ = stream.write_all(oauth_fail_html().as_bytes()).await;
@@ -954,7 +989,26 @@ mod tests {
         let n = bad.read(&mut buf).await.unwrap();
         assert!(String::from_utf8_lossy(&buf[..n]).contains("400 Bad Request"));
 
-        // 4. Legitimate callback succeeds
+        // 4. Error callback missing `state` and wrong-path error probe must both be rejected without cancelling
+        let mut err_no_state = tokio::net::TcpStream::connect(addr).await.unwrap();
+        err_no_state
+            .write_all(
+                b"GET /oauth-callback?error=access_denied HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let n = err_no_state.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).contains("400 Bad Request"));
+
+        let mut wrong_path_err = tokio::net::TcpStream::connect(addr).await.unwrap();
+        wrong_path_err
+            .write_all(b"GET /evil?error=access_denied&state=expected-state-xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let n = wrong_path_err.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).contains("204 No Content"));
+
+        // 5. Legitimate callback succeeds
         let mut ok_conn = tokio::net::TcpStream::connect(addr).await.unwrap();
         ok_conn
             .write_all(
@@ -968,5 +1022,55 @@ mod tests {
         let received = code_rx.recv().await.unwrap();
         assert_eq!(received.unwrap(), "good-code-123");
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn serve_oauth_callback_listener_timeout_notifies_waiter_and_clears_matching_state() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let (code_tx, mut code_rx) = mpsc::channel::<Result<String, String>>(1);
+
+        {
+            let mut flow = get_oauth_flow_state()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *flow = Some(OAuthFlowState {
+                auth_url: "https://example.test/auth".to_string(),
+                state: "timeout-state-123".to_string(),
+                redirect_uri: "http://localhost:1234/oauth-callback".to_string(),
+                client_key: "default".to_string(),
+                proxy_options: AddAccountProxyOptions::default(),
+                cancel_tx: cancel_tx.clone(),
+                code_tx: code_tx.clone(),
+                code_rx: None,
+            });
+        }
+
+        serve_oauth_callback_listener_with_timeout(
+            listener,
+            "timeout-state-123".to_string(),
+            code_tx,
+            cancel_tx,
+            cancel_rx,
+            None,
+            "IPv4-timeout-test",
+            std::time::Duration::from_millis(20),
+        )
+        .await;
+
+        let err = code_rx
+            .recv()
+            .await
+            .expect("timeout must notify receiver instead of hanging")
+            .unwrap_err();
+        assert!(err.contains("timed out"));
+
+        let flow = get_oauth_flow_state()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert!(
+            flow.is_none(),
+            "expired OAuthFlowState must be cleared so subsequent logins prepare a fresh listener"
+        );
     }
 }

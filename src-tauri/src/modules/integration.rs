@@ -619,6 +619,15 @@ fn execute_desktop_account_switch(
     let active_args = process::get_args_from_running_process(effective_target);
 
     // 2. 决定切换模式（热切号 / 完整重启）并处理进程与凭据
+    //
+    //    · 热切号（原生经典版与 Antigravity IDE 统一支持，issue #3503 / issue #3637）：
+    //      主窗口进程（无论是 Standalone 还是 VS Code 架构的 IDE）与后台 language_server/agy 解耦，
+    //      只要客户端运行中且能定位到语言服务子进程，先将凭据双写至 SQLite/Keyring/本地文件，
+    //      然后仅终止后台 language_server/agy 子进程。宿主内置的 supervisor 会在约 1.5~2 秒内原地
+    //      重建子进程并重新挂载新凭据，完美保留主窗口和未保存内容，无需重启 IDE。
+    //      顺序是**先写凭据 → 再杀子进程 →（best-effort）再补写一次**。
+    //    · 完整重启 —— 客户端未运行、未定位到语言服务子进程或杀死/拉起失败：
+    //      兜底保持「终止主进程 → 干净写入凭据 → 重新启动客户端」的稳健流程。
     let running = process::is_antigravity_running(effective_target);
     let mut hot_switch = false;
     let mut credentials_applied = false;
@@ -634,6 +643,15 @@ fn execute_desktop_account_switch(
         )?;
         credentials_applied = true;
 
+        // 热切号保障（Fixes #4026）：在终止 language_server 子进程前，
+        // 验证文件级凭据回退（~/.gemini/jetski-standalone-oauth-token）已持久化到磁盘。
+        // 背景：Linux D-Bus/Keyring 存在异步延迟（尤其是 Wayland/AppImage 沙箱），
+        // 当 Keyring 在 10s 窗口内返回 has_token=false 时，前端 authActor 会切换到
+        // signedOut 状态并将 URL 污染为 /onboarding?login=true，而 Electron 的
+        // buildLsRestartWindowUrl 会将此污染 URL 传播给新启动的 language_server。
+        // 通过确保文件凭据在杀死子进程前真实可读，supervisor 重建的 language_server
+        // 始终能从文件回退路径获取 has_token=true，彻底阻断 URL 污染链。
+        // 此验证不阻塞 macOS/Windows（它们的凭据路径始终同步可用）。
         ensure_file_credentials_flushed(account);
 
         match process::kill_language_server_subprocesses_and_get_pids(effective_target) {
@@ -647,6 +665,11 @@ fn execute_desktop_account_switch(
                     n, effective_target
                 ));
 
+                // 补写一次凭据（best-effort）：子进程已被终止，此时数据库不存在竞争写者，
+                // 这次写入即为权威值 —— 用于覆盖"写凭据 → 杀子进程"这几十毫秒窗口内
+                // 旧语言服务可能把旧 token 回写进 Keyring 的情况，
+                // 确保 supervisor 约 2s 后重新拉起的子进程读到的一定是新凭据。
+                // 失败只告警，不使整个切号失败：第一次写入已经就位。
                 if let Err(e) = apply_account_credentials(
                     account,
                     effective_target,
@@ -672,6 +695,8 @@ fn execute_desktop_account_switch(
 
     if !hot_switch && running {
         process::close_antigravity(20, effective_target)?;
+        // 完整重启路径必须在彻底终止主进程之后重新断言写入凭据，
+        // 消除外部客户端退出钩子在关机瞬间回写陈旧 Session Token 的竞态
         apply_account_credentials(
             account,
             effective_target,
@@ -687,6 +712,7 @@ fn execute_desktop_account_switch(
         process::close_antigravity(20, target_ide)?;
     }
 
+    // 若此前从未写入凭据（例如客户端未处于运行状态）：此时写入凭据
     if !credentials_applied {
         apply_account_credentials(
             account,
@@ -697,6 +723,8 @@ fn execute_desktop_account_switch(
     }
 
     // 3. 重启外部进程（优先使用预快照路径与启动参数）
+    //    热切号路径下主窗口仍然存活：只需等 supervisor 把 language_server 拉起即可，
+    //    绝不能再去启动一次主窗口（否则会变成双实例）。
     if hot_switch {
         if process::wait_for_language_server_respawn_excluding(
             effective_target,
@@ -716,10 +744,12 @@ fn execute_desktop_account_switch(
             return Ok(());
         }
 
+        // 子进程迟迟未恢复 → 降级为完整重启，避免留下"窗口活着但 AI 引擎已死"的残状态
         crate::modules::logger::log_warn(
             "[Desktop] Hot switch degraded: language_server did not respawn within timeout; performing a full restart.",
         );
         process::close_antigravity(20, effective_target)?;
+        // 彻底杀死主窗口后重新断言写入凭据，消除退出钩子回写旧 token
         let _ = apply_account_credentials(
             account,
             effective_target,
@@ -728,6 +758,8 @@ fn execute_desktop_account_switch(
         );
     }
 
+    // 在 Windows 宿主机重新拉起 IDE 之前先有界同步 WSL 凭据（Ref #4032），
+    // 避免 Remote-WSL 窗口启动瞬间抢先连接并使用旧凭据。
     #[cfg(target_os = "windows")]
     crate::modules::wsl_sync::sync_account_to_wsl_blocking(
         account,
@@ -739,6 +771,9 @@ fn execute_desktop_account_switch(
         active_exe_path.as_deref(),
         active_args.as_deref(),
     ) {
+        // 若切号前外部客户端原本就没有处于运行状态，且启动失败原因是找不到客户端可执行文件
+        // （例如纯反代服务模式、未安装 GUI 客户端或无头环境）：
+        // 此时凭据和配置已经写入成功，降级处理并记录信息，避免让整个切号操作报错中断。
         if !running && process::is_client_executable_missing(&e) {
             crate::modules::logger::log_info(
                 "[Desktop] Client executable not found and was not running before switch; credentials applied successfully.",
