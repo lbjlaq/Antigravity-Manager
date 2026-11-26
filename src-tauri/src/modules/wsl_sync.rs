@@ -217,6 +217,28 @@ pub fn get_running_wsl_distros() -> Vec<String> {
     Vec::new()
 }
 
+fn collect_distro_user_homes(prefixes: &[PathBuf]) -> Vec<PathBuf> {
+    for home_base in prefixes {
+        let mut homes = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(home_base) {
+            for entry in entries.flatten() {
+                let user_dir = entry.path();
+                if user_dir.is_dir() {
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if !file_name.starts_with('.') && file_name != "lost+found" {
+                        homes.push(user_dir);
+                    }
+                }
+            }
+        }
+        // 同一个分发版只需通过一种 UNC 前缀写入一次，避免对同一 state.vscdb 重复注入并覆盖备份
+        if !homes.is_empty() {
+            return homes;
+        }
+    }
+    Vec::new()
+}
+
 /// 解析有效的 WSL 用户主目录路径（供凭据写入）
 pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
@@ -240,29 +262,11 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
 
     // 2. 自动枚举当前处于运行中的 WSL 分发版
     for distro in get_running_wsl_distros() {
-        let mut distro_found = false;
-        for prefix in [
-            format!(r"\\wsl.localhost\{}\home", distro),
-            format!(r"\\wsl$\{}\home", distro),
-        ] {
-            let home_base = PathBuf::from(&prefix);
-            if let Ok(entries) = std::fs::read_dir(&home_base) {
-                for entry in entries.flatten() {
-                    let user_dir = entry.path();
-                    if user_dir.is_dir() {
-                        let file_name = entry.file_name().to_string_lossy().to_string();
-                        if !file_name.starts_with('.') && file_name != "lost+found" {
-                            candidates.push(user_dir);
-                            distro_found = true;
-                        }
-                    }
-                }
-            }
-            // 同一个分发版只需通过一种 UNC 前缀写入一次，避免对同一 state.vscdb 重复注入并覆盖备份
-            if distro_found {
-                break;
-            }
-        }
+        let prefixes = [
+            PathBuf::from(format!(r"\\wsl.localhost\{}\home", distro)),
+            PathBuf::from(format!(r"\\wsl$\{}\home", distro)),
+        ];
+        candidates.extend(collect_distro_user_homes(&prefixes));
     }
 
     candidates.sort();
@@ -270,10 +274,25 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
     candidates
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn collect_unique_wsl_distros(homes: &[PathBuf]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut distros = Vec::new();
+    for home in homes {
+        if let Some(distro) = extract_wsl_distro(&home.to_string_lossy()) {
+            if seen.insert(distro.to_ascii_lowercase()) {
+                distros.push(distro);
+            }
+        }
+    }
+    distros
+}
+
 /// 构造 WSL 内重启 Antigravity 语言服务子进程的 `wsl.exe` 参数。
 ///
 /// 不依赖 `killall`（最小化 WSL 发行版常未预装 `psmisc`），改用 `procps` 标准 `pkill -TERM -f`，
-/// 仅精确匹配 Antigravity 安装/服务端路径下的 `language_server*` 与 `agy`，避免误杀宿主内其他 LSP。
+/// 仅精确匹配 Antigravity 安装/服务端（及 VS Code Remote 中的 Antigravity/Gemini 扩展）路径下的
+/// `language_server*` 与 `agy`，避免误杀宿主内其他 LSP。
 pub fn build_wsl_language_server_reload_args(distro: &str) -> Vec<String> {
     vec![
         "-d".to_string(),
@@ -281,7 +300,7 @@ pub fn build_wsl_language_server_reload_args(distro: &str) -> Vec<String> {
         "--".to_string(),
         "sh".to_string(),
         "-c".to_string(),
-        "pkill -TERM -f '([a]ntigravity|\\.[a]ntigravity-server|\\.[v]scode-server).*(language_server|agy)' 2>/dev/null || true".to_string(),
+        "pkill -TERM -f '([Aa]ntigravity|\\.[a]ntigravity-server|\\.[v]scode-server.*([Aa]ntigravity|[Gg]emini)).*(language_server|[/ ]agy($|[[:space:]]))' 2>/dev/null || true".to_string(),
     ]
 }
 
@@ -358,18 +377,18 @@ fn sync_account_to_wsl_inner(account: &crate::models::Account, custom_home: Opti
                 }
             }
         }
+    }
 
-        // 3. 尝试向 WSL 运行态中的 language_server 发送重载信号（结束旧进程以便自动拉起新凭据）
-        #[cfg(target_os = "windows")]
-        if let Some(distro) = extract_wsl_distro(&wsl_home.to_string_lossy()) {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            let args = build_wsl_language_server_reload_args(&distro);
-            let mut cmd = std::process::Command::new("wsl.exe");
-            cmd.args(&args);
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            let _ = run_command_with_timeout(&mut cmd, Duration::from_millis(1500));
-        }
+    // 3. 全部主目录凭据落盘后，按分发版去重向 WSL 运行态中的 language_server 发送重载信号
+    #[cfg(target_os = "windows")]
+    for distro in collect_unique_wsl_distros(&target_homes) {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let args = build_wsl_language_server_reload_args(&distro);
+        let mut cmd = std::process::Command::new("wsl.exe");
+        cmd.args(&args);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = run_command_with_timeout(&mut cmd, Duration::from_millis(1500));
     }
 }
 
@@ -486,12 +505,65 @@ mod tests {
         let args = build_wsl_language_server_reload_args("Ubuntu-24.04");
         assert_eq!(&args[..4], &["-d", "Ubuntu-24.04", "--", "sh"]);
         assert_eq!(args[4], "-c");
-        assert!(args[5].contains("pkill -TERM -f"));
-        assert!(args[5].contains("[a]ntigravity"));
-        assert!(args[5].contains("language_server"));
-        assert!(args[5].contains("agy"));
-        assert!(!args[5].contains("killall"));
+        let shell_cmd = &args[5];
+        assert!(shell_cmd.contains("pkill -TERM -f"));
+        assert!(shell_cmd.contains("[Aa]ntigravity"));
+        assert!(shell_cmd.contains("language_server"));
+        assert!(shell_cmd.contains("agy"));
+        assert!(!shell_cmd.contains("killall"));
         // Avoid matching the parent `sh -c ...` cmdline itself under procps `pkill -f`.
-        assert!(!args[5].contains("(antigravity"));
+        assert!(!shell_cmd.contains("(antigravity"));
+
+        let start = shell_cmd.find('\'').expect("opening quote") + 1;
+        let end = shell_cmd.rfind('\'').expect("closing quote");
+        let pattern = &shell_cmd[start..end];
+        let re = regex::Regex::new(pattern).expect("pkill ERE pattern should compile");
+
+        assert!(re.is_match("/home/u/.antigravity-server/bin/1.0/language_server_linux_x64"));
+        assert!(re.is_match("/home/u/.config/Antigravity/bin/language_server"));
+        assert!(re.is_match("/home/u/.antigravity-server/bin/agy --serve"));
+        assert!(re.is_match("/home/u/.antigravity-server/bin/agy"));
+        assert!(re.is_match(
+            "/home/u/.vscode-server/extensions/google.geminicodeassist-2.0/language_server"
+        ));
+
+        assert!(!re.is_match(shell_cmd));
+        assert!(!re.is_match("/home/u/.vscode-server/extensions/elixir-ls/language_server.sh"));
+        assert!(!re.is_match("/home/u/antigravity-docs/pedagogy"));
+    }
+
+    #[test]
+    fn test_collect_distro_user_homes_stops_after_first_matching_prefix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let first_prefix = tmp.path().join("wsl_localhost_home");
+        let second_prefix = tmp.path().join("wsl_dollar_home");
+
+        std::fs::create_dir_all(first_prefix.join("alice")).unwrap();
+        std::fs::create_dir_all(first_prefix.join(".cache")).unwrap();
+        std::fs::create_dir_all(first_prefix.join("lost+found")).unwrap();
+        std::fs::create_dir_all(second_prefix.join("alice")).unwrap();
+
+        let homes = collect_distro_user_homes(&[first_prefix.clone(), second_prefix.clone()]);
+        assert_eq!(homes, vec![first_prefix.join("alice")]);
+
+        // Falls back to the second prefix when the first prefix has no valid user dirs.
+        let empty_prefix = tmp.path().join("empty_home");
+        std::fs::create_dir_all(empty_prefix.join(".hidden")).unwrap();
+        let fallback = collect_distro_user_homes(&[empty_prefix, second_prefix.clone()]);
+        assert_eq!(fallback, vec![second_prefix.join("alice")]);
+    }
+
+    #[test]
+    fn test_collect_unique_wsl_distros_deduplicates_case_insensitively() {
+        let homes = vec![
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\alice"),
+            PathBuf::from(r"\\wsl.localhost\ubuntu\home\bob"),
+            PathBuf::from(r"\\wsl$\Debian\home\carol"),
+            PathBuf::from(r"C:\Users\local"),
+        ];
+        assert_eq!(
+            collect_unique_wsl_distros(&homes),
+            vec!["Ubuntu".to_string(), "Debian".to_string()]
+        );
     }
 }
