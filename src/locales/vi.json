@@ -1497,7 +1497,7 @@
             "subtitle": "Định tuyến model theo nhóm (Series) hoặc thêm ánh xạ chính xác.\nLưu ý: Các native model Claude (ví dụ: claude-opus-4-6-thinking) mặc định sẽ bỏ qua nhóm series và đi thẳng. Dùng \"Định tuyến Tùy chỉnh Cao cấp\" để ghi đè.",
             "subtitle_simple": "Tùy chỉnh định tuyến model với ký tự đại diện hoặc ánh xạ chính xác",
             "background_task_title": "Mô hình tác vụ nền",
-            "background_task_desc": "Mô hình được sử dụng cho các tác vụ nền của Claude CLI như tạo tiêu đề, tóm tắt, v.v. (Mặc định: gemini-3.1-flash-lite)",
+            "background_task_desc": "Mô hình dùng cho các tác vụ nền và phụ trợ của CLI như tạo tiêu đề, tóm tắt. Khi để trống, tự động dùng mô hình thực thi nhẹ của orchestrator chính thức.",
             "use_default": "Sử dụng mặc định hệ thống",
             "current_model": "Mô hình hiện tại",
             "apply_presets": "Áp dụng Cài sẵn",
