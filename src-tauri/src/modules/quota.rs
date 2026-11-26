@@ -561,37 +561,14 @@ pub async fn fetch_quota_with_cache(
                             "Account unauthorized (403 Forbidden): {}",
                             text
                         ));
-                        let mut q = QuotaData::new();
-                        q.is_forbidden = true;
-                        q.forbidden_reason = Some(text.clone());
-                        // 保留本次 loadCodeAssist 拿到的等级；拿不到才回退到已存值
-                        q.subscription_tier = subscription_tier.clone();
-                        q.raw_tier = raw_tier.clone();
-
-                        // 智能识别上游返回信息并分类处理
-                        if let Some(id) = account_id {
-                            let text_lower = text.to_lowercase();
-                            let is_validation = text_lower.contains("validation_required")
-                                || text_lower.contains("verify your account")
-                                || text_lower.contains("validation_url");
-
-                            if is_validation {
-                                let block_minutes = 10i64;
-                                let block_until =
-                                    chrono::Utc::now().timestamp() + (block_minutes * 60);
-                                let _ = crate::modules::account::mark_account_validation_blocked(
-                                    id,
-                                    block_until,
-                                    &text,
-                                );
-                            } else {
-                                let _ = crate::modules::account::mark_account_forbidden(
-                                    id,
-                                    &format!("Forbidden (403): {}", text),
-                                );
-                            }
-                        }
-
+                        let is_validation = is_validation_challenge_body(&text);
+                        let q = record_quota_403_forbidden(
+                            account_id,
+                            &text,
+                            is_validation,
+                            subscription_tier.clone(),
+                            raw_tier.clone(),
+                        );
                         return Ok((q, project_id.clone()));
                     }
 
@@ -686,11 +663,32 @@ pub async fn fetch_quota_with_cache(
                 let is_ultra = final_tier == "ULTRA";
 
                 // Best-effort: 先行获取分组配额摘要 (weekly + 5h windows)。
-                // 这样在解析模型列表时，对于上游不再返回 quotaInfo 的 Gemini/Argon 系模型，
-                // 可以直接提取并绑定其所属分组的真实配额，杜绝模型被误丢弃导致调度器 503 (Issue #3737)。
-                let mut quota_groups =
-                    fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
-                        .await;
+                // 若 retrieveUserQuotaSummary 返回明确的人机验证或封禁 403，直接中止配额构建并标记账号受限，
+                // 防止静态目录 fetchAvailableModels 200 OK 被误判为 100% 健康账号。
+                let mut quota_groups = match fetch_quota_summary(
+                    access_token,
+                    email,
+                    project_id.as_deref(),
+                    account_id,
+                )
+                .await
+                {
+                    QuotaSummaryOutcome::Groups(groups) => Some(groups),
+                    QuotaSummaryOutcome::AccountBlocked {
+                        body,
+                        is_validation,
+                    } => {
+                        let q = record_quota_403_forbidden(
+                            account_id,
+                            &body,
+                            is_validation,
+                            Some(final_tier),
+                            raw_tier.clone(),
+                        );
+                        return Ok((q, project_id.clone()));
+                    }
+                    QuotaSummaryOutcome::Unavailable => None,
+                };
 
                 // Pre-collect any active Gemini 4+ codenames returned by fetchAvailableModels
                 // so future dedicated groups (even with short names like "Helium") are isolated
@@ -1110,16 +1108,79 @@ pub async fn fetch_quota_with_cache(
     }))
 }
 
+#[derive(Debug)]
+enum QuotaSummaryOutcome {
+    Groups(Vec<crate::models::quota::QuotaGroup>),
+    AccountBlocked { body: String, is_validation: bool },
+    Unavailable,
+}
+
+fn is_validation_challenge_body(body: &str) -> bool {
+    let lower = body.to_lowercase();
+    lower.contains("validation_required")
+        || lower.contains("validation_url")
+        || lower.contains("verify your account")
+        || lower.contains("further action is required")
+        || lower.contains("not eligible for antigravity")
+}
+
+/// Classify a 403 response body from `retrieveUserQuotaSummary`.
+///
+/// Returns `Some(true)` for validation/eligibility challenges, `Some(false)` for
+/// high-confidence ban/TOS violations, and `None` for generic non-validation
+/// permission errors (so GCP/Vertex projects without this auxiliary endpoint
+/// still degrade gracefully).
+pub(crate) fn classify_quota_summary_403(body: &str) -> Option<bool> {
+    if is_validation_challenge_body(body) {
+        Some(true)
+    } else if crate::models::AccountBanInfo::classify_upstream(403, body).is_some() {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn record_quota_403_forbidden(
+    account_id: Option<&str>,
+    text: &str,
+    is_validation: bool,
+    subscription_tier: Option<String>,
+    raw_tier: Option<String>,
+) -> QuotaData {
+    let mut q = QuotaData::new();
+    q.is_forbidden = true;
+    q.forbidden_reason = Some(text.to_string());
+    // 保留本次 loadCodeAssist 拿到的等级；拿不到才回退到已存值
+    q.subscription_tier = subscription_tier;
+    q.raw_tier = raw_tier;
+
+    if let Some(id) = account_id {
+        if is_validation {
+            let block_minutes = 10i64;
+            let block_until = chrono::Utc::now().timestamp() + (block_minutes * 60);
+            let _ = crate::modules::account::mark_account_validation_blocked(id, block_until, text);
+        } else {
+            let _ = crate::modules::account::mark_account_forbidden(
+                id,
+                &format!("Forbidden (403): {}", text),
+            );
+        }
+    }
+
+    q
+}
+
 /// Fetch grouped quota summary (weekly + 5h windows) via retrieveUserQuotaSummary.
 ///
-/// Best-effort: returns `None` on any failure so that the primary 5h quota fetch
-/// (fetchAvailableModels) is never blocked by this auxiliary endpoint.
+/// Best-effort on transient or unsupported endpoint errors (`Unavailable`), while
+/// explicitly propagating `VALIDATION_REQUIRED` and high-confidence ban `403`s so
+/// inaccessible accounts are not treated as 100% healthy.
 async fn fetch_quota_summary(
     access_token: &str,
     email: &str,
     project_id: Option<&str>,
     account_id: Option<&str>,
-) -> Option<Vec<crate::models::quota::QuotaGroup>> {
+) -> QuotaSummaryOutcome {
     let client = create_standard_client(account_id).await;
     let payload = if let Some(pid) = project_id {
         json!({ "project": pid })
@@ -1147,6 +1208,20 @@ async fn fetch_quota_summary(
             Ok(response) => {
                 let status = response.status();
                 if !status.is_success() {
+                    if status == rquest::StatusCode::FORBIDDEN {
+                        let body = response.text().await.unwrap_or_default();
+                        if let Some(is_validation) = classify_quota_summary_403(&body) {
+                            crate::modules::logger::log_warn(&format!(
+                                "QuotaSummary API unauthorized (403 Forbidden) for {}: {}",
+                                email, body
+                            ));
+                            return QuotaSummaryOutcome::AccountBlocked {
+                                body,
+                                is_validation,
+                            };
+                        }
+                    }
+
                     if crate::proxy::upstream::client::should_try_next_endpoint_for_url(
                         status, ep_url,
                     ) {
@@ -1175,7 +1250,7 @@ async fn fetch_quota_summary(
                             "QuotaSummary JSON parse failed for {}: {}",
                             email, e
                         ));
-                        return None;
+                        return QuotaSummaryOutcome::Unavailable;
                     }
                 };
 
@@ -1195,7 +1270,7 @@ async fn fetch_quota_summary(
                     .collect();
 
                 tracing::debug!("[{}] QuotaSummary fetched {} groups", email, groups.len());
-                return Some(groups);
+                return QuotaSummaryOutcome::Groups(groups);
             }
             Err(e) => {
                 health_tracker.mark_failure(ep_url);
@@ -1208,7 +1283,7 @@ async fn fetch_quota_summary(
         }
     }
 
-    None
+    QuotaSummaryOutcome::Unavailable
 }
 
 /// Internal fetch quota logic
@@ -2178,5 +2253,48 @@ mod tests {
         let group = make_test_group("Third-party models", "3p-weekly");
         assert!(is_claude_or_3p_group(&group));
         assert!(group.is_third_party());
+    }
+
+    #[test]
+    fn test_classify_quota_summary_403_detects_validation_and_ban_while_ignoring_generic_403() {
+        let validation_body = r#"{
+            "error": {
+                "code": 403,
+                "message": "Verify your account to continue.",
+                "status": "PERMISSION_DENIED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "VALIDATION_REQUIRED",
+                        "domain": "cloudcode-pa.googleapis.com",
+                        "metadata": {
+                            "validation_url": "https://accounts.google.com/v3/signin/continue?plt=abc"
+                        }
+                    }
+                ]
+            }
+        }"#;
+        assert_eq!(classify_quota_summary_403(validation_body), Some(true));
+
+        let eligibility_body = r#"{"error":{"code":403,"message":"Your current account is not eligible for Antigravity."}}"#;
+        assert_eq!(classify_quota_summary_403(eligibility_body), Some(true));
+
+        let tos_ban_body = r#"{
+            "error": {
+                "code": 403,
+                "message": "This account has been suspended for Terms of Service violations.",
+                "status": "PERMISSION_DENIED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "TOS_VIOLATION"
+                    }
+                ]
+            }
+        }"#;
+        assert_eq!(classify_quota_summary_403(tos_ban_body), Some(false));
+
+        let generic_body = r#"{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}"#;
+        assert_eq!(classify_quota_summary_403(generic_body), None);
     }
 }
