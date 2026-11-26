@@ -228,6 +228,8 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
 
   // [FIX] 创建 args 副本，用于移除已使用的路径参数
   let bodyArgs = args ? { ...args } : undefined;
+  // [FIX] 记录已被路径替换使用的参数 key，避免对 query/body 值做子串匹配
+  const usedPathKeys = new Set<string>();
 
   // 通用路径参数处理：替换 :key 为 args[key]
   if (args) {
@@ -236,6 +238,7 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
       if (url.includes(placeholder)) {
         url = url.replace(placeholder, encodeURIComponent(String(args[key])));
         // [FIX] 从 body 参数中移除已用于路径的参数
+        usedPathKeys.add(key);
         if (bodyArgs) {
           delete bodyArgs[key];
         }
@@ -261,8 +264,8 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
   if ((mapping.method === 'GET' || mapping.method === 'DELETE') && args) {
     const params = new URLSearchParams();
     Object.entries(args).forEach(([key, value]) => {
-      // [FIX] 跳过已用于路径替换的参数
-      if (url.includes(encodeURIComponent(String(value)))) return;
+      // [FIX] 跳过已用于路径替换的参数（按 key 精确匹配，避免值出现在路径中导致 query 参数被误丢弃）
+      if (usedPathKeys.has(key)) return;
       if (value !== undefined && value !== null) {
         params.append(key, String(value));
       }
