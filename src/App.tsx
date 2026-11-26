@@ -159,7 +159,7 @@ function App() {
     // 监听托盘显示主窗口事件
     unlistenPromises.push(
       listen('tray://show-window', async () => {
-        if (!isTauri() && useViewStore.getState().isMiniView) {
+        if (useViewStore.getState().isMiniView) {
           useViewStore.getState().setMiniView(false);
         }
       })

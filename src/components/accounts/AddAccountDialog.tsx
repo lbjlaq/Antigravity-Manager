@@ -60,64 +60,61 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     // Listen for OAuth URL
     useEffect(() => {
         if (!isTauri()) return;
-        let unlisten: (() => void) | undefined;
+        let disposed = false;
 
-        const setupListener = async () => {
-            unlisten = await listen('oauth-url-generated', (event) => {
-                setOauthUrl(event.payload as string);
-                // 自动复制到剪贴板? 可选，这里只设置状态让用户手动复制
-            });
-        };
-
-        setupListener();
+        const unlistenPromise = listen('oauth-url-generated', (event) => {
+            if (disposed) return;
+            setOauthUrl(event.payload as string);
+            // 自动复制到剪贴板? 可选，这里只设置状态让用户手动复制
+        });
 
         return () => {
-            if (unlisten) unlisten();
+            disposed = true;
+            void unlistenPromise.then((fn) => fn()).catch(() => {});
         };
     }, []);
 
     // Listen for OAuth callback completion (user may open the URL manually without clicking Start)
     useEffect(() => {
         if (!isTauri()) return;
-        let unlisten: (() => void) | undefined;
+        let disposed = false;
 
-        const setupListener = async () => {
-            unlisten = await listen('oauth-callback-received', async () => {
-                if (!isOpenRef.current) return;
-                if (activeTabRef.current !== 'oauth') return;
-                if (statusRef.current === 'loading' || statusRef.current === 'success') return;
-                if (!oauthUrlRef.current) return;
+        const unlistenPromise = listen('oauth-callback-received', async () => {
+            if (disposed) return;
+            if (!isOpenRef.current) return;
+            if (activeTabRef.current !== 'oauth') return;
+            if (statusRef.current === 'loading' || statusRef.current === 'success') return;
+            if (!oauthUrlRef.current) return;
 
-                // Auto-complete: exchange code and save account (no browser open)
-                setStatus('loading');
-                setMessage(`${t('accounts.add.tabs.oauth')}...`);
+            // Auto-complete: exchange code and save account (no browser open)
+            setStatus('loading');
+            setMessage(`${t('accounts.add.tabs.oauth')}...`);
 
-                try {
-                    await completeOAuthLogin();
-                    setStatus('success');
-                    setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.success')}!`);
-                    setTimeout(() => {
-                        setIsOpen(false);
-                        resetState();
-                    }, 1500);
-                } catch (error) {
-                    setStatus('error');
-                    let errorMsg = String(error);
-                    if (errorMsg.includes('Refresh Token') || errorMsg.includes('refresh_token')) {
-                        setMessage(errorMsg);
-                    } else if (errorMsg.includes('Tauri') || errorMsg.toLowerCase().includes('environment') || errorMsg.includes('环境')) {
-                        setMessage(t('common.environment_error', { error: errorMsg }));
-                    } else {
-                        setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.error')}: ${errorMsg}`);
-                    }
+            try {
+                await completeOAuthLogin();
+                setStatus('success');
+                setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.success')}!`);
+                setTimeout(() => {
+                    setIsOpen(false);
+                    resetState();
+                }, 1500);
+            } catch (error) {
+                if (disposed) return;
+                setStatus('error');
+                let errorMsg = String(error);
+                if (errorMsg.includes('Refresh Token') || errorMsg.includes('refresh_token')) {
+                    setMessage(errorMsg);
+                } else if (errorMsg.includes('Tauri') || errorMsg.toLowerCase().includes('environment') || errorMsg.includes('环境')) {
+                    setMessage(t('common.environment_error', { error: errorMsg }));
+                } else {
+                    setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.error')}: ${errorMsg}`);
                 }
-            });
-        };
-
-        setupListener();
+            }
+        });
 
         return () => {
-            if (unlisten) unlisten();
+            disposed = true;
+            void unlistenPromise.then((fn) => fn()).catch(() => {});
         };
     }, [completeOAuthLogin, t]);
 
