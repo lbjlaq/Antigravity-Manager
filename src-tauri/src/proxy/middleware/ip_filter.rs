@@ -285,9 +285,10 @@ pub fn extract_client_ip(request: &Request) -> Option<String> {
 
     // 只有经由本机反代/隧道 (127.0.0.1 / ::1) 转发，或显式开启 ABV_TRUST_FORWARDED_HEADERS，
     // 才采信 X-Forwarded-For / X-Real-IP；直连 LAN/公网请求严禁凭转发头伪造源 IP。
-    // 单元测试中若未挂载 ConnectInfo，保留既有行为以兼容无 Socket 的 Router::oneshot 测试。
+    // 单元测试中若未挂载 ConnectInfo，保留既有行为以兼容无 Socket 的 Router::oneshot 测试；
+    // 生产环境缺少 ConnectInfo 时 fail-closed，不采信可伪造的转发头。
     let trust_forwarded =
-        peer_ip.map(ip_is_loopback).unwrap_or(true) || trust_forwarded_headers_env();
+        peer_ip.map(ip_is_loopback).unwrap_or(cfg!(test)) || trust_forwarded_headers_env();
 
     if trust_forwarded {
         let raw = request

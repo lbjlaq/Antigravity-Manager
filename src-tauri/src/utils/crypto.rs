@@ -42,6 +42,10 @@ fn get_android_device_id() -> String {
     }
 }
 
+pub fn is_undecrypted_ciphertext(value: &str) -> bool {
+    value.starts_with(ENCRYPTED_PREFIX) || value.starts_with(ENCRYPTED_V2_PREFIX)
+}
+
 pub fn serialize_password<S>(password: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -238,5 +242,8 @@ mod tests {
         let json_legacy = format!(r#"{{"password": "{}"}}"#, corrupted_legacy);
         let parsed_legacy: PasswordContainer = serde_json::from_str(&json_legacy).unwrap();
         assert_eq!(parsed_legacy.password, corrupted_legacy);
+        assert!(is_undecrypted_ciphertext(corrupted_v2));
+        assert!(is_undecrypted_ciphertext(corrupted_legacy));
+        assert!(!is_undecrypted_ciphertext("plain_password"));
     }
 }

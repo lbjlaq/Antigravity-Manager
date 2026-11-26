@@ -223,28 +223,26 @@ async fn auth_middleware_internal(
     }
 
     // 认证逻辑
-    let authorized = if force_strict {
-        // 管理接口：优先使用独立的 admin_password，如果没有则回退使用 api_key
-        match &security.admin_password {
-            Some(pwd) if !pwd.is_empty() => api_key
-                .as_deref()
-                .map(|k| constant_time_eq(k, pwd))
-                .unwrap_or(false),
-            _ => {
-                // 回退使用 api_key
-                api_key
-                    .as_deref()
-                    .map(|k| constant_time_eq(k, &security.api_key))
-                    .unwrap_or(false)
-            }
+    let active_secret = if force_strict {
+        match security.admin_password.as_deref() {
+            Some(pwd) if !pwd.is_empty() => pwd,
+            _ => security.api_key.as_str(),
         }
     } else {
-        // AI 代理接口：仅允许使用 api_key
-        api_key
-            .as_deref()
-            .map(|k| constant_time_eq(k, &security.api_key))
-            .unwrap_or(false)
+        security.api_key.as_str()
     };
+
+    if crate::utils::crypto::is_undecrypted_ciphertext(active_secret) {
+        tracing::error!(
+            "Configured auth credential could not be decrypted (retains ag_enc_* prefix); denying request"
+        );
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let authorized = api_key
+        .as_deref()
+        .map(|k| constant_time_eq(k, active_secret))
+        .unwrap_or(false);
 
     if authorized {
         Ok(next.run(request).await)
@@ -695,5 +693,51 @@ mod tests {
         assert!(!constant_time_eq("sk-secret-123", ""));
         assert!(constant_time_eq("密钥-αβγ", "密钥-αβγ"));
         assert!(!constant_time_eq("密钥-αβγ", "密钥-αβδ"));
+    }
+
+    #[tokio::test]
+    async fn test_auth_rejects_undecrypted_ciphertext_credentials() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let encrypted_placeholder = "ag_enc_v2_abc.def";
+        let security = Arc::new(RwLock::new(ProxySecurityConfig {
+            auth_mode: ProxyAuthMode::Strict,
+            api_key: encrypted_placeholder.to_string(),
+            admin_password: Some(encrypted_placeholder.to_string()),
+            allow_lan_access: true,
+            port: 8045,
+            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+        }));
+
+        let proxy_app = axum::Router::new()
+            .route("/v1/models", get(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn_with_state(
+                security.clone(),
+                auth_middleware,
+            ));
+
+        let admin_app = axum::Router::new()
+            .route("/api/config", get(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn_with_state(
+                security.clone(),
+                admin_auth_middleware,
+            ));
+
+        let proxy_req = Request::builder()
+            .uri("/v1/models")
+            .header("Authorization", format!("Bearer {}", encrypted_placeholder))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let proxy_resp = proxy_app.oneshot(proxy_req).await.unwrap();
+        assert_eq!(proxy_resp.status(), StatusCode::UNAUTHORIZED);
+
+        let admin_req = Request::builder()
+            .uri("/api/config")
+            .header("Authorization", format!("Bearer {}", encrypted_placeholder))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let admin_resp = admin_app.oneshot(admin_req).await.unwrap();
+        assert_eq!(admin_resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
