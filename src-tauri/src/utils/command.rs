@@ -67,8 +67,8 @@ pub fn output_with_timeout(cmd: &mut StdCommand, timeout: Duration) -> std::io::
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    let _ = stdout_handle.join();
-                    let _ = stderr_handle.join();
+                    // Detach reader threads on timeout: a wrapper's grandchild process (e.g., Windows cmd.exe /C)
+                    // may still keep stdout/stderr pipes open after child.kill(), so joining here could hang.
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "command timed out",

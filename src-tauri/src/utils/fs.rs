@@ -57,7 +57,6 @@ fn atomic_replace_file(src: &Path, dst: &Path) -> Result<(), String> {
             continue;
         }
 
-        let _ = std::fs::remove_file(src);
         return Err(format!(
             "MoveFileExW failed after {} attempts: {}",
             attempt + 1,
@@ -65,7 +64,6 @@ fn atomic_replace_file(src: &Path, dst: &Path) -> Result<(), String> {
         ));
     }
 
-    let _ = std::fs::remove_file(src);
     Err(format!(
         "MoveFileExW failed: {}",
         last_err
@@ -221,7 +219,6 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
-<<<<<<< HEAD
     #[test]
     fn test_write_atomic_restricted_creates_parent_and_replaces_content() {
         let temp_dir =
@@ -302,6 +299,25 @@ mod tests {
         write_atomic(&target_file, b"{\"refresh_token\":\"secret\"}").unwrap();
         let mode = fs::metadata(&target_file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_replace_file_atomic_preserves_source_on_failure() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_replace_preserve_src_{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let src = temp_dir.join("settings.json.antigravity.bak");
+        fs::write(&src, b"precious-backup-data").unwrap();
+
+        let missing_dst = temp_dir.join("nonexistent_parent").join("settings.json");
+        let err = replace_file_atomic(&src, &missing_dst)
+            .expect_err("replace into nonexistent parent directory should fail");
+        assert!(!err.is_empty());
+        assert!(src.exists(), "source file must remain intact on failure");
+        assert_eq!(fs::read(&src).unwrap(), b"precious-backup-data");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
