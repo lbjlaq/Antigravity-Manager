@@ -56,6 +56,8 @@ export interface StreamTimeoutConfig {
     initial_ttft_secs?: number;
     transition_secs?: number;
     streaming_sliding_secs?: number;
+    gateway_request_budget_secs?: number;
+    allow_extended_ttft_budget?: boolean;
 }
 
 export interface MultimodalConfig {
