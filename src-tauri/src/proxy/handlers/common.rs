@@ -122,6 +122,13 @@ mod tests {
     }
 }
 
+/// 入站模型闸门放行结果（供协议层直接复用，区分是否来自自定义映射/后台别名）。
+#[derive(Debug, Clone)]
+pub struct GatedModel {
+    pub model: String,
+    pub from_custom_route: bool,
+}
+
 /// 入站模型闸门（协议无关）。
 ///
 /// - 缺失 / 不存在的 model-id → 404 `model not exist`
@@ -147,16 +154,39 @@ pub async fn enforce_model_gate_scoped(
     upstream_recorder: Option<&crate::proxy::monitor::UpstreamRequestBodyHolder>,
     allowed_accounts: Option<&std::collections::HashSet<String>>,
 ) -> Result<String, Response> {
-    let decision = crate::proxy::common::model_gate::gate_inbound_model_scoped(
+    enforce_model_gate_resolved_scoped(
+        state,
         requested_model,
-        &state.custom_mapping,
-        &state.token_manager,
+        protocol,
+        upstream_recorder,
         allowed_accounts,
     )
-    .await;
+    .await
+    .map(|gated| gated.model)
+}
+
+/// 带可选账号作用域与来源标记的入站模型闸门（供主协议处理器复用）。
+pub async fn enforce_model_gate_resolved_scoped(
+    state: &AppState,
+    requested_model: Option<&str>,
+    protocol: &str,
+    upstream_recorder: Option<&crate::proxy::monitor::UpstreamRequestBodyHolder>,
+    allowed_accounts: Option<&std::collections::HashSet<String>>,
+) -> Result<GatedModel, Response> {
+    let (decision, from_custom_route) =
+        crate::proxy::common::model_gate::gate_inbound_model_scoped_with_origin(
+            requested_model,
+            &state.custom_mapping,
+            &state.token_manager,
+            allowed_accounts,
+        )
+        .await;
 
     let Some((status, reason)) = decision.rejection() else {
-        return Ok(decision.allowed_model().unwrap_or_default().to_string());
+        return Ok(GatedModel {
+            model: decision.allowed_model().unwrap_or_default().to_string(),
+            from_custom_route,
+        });
     };
 
     let requested = requested_model.unwrap_or("").trim().to_string();

@@ -1505,7 +1505,7 @@
             "only_raw_quota_models": "Only Expose Quota Models",
             "only_raw_quota_models_tooltip": "When enabled, /v1/models only lists active quota models fetched from connected accounts, hiding built-in alias models (like gpt-4o) and image ratio variants.",
             "background_task_title": "バックグラウンドタスク用モデル",
-            "background_task_desc": "タイトル生成や要約などのCLIバックグラウンド・補助タスク用モデル。未設定時は公式 orchestrator の軽量実行モデルを自動的に使用します。",
+            "background_task_desc": "タイトル生成や要約などのCLIバックグラウンド・補助タスク用モデル。未設定時は公式の軽量階層モデルを自動的に使用します。",
             "use_default": "システムデフォルトを使用",
             "current_model": "現在のモデル",
             "apply_presets": "プリセットを適用",

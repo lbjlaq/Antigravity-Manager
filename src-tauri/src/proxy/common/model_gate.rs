@@ -66,21 +66,30 @@ impl ModelGate {
 }
 
 /// 仅应用「用户自定义映射」与官方淘汰重定向；无命中时保留原值，不做任何系统映射。
-pub fn resolve_requested_model(
+/// 同时返回是否命中了自定义/淘汰重定向映射（供下游保留“未传 effort 不改写自定义裸模型目标”契约）。
+pub fn resolve_requested_model_with_origin(
     requested: &str,
     custom_mapping: &HashMap<String, String>,
-) -> String {
+) -> (String, bool) {
     if let Some(target) = model_mapping::resolve_custom_model_route(requested, custom_mapping) {
-        return target;
+        return (target, true);
     }
     // 客户端联网修饰后缀处理：如 `gemini-3.8-flash-online` 剥离 `-online` 后匹配自定义映射或基准模型
     if let Some(base) = requested.strip_suffix("-online") {
         if let Some(target) = model_mapping::resolve_custom_model_route(base, custom_mapping) {
-            return target;
+            return (target, true);
         }
-        return base.to_string();
+        return (base.to_string(), false);
     }
-    requested.to_string()
+    (requested.to_string(), false)
+}
+
+/// 仅应用「用户自定义映射」与官方淘汰重定向；无命中时保留原值，不做任何系统映射。
+pub fn resolve_requested_model(
+    requested: &str,
+    custom_mapping: &HashMap<String, String>,
+) -> String {
+    resolve_requested_model_with_origin(requested, custom_mapping).0
 }
 
 /// 已下线模型族硬门禁（作用于**映射后的最终出站模型 ID**，而非客户端原始请求名）。
@@ -369,7 +378,7 @@ pub async fn gate_inbound_model(
 fn no_available_accounts(is_background_auto: bool, final_model: &str) -> ModelGate {
     if is_background_auto {
         tracing::warn!(
-            "[ModelGate] Background model '{}' resolved from orchestrator metadata is not supported by any active account; configure a manual Background Task Model in Settings",
+            "[ModelGate] Background model '{}' resolved from official tiered catalog is not supported by any active account; configure a manual Background Task Model in Settings",
             final_model
         );
     }
@@ -383,34 +392,53 @@ pub async fn gate_inbound_model_scoped(
     token_manager: &TokenManager,
     allowed_accounts: Option<&HashSet<String>>,
 ) -> ModelGate {
+    gate_inbound_model_scoped_with_origin(
+        requested_model,
+        custom_mapping,
+        token_manager,
+        allowed_accounts,
+    )
+    .await
+    .0
+}
+
+/// 带可选账号作用域及来源标记的入站模型闸门入口：
+/// 额外返回 `from_custom_route`（是否命中用户自定义映射/后台别名），避免下游对自定义裸目标误施加默认档位。
+pub async fn gate_inbound_model_scoped_with_origin(
+    requested_model: Option<&str>,
+    custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
+    token_manager: &TokenManager,
+    allowed_accounts: Option<&HashSet<String>>,
+) -> (ModelGate, bool) {
     let requested = requested_model.map(str::trim).unwrap_or("");
     if requested.is_empty() {
-        return ModelGate::NotFound;
+        return (ModelGate::NotFound, false);
     }
 
     // 自定义映射与号池自适应暗路由前置解析（持读锁传引用，零 HashMap::clone）：
     // 用户显式声明的别名与 auto: 自适应协议目标优先转换为目标物理/逻辑模型
-    let (final_model, is_background_auto) = {
+    let (final_model, is_background_auto, from_custom_route) = {
         let mapping = custom_mapping.read().await;
-        let raw_target = resolve_requested_model(requested, &mapping);
+        let (raw_target, from_custom) = resolve_requested_model_with_origin(requested, &mapping);
         let is_bg_auto = raw_target == model_mapping::AUTO_BACKGROUND_TARGET
             || raw_target == model_mapping::LEGACY_AUTO_BACKGROUND_TARGET;
         let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
-        let resolved = model_mapping::resolve_adaptive_target(
+        let resolved = model_mapping::resolve_adaptive_target_scoped(
             &raw_target,
             lookup_base,
             None,
             Some(&mapping),
             Some(token_manager),
+            allowed_accounts,
         );
-        (resolved, is_bg_auto)
+        (resolved, is_bg_auto, from_custom)
     };
 
     // 已下线模型族硬门禁：检查 **映射后的真实出站模型**，
     // 允许用户把已下线的旧名作为别名键映射到合规模型。
     if is_retired_model_id(&final_model) {
         tracing::warn!("[ModelGate] Rejected retired model family: {}", final_model);
-        return ModelGate::NotFound;
+        return (ModelGate::NotFound, from_custom_route);
     }
 
     // Fail-closed: when a token restricts allowed_accounts, never fail-open if
@@ -419,7 +447,7 @@ pub async fn gate_inbound_model_scoped(
         if !token_manager.has_any_active_account_in_scope(Some(allowed_set)) {
             token_manager.refresh_pool_for_gate_if_stale().await;
             if !token_manager.has_any_active_account_in_scope(Some(allowed_set)) {
-                return ModelGate::NoAvailableAccounts;
+                return (ModelGate::NoAvailableAccounts, from_custom_route);
             }
         }
     }
@@ -446,9 +474,9 @@ pub async fn gate_inbound_model_scoped(
                 "[ModelGate] Account pool has no model metadata yet, skipping existence gate for '{}'",
                 final_model
             );
-            return ModelGate::Allow(final_model);
+            return (ModelGate::Allow(final_model), from_custom_route);
         }
-        return if is_known_catalog_or_disk_model(
+        let decision = if is_known_catalog_or_disk_model(
             &final_model,
             &routed,
             custom_mapping,
@@ -461,6 +489,7 @@ pub async fn gate_inbound_model_scoped(
         } else {
             ModelGate::NotFound
         };
+        return (decision, from_custom_route);
     }
 
     let mut allowed =
@@ -472,7 +501,7 @@ pub async fn gate_inbound_model_scoped(
             "[ModelGate] Exposed model set is empty after baseline filtering; fail-open for '{}'",
             final_model
         );
-        return ModelGate::Allow(final_model);
+        return (ModelGate::Allow(final_model), from_custom_route);
     }
 
     let strip = |s: &str| model_mapping::strip_tier_suffix(s);
@@ -508,7 +537,7 @@ pub async fn gate_inbound_model_scoped(
                 "[ModelGate] Exposed model set is empty after gate self-heal; fail-open for '{}'",
                 final_model
             );
-            return ModelGate::Allow(final_model);
+            return (ModelGate::Allow(final_model), from_custom_route);
         }
         exact_allowed = allowed.contains(&final_model);
         routed_allowed = allowed.contains(&routed);
@@ -524,7 +553,7 @@ pub async fn gate_inbound_model_scoped(
             || is_image_family_allowed(&final_model, &allowed)
             || is_image_family_allowed(&routed, &allowed);
         if !exposed {
-            return if is_known_catalog_or_disk_model(
+            let decision = if is_known_catalog_or_disk_model(
                 &final_model,
                 &routed,
                 custom_mapping,
@@ -537,6 +566,7 @@ pub async fn gate_inbound_model_scoped(
             } else {
                 ModelGate::NotFound
             };
+            return (decision, from_custom_route);
         }
     }
 
@@ -578,15 +608,16 @@ pub async fn gate_inbound_model_scoped(
                 || (quota_model != final_model
                     && token_manager
                         .has_any_capable_account_in_pool_scoped(&final_model, allowed_accounts));
-            return if has_capable {
+            let decision = if has_capable {
                 ModelGate::NoQuota
             } else {
                 no_available_accounts(is_background_auto, &final_model)
             };
+            return (decision, from_custom_route);
         }
     }
 
-    ModelGate::Allow(final_model)
+    (ModelGate::Allow(final_model), from_custom_route)
 }
 
 /// 「只查存在性」的入站模型闸门（不做整池配额检查）
@@ -619,12 +650,13 @@ pub async fn gate_inbound_model_exists_scoped(
         let mapping = custom_mapping.read().await;
         let raw_target = resolve_requested_model(requested, &mapping);
         let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
-        model_mapping::resolve_adaptive_target(
+        model_mapping::resolve_adaptive_target_scoped(
             &raw_target,
             lookup_base,
             None,
             Some(&mapping),
             Some(token_manager),
+            allowed_accounts,
         )
     };
 
@@ -998,8 +1030,27 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(final_model, "gemini-4-hydrogen-low");
+        assert_eq!(final_model, "gemini-3.5-flash-lite");
         assert!(!is_retired_model_id(&final_model));
+    }
+
+    #[test]
+    fn test_resolve_requested_model_with_origin_preserves_online_custom_routes() {
+        let mut custom = crate::proxy::config::default_custom_mapping();
+        custom.insert("my-alias".to_string(), "gemini-4-hydrogen".to_string());
+
+        assert_eq!(
+            resolve_requested_model_with_origin("my-alias-online", &custom),
+            ("gemini-4-hydrogen".to_string(), true)
+        );
+        assert_eq!(
+            resolve_requested_model_with_origin("claude-haiku-4-5-online", &custom),
+            ("auto:gemini-flash-low".to_string(), true)
+        );
+        assert_eq!(
+            resolve_requested_model_with_origin("gemini-3.8-flash-online", &custom),
+            ("gemini-3.8-flash".to_string(), false)
+        );
     }
 
     #[test]
@@ -1462,6 +1513,45 @@ mod tests {
         assert_eq!(
             decision.rejection().map(|(s, _)| s),
             Some(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+        );
+    }
+
+    #[tokio::test]
+    async fn background_model_pool_aware_picks_supported_candidate_before_503() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        std::fs::create_dir_all(data_dir.join("accounts")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let reset = chrono::DateTime::from_timestamp(now + 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+        // Account does NOT have gemini-3.5-flash-lite, only gemini-4-hydrogen-tiered-high
+        let acc = serde_json::json!({
+            "id": "acc-1", "email": "pool@example.invalid", "proxy_disabled": false,
+            "token": { "access_token": "a", "refresh_token": "r", "expires_in": 3600, "expiry_timestamp": now + 3600 },
+            "quota": { "last_updated": now, "models": [{ "name": "gemini-4-hydrogen-tiered-high", "percentage": 100, "reset_time": reset }] }
+        });
+        std::fs::write(data_dir.join("accounts/acc-1.json"), acc.to_string()).unwrap();
+        std::fs::write(
+            data_dir.join("accounts.json"),
+            r#"{"accounts":[{"id":"acc-1","email":"pool@example.invalid","disabled":false,"proxy_disabled":false}]}"#,
+        )
+        .unwrap();
+
+        let tm = TokenManager::new(data_dir);
+        tm.load_accounts().await.unwrap();
+        let mapping = tokio::sync::RwLock::new(crate::proxy::config::default_custom_mapping());
+        let (decision, from_custom) = gate_inbound_model_scoped_with_origin(
+            Some("gemini-3.1-flash-lite-preview"),
+            &mapping,
+            &tm,
+            None,
+        )
+        .await;
+        assert!(from_custom);
+        assert_eq!(
+            decision,
+            ModelGate::Allow("gemini-4-hydrogen-tiered-high".to_string())
         );
     }
 }

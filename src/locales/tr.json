@@ -1499,7 +1499,7 @@
             "subtitle": "Modelleri serilere göre yönlendirin veya özel tam eşlemeler ekleyin.\nNot: Yerel Claude geçiş modelleri (örn. claude-opus-4-6-thinking) varsayılan olarak seri gruplarını atlar. Geçersiz kılmak için \"Uzman Özel Yönlendirme\" kullanın.",
             "subtitle_simple": "Joker karakterlerle veya tam eşlemelerle model yönlendirmeyi özelleştirin",
             "background_task_title": "Arka Plan Görev Modeli",
-            "background_task_desc": "Başlık oluşturma, özetleme vb. CLI arka plan ve yardımcı görevleri için kullanılan model. Belirtilmezse resmi orchestrator'ın hafif yürütme modeli otomatik olarak kullanılır.",
+            "background_task_desc": "Başlık oluşturma, özetleme vb. CLI arka plan ve yardımcı görevleri için kullanılan model. Belirtilmezse resmi hafif katmanlı model otomatik olarak kullanılır.",
             "use_default": "Sistem Varsayılanını Kullan",
             "current_model": "Mevcut Model",
             "apply_presets": "Ön Ayarları Uygula",

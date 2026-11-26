@@ -1485,7 +1485,7 @@
             "subtitle": "Halakan model mengikut siri atau tambah pemetaan tepat tersuai.\nNota: Model pass-through Claude asli (cth. claude-opus-4-6-thinking) memintas kumpulan siri secara lalai. Gunakan \"Penghalaan Tersuai Pakar\" untuk mengatasi.",
             "subtitle_simple": "Sesuaikan penghalaan model dengan wildcard atau pemetaan tepat",
             "background_task_title": "Model Tugas Latar Belakang",
-            "background_task_desc": "Model digunakan untuk tugas latar belakang dan bantuan CLI seperti penjanaan tajuk dan ringkasan. Menggunakan model pelaksanaan ringan orchestrator rasmi secara automatik jika tidak ditetapkan.",
+            "background_task_desc": "Model digunakan untuk tugas latar belakang dan bantuan CLI seperti penjanaan tajuk dan ringkasan. Menggunakan model berperingkat ringan rasmi secara automatik jika tidak ditetapkan.",
             "use_default": "Gunakan Lalai Sistem",
             "current_model": "Model Semasa",
             "apply_presets": "Gunakan Pratetap",
