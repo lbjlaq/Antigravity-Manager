@@ -366,6 +366,16 @@ pub async fn gate_inbound_model(
     gate_inbound_model_scoped(requested_model, custom_mapping, token_manager, None).await
 }
 
+fn no_available_accounts(is_background_auto: bool, final_model: &str) -> ModelGate {
+    if is_background_auto {
+        tracing::warn!(
+            "[ModelGate] Background model '{}' resolved from orchestrator metadata is not supported by any active account; configure a manual Background Task Model in Settings",
+            final_model
+        );
+    }
+    ModelGate::NoAvailableAccounts
+}
+
 /// 带可选账号作用域的入站模型闸门主入口。
 pub async fn gate_inbound_model_scoped(
     requested_model: Option<&str>,
@@ -378,20 +388,23 @@ pub async fn gate_inbound_model_scoped(
         return ModelGate::NotFound;
     }
 
-    // 自定义映射与号池自适应暗路由前置解析：
+    // 自定义映射与号池自适应暗路由前置解析（持读锁传引用，零 HashMap::clone）：
     // 用户显式声明的别名与 auto: 自适应协议目标优先转换为目标物理/逻辑模型
-    let raw_target = {
+    let (final_model, is_background_auto) = {
         let mapping = custom_mapping.read().await;
-        resolve_requested_model(requested, &mapping)
+        let raw_target = resolve_requested_model(requested, &mapping);
+        let is_bg_auto = raw_target == model_mapping::AUTO_BACKGROUND_TARGET
+            || raw_target == model_mapping::LEGACY_AUTO_BACKGROUND_TARGET;
+        let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
+        let resolved = model_mapping::resolve_adaptive_target(
+            &raw_target,
+            lookup_base,
+            None,
+            Some(&mapping),
+            Some(token_manager),
+        );
+        (resolved, is_bg_auto)
     };
-    let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
-    let final_model = model_mapping::resolve_adaptive_target(
-        &raw_target,
-        lookup_base,
-        None,
-        None,
-        Some(token_manager),
-    );
 
     // 已下线模型族硬门禁：检查 **映射后的真实出站模型**，
     // 允许用户把已下线的旧名作为别名键映射到合规模型。
@@ -444,7 +457,7 @@ pub async fn gate_inbound_model_scoped(
         )
         .await
         {
-            ModelGate::NoAvailableAccounts
+            no_available_accounts(is_background_auto, &final_model)
         } else {
             ModelGate::NotFound
         };
@@ -520,7 +533,7 @@ pub async fn gate_inbound_model_scoped(
             )
             .await
             {
-                ModelGate::NoAvailableAccounts
+                no_available_accounts(is_background_auto, &final_model)
             } else {
                 ModelGate::NotFound
             };
@@ -568,7 +581,7 @@ pub async fn gate_inbound_model_scoped(
             return if has_capable {
                 ModelGate::NoQuota
             } else {
-                ModelGate::NoAvailableAccounts
+                no_available_accounts(is_background_auto, &final_model)
             };
         }
     }
@@ -602,18 +615,18 @@ pub async fn gate_inbound_model_exists_scoped(
         return ModelGate::NotFound;
     }
 
-    let raw_target = {
+    let final_model = {
         let mapping = custom_mapping.read().await;
-        resolve_requested_model(requested, &mapping)
+        let raw_target = resolve_requested_model(requested, &mapping);
+        let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
+        model_mapping::resolve_adaptive_target(
+            &raw_target,
+            lookup_base,
+            None,
+            Some(&mapping),
+            Some(token_manager),
+        )
     };
-    let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
-    let final_model = model_mapping::resolve_adaptive_target(
-        &raw_target,
-        lookup_base,
-        None,
-        None,
-        Some(token_manager),
-    );
 
     // 检查映射后的真实出站模型，允许旧名作为自定义别名键。
     if is_retired_model_id(&final_model) {
@@ -1417,6 +1430,38 @@ mod tests {
             )
             .await,
             ModelGate::NoAvailableAccounts
+        );
+    }
+
+    #[tokio::test]
+    async fn background_model_unsupported_by_pool_returns_503() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        std::fs::create_dir_all(data_dir.join("accounts")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let reset = chrono::DateTime::from_timestamp(now + 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+        let acc = serde_json::json!({
+            "id": "acc-1", "email": "free@example.invalid", "proxy_disabled": false,
+            "token": { "access_token": "a", "refresh_token": "r", "expires_in": 3600, "expiry_timestamp": now + 3600 },
+            "quota": { "last_updated": now, "models": [{ "name": "claude-sonnet-4-6", "percentage": 100, "reset_time": reset }] }
+        });
+        std::fs::write(data_dir.join("accounts/acc-1.json"), acc.to_string()).unwrap();
+        std::fs::write(
+            data_dir.join("accounts.json"),
+            r#"{"accounts":[{"id":"acc-1","email":"free@example.invalid","disabled":false,"proxy_disabled":false}]}"#,
+        )
+        .unwrap();
+
+        let tm = TokenManager::new(data_dir);
+        tm.load_accounts().await.unwrap();
+        let mapping = tokio::sync::RwLock::new(HashMap::new());
+        let decision = gate_inbound_model(Some("internal-background-task"), &mapping, &tm).await;
+        assert_eq!(decision, ModelGate::NoAvailableAccounts);
+        assert_eq!(
+            decision.rejection().map(|(s, _)| s),
+            Some(axum::http::StatusCode::SERVICE_UNAVAILABLE)
         );
     }
 }

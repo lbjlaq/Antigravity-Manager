@@ -89,7 +89,7 @@ pub async fn handle_generate(
     // [NEW] :countTokens 冒号语法，直接代理到上游 v1internal:countTokens
     if method == "countTokens" {
         // [MODEL GATE] 探测端点同样接入门禁（POST 也需要，不能只靠 GET 拦截）
-        if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
+        let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
             &state,
             Some(model_name.as_str()),
             "gemini",
@@ -98,8 +98,9 @@ pub async fn handle_generate(
         )
         .await
         {
-            return Ok(rejection);
-        }
+            Ok(model) => model,
+            Err(rejection) => return Ok(rejection),
+        };
         return Ok(execute_count_tokens(
             state,
             headers,
@@ -107,7 +108,7 @@ pub async fn handle_generate(
                 .as_ref()
                 .map(|identity| identity.token_id.clone()),
             allowed_accounts,
-            model_name,
+            gated_model,
             body,
         )
         .await);
@@ -147,7 +148,8 @@ pub async fn handle_generate(
 
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
     // 必须放在任何 `state.*` 字段被 move 之前，避免 borrow-after-partial-move。
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
+    // 门禁产出的 `gated_model` 直接供下方出站路由复用，单次请求只解析一次。
+    let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(model_name.as_str()),
         "gemini",
@@ -156,8 +158,9 @@ pub async fn handle_generate(
     )
     .await
     {
-        return Ok(rejection);
-    }
+        Ok(model) => model,
+        Err(rejection) => return Ok(rejection),
+    };
 
     // 2. 获取 UpstreamClient 和 TokenManager
     let upstream = state.upstream.clone();
@@ -199,8 +202,8 @@ pub async fn handle_generate(
         crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref());
 
     let initial_mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
-        &model_name,
-        &*state.custom_mapping.read().await,
+        &gated_model,
+        &std::collections::HashMap::new(),
         route_effort,
     );
 
@@ -1557,7 +1560,7 @@ pub async fn execute_count_tokens(
 
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &model_name,
-        &*state.custom_mapping.read().await,
+        &std::collections::HashMap::new(),
         crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref()),
     );
 

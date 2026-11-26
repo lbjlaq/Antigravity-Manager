@@ -939,7 +939,8 @@ pub async fn handle_messages(
         .cloned();
 
     // [MODEL GATE] 入站模型闸门：缺失/不存在 → 404 model not exist；全池无配额 → 502 no quota accounts
-    if let Err(rejection) = crate::proxy::handlers::common::enforce_model_gate_scoped(
+    // 门禁已统一完成自定义映射、后台模型与 auto:* 自适应解析；协议层直接复用结果，不再二次解析。
+    let gated_model = match crate::proxy::handlers::common::enforce_model_gate_scoped(
         &state,
         Some(request.model.as_str()),
         "claude",
@@ -948,25 +949,17 @@ pub async fn handle_messages(
     )
     .await
     {
-        return rejection;
-    }
-
-    // 0. 自定义映射优先拦截 (用户自定义路由与热更新规则拥有最高优先级，避免被后续变体推断抹平原模型意图)
-    let custom_target = {
-        let custom_mapping = state.custom_mapping.read().await;
-        crate::proxy::common::model_mapping::resolve_custom_model_route(
-            &request.model,
-            &*custom_mapping,
-        )
+        Ok(model) => model,
+        Err(rejection) => return rejection,
     };
-    if let Some(target) = custom_target {
+    if gated_model != request.model {
         tracing::info!(
-            "[{}] [CustomMapping] 命中用户自定义映射规则: {} -> {}",
+            "[{}] [ModelGate] 复用门禁解析结果: {} -> {}",
             trace_id,
             request.model,
-            target
+            gated_model
         );
-        request.model = target;
+        request.model = gated_model;
     }
 
     // [Variant] Resolve canonical model + variant → real model + real params.
@@ -1034,14 +1027,11 @@ pub async fn handle_messages(
     let canonical_model = request.model.clone();
     // [ROUTE SINGLE ENTRY] 路由只由 router 决定；variant 仅根据已路由的物理模型
     // 解析 spec（budget / max / supports_thinking），不再做第二套档位选择。
-    request.model = {
-        let mapping = state.custom_mapping.read().await;
-        crate::proxy::common::model_mapping::resolve_model_route_with_effort(
-            &request.model,
-            &mapping,
-            effort_hint.as_deref(),
-        )
-    };
+    request.model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+        &request.model,
+        &std::collections::HashMap::new(),
+        effort_hint.as_deref(),
+    );
     if let Some(spec) = apply_routed_spec(&mut request, effective_budget_hint) {
         // 网关权威控制模式（唯一模式）：保留客户端 effort 等级提示供下游 Pipeline 精准感知
         if let Some(ref mut t) = request.thinking {
@@ -1737,10 +1727,10 @@ pub async fn handle_messages(
             break;
         }
 
-        // 2. 模型路由解析
+        // 2. 模型路由解析（自定义/后台映射已由门禁单次完成，此处仅处理裸模型 effort）
         let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
             &request_for_body.model,
-            &*state.custom_mapping.read().await,
+            &std::collections::HashMap::new(),
             effort_hint.as_deref(),
         );
         last_mapped_model = Some(mapped_model.clone());

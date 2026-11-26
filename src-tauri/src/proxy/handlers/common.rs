@@ -298,10 +298,13 @@ pub async fn handle_detect_model(
     }
 
     // 1. Resolve mapping
-    let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
-        model_name,
-        &*state.custom_mapping.read().await,
-    );
+    let mapped_model =
+        crate::proxy::common::model_mapping::resolve_model_route_with_effort_and_pool(
+            model_name,
+            &*state.custom_mapping.read().await,
+            None,
+            Some(&state.token_manager),
+        );
 
     // 2. Resolve capabilities
     let config = crate::proxy::mappers::common_utils::resolve_request_config(
