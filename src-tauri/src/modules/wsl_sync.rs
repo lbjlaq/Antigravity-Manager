@@ -112,7 +112,7 @@ fn run_command_with_timeout(
     use std::sync::mpsc;
     use std::thread;
 
-    let mut child = cmd
+    let child = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -314,7 +314,7 @@ fn sync_account_to_wsl_inner(account: &crate::models::Account, custom_home: Opti
         return;
     }
 
-    for wsl_home in target_homes {
+    for wsl_home in &target_homes {
         crate::modules::logger::log_info(&format!(
             "[WSL Sync] Syncing account credentials to WSL home: {}",
             wsl_home.display()
