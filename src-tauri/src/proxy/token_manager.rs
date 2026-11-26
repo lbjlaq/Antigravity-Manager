@@ -6017,6 +6017,37 @@ impl TokenManager {
         self.count_matching_accounts(model, false, allowed_accounts) > 0
     }
 
+    /// 检查当前活跃池（及可选账号作用域）内是否存在未冻结且真实上报了该模型的账号。
+    pub fn has_available_model_scoped(
+        &self,
+        model: &str,
+        allowed_accounts: Option<&HashSet<String>>,
+    ) -> bool {
+        let model_lower = model.trim().to_lowercase();
+        let base_name = crate::proxy::common::model_mapping::strip_tier_suffix(&model_lower);
+        self.tokens.iter().any(|entry| {
+            let token = entry.value();
+            if let Some(allowed) = allowed_accounts {
+                if !allowed.contains(&token.account_id) {
+                    return false;
+                }
+            }
+            if token.is_model_forbidden(model) {
+                return false;
+            }
+            token.available_models.iter().any(|m| {
+                let ml = m.to_lowercase();
+                ml == model_lower || (!base_name.is_empty() && ml == base_name)
+            }) || Self::get_available_models_from_json(&token.account_path).is_some_and(|raw| {
+                raw.iter().any(|m| {
+                    let ml = m.to_lowercase();
+                    !token.is_model_forbidden(m)
+                        && (ml == model_lower || (!base_name.is_empty() && ml == base_name))
+                })
+            })
+        })
+    }
+
     /// 检查作用域内是否存在至少一个非验证锁定的活跃账号（用于模型门禁 fail-closed 校验）。
     pub fn has_any_active_account_in_scope(
         &self,

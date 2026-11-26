@@ -63,9 +63,31 @@ impl BoundedStreamCapture {
     }
 }
 
+fn sanitize_trace_id_for_filename(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(96)
+        .collect();
+    let trimmed = sanitized.trim_matches('_');
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
 fn build_filename(prefix: &str, trace_id: Option<&str>) -> String {
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S%.3f");
-    let tid = trace_id.unwrap_or("unknown");
+    let tid = trace_id
+        .map(sanitize_trace_id_for_filename)
+        .unwrap_or_else(|| "unknown".to_string());
     format!("{}_{}_{}.json", ts, tid, prefix)
 }
 
@@ -330,5 +352,18 @@ mod tests {
         tokio::fs::remove_dir_all(output_dir)
             .await
             .expect("remove test debug dir");
+    }
+
+    #[test]
+    fn build_filename_sanitizes_trace_id() {
+        let name = build_filename("req", Some("../../etc/passwd:evil\\id"));
+        assert!(!name.contains('/'));
+        assert!(!name.contains('\\'));
+        assert!(!name.contains(':'));
+        assert!(!name.contains(".."));
+        assert!(name.ends_with("_req.json"));
+
+        let empty = build_filename("req", Some("///"));
+        assert!(empty.ends_with("_unknown_req.json"));
     }
 }

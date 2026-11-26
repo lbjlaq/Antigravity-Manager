@@ -155,12 +155,12 @@ fn write_atomic_inner(
 /// Atomically write bytes to a file at `target_path`.
 ///
 /// Steps:
-/// 1. Create a unique temporary file in the same directory (`<file>.tmp.<uuid>`) with `create_new(true)`.
+/// 1. Create a unique temporary file in the same directory (`<file>.tmp.<uuid>`) with private 0600 permissions on Unix.
 /// 2. Write content and call `sync_all()` to flush buffers to physical disk.
 /// 3. Replace target file via atomic rename (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH` on Windows, `fs::rename` on POSIX).
 /// 4. If any step fails, remove the temporary file.
 pub fn write_atomic<P: AsRef<Path>>(target_path: P, content: &[u8]) -> Result<(), String> {
-    write_atomic_inner(target_path.as_ref(), content, None)
+    write_atomic_inner(target_path.as_ref(), content, Some(0o600))
 }
 
 /// Atomically write bytes to `target_path`, enforcing `unix_mode` (e.g. `0o600` or `0o700`) on Unix
@@ -221,6 +221,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
+<<<<<<< HEAD
     #[test]
     fn test_write_atomic_restricted_creates_parent_and_replaces_content() {
         let temp_dir =
@@ -282,6 +283,25 @@ mod tests {
         replace_file_atomic(&src, &dst).expect("atomic replace should succeed");
         assert!(!src.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"backup-data");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_sets_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = std::env::temp_dir().join(format!("test_atomic_perms_{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let target_file = temp_dir.join("secret.json");
+        fs::write(&target_file, b"{}").unwrap();
+        fs::set_permissions(&target_file, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_atomic(&target_file, b"{\"refresh_token\":\"secret\"}").unwrap();
+        let mode = fs::metadata(&target_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

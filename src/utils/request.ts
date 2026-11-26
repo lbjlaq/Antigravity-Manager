@@ -139,8 +139,6 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'save_update_settings': { url: '/api/system/updates/save', method: 'POST' },
   'is_auto_launch_enabled': { url: '/api/system/autostart/status', method: 'GET' },
   'toggle_auto_launch': { url: '/api/system/autostart/toggle', method: 'POST' },
-  'get_http_api_settings': { url: '/api/system/http-api/settings', method: 'GET' },
-  'save_http_api_settings': { url: '/api/system/http-api/settings', method: 'POST' },
   'get_antigravity_path': { url: '/api/system/antigravity/path', method: 'GET' },
   'get_antigravity_args': { url: '/api/system/antigravity/args', method: 'GET' },
 

@@ -1004,9 +1004,6 @@ pub fn run() {
             commands::update_account_priority,
             commands::update_account_project_id,
             commands::auto_fetch_account_project_id,
-            // HTTP API settings commands
-            commands::get_http_api_settings,
-            commands::save_http_api_settings,
             // Token 统计命令
             commands::get_token_stats_minute,
             commands::get_token_stats_hourly,

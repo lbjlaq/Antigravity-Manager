@@ -125,6 +125,46 @@ pub struct OfficialModelsFile {
 const LIVE_CACHE_FILE_NAME: &str = "official_models_live_cache.json";
 const LIVE_CACHE_SCHEMA_VERSION: u32 = 1;
 
+/// 官方 `v1internal:fetchAvailableModels` 下发的分层模型配置 (`tieredModelIds`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TieredModelConfig {
+    #[serde(default)]
+    pub flash_lite: Vec<String>,
+    #[serde(default)]
+    pub flash: Vec<String>,
+    #[serde(default)]
+    pub pro: Vec<String>,
+}
+
+impl TieredModelConfig {
+    pub fn from_raw_map(raw: &HashMap<String, Vec<String>>) -> Self {
+        let collect = |keys: &[&str]| -> Vec<String> {
+            let mut out = Vec::new();
+            for key in keys {
+                if let Some(list) = raw.get(*key) {
+                    for item in list {
+                        let trimmed = item.trim();
+                        if !trimmed.is_empty() && !out.iter().any(|existing| existing == trimmed) {
+                            out.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+            out
+        };
+        Self {
+            flash_lite: collect(&["flashLite", "flash_lite"]),
+            flash: collect(&["flash"]),
+            pro: collect(&["pro"]),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.flash_lite.is_empty() && self.flash.is_empty() && self.pro.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LiveCatalogCacheFile {
@@ -136,13 +176,41 @@ pub(crate) struct LiveCatalogCacheFile {
     accounts: HashMap<String, Vec<String>>,
     #[serde(default)]
     models: HashMap<String, OfficialModelInfo>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub(crate) account_tiered_models: HashMap<String, TieredModelConfig>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub(crate) deprecated_model_ids: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resolved_background_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct LiveCatalogState {
     accounts: HashMap<String, std::collections::HashSet<String>>,
     live_models: HashMap<String, OfficialModelInfo>,
+    account_tiered_models: HashMap<String, TieredModelConfig>,
+    deprecated_model_ids: HashMap<String, String>,
 }
+
+static RESOLVED_BACKGROUND_MODEL: Lazy<RwLock<Option<String>>> = Lazy::new(|| {
+    let from_disk = initial_disk_cache()
+        .as_ref()
+        .and_then(|c| c.resolved_background_model.clone())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && !crate::proxy::common::model_gate::is_retired_model_id(s));
+    let initial = from_disk.or_else(|| {
+        DYNAMIC_CATALOG.read().ok().and_then(|cat| {
+            OfficialModelCatalog::derive_background_candidates(
+                &HashMap::new(),
+                &HashMap::new(),
+                &cat,
+            )
+            .into_iter()
+            .next()
+        })
+    });
+    RwLock::new(initial)
+});
 
 static INITIAL_DISK_CACHE: std::sync::OnceLock<Option<LiveCatalogCacheFile>> =
     std::sync::OnceLock::new();
@@ -312,6 +380,8 @@ impl OfficialModelCatalog {
                     return RwLock::new(Some(LiveCatalogState {
                         accounts,
                         live_models: cache.models.clone(),
+                        account_tiered_models: cache.account_tiered_models.clone(),
+                        deprecated_model_ids: cache.deprecated_model_ids.clone(),
                     }));
                 }
             }
@@ -409,7 +479,251 @@ impl OfficialModelCatalog {
             updated_at: chrono::Utc::now().timestamp(),
             accounts,
             models: state.live_models.clone(),
+            account_tiered_models: state.account_tiered_models.clone(),
+            deprecated_model_ids: state.deprecated_model_ids.clone(),
+            resolved_background_model: Self::resolved_background_model(),
         }
+    }
+
+    fn lookup_catalog_info<'a>(
+        catalog: &'a HashMap<String, OfficialModelInfo>,
+        id: &str,
+    ) -> Option<&'a OfficialModelInfo> {
+        catalog.get(id).or_else(|| {
+            catalog
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(id))
+                .map(|(_, v)| v)
+        })
+    }
+
+    fn resolve_deprecated_redirect(
+        raw_id: &str,
+        deprecated_redirects: &HashMap<String, String>,
+    ) -> String {
+        let mut current = raw_id.trim().to_string();
+        for _ in 0..4 {
+            let next = deprecated_redirects
+                .get(&current)
+                .or_else(|| {
+                    deprecated_redirects
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(&current))
+                        .map(|(_, v)| v)
+                })
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case(&current));
+            match next {
+                Some(target) => current = target.to_string(),
+                None => break,
+            }
+        }
+        current
+    }
+
+    fn is_valid_background_candidate(
+        id: &str,
+        catalog: &HashMap<String, OfficialModelInfo>,
+    ) -> bool {
+        if id.trim().is_empty()
+            || Self::is_excluded_internal_model(id)
+            || crate::proxy::common::model_gate::is_retired_model_id(id)
+            || !crate::proxy::common::model_mapping::is_model_compliant_with_baseline(id)
+        {
+            return false;
+        }
+        if let Some(info) = Self::lookup_catalog_info(catalog, id) {
+            if info.is_disabled() || info.is_internal == Some(true) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_leaving_soon(id: &str, catalog: &HashMap<String, OfficialModelInfo>) -> bool {
+        Self::lookup_catalog_info(catalog, id)
+            .and_then(|info| info.tag_title.as_deref())
+            .is_some_and(|t| t.eq_ignore_ascii_case("Leaving Soon"))
+    }
+
+    /// 依据原生 `fetchAvailableModels` 下发的 `tieredModelIds`（`flashLite` -> `flash`）与
+    /// `deprecatedModelIds` 确定性推导后台轻量模型候选链。
+    ///
+    /// - 在线阶段：跨账号汇总 `flashLite` 与 `flash`，按 `(官方顺位 min_rank ASC, 支持账号数 DESC, id ASC)`
+    ///   确定性排序，活跃模型优先于 `Leaving Soon` 模型；零 `HashMap` 随机顺序，保证缓存稳定性与全档位账号覆盖。
+    /// - 冷启动（尚无账号分层数据）：从静态目录中按 `recommended == true` 的 `-flash-lite` -> 轻量执行档确定性挑选。
+    pub fn derive_background_candidates(
+        account_tiered: &HashMap<String, TieredModelConfig>,
+        deprecated_redirects: &HashMap<String, String>,
+        catalog: &HashMap<String, OfficialModelInfo>,
+    ) -> Vec<String> {
+        if !account_tiered.is_empty() {
+            let collect_tier = |selector: fn(&TieredModelConfig) -> &[String]| {
+                let mut active: HashMap<String, (usize, usize)> = HashMap::new();
+                let mut leaving: HashMap<String, (usize, usize)> = HashMap::new();
+                for cfg in account_tiered.values() {
+                    let mut seen_in_account = std::collections::HashSet::new();
+                    for (rank, raw_id) in selector(cfg).iter().enumerate() {
+                        let resolved =
+                            Self::resolve_deprecated_redirect(raw_id, deprecated_redirects);
+                        if !Self::is_valid_background_candidate(&resolved, catalog) {
+                            continue;
+                        }
+                        let bucket = if Self::is_leaving_soon(&resolved, catalog) {
+                            &mut leaving
+                        } else {
+                            &mut active
+                        };
+                        let first_for_account = seen_in_account.insert(resolved.clone());
+                        let entry = bucket.entry(resolved).or_insert((rank, 0));
+                        if rank < entry.0 {
+                            entry.0 = rank;
+                        }
+                        if first_for_account {
+                            entry.1 += 1;
+                        }
+                    }
+                }
+                let sort_bucket = |map: HashMap<String, (usize, usize)>| -> Vec<String> {
+                    let mut items: Vec<(String, usize, usize)> = map
+                        .into_iter()
+                        .map(|(id, (min_rank, support))| (id, min_rank, support))
+                        .collect();
+                    items.sort_by(|a, b| {
+                        a.1.cmp(&b.1)
+                            .then_with(|| b.2.cmp(&a.2))
+                            .then_with(|| a.0.cmp(&b.0))
+                    });
+                    items.into_iter().map(|(id, _, _)| id).collect()
+                };
+                (sort_bucket(active), sort_bucket(leaving))
+            };
+
+            let (flash_lite_active, flash_lite_leaving) = collect_tier(|c| &c.flash_lite);
+            let (flash_active, flash_leaving) = collect_tier(|c| &c.flash);
+
+            let mut out = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for list in [
+                flash_lite_active,
+                flash_active,
+                flash_lite_leaving,
+                flash_leaving,
+            ] {
+                for id in list {
+                    if seen.insert(id.clone()) {
+                        out.push(id);
+                    }
+                }
+            }
+            return out;
+        }
+
+        // 冷启动兜底：无实时 tieredModelIds 时，从静态官方目录提取推荐的 -flash-lite -> 轻量 Gemini 执行模型
+        let mut flash_lites: Vec<((u32, u32), String)> = Vec::new();
+        let mut light_execs: Vec<((u32, u32), u8, String)> = Vec::new();
+        for (id, info) in catalog {
+            if info.recommended != Some(true)
+                || !Self::is_valid_background_candidate(id, catalog)
+                || Self::is_leaving_soon(id, catalog)
+            {
+                continue;
+            }
+            let lower = id.to_lowercase();
+            let Some(rest) = lower.strip_prefix("gemini-") else {
+                continue;
+            };
+            let Some(ver) = crate::proxy::common::model_mapping::parse_version_tuple(rest) else {
+                continue;
+            };
+            if lower.ends_with("-flash-lite") {
+                flash_lites.push((ver, id.clone()));
+            } else if !lower.contains("orchestrator")
+                && !lower.contains("image")
+                && !lower.contains("sonar")
+                && !lower.contains("-pro")
+                && (lower.ends_with("-tiered-high") || lower.ends_with("-low"))
+            {
+                let prio = if lower.ends_with("-tiered-high") {
+                    0
+                } else {
+                    1
+                };
+                light_execs.push((ver, prio, id.clone()));
+            }
+        }
+        flash_lites.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        light_execs.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (_, id) in flash_lites {
+            if seen.insert(id.clone()) {
+                out.push(id);
+            }
+        }
+        for (_, _, id) in light_execs {
+            if seen.insert(id.clone()) {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    /// 获取官方分层元数据推导的后台轻量模型有序候选列表（含内存/磁盘 last-known-good 兜底）。
+    pub fn background_model_candidates() -> Vec<String> {
+        let (account_tiered, deprecated) = Self::live_recommended_store()
+            .read()
+            .ok()
+            .and_then(|guard| {
+                guard.as_ref().map(|s| {
+                    (
+                        s.account_tiered_models.clone(),
+                        s.deprecated_model_ids.clone(),
+                    )
+                })
+            })
+            .unwrap_or_default();
+
+        let catalog_guard = DYNAMIC_CATALOG.read().ok();
+        if let Some(ref catalog) = catalog_guard {
+            if !account_tiered.is_empty() {
+                let candidates =
+                    Self::derive_background_candidates(&account_tiered, &deprecated, catalog);
+                if !candidates.is_empty() {
+                    return candidates;
+                }
+            }
+        }
+
+        let mut fallback = Vec::new();
+        if let Ok(guard) = RESOLVED_BACKGROUND_MODEL.read() {
+            if let Some(lkg) = guard.as_deref() {
+                if !lkg.trim().is_empty()
+                    && !crate::proxy::common::model_gate::is_retired_model_id(lkg)
+                {
+                    fallback.push(lkg.to_string());
+                }
+            }
+        }
+
+        if let Some(ref catalog) = catalog_guard {
+            for id in Self::derive_background_candidates(&HashMap::new(), &deprecated, catalog) {
+                if !fallback.iter().any(|existing| existing == &id) {
+                    fallback.push(id);
+                }
+            }
+        }
+        fallback
+    }
+
+    /// 获取当前首选的后台轻量模型（含内存/磁盘 last-known-good）。
+    pub fn resolved_background_model() -> Option<String> {
+        Self::background_model_candidates().into_iter().next()
     }
 
     fn is_excluded_internal_model(id: &str) -> bool {
@@ -491,11 +805,13 @@ impl OfficialModelCatalog {
         }
     }
 
-    /// 使用在线 `fetchAvailableModels` 的官方推荐列表同步动态目录，替换冷启动静态快照的推荐集合并持久化到数据目录
+    /// 使用在线 `fetchAvailableModels` 的官方推荐列表与分层元数据同步动态目录，替换冷启动静态快照的推荐集合并持久化到数据目录
     pub fn sync_live_catalog(
         account_key: Option<&str>,
         models: HashMap<String, OfficialModelInfo>,
         official_supported_ids: &std::collections::HashSet<String>,
+        tiered_models: Option<&HashMap<String, Vec<String>>>,
+        deprecated_model_ids: Option<&HashMap<String, String>>,
     ) {
         let recommended = Self::extract_live_recommended_ids(&models, official_supported_ids);
         let compacted_models: Vec<(String, OfficialModelInfo)> = models
@@ -515,12 +831,54 @@ impl OfficialModelCatalog {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "_global".to_string());
 
+        let parsed_tiered = tiered_models.map(TieredModelConfig::from_raw_map);
+
         let snapshot = if let Ok(mut live_lock) = Self::live_recommended_store().write() {
             let state = live_lock.get_or_insert_with(LiveCatalogState::default);
-            state.accounts.insert(key, recommended);
+            state.accounts.insert(key.clone(), recommended);
             for (id, info) in compacted_models {
                 state.live_models.insert(id, info);
             }
+            if let Some(cfg) = parsed_tiered {
+                if cfg.is_empty() {
+                    state.account_tiered_models.remove(&key);
+                } else {
+                    state.account_tiered_models.insert(key, cfg);
+                }
+            }
+            if let Some(dep) = deprecated_model_ids {
+                for (old_id, new_id) in dep {
+                    state
+                        .deprecated_model_ids
+                        .insert(old_id.clone(), new_id.clone());
+                }
+            }
+
+            let catalog_guard = DYNAMIC_CATALOG.read().ok();
+            let catalog_ref = catalog_guard.as_deref().unwrap_or(&state.live_models);
+            let derived = Self::derive_background_candidates(
+                &state.account_tiered_models,
+                &state.deprecated_model_ids,
+                catalog_ref,
+            );
+            if let Ok(mut bg_lock) = RESOLVED_BACKGROUND_MODEL.write() {
+                if let Some(next_bg) = derived.into_iter().next() {
+                    if bg_lock.as_deref() != Some(next_bg.as_str()) {
+                        tracing::info!(
+                            "[OfficialCatalog] Background model resolved from tieredModelIds: {:?} -> {}",
+                            *bg_lock,
+                            next_bg
+                        );
+                    }
+                    *bg_lock = Some(next_bg);
+                } else if let Some(lkg) = bg_lock.as_deref() {
+                    tracing::warn!(
+                        "[OfficialCatalog] Failed to derive background model from tieredModelIds; keeping last-known-good '{}'",
+                        lkg
+                    );
+                }
+            }
+            drop(catalog_guard);
             Some(Self::build_cache_snapshot(state))
         } else {
             None
@@ -549,7 +907,9 @@ impl OfficialModelCatalog {
         let mut updated_snapshot: Option<Option<LiveCatalogCacheFile>> = None;
         if let Ok(mut live_lock) = Self::live_recommended_store().write() {
             if let Some(state) = live_lock.as_mut() {
-                if state.accounts.remove(&key).is_some() {
+                let removed_acc = state.accounts.remove(&key).is_some();
+                let removed_tiered = state.account_tiered_models.remove(&key).is_some();
+                if removed_acc || removed_tiered {
                     if state.accounts.is_empty() {
                         *live_lock = None;
                         updated_snapshot = Some(None);
@@ -905,6 +1265,17 @@ mod tests {
             "gemini-4-hydrogen-high".to_string(),
             OfficialModelCatalog::compact_live_model_info(&info),
         );
+        state.account_tiered_models.insert(
+            "vanskou@outlook.com".to_string(),
+            TieredModelConfig {
+                flash_lite: vec!["gemini-3.5-flash-lite".to_string()],
+                flash: vec!["gemini-4-hydrogen-tiered-high".to_string()],
+                pro: vec!["gemini-4-hydrogen-tiered-xhigh".to_string()],
+            },
+        );
+        state
+            .deprecated_model_ids
+            .insert("old-flash".to_string(), "gemini-3.5-flash-lite".to_string());
 
         let snapshot = OfficialModelCatalog::build_cache_snapshot(&state);
         OfficialModelCatalog::save_live_cache_to_path(&cache_path, Some(&snapshot));
@@ -923,6 +1294,20 @@ mod tests {
                 "gemini-4-hydrogen-high".to_string()
             ]
         );
+        assert_eq!(
+            reloaded
+                .account_tiered_models
+                .get("vanskou@outlook.com")
+                .map(|t| t.flash_lite.clone()),
+            Some(vec!["gemini-3.5-flash-lite".to_string()])
+        );
+        assert_eq!(
+            reloaded
+                .deprecated_model_ids
+                .get("old-flash")
+                .map(String::as_str),
+            Some("gemini-3.5-flash-lite")
+        );
         let reloaded_hy = reloaded.models.get("gemini-4-hydrogen-high").unwrap();
         assert!(reloaded_hy.quota_info.is_none());
         assert!(reloaded_hy.model_experiments.is_none());
@@ -940,5 +1325,135 @@ mod tests {
         assert!(!cache_path.exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    fn make_model_info(
+        tag_title: Option<&str>,
+        recommended: Option<bool>,
+        disabled: Option<bool>,
+    ) -> OfficialModelInfo {
+        let mut info = OfficialModelCatalog::default_model();
+        info.tag_title = tag_title.map(str::to_string);
+        info.tag_description = None;
+        info.recommended = recommended;
+        info.is_internal = None;
+        info.disabled = disabled;
+        info
+    }
+
+    fn make_catalog(
+        entries: &[(&str, Option<&str>, Option<bool>, Option<bool>)],
+    ) -> HashMap<String, OfficialModelInfo> {
+        entries
+            .iter()
+            .map(|(id, title, rec, dis)| ((*id).to_string(), make_model_info(*title, *rec, *dis)))
+            .collect()
+    }
+
+    #[test]
+    fn derives_background_candidates_from_tiered_models_and_handles_edge_cases() {
+        // 1. Cold-start embedded catalog resolves to gemini-3.5-flash-lite first
+        assert_eq!(
+            OfficialModelCatalog::resolved_background_model().as_deref(),
+            Some("gemini-3.5-flash-lite")
+        );
+
+        // 2. Works for FREE/PRO accounts (zero orchestrator entries) and respects flashLite -> flash,
+        //    deprecatedModelIds redirects, Leaving Soon deprioritization, and disabled filtering.
+        let catalog = make_catalog(&[
+            ("gemini-3.5-flash-lite", None, Some(true), None),
+            ("gemini-4-hydrogen-tiered-high", None, Some(true), None),
+            (
+                "gemini-3.8-flash-tiered",
+                Some("Leaving Soon"),
+                Some(true),
+                None,
+            ),
+            ("gemini-4-helium-disabled", None, Some(false), Some(true)),
+        ]);
+        let deprecated = HashMap::from([(
+            "legacy-lite".to_string(),
+            "gemini-3.5-flash-lite".to_string(),
+        )]);
+        let tiered = HashMap::from([
+            (
+                "free@example.com".to_string(),
+                TieredModelConfig {
+                    flash_lite: vec![
+                        "gemini-4-helium-disabled".to_string(),
+                        "legacy-lite".to_string(),
+                    ],
+                    flash: vec![
+                        "gemini-3.8-flash-tiered".to_string(),
+                        "gemini-4-hydrogen-tiered-high".to_string(),
+                    ],
+                    pro: vec![],
+                },
+            ),
+            (
+                "ultra@example.com".to_string(),
+                TieredModelConfig {
+                    flash_lite: vec!["gemini-3.5-flash-lite".to_string()],
+                    flash: vec!["gemini-4-hydrogen-tiered-high".to_string()],
+                    pro: vec!["gemini-4-hydrogen-tiered-xhigh".to_string()],
+                },
+            ),
+        ]);
+
+        let candidates =
+            OfficialModelCatalog::derive_background_candidates(&tiered, &deprecated, &catalog);
+        assert_eq!(
+            candidates,
+            vec![
+                "gemini-3.5-flash-lite".to_string(),
+                "gemini-4-hydrogen-tiered-high".to_string(),
+                "gemini-3.8-flash-tiered".to_string(),
+            ]
+        );
+
+        // 3. Deterministic tie-breaking by support count & lexical ID regardless of HashMap order
+        let mixed = HashMap::from([
+            (
+                "acc1".to_string(),
+                TieredModelConfig {
+                    flash_lite: vec!["gemini-4-alpha-low".to_string()],
+                    flash: vec![],
+                    pro: vec![],
+                },
+            ),
+            (
+                "acc2".to_string(),
+                TieredModelConfig {
+                    flash_lite: vec!["gemini-4-beta-low".to_string()],
+                    flash: vec![],
+                    pro: vec![],
+                },
+            ),
+            (
+                "acc3".to_string(),
+                TieredModelConfig {
+                    flash_lite: vec!["gemini-4-beta-low".to_string()],
+                    flash: vec![],
+                    pro: vec![],
+                },
+            ),
+        ]);
+        let mixed_catalog = make_catalog(&[
+            ("gemini-4-alpha-low", None, Some(true), None),
+            ("gemini-4-beta-low", None, Some(true), None),
+        ]);
+        let ranked = OfficialModelCatalog::derive_background_candidates(
+            &mixed,
+            &HashMap::new(),
+            &mixed_catalog,
+        );
+        // Both have min_rank 0, but gemini-4-beta-low has support_count=2 vs 1 -> deterministic!
+        assert_eq!(
+            ranked,
+            vec![
+                "gemini-4-beta-low".to_string(),
+                "gemini-4-alpha-low".to_string(),
+            ]
+        );
     }
 }
