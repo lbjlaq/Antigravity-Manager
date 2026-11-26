@@ -30,17 +30,24 @@ pub struct AdminServerInstance {
 }
 
 impl AdminServerInstance {
-    /// 优雅停止管理服务器并等待监听任务退出释放端口
-    pub async fn stop(mut self) {
-        self.axum_server.stop();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(1000),
-            &mut self.server_handle,
-        )
-        .await;
-        if !self.server_handle.is_finished() {
-            self.server_handle.abort();
+    async fn finish_stop(self) {
+        let mut handle = self.server_handle;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), &mut handle).await;
+        if !handle.is_finished() {
+            handle.abort();
         }
+    }
+
+    /// 优雅停止管理服务器并等待监听任务退出释放端口
+    pub async fn stop(self) {
+        self.axum_server.stop();
+        self.finish_stop().await;
+    }
+
+    /// 仅停止监听任务并等待端口释放，保留共享的全局代理池健康检查循环
+    pub async fn stop_listener_only(self) {
+        self.axum_server.stop_listener_only();
+        self.finish_stop().await;
     }
 }
 
@@ -280,6 +287,39 @@ pub async fn internal_start_proxy_service(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn start_admin_axum_server(
+    host: String,
+    port: u16,
+    token_manager: Arc<TokenManager>,
+    config: &ProxyConfig,
+    monitor: Arc<ProxyMonitor>,
+    integration: crate::modules::integration::SystemManager,
+    cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
+    proxy_pool: crate::proxy::config::ProxyPoolConfig,
+) -> Result<(crate::proxy::AxumServer, tokio::task::JoinHandle<()>), String> {
+    crate::proxy::AxumServer::start(
+        host,
+        port,
+        token_manager,
+        config.custom_mapping.clone(),
+        config.request_timeout,
+        config.upstream_proxy.clone(),
+        config.user_agent_override.clone(),
+        crate::proxy::ProxySecurityConfig::from_proxy_config(config),
+        monitor,
+        config.experimental.clone(),
+        config.debug_logging.clone(),
+        integration,
+        cloudflared_state,
+        proxy_pool,
+        config.only_raw_quota_models,
+        config.image_scheduler.clone(),
+    )
+    .await
+    .map_err(|e| format!("启动管理服务器失败: {}", e))
+}
+
 /// 确保管理服务器正在运行
 pub async fn ensure_admin_server(
     config: ProxyConfig,
@@ -288,9 +328,48 @@ pub async fn ensure_admin_server(
     cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
 ) -> Result<(), String> {
     let mut admin_lock = state.admin_server.write().await;
-    if admin_lock.is_some() {
-        return Ok(());
+    let desired_host = config.get_bind_address().to_string();
+
+    enum RebindMode {
+        Fresh,
+        DifferentPort {
+            tm: Arc<TokenManager>,
+            prev_pool_cfg: crate::proxy::config::ProxyPoolConfig,
+        },
+        SamePortDifferentHost {
+            old_host: String,
+            old_port: u16,
+            prev_pool_cfg: crate::proxy::config::ProxyPoolConfig,
+        },
     }
+
+    let rebind_mode = if let Some(existing) = admin_lock.as_ref() {
+        if existing.axum_server.port == config.port && existing.axum_server.host == desired_host {
+            return Ok(());
+        }
+        tracing::info!(
+            "Admin server listener config changed ({}:{} -> {}:{}), rebinding...",
+            existing.axum_server.host,
+            existing.axum_server.port,
+            desired_host,
+            config.port
+        );
+        let prev_pool_cfg = existing.axum_server.proxy_pool_state.read().await.clone();
+        if existing.axum_server.port != config.port {
+            RebindMode::DifferentPort {
+                tm: existing.axum_server.token_manager.clone(),
+                prev_pool_cfg,
+            }
+        } else {
+            RebindMode::SamePortDifferentHost {
+                old_host: existing.axum_server.host.clone(),
+                old_port: existing.axum_server.port,
+                prev_pool_cfg,
+            }
+        }
+    } else {
+        RebindMode::Fresh
+    };
 
     crate::proxy::config::update_global_audit_config(
         config.experimental.payload_storage_mode.clone(),
@@ -318,45 +397,118 @@ pub async fn ensure_admin_server(
         monitor_lock.as_ref().unwrap().clone()
     };
 
-    // 默认空 TokenManager 用于管理界面
-    let app_data_dir = crate::modules::account::get_data_dir()?;
-    let token_manager = Arc::new(TokenManager::new(app_data_dir));
-    token_manager.set_qos_auto_jail(config.qos_auto_jail);
-    // [NEW] 加载账号数据，否则管理界面统计为 0
-    let _ = token_manager.load_accounts().await;
-
-    // 恢复持久化的固定账号模式设置，确保管理界面在代理未启动时也能读到一致状态
-    if let Some(ref account_id) = config.preferred_account_id {
-        let trimmed = account_id.trim();
-        if !trimmed.is_empty() {
-            token_manager
-                .set_preferred_account(Some(trimmed.to_string()))
-                .await;
+    let (axum_server, server_handle) = match rebind_mode {
+        RebindMode::Fresh => {
+            let app_data_dir = crate::modules::account::get_data_dir()?;
+            let tm = Arc::new(TokenManager::new(app_data_dir));
+            tm.set_qos_auto_jail(config.qos_auto_jail);
+            let _ = tm.load_accounts().await;
+            if let Some(ref account_id) = config.preferred_account_id {
+                let trimmed = account_id.trim();
+                if !trimmed.is_empty() {
+                    tm.set_preferred_account(Some(trimmed.to_string())).await;
+                }
+            }
+            start_admin_axum_server(
+                desired_host,
+                config.port,
+                tm,
+                &config,
+                monitor,
+                integration,
+                cloudflared_state,
+                config.proxy_pool.clone(),
+            )
+            .await?
         }
-    }
+        RebindMode::DifferentPort { tm, prev_pool_cfg } => {
+            tm.set_qos_auto_jail(config.qos_auto_jail);
+            if let Some(ref account_id) = config.preferred_account_id {
+                let trimmed = account_id.trim();
+                if !trimmed.is_empty() {
+                    tm.set_preferred_account(Some(trimmed.to_string())).await;
+                }
+            }
+            // Start the new port first so if bind/start fails, `old` stays live in `admin_lock`.
+            match start_admin_axum_server(
+                desired_host,
+                config.port,
+                tm,
+                &config,
+                monitor,
+                integration,
+                cloudflared_state,
+                config.proxy_pool.clone(),
+            )
+            .await
+            {
+                Ok(started) => {
+                    if let Some(old) = admin_lock.take() {
+                        old.stop_listener_only().await;
+                    }
+                    started
+                }
+                Err(e) => {
+                    let pool =
+                        crate::proxy::proxy_pool::init_or_update_global_proxy_pool(prev_pool_cfg)
+                            .await;
+                    pool.start_health_check_loop();
+                    return Err(e);
+                }
+            }
+        }
+        RebindMode::SamePortDifferentHost {
+            old_host,
+            old_port,
+            prev_pool_cfg,
+        } => {
+            let old = admin_lock.take().expect("admin_lock checked Some");
+            let tm = old.axum_server.token_manager.clone();
+            tm.set_qos_auto_jail(config.qos_auto_jail);
+            if let Some(ref account_id) = config.preferred_account_id {
+                let trimmed = account_id.trim();
+                if !trimmed.is_empty() {
+                    tm.set_preferred_account(Some(trimmed.to_string())).await;
+                }
+            }
+            old.stop().await;
 
-    let (axum_server, server_handle) = match crate::proxy::AxumServer::start(
-        config.get_bind_address().to_string(),
-        config.port,
-        token_manager,
-        config.custom_mapping.clone(),
-        config.request_timeout,
-        config.upstream_proxy.clone(),
-        config.user_agent_override.clone(),
-        crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
-        monitor,
-        config.experimental.clone(),
-        config.debug_logging.clone(),
-        integration.clone(),
-        cloudflared_state,
-        config.proxy_pool.clone(),
-        config.only_raw_quota_models,
-        config.image_scheduler.clone(),
-    )
-    .await
-    {
-        Ok((server, handle)) => (server, handle),
-        Err(e) => return Err(format!("启动管理服务器失败: {}", e)),
+            match start_admin_axum_server(
+                desired_host,
+                config.port,
+                tm.clone(),
+                &config,
+                monitor.clone(),
+                integration.clone(),
+                cloudflared_state.clone(),
+                config.proxy_pool.clone(),
+            )
+            .await
+            {
+                Ok(started) => started,
+                Err(e) => {
+                    // Roll back to previous listener host/port so WebUI and health loop stay alive
+                    if let Ok((rb_server, rb_handle)) = start_admin_axum_server(
+                        old_host,
+                        old_port,
+                        tm,
+                        &config,
+                        monitor,
+                        integration,
+                        cloudflared_state,
+                        prev_pool_cfg,
+                    )
+                    .await
+                    {
+                        *admin_lock = Some(AdminServerInstance {
+                            axum_server: rb_server,
+                            server_handle: rb_handle,
+                        });
+                    }
+                    return Err(e);
+                }
+            }
+        }
     };
 
     *admin_lock = Some(AdminServerInstance {
@@ -1299,6 +1451,103 @@ mod tests {
 
         if let Some(admin) = state.admin_server.write().await.take() {
             admin.stop().await;
+        }
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn ensure_admin_server_rebinds_when_port_changes() {
+        let _config_guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let prev_data_dir = std::env::var("ABV_DATA_DIR").ok();
+        let temp_dir =
+            std::env::temp_dir().join(format!("abv_admin_rebind_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::env::set_var("ABV_DATA_DIR", &temp_dir);
+
+        let l1 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port1 = l1.local_addr().unwrap().port();
+        drop(l1);
+
+        let l2 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port2 = l2.local_addr().unwrap().port();
+        drop(l2);
+
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+
+        let state = ProxyServiceState::new();
+        let cf_state = Arc::new(crate::commands::cloudflared::CloudflaredState::new());
+
+        let mut cfg = ProxyConfig::default();
+        cfg.port = port1;
+        ensure_admin_server(
+            cfg.clone(),
+            &state,
+            crate::modules::integration::SystemManager::Headless,
+            cf_state.clone(),
+        )
+        .await
+        .expect("start admin server on port1");
+
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port1))
+            .await
+            .is_ok());
+
+        // Failed rebind onto occupied port must preserve existing server on port1
+        cfg.port = occupied_port;
+        let failed_rebind = ensure_admin_server(
+            cfg.clone(),
+            &state,
+            crate::modules::integration::SystemManager::Headless,
+            cf_state.clone(),
+        )
+        .await;
+        assert!(failed_rebind.is_err());
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", port1))
+                .await
+                .is_ok(),
+            "old listener must remain reachable after failed rebind"
+        );
+        drop(occupied);
+
+        // Rebind to port2
+        cfg.port = port2;
+        ensure_admin_server(
+            cfg,
+            &state,
+            crate::modules::integration::SystemManager::Headless,
+            cf_state,
+        )
+        .await
+        .expect("rebind admin server to port2");
+
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", port2))
+                .await
+                .is_ok(),
+            "new port2 must accept connections"
+        );
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", port1)).is_ok(),
+            "old port1 must be released after rebind"
+        );
+
+        let admin_opt = state.admin_server.write().await.take();
+        if let Some(admin) = admin_opt {
+            admin.stop().await;
+        }
+
+        if let Some(prev) = prev_data_dir {
+            std::env::set_var("ABV_DATA_DIR", prev);
+        } else {
+            std::env::remove_var("ABV_DATA_DIR");
         }
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

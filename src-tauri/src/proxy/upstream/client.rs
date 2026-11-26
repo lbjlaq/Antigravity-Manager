@@ -859,7 +859,9 @@ impl UpstreamClient {
                 let url = crate::proxy::config::normalize_proxy_url(&config.url);
                 if let Ok(proxy) = rquest::Proxy::all(&url) {
                     builder = builder.proxy(proxy);
-                    tracing::info!("UpstreamClient enabled proxy: {}", url);
+                    let redacted =
+                        crate::proxy::proxy_pool::ProxyPoolManager::redact_proxy_url(&url);
+                    tracing::info!("UpstreamClient enabled proxy: {}", redacted);
                 }
             }
         }
@@ -867,13 +869,10 @@ impl UpstreamClient {
         builder.build()
     }
 
-    /// Build a client with a specific PoolProxyConfig (from ProxyPool)
-    fn build_client_with_proxy(
-        &self,
-        proxy_config: crate::proxy::proxy_pool::PoolProxyConfig,
-    ) -> Result<Client, rquest::Error> {
+    /// Build a client with a specific proxy (from ProxyPool)
+    fn build_client_with_proxy(&self, proxy: rquest::Proxy) -> Result<Client, rquest::Error> {
         // Reuse base settings similar to default client but with specific proxy
-        let builder = Self::base_client_builder().proxy(proxy_config.proxy);
+        let builder = Self::base_client_builder().proxy(proxy);
         builder.build()
     }
 
@@ -911,38 +910,49 @@ impl UpstreamClient {
         }
     }
 
-    /// Get client for a specific account (fallible: respects proxy pool strict mode)
-    pub async fn try_get_client(&self, account_id: Option<&str>) -> Result<Client, String> {
+    /// Get client for a specific account and optional active proxy-pool in-flight guard
+    /// (fallible: respects proxy pool strict mode).
+    pub async fn try_acquire_client(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<
+        (
+            Client,
+            Option<Arc<crate::proxy::proxy_pool::ProxyInFlightGuard>>,
+        ),
+        String,
+    > {
         if let Some(pool) = &self.proxy_pool {
             let strict = pool.is_strict_mode().await;
             if let Some(acc_id) = account_id {
                 // Try to get per-account proxy
                 match pool.get_proxy_for_account(acc_id).await {
                     Ok(Some(proxy_cfg)) => {
+                        let in_flight_guard = proxy_cfg.in_flight_guard.clone();
                         // Check cache
                         if let Some(client) = self.client_cache.get(&proxy_cfg.entry_id) {
-                            return Ok(client.clone());
+                            return Ok((client.clone(), in_flight_guard));
                         }
                         // Build new client and cache it
-                        match self.build_client_with_proxy(proxy_cfg.clone()) {
+                        let entry_id = proxy_cfg.entry_id.clone();
+                        match self.build_client_with_proxy(proxy_cfg.proxy) {
                             Ok(client) => {
-                                self.client_cache
-                                    .insert(proxy_cfg.entry_id.clone(), client.clone());
+                                self.client_cache.insert(entry_id.clone(), client.clone());
                                 tracing::info!(
                                     "Using ProxyPool proxy ID: {} for account: {}",
-                                    proxy_cfg.entry_id,
+                                    entry_id,
                                     acc_id
                                 );
-                                return Ok(client);
+                                return Ok((client, in_flight_guard));
                             }
                             Err(e) => {
                                 if strict {
                                     return Err(format!(
                                         "[Strict Proxy] 构建账号 {} 代理 {} 客户端失败: {}",
-                                        acc_id, proxy_cfg.entry_id, e
+                                        acc_id, entry_id, e
                                     ));
                                 }
-                                tracing::error!("Failed to build client for proxy {}: {}, falling back to default", proxy_cfg.entry_id, e);
+                                tracing::error!("Failed to build client for proxy {}: {}, falling back to default", entry_id, e);
                             }
                         }
                     }
@@ -969,22 +979,41 @@ impl UpstreamClient {
             }
         }
         // Fallback to default client
-        Ok(self.default_client.read().await.clone())
+        Ok((self.default_client.read().await.clone(), None))
     }
 
-    /// Get client for a specific account (or default if no proxy bound)
-    pub async fn get_client(&self, account_id: Option<&str>) -> Client {
-        match self.try_get_client(account_id).await {
-            Ok(client) => client,
+    /// Get client for a specific account (fallible: respects proxy pool strict mode)
+    pub async fn try_get_client(&self, account_id: Option<&str>) -> Result<Client, String> {
+        self.try_acquire_client(account_id)
+            .await
+            .map(|(client, _)| client)
+    }
+
+    /// Get client for a specific account (or default if no proxy bound) along with
+    /// any active proxy-pool in-flight connection guard.
+    pub async fn acquire_client(
+        &self,
+        account_id: Option<&str>,
+    ) -> (
+        Client,
+        Option<Arc<crate::proxy::proxy_pool::ProxyInFlightGuard>>,
+    ) {
+        match self.try_acquire_client(account_id).await {
+            Ok(acquired) => acquired,
             Err(e) => {
                 tracing::error!(
                     "[Strict Proxy] Fallback triggered on infallible get_client({:?}): {}",
                     account_id,
                     e
                 );
-                self.default_client.read().await.clone()
+                (self.default_client.read().await.clone(), None)
             }
         }
+    }
+
+    /// Get client for a specific account (or default if no proxy bound)
+    pub async fn get_client(&self, account_id: Option<&str>) -> Client {
+        self.acquire_client(account_id).await.0
     }
 
     /// Build v1internal URL
@@ -1594,7 +1623,7 @@ impl UpstreamClient {
         }
 
         // [NEW] Get client based on account (cached in proxy pool manager; strict mode rejects silent fallback)
-        let client = self.try_get_client(account_id).await?;
+        let (client, _proxy_in_flight_guard) = self.try_acquire_client(account_id).await?;
 
         // 构建 Headers (所有端点复用)
         let mut headers = header::HeaderMap::new();
@@ -2331,7 +2360,7 @@ impl UpstreamClient {
         } else {
             crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut body);
         }
-        let client = self.try_get_client(account_id).await?;
+        let (client, _proxy_in_flight_guard) = self.try_acquire_client(account_id).await?;
         let mut last_error = String::new();
 
         let candidate_endpoints = self

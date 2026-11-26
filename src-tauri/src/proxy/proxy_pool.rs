@@ -21,11 +21,55 @@ pub fn get_global_proxy_pool() -> Option<Arc<ProxyPoolManager>> {
     GLOBAL_PROXY_POOL.get().cloned()
 }
 
-/// 初始化全局代理池管理器
+/// 初始化全局代理池管理器（若已初始化则就地同步配置与绑定，避免重启后出现双实例分裂）
 pub fn init_global_proxy_pool(config: Arc<RwLock<ProxyPoolConfig>>) -> Arc<ProxyPoolManager> {
-    let manager = Arc::new(ProxyPoolManager::new(config));
-    let _ = GLOBAL_PROXY_POOL.set(manager.clone());
-    manager
+    if let Some(existing) = GLOBAL_PROXY_POOL.get() {
+        if let Ok(new_cfg) = config.try_read() {
+            if let Ok(mut guard) = existing.config.try_write() {
+                *guard = new_cfg.clone();
+            }
+            existing.account_bindings.clear();
+            for (account_id, proxy_id) in &new_cfg.account_bindings {
+                existing
+                    .account_bindings
+                    .insert(account_id.clone(), proxy_id.clone());
+            }
+        }
+        return existing.clone();
+    }
+    GLOBAL_PROXY_POOL
+        .get_or_init(|| Arc::new(ProxyPoolManager::new(config)))
+        .clone()
+}
+
+/// 初始化或异步更新全局代理池管理器（确保 `AppState` 与 `GLOBAL_PROXY_POOL` 共享同一实例与状态锁）
+pub async fn init_or_update_global_proxy_pool(
+    new_config: ProxyPoolConfig,
+) -> Arc<ProxyPoolManager> {
+    if let Some(existing) = GLOBAL_PROXY_POOL.get() {
+        {
+            let mut guard = existing.config.write().await;
+            *guard = new_config;
+        }
+        existing.sync_bindings_from_config().await;
+        return existing.clone();
+    }
+    let config_state = Arc::new(RwLock::new(new_config));
+    GLOBAL_PROXY_POOL
+        .get_or_init(|| Arc::new(ProxyPoolManager::new(config_state)))
+        .clone()
+}
+
+/// RAII 并发连接守卫：释放时自动递减对应代理的活跃连接计数
+#[derive(Debug)]
+pub struct ProxyInFlightGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for ProxyInFlightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// 新增账号 / OAuth 流程可选预选代理及严格模式配置
@@ -126,6 +170,7 @@ pub fn build_proxy_config_from_entry(entry: &ProxyEntry) -> Result<PoolProxyConf
     Ok(PoolProxyConfig {
         proxy,
         entry_id: entry.id.clone(),
+        in_flight_guard: None,
     })
 }
 
@@ -449,22 +494,26 @@ async fn resolve_client_for_add_account_with_config(
 
     if let Some(up) = upstream_proxy {
         if up.enabled && !up.url.trim().is_empty() {
+            let redacted_up = ProxyPoolManager::redact_proxy_url(&up.url);
             match rquest::Proxy::all(&up.url) {
                 Ok(p) => {
                     let builder = build_rquest_client_builder(emulated, timeout_secs).proxy(p);
                     let client = builder.build().map_err(|e| {
-                        format!("Failed to build upstream proxy client '{}': {}", up.url, e)
+                        format!(
+                            "Failed to build upstream proxy client '{}': {}",
+                            redacted_up, e
+                        )
                     })?;
                     return Ok(ResolvedClient {
                         client,
-                        proxy_label: Some(up.url.clone()),
+                        proxy_label: Some(redacted_up),
                         strict,
                     });
                 }
                 Err(e) if strict => {
                     return Err(format!(
                         "[Strict Proxy] 全局上游代理 '{}' 无效: {}",
-                        up.url, e
+                        redacted_up, e
                     ));
                 }
                 Err(_) => {}
@@ -500,20 +549,24 @@ async fn resolve_client_for_add_account_with_config(
 pub struct PoolProxyConfig {
     pub proxy: rquest::Proxy,
     pub entry_id: String,
+    pub in_flight_guard: Option<Arc<ProxyInFlightGuard>>,
 }
 
 /// 代理池管理器
 pub struct ProxyPoolManager {
     config: Arc<RwLock<ProxyPoolConfig>>,
 
-    /// 代理使用计数 (proxy_id -> count)
-    usage_counter: Arc<DashMap<String, usize>>,
+    /// 活跃在途连接计数 (proxy_id -> active count，通过 ProxyInFlightGuard 自动增减)
+    active_connections: Arc<DashMap<String, Arc<AtomicUsize>>>,
 
     /// 账号到代理的绑定 (account_id -> proxy_id)
     account_bindings: Arc<DashMap<String, String>>,
 
-    /// 轮询索引 (用于 RoundRobin 策略)
+    /// 轮询索引 (用于 RoundRobin / WeightedRoundRobin 策略)
     round_robin_index: Arc<AtomicUsize>,
+
+    /// 健康检查后台循环任务句柄（用于停止或重启时清理旧循环）
+    health_check_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl ProxyPoolManager {
@@ -537,10 +590,55 @@ impl ProxyPoolManager {
 
         Self {
             config,
-            usage_counter: Arc::new(DashMap::new()),
+            active_connections: Arc::new(DashMap::new()),
             account_bindings,
             round_robin_index: Arc::new(AtomicUsize::new(0)),
+            health_check_handle: std::sync::Mutex::new(None),
         }
+    }
+
+    pub fn config_state(&self) -> Arc<RwLock<ProxyPoolConfig>> {
+        self.config.clone()
+    }
+
+    fn acquire_in_flight_guard(&self, proxy_id: &str) -> Arc<ProxyInFlightGuard> {
+        let counter = self
+            .active_connections
+            .entry(proxy_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+            .clone();
+        counter.fetch_add(1, Ordering::Relaxed);
+        Arc::new(ProxyInFlightGuard { counter })
+    }
+
+    pub fn active_connection_count(&self, proxy_id: &str) -> usize {
+        self.active_connections
+            .get(proxy_id)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    pub fn redact_proxy_url(raw_url: &str) -> String {
+        let normalized = crate::proxy::config::normalize_proxy_url(raw_url);
+        if url::Url::parse(&normalized).is_ok() {
+            return Self::parse_and_clean_proxy_url(&normalized).0;
+        }
+        if let Some(scheme_end) = normalized.find("://") {
+            let after_scheme = &normalized[scheme_end + 3..];
+            let authority_end = after_scheme
+                .find(['/', '?', '#'])
+                .unwrap_or(after_scheme.len());
+            let authority = &after_scheme[..authority_end];
+            if let Some(at_pos) = authority.rfind('@') {
+                return format!(
+                    "{}://***REDACTED***@{}{}",
+                    &normalized[..scheme_end],
+                    &authority[at_pos + 1..],
+                    &after_scheme[authority_end..]
+                );
+            }
+        }
+        normalized
     }
 
     /// 当前代理池是否处于严格模式（受配置字段与环境变量共同控制）
@@ -602,27 +700,31 @@ impl ProxyPoolManager {
         if let Ok(app_cfg) = crate::modules::config::load_app_config() {
             let up = app_cfg.proxy.upstream_proxy;
             if up.enabled && !up.url.trim().is_empty() {
+                let redacted_up = Self::redact_proxy_url(&up.url);
                 match rquest::Proxy::all(&up.url) {
                     Ok(p) => {
                         tracing::info!(
                             "[Proxy] Route: {:?} (emulated={}) -> Upstream: {} (AppConfig)",
                             account_id.unwrap_or("Generic"),
                             emulated,
-                            up.url
+                            redacted_up
                         );
                         builder = builder.proxy(p);
                         return builder.build().map_err(|e| {
-                            format!("Failed to build upstream proxy client '{}': {}", up.url, e)
+                            format!(
+                                "Failed to build upstream proxy client '{}': {}",
+                                redacted_up, e
+                            )
                         });
                     }
                     Err(e) if strict => {
                         return Err(format!(
                             "[Strict Proxy] 全局上游代理 '{}' 无效: {}",
-                            up.url, e
+                            redacted_up, e
                         ));
                     }
                     Err(e) => {
-                        tracing::error!("invalid upstream proxy url '{}': {}", up.url, e);
+                        tracing::error!("invalid upstream proxy url '{}': {}", redacted_up, e);
                     }
                 }
             }
@@ -761,7 +863,9 @@ impl ProxyPoolManager {
                 if entry.enabled {
                     // 1. 若代理健康，直接使用专属绑定代理
                     if entry.is_healthy {
-                        return Ok(Some(self.build_proxy_config(entry)?));
+                        let mut cfg = self.build_proxy_config(entry)?;
+                        cfg.in_flight_guard = Some(self.acquire_in_flight_guard(&entry.id));
+                        return Ok(Some(cfg));
                     }
 
                     // 2. 非严格模式下，若代理不健康且启用了自动故障转移，优先从公用池选择其他可用代理
@@ -785,7 +889,9 @@ impl ProxyPoolManager {
                         account_id,
                         strict
                     );
-                    return Ok(Some(self.build_proxy_config(entry)?));
+                    let mut cfg = self.build_proxy_config(entry)?;
+                    cfg.in_flight_guard = Some(self.acquire_in_flight_guard(&entry.id));
+                    return Ok(Some(cfg));
                 }
 
                 if strict {
@@ -852,9 +958,9 @@ impl ProxyPoolManager {
         };
 
         if let Some(entry) = selected {
-            // 更新计数
-            *self.usage_counter.entry(entry.id.clone()).or_insert(0) += 1;
-            Ok(Some(self.build_proxy_config(entry)?))
+            let mut cfg = self.build_proxy_config(entry)?;
+            cfg.in_flight_guard = Some(self.acquire_in_flight_guard(&entry.id));
+            Ok(Some(cfg))
         } else {
             Ok(None)
         }
@@ -885,13 +991,30 @@ impl ProxyPoolManager {
     fn select_least_connections<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
         proxies
             .iter()
-            .min_by_key(|p| self.usage_counter.get(&p.id).map(|v| *v).unwrap_or(0))
+            .min_by_key(|p| self.active_connection_count(&p.id))
             .copied()
     }
 
     fn select_weighted<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
-        // 简单实现: 类似优先级的加权, 这里暂用 Priority 代替
-        self.select_by_priority(proxies)
+        if proxies.is_empty() {
+            return None;
+        }
+        let weights: Vec<usize> = proxies
+            .iter()
+            .map(|p| (101 - p.priority.clamp(1, 100)) as usize)
+            .collect();
+        let total_weight: usize = weights.iter().sum();
+        if total_weight == 0 {
+            return self.select_round_robin(proxies);
+        }
+        let mut slot = self.round_robin_index.fetch_add(1, Ordering::Relaxed) % total_weight;
+        for (proxy, weight) in proxies.iter().zip(weights.iter()) {
+            if slot < *weight {
+                return Some(*proxy);
+            }
+            slot -= *weight;
+        }
+        proxies.first().copied()
     }
 
     /// 解析并清理 URL 中的凭据
@@ -1059,7 +1182,7 @@ impl ProxyPoolManager {
                 tracing::info!(
                     "Proxy {} ({}) health check: {} (Latency: {})",
                     proxy.name,
-                    proxy.url,
+                    Self::redact_proxy_url(&proxy.url),
                     if is_healthy { "✓ OK" } else { "✗ FAILED" },
                     latency_msg
                 );
@@ -1098,9 +1221,10 @@ impl ProxyPoolManager {
         };
 
         // 尝试构建 Client，如果失败直接视为不健康
+        let redacted_url = Self::redact_proxy_url(&entry.url);
         let proxy_res = self.build_proxy_config(entry);
         if let Err(e) = proxy_res {
-            tracing::error!("Proxy {} build config failed: {}", entry.url, e);
+            tracing::error!("Proxy {} build config failed: {}", redacted_url, e);
             return (false, None);
         }
         let proxy_cfg = proxy_res.unwrap();
@@ -1117,7 +1241,7 @@ impl ProxyPoolManager {
         let client = match client_result {
             Ok(c) => c,
             Err(e) => {
-                tracing::error!("Proxy {} build client failed: {}", entry.url, e);
+                tracing::error!("Proxy {} build client failed: {}", redacted_url, e);
                 return (false, None);
             }
         };
@@ -1131,35 +1255,46 @@ impl ProxyPoolManager {
                 } else {
                     tracing::warn!(
                         "Proxy {} health check status error: {}",
-                        entry.url,
+                        redacted_url,
                         resp.status()
                     );
                     (false, None)
                 }
             }
             Err(e) => {
-                tracing::warn!("Proxy {} health check request failed: {}", entry.url, e);
+                tracing::warn!("Proxy {} health check request failed: {}", redacted_url, e);
                 (false, None)
             }
         }
     }
 
-    /// 启动健康检查循环
+    /// 停止健康检查循环
+    pub fn stop_health_check_loop(&self) {
+        if let Ok(mut guard) = self.health_check_handle.lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
+    }
+
+    /// 启动健康检查循环（若已有旧循环运行，先终止旧循环再启动）
     pub fn start_health_check_loop(self: Arc<Self>) {
-        tokio::spawn(async move {
+        self.stop_health_check_loop();
+        let mgr = self.clone();
+        let handle = tokio::spawn(async move {
             tracing::info!("Starting proxy pool health check loop...");
             loop {
                 // Perform check only if enabled
-                let enabled = self.config.read().await.enabled;
+                let enabled = mgr.config.read().await.enabled;
                 if enabled {
-                    if let Err(e) = self.health_check().await {
+                    if let Err(e) = mgr.health_check().await {
                         tracing::error!("Proxy pool health check failed: {}", e);
                     }
                 }
 
                 // Get interval and sleep AFTER check
                 let interval_secs = {
-                    let cfg = self.config.read().await;
+                    let cfg = mgr.config.read().await;
                     if !cfg.enabled {
                         60 // check every minute if disabled
                     } else {
@@ -1170,6 +1305,9 @@ impl ProxyPoolManager {
                 tokio::time::sleep(Duration::from_secs(interval_secs)).await;
             }
         });
+        if let Ok(mut guard) = self.health_check_handle.lock() {
+            *guard = Some(handle);
+        }
     }
 }
 
@@ -1553,5 +1691,113 @@ mod tests {
         .expect("valid enabled proxy under strict mode should succeed");
         assert!(strict_ok.strict);
         assert!(strict_ok.proxy_label.as_deref().unwrap().contains("p_ok"));
+    }
+
+    #[test]
+    fn redact_proxy_url_strips_embedded_credentials() {
+        assert_eq!(
+            ProxyPoolManager::redact_proxy_url("http://alice:s3cr3t@10.0.0.5:8080"),
+            "http://10.0.0.5:8080/"
+        );
+        assert_eq!(
+            ProxyPoolManager::redact_proxy_url("socks5h://bob:pass@127.0.0.1:1080"),
+            "socks5h://127.0.0.1:1080"
+        );
+        assert_eq!(
+            ProxyPoolManager::redact_proxy_url("127.0.0.1:8080"),
+            "http://127.0.0.1:8080/"
+        );
+        assert_eq!(
+            ProxyPoolManager::redact_proxy_url("http://alice:p@ss@word@[bad]:8080/path?q=@x"),
+            "http://***REDACTED***@[bad]:8080/path?q=@x"
+        );
+    }
+
+    #[tokio::test]
+    async fn least_connections_uses_raii_active_count_and_weighted_distributes() {
+        let make_entry = |id: &str, priority: i32| ProxyEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            url: "http://127.0.0.1:8080".to_string(),
+            auth: None,
+            enabled: true,
+            priority,
+            tags: vec![],
+            max_accounts: None,
+            health_check_url: None,
+            last_check_time: None,
+            is_healthy: true,
+            latency: None,
+        };
+
+        // 1. LeastConnections increments while guard is held and decrements on drop
+        let lc_pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
+            enabled: true,
+            strategy: ProxySelectionStrategy::LeastConnections,
+            proxies: vec![make_entry("p1", 1), make_entry("p2", 1)],
+            ..Default::default()
+        })));
+
+        let first = lc_pool.get_proxy_for_account("a1").await.unwrap().unwrap();
+        assert_eq!(lc_pool.active_connection_count(&first.entry_id), 1);
+
+        // While first guard is alive, second selection picks the other proxy
+        let second = lc_pool.get_proxy_for_account("a2").await.unwrap().unwrap();
+        assert_ne!(second.entry_id, first.entry_id);
+        assert_eq!(lc_pool.active_connection_count(&second.entry_id), 1);
+
+        drop(first);
+        assert_eq!(lc_pool.active_connection_count("p1"), 0);
+        drop(second);
+        assert_eq!(lc_pool.active_connection_count("p2"), 0);
+
+        // 2. WeightedRoundRobin distributes across multiple healthy proxies instead of starving p2
+        let w_pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
+            enabled: true,
+            strategy: ProxySelectionStrategy::WeightedRoundRobin,
+            proxies: vec![make_entry("high", 1), make_entry("low", 80)],
+            ..Default::default()
+        })));
+
+        let mut high_hits = 0usize;
+        let mut low_hits = 0usize;
+        for _ in 0..121 {
+            let sel = w_pool.get_proxy_for_account("a1").await.unwrap().unwrap();
+            if sel.entry_id == "high" {
+                high_hits += 1;
+            } else if sel.entry_id == "low" {
+                low_hits += 1;
+            }
+        }
+        assert_eq!(high_hits, 100);
+        assert_eq!(low_hits, 21);
+    }
+
+    #[tokio::test]
+    async fn global_proxy_pool_reuses_singleton_and_aborts_prior_health_loop() {
+        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let cfg1 = ProxyPoolConfig {
+            enabled: false,
+            health_check_interval: 300,
+            ..Default::default()
+        };
+        let mgr1 = init_or_update_global_proxy_pool(cfg1).await;
+        mgr1.clone().start_health_check_loop();
+        assert!(mgr1.health_check_handle.lock().unwrap().is_some());
+
+        let cfg2 = ProxyPoolConfig {
+            enabled: false,
+            health_check_interval: 120,
+            ..Default::default()
+        };
+        let mgr2 = init_or_update_global_proxy_pool(cfg2).await;
+        assert!(Arc::ptr_eq(&mgr1, &mgr2));
+        assert_eq!(mgr2.config_state().read().await.health_check_interval, 120);
+
+        mgr2.clone().start_health_check_loop();
+        mgr2.stop_health_check_loop();
+        assert!(mgr2.health_check_handle.lock().unwrap().is_none());
     }
 }
