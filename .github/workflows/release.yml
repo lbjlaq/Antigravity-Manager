@@ -151,15 +151,15 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install Tauri CLI
-        uses: taiki-e/install-action@cargo-tauri
-
       - name: Node.js setup
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: "npm"
           cache-dependency-path: crates/am-gui/ui/package-lock.json
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
 
       - name: Install and build frontend
         working-directory: crates/am-gui/ui
@@ -200,7 +200,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: cargo tauri build ${{ matrix.args }} ${{ env.PRE_BUNDLE_ARGS }}
+        run: tauri build ${{ matrix.args }} ${{ env.PRE_BUNDLE_ARGS }}
 
       # 处理 macOS 架构重命名冲突 (解决 422 Already Exists)
       - name: Rename macOS assets for architecture

@@ -105,9 +105,6 @@ jobs:
       - name: Rust setup
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Tauri CLI
-        uses: taiki-e/install-action@cargo-tauri
-
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -119,6 +116,9 @@ jobs:
           node-version: 20
           cache: "npm"
           cache-dependency-path: crates/am-gui/ui/package-lock.json
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
 
       - name: Install and build frontend
         working-directory: crates/am-gui/ui
@@ -140,7 +140,7 @@ jobs:
 
       - name: Build Tauri app (debug)
         working-directory: crates/am-gui/src-tauri
-        run: cargo tauri build --debug --no-bundle
+        run: tauri build --debug --no-bundle
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
