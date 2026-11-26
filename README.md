@@ -16,6 +16,9 @@
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
     <img src="https://img.shields.io/badge/Frontend-React-61DAFB?style=flat-square" alt="React">
+    <a href="https://github.com/sponsors/lbjlaq">
+      <img src="https://img.shields.io/github/sponsors/lbjlaq?style=flat-square&logo=githubsponsors&logoColor=white&color=ea4aaa&label=Sponsor" alt="GitHub Sponsors">
+    </a>
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA--4.0-lightgrey?style=flat-square" alt="License">
   </p>
 
@@ -43,6 +46,18 @@
 
 By leveraging this app, you can transform common Web Sessions (Google/Anthropic) into standardized API interfaces, completely eliminating the protocol gap between different providers.
 
+## 📦 Editions & Quick Download
+
+Choose the channel that best fits your workflow (both editions share `~/.antigravity_tools/` seamlessly and can run side-by-side):
+
+| Edition / Channel | Positioning | Best For | Direct Download / Homebrew |
+| :--- | :--- | :--- | :--- |
+| **🚀 Antigravity Tools (Stable)** | Full AI protocol proxy &amp; relay gateway (`main`) | Local OpenAI / Anthropic Claude / Gemini API conversion, Docker &amp; headless deployment | **[Download Latest](https://github.com/lbjlaq/Antigravity-Manager/releases/latest)** · `brew install --cask antigravity-tools` |
+| **🧪 Antigravity Tools (Beta Preview)** | Early-access preview builds (`beta`) | Testing upcoming model routing &amp; protocol adaptations | **[Download Preview](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/preview)** |
+| **⚡ Antigravity Manager (Zero-Proxy)** | Lightweight native 4-host switcher, dual-pool quota monitor, local SQLite telemetry &amp; `am` CLI ([`antigravity-manager`](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager)) | Seamless account switching &amp; quota monitoring without running a local proxy | **[Download Manager](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)** · `brew install --cask antigravity-manager` |
+
+> First time using Homebrew? Run `brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manager` once, then install either cask above.
+
 ## 💖 Sponsors
 
 | Sponsor | Description |
@@ -54,9 +69,17 @@ By leveraging this app, you can transform common Web Sessions (Google/Anthropic)
 
 ### ☕ Support
 
-If you find this project helpful, feel free to buy me a coffee!
+If you find this project helpful, feel free to support ongoing development via [GitHub Sponsors](https://github.com/sponsors/lbjlaq) or Buy Me a Coffee! Want your GitHub avatar or logo featured in this README? Choose the **README Backer ($25/mo)** or **Silver Sponsor ($150/mo)** tier on GitHub Sponsors.
 
-<a href="https://www.buymeacoffee.com/Ctrler" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="Buy Me A Coffee" style="height: 60px !important; width: 217px !important;"></a>
+<p align="center">
+  <a href="https://github.com/sponsors/lbjlaq" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors" height="48" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://www.buymeacoffee.com/Ctrler" target="_blank" rel="noopener noreferrer">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="Buy Me A Coffee" height="48" />
+  </a>
+</p>
 
 | Alipay | WeChat Pay | Buy Me a Coffee |
 | :---: | :---: | :---: |

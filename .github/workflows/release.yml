@@ -508,7 +508,7 @@ jobs:
         with:
           allowUpdates: true
           tag: ${{ needs.verify-release-target.outputs.release_tag }}
-          name: "Antigravity Tools ${{ needs.verify-release-target.outputs.release_tag }}"
+          name: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' && format('🧪 [Beta] Antigravity Tools {0}', needs.verify-release-target.outputs.release_tag) || format('🚀 [Tools] Antigravity Tools {0}', needs.verify-release-target.outputs.release_tag) }}
           bodyFile: "release_notes.md"
           generateReleaseNotes: true
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -516,7 +516,7 @@ jobs:
           artifactErrorsFailBuild: false
           replacesArtifacts: true
           prerelease: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' }}
-          makeLatest: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' && 'false' || 'legacy' }}
+          makeLatest: ${{ needs.verify-release-target.outputs.is_prerelease == 'true' && 'false' || 'true' }}
 
       # 预览版专属通道：同步镜像至 preview Tag Release，供应用内 Beta 通道稳定拉取 updater.json
       - name: Sync Preview Channel Release (Beta Only)
@@ -525,7 +525,7 @@ jobs:
         with:
           allowUpdates: true
           tag: "preview"
-          name: "Antigravity Tools Preview Channel (${{ needs.verify-release-target.outputs.release_tag }})"
+          name: "🧪 [Beta] Antigravity Tools Preview Channel (${{ needs.verify-release-target.outputs.release_tag }})"
           body: "Preview Channel build for version ${{ needs.verify-release-target.outputs.release_tag }}. Automatically synced for in-app Beta updater."
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
@@ -533,7 +533,7 @@ jobs:
           removeArtifacts: true
           replacesArtifacts: true
           prerelease: true
-          makeLatest: false
+          makeLatest: 'false'
 
   docker-build-amd64:
     needs: verify-release-target

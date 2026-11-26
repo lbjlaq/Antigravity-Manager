@@ -16,6 +16,9 @@
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
     <img src="https://img.shields.io/badge/Frontend-React-61DAFB?style=flat-square" alt="React">
+    <a href="https://github.com/sponsors/lbjlaq">
+      <img src="https://img.shields.io/github/sponsors/lbjlaq?style=flat-square&logo=githubsponsors&logoColor=white&color=ea4aaa&label=Sponsor" alt="GitHub Sponsors">
+    </a>
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA--4.0-lightgrey?style=flat-square" alt="License">
   </p>
 
@@ -43,6 +46,18 @@
 
 通过本应用，您可以将常见的 Web 端 Session (Google/Anthropic) 转化为标准化的 API 接口，消除不同厂商间的协议鸿沟。
 
+## 📦 版本选型与一键下载
+
+本仓库提供两个定位互补的版本与三条独立发布通道（两个版本共用 `~/.antigravity_tools/` 账号数据，支持同机并存免冲突）：
+
+| 版本 / 通道 | 核心定位 | 适合人群 | 直达下载 / Homebrew 一键安装 |
+| :--- | :--- | :--- | :--- |
+| **🚀 Antigravity Tools（正式版）** | 全功能本地 AI 协议反代网关（`main` 分支） | 需要 OpenAI / Anthropic Claude / Gemini 本地 API 转发、Docker / 无头服务端部署 | **[下载正式版 (Latest)](https://github.com/lbjlaq/Antigravity-Manager/releases/latest)** · `brew install --cask antigravity-tools` |
+| **🧪 Antigravity Tools（Beta 预览版）** | 抢先体验最新模型与协议适配（`beta` 分支） | 愿意尝鲜并反馈问题的进阶用户 | **[下载预览版 (Preview)](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/preview)** |
+| **⚡ Antigravity Manager（纯净零反代版）** | 轻量原生四宿主热切、双池配额监控、本地遥测与 `am` CLI（[`antigravity-manager` 分支](https://github.com/lbjlaq/Antigravity-Manager/tree/antigravity-manager)） | 只需无感切号、监控配额与本地 Token 统计，不需要本地反代服务 | **[下载纯净版 (Manager)](https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager)** · `brew install --cask antigravity-manager` |
+
+> 首次使用 Homebrew 请先执行一次 `brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manager`，随后即可按需安装上方任意版本。
+
 ## 💖 赞助商 (Sponsors)
 
 | 赞助商 (Sponsor) | 简介 (Description) |
@@ -54,9 +69,17 @@
 
 ### ☕ 支持项目 (Support)
 
-如果您觉得本项目对您有所帮助，欢迎打赏作者！
+如果您觉得本项目对您有所帮助，欢迎通过 [GitHub Sponsors](https://github.com/sponsors/lbjlaq) 或扫码打赏支持作者！希望将您的个人头像或品牌 Logo 展示在本项目 README？欢迎在 GitHub Sponsors 选择 **README Backer（$25/月）** 或 **Silver Sponsor（$150/月）** 档位。
 
-<a href="https://www.buymeacoffee.com/Ctrler" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="请我喝杯咖啡" style="height: 60px !important; width: 217px !important;"></a>
+<p align="center">
+  <a href="https://github.com/sponsors/lbjlaq" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors" height="48" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://www.buymeacoffee.com/Ctrler" target="_blank" rel="noopener noreferrer">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="请我喝杯咖啡" height="48" />
+  </a>
+</p>
 
 | 支付宝 (Alipay) | 微信支付 (WeChat) | Buy Me a Coffee |
 | :---: | :---: | :---: |
