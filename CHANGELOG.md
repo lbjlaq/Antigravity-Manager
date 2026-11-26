@@ -3,6 +3,37 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.3 (2026-11-26)**:
+        -   **[添加账号预选代理节点、自动绑定与严格代理模式] (Fixes #4077)**:
+            -   **前置选代理与自动绑定闭环**: 在 `AddAccountDialog` 中支持添加账号前（覆盖 OAuth 与 Refresh Token 导入全路径）预选代理节点；支持无头/CLI 参数透传 `AddAccountProxyOptions`，在首次配额探测之前即完成账号与代理节点的持久化绑定 (`bind_account_proxy_persistent`) 并使用该节点客户端发起配额探测；同时修复节点达 `max_accounts` 上限时重复绑定已属该节点账号被误拒的问题，并补充代理池配置离线回退。(Fixes #4077)
+            -   **严格代理模式 (`strict_mode`) Fail-Closed 保护**: 新增 `ProxyPoolConfig.strict_mode` 配置及 `ABV_PROXY_POOL_STRICT_MODE` / `ANTIGRAVITY_PROXY_POOL_STRICT_MODE` 环境变量并在代理池设置页面透出切换开关（含 12 国多语言与说明）。开启后，绑定节点被禁用或不可用时直接拒绝回退直连，严防真实 IP 意外暴露。(Fixes #4077)
+        -   **[用户 Token 专属上游账号池隔离授权] (Fixes #4058, PR #4059, Thanks to @dandelion-promise520, @cubelikeplayDaniel)**:
+            -   **Token 级可用账号范围绑定**: 在用户 Token 身份模型（`UserTokenIdentity`）中持久化 `allowed_account_ids`，在入站模型门禁、`TokenManager` 账号调度、OpenAI 生图并发 `JoinSet` 任务以及 Responses WebSocket 链路全面强制校验授权账号子集；前端 Token 管理同步提供账号范围选择器与授权标签展示。(Fixes #4058, PR #4059, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+        -   **[1M 上下文硬超限重试收敛、`/compact` 400 死锁防线与 `count_tokens` 思考缓存对齐] (Fixes #4024)**:
+            -   **400 超限判定收敛与无括号变体估算兜底**: 复用流水线 `UpstreamClassification::is_input_token_limit_exceeded`，将四协议（Claude / Gemini / OpenAI Chat / Responses）遇到 `exceeds the maximum number of tokens` 的 `bump_session` 同账号重试收敛为最多 1 次，消除单包物理超限时的无效轮换等待；扩展无括号及省略 `input token count` 报错的正则解析并结合本地估算保底（`input > max`），为 Claude 客户端输出标准 `prompt is too long` 触发自动压缩。(Fixes #4024)
+            -   **`/compact` 主动与响应式渐进裁剪及 `count_tokens` 对齐**: 修复多文本块混排 `<system-reminder>` 时的压缩请求识别盲区与多键位思考缓存清理；新增 `compact_gemini_payload_to_budget` 与 `compute_reactive_compaction_budget` 四阶段防死锁管道（剥离历史 thinking/签名、清理历史及工具返回媒体、按安全 `user` 边界淘汰最旧轮次、UTF-8 中间截断）；同时使 `/v1/messages/count_tokens` 计入 L1 `ThinkingStore` 将要回填的思考与签名开销。(Fixes #4024)
+        -   **[>100MB 请求体监控保真与多模态滑动窗口全媒体/`functionResponse.parts` 覆盖] (Fixes #4083)**:
+            -   **统一请求体上限并消除 >100MB 静默置空**: 在 `server.rs` 抽离统一 `resolve_max_body_size()`（默认 256 MB，尊重 `ABV_MAX_BODY_SIZE`）；重构 `monitor.rs` 使超过 100 MB 日志阈值但处于上限内的请求跳过全量缓冲并原样放行至下游 Handler，超限请求明确返回 HTTP 413 `Payload Too Large` JSON 报错，彻底消除此前无条件置为 `Body::empty()` 的问题。(Fixes #4083)
+            -   **多模态滑动窗口与估算器覆盖 PDF/音视频与嵌套 `functionResponse.parts`**: 将 `apply_multimodal_sliding_window_and_limits` 与 `estimator.rs` 从顶层图片扩展到顶层及 `functionResponse.parts` 内嵌套的 `image/*`、`application/pdf`、`audio/*`、`video/*`；驱逐嵌套文件时改为记录 `functionResponse.response._omitted_multimodal_parts` 元数据，严格避免向 `functionResponse.parts` 写入非法 `text` 部件，并同步更新前后端设置说明。(Fixes #4083)
+        -   **[全局请求预算可配置、可选延长 TTFT 顶棚与流式建连后超时解绑] (Fixes #4061, Fixes #4063, PR #4076, PR #4081, Thanks to @koeria, @zainulhasan)**:
+            -   **可配置请求全局预算与延长 TTFT 上限**: 在超时设置面板、配置文件、管理 API 及 `ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS` 中开放 `gateway_request_budget_secs` 配置，支持在预算超过 270 秒时按需开启延长首字等待（TTFT）顶棚。(Fixes #4061, PR #4081, Thanks to @zainulhasan)
+            -   **解绑流式首包后超时与入场预算夹紧**: 修复 `StreamLifecycleConfig::new` 将首包到达后的 `transition_secs` 与 `streaming_sliding_secs` 强行夹紧至剩余 `budget::remaining_secs()` 导致长排队/长思考建连后流中途被 3 秒超时误杀的问题，仅将 `initial_ttft_secs` 绑定剩余首字预算。(Fixes #4063, PR #4076, Thanks to @koeria)
+        -   **[Linux glibc 内存 RSS 膨胀治理、热路径分配优化与无界缓存封顶] (Fixes #4054, PR #4060, Thanks to @cubelikeplayDaniel)**:
+            -   **glibc 分配器调优与周期性内存归还**: 新增跨平台内存统计与 Linux glibc 调优模块 `memory_stats.rs`（启动配置 `M_ARENA_MAX=2`、`M_MMAP_THRESHOLD`/`M_TRIM_THRESHOLD=128KiB` 并周期性执行 `malloc_trim(0)`，支持环境变量覆盖），同步更新运行时 Dockerfile 的 `MALLOC_ARENA_MAX=2` 并开放 `/api/system/memory` 与 `/api/system/memory/trim` 诊断接口。(Fixes #4054, PR #4060, Thanks to @cubelikeplayDaniel)
+            -   **消除热路径碎片与无界 Map 泄漏**: 将 Gemini SSE 收集器中的 $O(N^2)$ `format!` 拼接改为原地 `String::push_str`；为 `proxy_db::save_log` 复用持久化有界 SQLite 写连接（8 MiB cache + 64 MiB mmap）；将流式监控缓冲封顶为 4 MiB；并为 `TokenManager.session_accounts`、`SignatureCache` 2–4 层、`ThinkingStore::load_turns`、`WEBSOCKET_TOOL_CALL_CACHE` 与 `SESSION_BUMPS` 统一实施 TTL + 容量上限淘汰。(Fixes #4054, PR #4060, Thanks to @cubelikeplayDaniel)
+        -   **[Gemini 空 `STOP` 响应显式流式报错透传] (Fixes #4071, Ref #4055, PR #4072, Thanks to @devsanthoshmk)**:
+            -   **消除静默 HTTP 200 空流**: 当上游 Gemini 在未产出实质正文时直接返回裸空 `finishReason: "STOP"` 且流内自愈前已进入错误分支时，向客户端显式发送结构化流式错误事件，杜绝下游静默收到空 200 响应。(Fixes #4071, Ref #4055, PR #4072, Thanks to @devsanthoshmk)
+        -   **[纯对象 `anyOf`/`oneOf` 联合 Schema 合并策略移植至 Beta] (Ref #3878, Ref #815, PR #4067, Thanks to @zainulhasan, @snailb1007)**:
+            -   **复杂工具联合 Schema 无损展平**: 从 `main` 同步纯对象类型 `anyOf`/`oneOf` 联合 Schema 合并逻辑，提升复杂 MCP 与函数声明通过上游 Google Protobuf 校验的兼容性。(Ref #3878, Ref #815, PR #4067, Thanks to @zainulhasan, @snailb1007)
+        -   **[网关纵深安全加固与 WebUI/Headless 管理端完整对齐] (Fixes #4064, Ref #4039, Ref #4049, PR #4065, PR #4075, PR #4079, Thanks to @koeria, @zainulhasan)**:
+            -   **转发 IP、密钥比对、本地媒体与前端缓存加固**: 限制仅来自回环代理的 `X-Forwarded-For`/`X-Real-IP` 可信生效并扩大 `/api` IP 过滤覆盖；`api_key` 与 `admin_password` 改用常量时间比对；多模态本地文件读取增加回环属主校验、体积上限与魔数验证；前端缓存账号快照到 `localStorage` 前剥离 OAuth 密钥令牌。(Ref #4039, PR #4065, Thanks to @zainulhasan)
+            -   **管理端路由补齐、查询参数与黑白名单修复**: 修复 `request.ts` 错误按子串吞掉 `filter`/`limit` 查询参数、`clear_ip_whitelist` 及桌面端 `clear_ip_blacklist` 未按行 ID 删除导致清空失效、以及 `admin_set_preferred_account` 重启丢失的问题；补齐 WebUI 分钟统计、Droid 同步、分页日志与模型解冻管理路由。(Fixes #4064, Ref #4049, PR #4075, PR #4079, Thanks to @koeria, @zainulhasan)
+        -   **[进程发现全链路按需刷新性能优化] (Fixes #4073, PR #4074, PR #4080, Thanks to @fPip98, @zainulhasan)**:
+            -   **淘汰 `refresh_all()` 重扫描开销**: 统一以仅采集 `cmd`/`exe` 的 `refresh_processes_specifics()` 替代客户端探测及剩余进程/补丁模块中的全量系统刷新，显著降低 CPU 与内存采集抖动并去除重复扫描。(Fixes #4073, PR #4074, PR #4080, Thanks to @fPip98, @zainulhasan)
+        -   **[Windows + WSL 切号同步与 Homebrew Beta 通道更新防护] (Fixes #4032, Fixes #3973, Ref #4030, PR #4069, PR #4070, Thanks to @zainulhasan)**:
+            -   **WSL 同步去重与精准重启时序**: 对 WSL UNC 凭据写入目标与发行版重载执行去重，用限定目标的 `pkill` 替代宽泛 `killall`，通过 `SystemIntegration::handles_wsl_sync` 统一在 IDE 重启前完成预同步，并修复 `wsl_sync` 在 Windows 构建下的借用检查错误。(Fixes #4032, Ref #4030, PR #4069, Thanks to @zainulhasan)
+            -   **Homebrew Cask 通道隔离防护**: 当更新通道设为 Beta 时阻止通过 Homebrew Cask 升级以免拉回稳定版，并在正式版通道启动检查中正确尊重 Homebrew Cask 安装形态。(Fixes #3973, PR #4070, Thanks to @zainulhasan)
+
     *   **v5.0.5-beta.2 (2026-11-25)**:
         -   **[Gemini 4 官方模型目录全面同步、Pro 档位 Carbon 接入与思考协议线格式对齐] (PR #4050, PR #4052, Thanks to @cubelikeplayDaniel)**:
             -   **官方模型目录与前后端全栈同步**: 同步官方最新目录新增 `gemini-4-neon-{low,medium,high,xhigh}`、`gemini-pro-orchestrator-neon`、`gemini-pro-orchestrator`（Carbon）、`gemini-pro-orchestrator-argon`、`gemini-4-hydrogen-tiered-{high,xhigh}` 与 `gemini-4-hydrogen-sonar`，替换真实 Carbon 占位映射（`MODEL_PLACEHOLDER_M438/M437/M427`），对齐 256K 输出上限（`262144`）及生命周期标签（`New` / `Leaving Soon` / `Notice`），并完整打通 `model_specs.json`、`variant_mapping.rs`、`official_model.rs`（含 Claude 5.5 识别）、`cli_sync`/`openclaw_sync`/`opencode_sync` 与前端模型展示及计费映射。(PR #4052, Thanks to @cubelikeplayDaniel)
