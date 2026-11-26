@@ -625,11 +625,16 @@ impl ProxyPoolManager {
         }
         if let Some(scheme_end) = normalized.find("://") {
             let after_scheme = &normalized[scheme_end + 3..];
-            if let Some(at_pos) = after_scheme.find('@') {
+            let authority_end = after_scheme
+                .find(['/', '?', '#'])
+                .unwrap_or(after_scheme.len());
+            let authority = &after_scheme[..authority_end];
+            if let Some(at_pos) = authority.rfind('@') {
                 return format!(
-                    "{}://***REDACTED***@{}",
+                    "{}://***REDACTED***@{}{}",
                     &normalized[..scheme_end],
-                    &after_scheme[at_pos + 1..]
+                    &authority[at_pos + 1..],
+                    &after_scheme[authority_end..]
                 );
             }
         }
@@ -1702,6 +1707,10 @@ mod tests {
             ProxyPoolManager::redact_proxy_url("127.0.0.1:8080"),
             "http://127.0.0.1:8080/"
         );
+        assert_eq!(
+            ProxyPoolManager::redact_proxy_url("http://alice:p@ss@word@[bad]:8080/path?q=@x"),
+            "http://***REDACTED***@[bad]:8080/path?q=@x"
+        );
     }
 
     #[tokio::test]
@@ -1766,6 +1775,9 @@ mod tests {
 
     #[tokio::test]
     async fn global_proxy_pool_reuses_singleton_and_aborts_prior_health_loop() {
+        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let cfg1 = ProxyPoolConfig {
             enabled: false,
             health_check_interval: 300,

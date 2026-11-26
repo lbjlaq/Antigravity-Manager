@@ -1312,6 +1312,12 @@ impl AxumServer {
         tracing::info!("Axum server 停止信号已发送");
     }
 
+    /// 仅停止当前监听任务，保留共享的全局代理池健康检查后台任务
+    pub fn stop_listener_only(&self) {
+        self.cancel_token.cancel();
+        tracing::info!("Axum server 监听已停止（保留全局代理池健康检查循环）");
+    }
+
     /// 检查服务器是否已被停止
     pub fn is_stopped(&self) -> bool {
         self.cancel_token.is_cancelled()

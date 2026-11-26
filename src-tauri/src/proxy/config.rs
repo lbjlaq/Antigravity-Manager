@@ -1379,8 +1379,8 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub allow_lan_access: bool,
 
-    /// 可选显式绑定地址（如 `::1`、`100.64.0.5`，主要由 Headless `--host` / `ABV_HOST` 设置）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// 可选显式绑定地址（如 `::1`、`100.64.0.5`，仅作用于当次 Headless `--host` / `ABV_HOST` 启动）
+    #[serde(skip)]
     pub bind_host: Option<String>,
 
     /// Authorization policy for the proxy.

@@ -859,7 +859,9 @@ impl UpstreamClient {
                 let url = crate::proxy::config::normalize_proxy_url(&config.url);
                 if let Ok(proxy) = rquest::Proxy::all(&url) {
                     builder = builder.proxy(proxy);
-                    tracing::info!("UpstreamClient enabled proxy: {}", url);
+                    let redacted =
+                        crate::proxy::proxy_pool::ProxyPoolManager::redact_proxy_url(&url);
+                    tracing::info!("UpstreamClient enabled proxy: {}", redacted);
                 }
             }
         }

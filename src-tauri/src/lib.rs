@@ -159,8 +159,12 @@ pub async fn run_headless_server(
     let proxy_state = commands::proxy::ProxyServiceState::new();
     let cf_state = Arc::new(commands::cloudflared::CloudflaredState::new());
 
-    // Load config (ephemeral CLI/env overrides are applied in memory without mutating gui_config.json)
+    // Load config (only `--host`/`ABV_HOST` and `--port`/`ABV_PORT`/`PORT` stay runtime-only;
+    // persistent headless security/hub overrides are synced to disk so WebUI never drifts).
     let mut config = modules::config::load_app_config().unwrap_or_default();
+    let disk_port = config.proxy.port;
+    let disk_allow_lan = config.proxy.allow_lan_access;
+    let mut persist_modified = false;
 
     let effective_port = port_override.or_else(|| {
         std::env::var("ABV_PORT")
@@ -173,14 +177,11 @@ pub async fn run_headless_server(
     }
 
     let effective_host = host_override
-        .or_else(|| {
-            std::env::var("ABV_HOST")
-                .or_else(|_| std::env::var("HOST"))
-                .ok()
-        })
+        .or_else(|| std::env::var("ABV_HOST").ok())
         .map(|h| h.trim().to_string())
         .filter(|h| !h.is_empty());
 
+    let has_ephemeral_host = effective_host.is_some();
     if let Some(host) = effective_host {
         let is_loopback = crate::proxy::ProxyConfig::is_loopback_host(&host);
         config.proxy.allow_lan_access = !is_loopback;
@@ -192,10 +193,10 @@ pub async fn run_headless_server(
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
         config.proxy.bind_host = None;
-        if bind_local_only {
-            config.proxy.allow_lan_access = false;
-        } else {
-            config.proxy.allow_lan_access = true;
+        let desired_lan = !bind_local_only;
+        if config.proxy.allow_lan_access != desired_lan {
+            config.proxy.allow_lan_access = desired_lan;
+            persist_modified = true;
         }
     }
 
@@ -206,6 +207,7 @@ pub async fn run_headless_server(
     ) {
         info!("Headless mode: Forcing auth_mode to AllExceptHealth for Web UI security");
         config.proxy.auth_mode = crate::proxy::ProxyAuthMode::AllExceptHealth;
+        persist_modified = true;
     }
 
     // Support API Key override from env
@@ -213,9 +215,10 @@ pub async fn run_headless_server(
         .or_else(|_| std::env::var("API_KEY"))
         .ok();
     if let Some(key) = env_key {
-        if !key.trim().is_empty() {
+        if !key.trim().is_empty() && config.proxy.api_key != key {
             info!("Using API Key from environment variable");
             config.proxy.api_key = key;
+            persist_modified = true;
         }
     }
 
@@ -224,9 +227,10 @@ pub async fn run_headless_server(
         .or_else(|_| std::env::var("WEB_PASSWORD"))
         .ok();
     if let Some(pwd) = env_web_password {
-        if !pwd.trim().is_empty() {
+        if !pwd.trim().is_empty() && config.proxy.admin_password.as_deref() != Some(pwd.as_str()) {
             info!("Using Web UI Password from environment variable");
             config.proxy.admin_password = Some(pwd);
+            persist_modified = true;
         }
     }
 
@@ -246,8 +250,11 @@ pub async fn run_headless_server(
             }
         };
         if let Some(m) = mode {
-            info!("Using Auth Mode from environment variable: {:?}", m);
-            config.proxy.auth_mode = m;
+            if std::mem::discriminant(&config.proxy.auth_mode) != std::mem::discriminant(&m) {
+                info!("Using Auth Mode from environment variable: {:?}", m);
+                config.proxy.auth_mode = m;
+                persist_modified = true;
+            }
         }
     }
 
@@ -268,6 +275,20 @@ pub async fn run_headless_server(
         env_hub_platform.as_deref(),
     ) {
         info!("Using Hub fingerprint configuration from environment variables");
+        persist_modified = true;
+    }
+
+    if persist_modified {
+        let mut disk_config = config.clone();
+        if effective_port.is_some() {
+            disk_config.proxy.port = disk_port;
+        }
+        if has_ephemeral_host {
+            disk_config.proxy.allow_lan_access = disk_allow_lan;
+        }
+        if let Err(e) = modules::config::save_app_config(&disk_config) {
+            warn!("Failed to save headless config overrides: {}", e);
+        }
     }
 
     let is_web_disabled = std::env::var("ABV_DISABLE_WEB")
