@@ -18,13 +18,19 @@ interface UpdateInfo {
   updater_json_url?: string;
 }
 
-type UpdateState = 'checking' | 'downloading' | 'ready' | 'error' | 'none' | 'manual';
+type UpdateState = 'checking' | 'downloading' | 'ready' | 'error' | 'none' | 'manual' | 'brew' | 'brew_upgrading' | 'brew_done';
 
 interface UpdateNotificationProps {
   onClose: () => void;
+  manualTrigger?: boolean;
+  manualTriggerSeq?: number;
 }
 
-export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose }) => {
+export const UpdateNotification: React.FC<UpdateNotificationProps> = ({
+  onClose,
+  manualTrigger = false,
+  manualTriggerSeq = 0,
+}) => {
   const { t } = useTranslation();
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -32,12 +38,38 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
   const [updateState, setUpdateState] = useState<UpdateState>('checking');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const downloadStarted = useRef(false);
+  const updateStateRef = useRef<UpdateState>('checking');
+  const lastManualTriggerSeq = useRef(manualTriggerSeq);
+
+  useEffect(() => {
+    updateStateRef.current = updateState;
+  }, [updateState]);
 
   useEffect(() => {
     checkAndDownload();
   }, []);
 
-  const checkAndDownload = async () => {
+  useEffect(() => {
+    if (manualTriggerSeq === lastManualTriggerSeq.current) {
+      return;
+    }
+    lastManualTriggerSeq.current = manualTriggerSeq;
+    const currentState = updateStateRef.current;
+    if (
+      currentState === 'downloading' ||
+      currentState === 'brew_upgrading' ||
+      currentState === 'ready' ||
+      currentState === 'brew_done'
+    ) {
+      return;
+    }
+    downloadStarted.current = false;
+    setUpdateState('checking');
+    setDownloadProgress(0);
+    void checkAndDownload(true);
+  }, [manualTriggerSeq]);
+
+  const checkAndDownload = async (isManual: boolean = manualTrigger) => {
     try {
       // 1. Check for updates via backend
       const info = await invoke<UpdateInfo>('check_for_updates');
@@ -66,6 +98,28 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
         }
       }
 
+      // On macOS Homebrew Cask stable updates during auto-check, avoid silently overwriting the
+      // Caskroom-managed app bundle via native updater unless explicitly triggered by the user.
+      if (!isManual && info.channel !== 'beta') {
+        const isBrewInstalled = await invoke<boolean>('check_homebrew_installation').catch(() => false);
+        if (isBrewInstalled) {
+          setUpdateState('brew');
+          setTimeout(() => setIsVisible(true), 100);
+          return;
+        }
+      }
+
+      await startNativeDownload(info);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('Auto update failed:', errorMsg);
+      setUpdateState('error');
+      showToast(`${t('update_notification.toast.failed')}: ${errorMsg}`, 'error');
+    }
+  };
+
+  const startNativeDownload = async (info: UpdateInfo) => {
+    try {
       // 3. Start background download immediately
       if (downloadStarted.current) return;
       downloadStarted.current = true;
@@ -136,11 +190,27 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
     }
   };
 
+  const handleBrewUpgrade = async () => {
+    setUpdateState('brew_upgrading');
+    try {
+      await invoke<string>('brew_upgrade_cask');
+      setUpdateState('brew_done');
+    } catch (error) {
+      const errKey = String(error);
+      const errMsg = t(`settings.about.brew_error_${errKey}`, t('settings.about.brew_upgrade_failed'));
+      showToast(errMsg, 'error');
+      setUpdateState('brew');
+    }
+  };
+
   const handleRestart = async () => {
     try {
       await tauriRelaunch();
     } catch (error) {
       console.error('Relaunch failed:', error);
+      if (updateState === 'brew_done') {
+        showToast(t('settings.about.brew_restart_failed'), 'error');
+      }
     }
   };
 
@@ -179,7 +249,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 shadow-sm">
-                {updateState === 'ready' ? (
+                {updateState === 'ready' || updateState === 'brew_done' ? (
                   <CheckCircle className="w-4 h-4 text-white" />
                 ) : (
                   <Sparkles className="w-4 h-4 text-white" />
@@ -187,7 +257,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
               </div>
               <div>
                 <h3 className="font-bold text-gray-800 dark:text-white leading-tight">
-                  {updateState === 'ready'
+                  {updateState === 'ready' || updateState === 'brew_done'
                     ? t('update_notification.ready')
                     : t('update_notification.title')}
                 </h3>
@@ -206,7 +276,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
               </div>
             </div>
 
-            {(updateState === 'error' || updateState === 'ready' || updateState === 'manual') && (
+            {(updateState === 'error' || updateState === 'ready' || updateState === 'manual' || updateState === 'brew' || updateState === 'brew_done') && (
               <button
                 onClick={handleClose}
                 className="
@@ -227,6 +297,9 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
             <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
               {updateState === 'downloading' && t('update_notification.downloading')}
               {updateState === 'ready' && t('update_notification.restart_prompt')}
+              {updateState === 'brew' && t('settings.about.brew_confirm_desc')}
+              {updateState === 'brew_upgrading' && t('settings.about.brew_upgrading', { defaultValue: 'Updating via Homebrew Cask...' })}
+              {updateState === 'brew_done' && t('settings.about.brew_upgrade_success')}
               {updateState === 'error' && `${t('update_notification.toast.failed')}`}
               {updateState === 'manual' && (
                 navigator.language.startsWith('zh')
@@ -234,6 +307,11 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
                   : 'We detected that you are not running the AppImage version. Auto-updates are only supported for AppImage. Please download the update manually.'
               )}
             </p>
+            {updateState === 'brew' && (
+              <code className="block mt-2 px-2.5 py-1.5 rounded-lg bg-black/5 dark:bg-white/10 font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">
+                brew upgrade --cask antigravity-tools
+              </code>
+            )}
           </div>
 
           {/* Progress bar during download */}
@@ -253,7 +331,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
           )}
 
           {/* Restart button when ready */}
-          {updateState === 'ready' && (
+          {(updateState === 'ready' || updateState === 'brew_done') && (
             <div className="flex gap-2">
               <button
                 onClick={handleRestart}
@@ -285,6 +363,58 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
               >
                 {t('update_notification.btn_later')}
               </button>
+            </div>
+          )}
+
+          {/* Homebrew stable upgrade actions */}
+          {(updateState === 'brew' || updateState === 'brew_upgrading') && updateInfo && (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBrewUpgrade}
+                  disabled={updateState === 'brew_upgrading'}
+                  className="
+                    flex-1
+                    bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500
+                    disabled:opacity-60 disabled:cursor-not-allowed
+                    text-white font-medium
+                    py-2.5 px-4 rounded-xl
+                    shadow-lg shadow-green-500/25
+                    transition-all duration-300
+                    flex items-center justify-center gap-2
+                    active:scale-[0.98]
+                  "
+                >
+                  {updateState === 'brew_upgrading' && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <span>{t('settings.about.brew_confirm_btn')}</span>
+                </button>
+                <button
+                  onClick={handleClose}
+                  disabled={updateState === 'brew_upgrading'}
+                  className="
+                    px-3 py-2.5 rounded-xl
+                    text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200
+                    hover:bg-black/5 dark:hover:bg-white/10
+                    disabled:opacity-50
+                    transition-all duration-200
+                    text-sm font-medium
+                  "
+                >
+                  {t('update_notification.btn_later')}
+                </button>
+              </div>
+              {updateState === 'brew' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    downloadStarted.current = false;
+                    void startNativeDownload(updateInfo);
+                  }}
+                  className="w-full text-center text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  {t('settings.about.brew_switch_to_native')}
+                </button>
+              )}
             </div>
           )}
 

@@ -941,6 +941,7 @@
             "brew_error_brew_timeout": "Homebrew 升级超时（3分钟），请在终端手动执行：brew upgrade --cask antigravity-tools",
             "brew_error_brew_already_latest": "已是最新版本，无需升级",
             "brew_error_brew_not_supported": "当前系统不支持 Homebrew 更新",
+            "brew_error_brew_beta_not_supported": "Homebrew 仅支持稳定版更新，测试版请改用应用内在线更新。",
             "brew_beta_notice": "Homebrew 仅支持稳定版更新，检测到测试版更新，已为您切换为原生自动更新。",
             "brew_switch_to_native": "改用应用内在线更新",
             "brew_switch_to_brew": "改用 Homebrew 更新",

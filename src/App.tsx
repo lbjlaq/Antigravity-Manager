@@ -181,6 +181,8 @@ function App() {
     unlistenPromises.push(
       listen('app://trigger-update', () => {
         console.log('[App] Received app://trigger-update event, showing updater...');
+        setIsManualUpdateTrigger(true);
+        setManualUpdateTriggerSeq((seq) => seq + 1);
         setShowUpdateNotification(true);
       })
     );
@@ -270,6 +272,8 @@ function App() {
 
   // Update notification state
   const [showUpdateNotification, setShowUpdateNotification] = useState(false);
+  const [isManualUpdateTrigger, setIsManualUpdateTrigger] = useState(false);
+  const [manualUpdateTriggerSeq, setManualUpdateTriggerSeq] = useState(0);
 
   // Check for updates on startup
   useEffect(() => {
@@ -280,6 +284,7 @@ function App() {
         console.log('[App] Should check updates:', shouldCheck);
 
         if (shouldCheck) {
+          setIsManualUpdateTrigger(false);
           setShowUpdateNotification(true);
           // 我们这里只负责显示通知组件，通知组件内部会去调用 check_for_updates
           // 我们在显示组件后，标记已经检查过了（即便失败或无更新，组件内部也会处理）
@@ -372,7 +377,14 @@ function App() {
       <DebugConsole />
       <SuggestionDeleteThinkingModal />
       {showUpdateNotification && (
-        <UpdateNotification onClose={() => setShowUpdateNotification(false)} />
+        <UpdateNotification
+          manualTrigger={isManualUpdateTrigger}
+          manualTriggerSeq={manualUpdateTriggerSeq}
+          onClose={() => {
+            setShowUpdateNotification(false);
+            setIsManualUpdateTrigger(false);
+          }}
+        />
       )}
       <RouterProvider router={router} />
     </AdminAuthGuard>

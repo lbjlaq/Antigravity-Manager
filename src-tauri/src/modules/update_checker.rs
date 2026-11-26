@@ -714,6 +714,11 @@ pub fn is_appimage_running() -> bool {
     }
 }
 
+/// Homebrew Cask 仅跟踪稳定版，Beta 通道不允许走 `brew upgrade --cask`
+pub fn can_use_brew_upgrade(channel: UpdateChannel) -> bool {
+    channel != UpdateChannel::Beta
+}
+
 /// Execute `brew upgrade --cask antigravity-tools` with timeout (macOS only)
 #[cfg(not(target_os = "macos"))]
 pub async fn brew_upgrade_cask() -> Result<String, String> {
@@ -722,6 +727,14 @@ pub async fn brew_upgrade_cask() -> Result<String, String> {
 
 #[cfg(target_os = "macos")]
 pub async fn brew_upgrade_cask() -> Result<String, String> {
+    let channel = load_update_settings().unwrap_or_default().update_channel;
+    if !can_use_brew_upgrade(channel) {
+        logger::log_warn(
+            "Rejected Homebrew Cask upgrade while update_channel is Beta (Cask only tracks stable releases)",
+        );
+        return Err("brew_beta_not_supported".to_string());
+    }
+
     logger::log_info("Starting Homebrew Cask upgrade for antigravity-tools...");
 
     // Find brew binary
@@ -849,5 +862,11 @@ mod tests {
 
         settings.auto_check = false;
         assert!(!should_check_for_updates(&settings));
+    }
+
+    #[test]
+    fn test_can_use_brew_upgrade_rejects_beta() {
+        assert!(can_use_brew_upgrade(UpdateChannel::Stable));
+        assert!(!can_use_brew_upgrade(UpdateChannel::Beta));
     }
 }
