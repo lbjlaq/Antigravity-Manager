@@ -570,9 +570,9 @@ impl AxumServer {
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
         let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
-        let proxy_pool_state = Arc::new(tokio::sync::RwLock::new(proxy_pool_config));
         let proxy_pool_manager =
-            crate::proxy::proxy_pool::init_global_proxy_pool(proxy_pool_state.clone());
+            crate::proxy::proxy_pool::init_or_update_global_proxy_pool(proxy_pool_config).await;
+        let proxy_pool_state = proxy_pool_manager.config_state();
 
         // Start health check loop
         proxy_pool_manager.clone().start_health_check_loop();
@@ -1308,6 +1308,7 @@ impl AxumServer {
     /// 停止服务器
     pub fn stop(&self) {
         self.cancel_token.cancel();
+        self.proxy_pool_manager.stop_health_check_loop();
         tracing::info!("Axum server 停止信号已发送");
     }
 
