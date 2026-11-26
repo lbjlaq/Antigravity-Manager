@@ -125,6 +125,38 @@ fn default_lang() -> String {
     "zh".to_string()
 }
 
+fn default_update_interval_hours() -> u64 {
+    24
+}
+
+/// 应用在线更新与自动检查偏好
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    /// 启动后静默自动检查更新 (默认 true)
+    #[serde(default = "default_true")]
+    pub auto_check: bool,
+    /// 自动检查最小冷却间隔（小时，默认 24 小时）
+    #[serde(default = "default_update_interval_hours")]
+    pub check_interval_hours: u64,
+    /// 最近一次自动检查 UNIX 时间戳（秒）
+    #[serde(default)]
+    pub last_check_time: u64,
+    /// 用户主动跳过提醒的版本号（如 "0.0.2"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_version: Option<String>,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            check_interval_hours: default_update_interval_hours(),
+            last_check_time: 0,
+            skipped_version: None,
+        }
+    }
+}
+
 /// 系统菜单栏 / 托盘悬浮窗与启动生命周期配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrayConfig {
@@ -233,6 +265,8 @@ pub struct AppConfig {
     pub tray: TrayConfig,
     #[serde(default)]
     pub ui_state: UiStateConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
 }
 
 static CONFIG_IO_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();

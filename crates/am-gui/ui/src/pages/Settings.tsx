@@ -20,9 +20,11 @@ import {
   MessageCircle,
   Send,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
-import { api, APP_VERSION_FALLBACK, AppConfig, isTauri, SystemInfo, UpdateInfo } from '../api';
+import { api, APP_VERSION_FALLBACK, AppConfig, isTauri, SystemInfo, UpdateSnapshot } from '../api';
 import { tUi } from '../i18n/ui';
+import { ReleaseNotesView } from '../components/ReleaseNotesView';
 
 interface SettingsProps {
   lang: string;
@@ -98,11 +100,8 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
   const [activeSection, setActiveSection] = useState<SettingsSection>('general');
   const [savedNotice, setSavedNotice] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [installingUpdate, setInstallingUpdate] = useState(false);
-  const [installPct, setInstallPct] = useState<number>(0);
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null);
+  const [autoCheckUpdates, setAutoCheckUpdates] = useState(true);
   const [supportModalOpen, setSupportModalOpen] = useState(false);
   const [appVersion, setAppVersion] = useState(APP_VERSION_FALLBACK);
   const [cliPlatform, setCliPlatform] = useState<CliPlatform>(() => detectCliPlatform());
@@ -214,6 +213,10 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
             setLaunchAtLogin(cfg.tray.auto_launch);
           }
         }
+
+        if (cfg.update && typeof cfg.update.auto_check === 'boolean') {
+          setAutoCheckUpdates(cfg.update.auto_check);
+        }
       }
 
       try {
@@ -256,6 +259,34 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
   }, [loadConfigAndSystem]);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void api.getUpdateState().then((snap) => {
+      if (!disposed) setUpdateSnapshot(snap);
+    }).catch(() => {});
+
+    if (isTauri()) {
+      import('@tauri-apps/api/event').then(async ({ listen }) => {
+        const off = await listen<UpdateSnapshot>('updater://state', (evt) => {
+          if (!disposed && evt.payload) {
+            setUpdateSnapshot(evt.payload);
+          }
+        });
+        if (disposed) {
+          off();
+        } else {
+          unlisten = off;
+        }
+      });
+    }
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!supportModalOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSupportModalOpen(false);
@@ -275,6 +306,7 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
     autoLaunch?: boolean;
     quietAutostart?: boolean;
     lightweightMode?: boolean;
+    autoCheckUpdates?: boolean;
     customPaths?: {
       app: string;
       ide: string;
@@ -293,6 +325,7 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
     const effAutoLaunch = overrides?.autoLaunch ?? launchAtLogin;
     const effQuietAutostart = overrides?.quietAutostart ?? quietAutostart;
     const effLightweight = overrides?.lightweightMode ?? lightweightMode;
+    const effAutoCheck = overrides?.autoCheckUpdates ?? autoCheckUpdates;
     const effPaths = overrides?.customPaths ?? customPaths;
 
     const intervalMinutes =
@@ -330,6 +363,12 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
         lightweight_mode: effLightweight,
       },
       ui_state: existing?.ui_state,
+      update: {
+        auto_check: effAutoCheck,
+        check_interval_hours: existing?.update?.check_interval_hours ?? 24,
+        last_check_time: existing?.update?.last_check_time ?? 0,
+        skipped_version: existing?.update?.skipped_version ?? null,
+      },
     };
 
     try {
@@ -339,7 +378,7 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
       console.warn('Failed to save config:', e);
       triggerSaved();
     }
-  }, [pollInterval, defaultStrategy, defaultPool, trayMode, trayClickAction, closeToTray, launchAtLogin, quietAutostart, lightweightMode, customPaths, triggerSaved]);
+  }, [pollInterval, defaultStrategy, defaultPool, trayMode, trayClickAction, closeToTray, launchAtLogin, quietAutostart, lightweightMode, autoCheckUpdates, customPaths, triggerSaved]);
 
   const handleCopy = (cmd: string) => {
     navigator.clipboard?.writeText(cmd);
@@ -1218,130 +1257,170 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
                 </div>
               </div>
 
-              {/* 技术栈徽章 + 更新通道切换 */}
-              <div className="w-full pt-3 border-t border-gray-100 dark:border-white/5 flex flex-col gap-2">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-1.5">
-                    {['Tauri v2', 'Rust am-core', 'React 18', 'TypeScript'].map((tech) => (
-                      <span
-                        key={tech}
-                        className="px-2.5 py-0.5 rounded-md bg-gray-100/80 dark:bg-white/[0.04] text-[10px] font-mono text-gray-500 dark:text-zinc-400"
-                      >
-                        {tech}
-                      </span>
-                    ))}
-                  </div>
+              {/* 技术栈徽章 + 自动检查与两阶段热更新控制台 */}
+              {(() => {
+                const phase = updateSnapshot?.phase ?? 'idle';
+                const info = updateSnapshot?.info ?? null;
+                const installChannel = updateSnapshot?.install_channel ?? info?.install_channel ?? 'native';
+                const isChecking = phase === 'checking';
+                const isDownloading = phase === 'downloading';
+                const isInstalling = phase === 'installing';
+                const isReady = phase === 'ready';
+                const isBusy = isChecking || isDownloading || isInstalling;
+                const pct = updateSnapshot?.progress_pct ?? 0;
+                const errText = phase === 'error' ? updateSnapshot?.error : null;
 
-                  <div className="flex flex-wrap items-center gap-2 text-[10.5px]">
-                    <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[10px] font-semibold">
-                      {tUi(lang, 'settings_channel_stable')}
-                    </span>
-                    <button
-                      onClick={async () => {
-                        setCheckingUpdate(true);
-                        setUpdateError(null);
-                        try {
-                          const info = await api.checkForUpdates();
-                          setUpdateInfo(info);
-                        } catch (e: any) {
-                          setUpdateError(e?.message || String(e));
-                        } finally {
-                          setCheckingUpdate(false);
-                        }
-                      }}
-                      disabled={checkingUpdate}
-                      className="px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.06] dark:hover:bg-white/10 text-gray-700 dark:text-zinc-200 text-[10px] font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${checkingUpdate ? 'animate-spin text-blue-500' : ''}`} />
-                      <span>
-                        {checkingUpdate
-                          ? tUi(lang, 'settings_update_checking')
-                          : tUi(lang, 'settings_update_check')}
-                      </span>
-                    </button>
-                    {updateInfo && !checkingUpdate && (
-                      updateInfo.has_update ? (
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            disabled={installingUpdate}
-                            onClick={async () => {
-                              setInstallingUpdate(true);
-                              setInstallPct(0);
-                              setUpdateError(null);
-                              let unlisten: (() => void) | undefined;
-                              try {
-                                if (isTauri()) {
-                                  const { listen } = await import('@tauri-apps/api/event');
-                                  unlisten = await listen<{ pct?: number }>('updater://progress', (evt) => {
-                                    if (typeof evt.payload?.pct === 'number') {
-                                      setInstallPct(evt.payload.pct);
-                                    }
-                                  });
-                                }
-                                await api.installUpdate();
-                              } catch (e: any) {
-                                setUpdateError(e?.message || String(e));
-                              } finally {
-                                unlisten?.();
-                                setInstallingUpdate(false);
-                              }
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-[10px] font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
-                          >
-                            {installingUpdate ? (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Download className="w-3 h-3" />
-                            )}
-                            <span>
-                              {installingUpdate
-                                ? tUi(lang, 'settings_update_installing', {
-                                    pct: installPct > 0 ? `${installPct}%` : '...',
-                                  })
-                                : tUi(lang, 'settings_update_available', { version: updateInfo.latest_version })}
-                            </span>
-                          </button>
-                          <button
-                            onClick={() => api.openExternalUrl(updateInfo.download_url)}
-                            title={tUi(lang, 'settings_update_manual_download')}
-                            className="p-1 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.06] dark:hover:bg-white/10 text-gray-600 dark:text-zinc-300 transition-colors cursor-pointer"
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                          </button>
+                return (
+                  <div className="w-full pt-3 border-t border-gray-100 dark:border-white/5 flex flex-col gap-2.5">
+                    {/* 自动检查更新开关（贴合关于/更新上下文） */}
+                    <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-gray-50/70 dark:bg-white/[0.025] border border-gray-100 dark:border-white/5">
+                      <div className="min-w-0 text-left">
+                        <div className="text-[11.5px] font-semibold text-gray-800 dark:text-zinc-200">
+                          {tUi(lang, 'settings_update_auto_check')}
                         </div>
-                      ) : (
-                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1">
-                          <Check className="w-3 h-3" />
-                          {tUi(lang, 'settings_update_latest', { version: updateInfo.latest_version })}
-                        </span>
-                      )
-                    )}
-                    {updateError && !checkingUpdate && (
-                      <span className="text-[10px] text-rose-500 truncate max-w-[220px]" title={updateError}>
-                        {tUi(lang, 'settings_update_failed')}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {updateInfo && !checkingUpdate && updateInfo.release_notes.trim().length > 0 && (
-                  <div className="mt-2 p-3 rounded-xl bg-gray-50/90 dark:bg-white/[0.03] border border-gray-200/70 dark:border-white/10 text-left">
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="text-[10.5px] font-bold text-gray-800 dark:text-zinc-200">
-                        {tUi(lang, 'settings_update_release_notes', { version: updateInfo.latest_version })}
-                      </span>
-                      {updateInfo.published_at && (
-                        <span className="text-[9.5px] font-mono text-gray-400">
-                          {updateInfo.published_at.slice(0, 10)}
-                        </span>
-                      )}
+                        <div className="text-[10px] text-gray-500 dark:text-zinc-400 mt-0.5">
+                          {tUi(lang, 'settings_update_auto_check_desc')}
+                        </div>
+                      </div>
+                      <Toggle
+                        checked={autoCheckUpdates}
+                        onChange={(next) => {
+                          setAutoCheckUpdates(next);
+                          void persistConfig({ autoCheckUpdates: next });
+                        }}
+                      />
                     </div>
-                    <pre className="text-[10.5px] leading-relaxed text-gray-600 dark:text-zinc-300 whitespace-pre-wrap font-sans max-h-40 overflow-y-auto">
-                      {updateInfo.release_notes}
-                    </pre>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-1.5">
+                        {['Tauri v2', 'Rust am-core', 'React 18', 'TypeScript'].map((tech) => (
+                          <span
+                            key={tech}
+                            className="px-2.5 py-0.5 rounded-md bg-gray-100/80 dark:bg-white/[0.04] text-[10px] font-mono text-gray-500 dark:text-zinc-400"
+                          >
+                            {tech}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-[10.5px]">
+                        <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[10px] font-semibold">
+                          {tUi(lang, 'settings_channel_stable')}
+                        </span>
+                        <button
+                          onClick={() => {
+                            void api.checkForUpdates().catch(() => {});
+                          }}
+                          disabled={isBusy}
+                          className="px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.06] dark:hover:bg-white/10 text-gray-700 dark:text-zinc-200 text-[10px] font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isChecking ? 'animate-spin text-blue-500' : ''}`} />
+                          <span>
+                            {isChecking
+                              ? tUi(lang, 'settings_update_checking')
+                              : tUi(lang, 'settings_update_check')}
+                          </span>
+                        </button>
+
+                        {info && !isChecking && (
+                          info.has_update ? (
+                            <div className="inline-flex items-center gap-1.5 flex-wrap">
+                              {isReady ? (
+                                <button
+                                  onClick={() => {
+                                    void api.applyAndRestartUpdate().catch(() => {});
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>{tUi(lang, 'settings_update_ready', { version: info.latest_version })}</span>
+                                </button>
+                              ) : installChannel === 'manual' ? (
+                                <button
+                                  onClick={() => void api.openExternalUrl(info.download_url)}
+                                  className="px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  <span>{tUi(lang, 'settings_update_manual_btn', { version: info.latest_version })}</span>
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    disabled={isDownloading || isInstalling}
+                                    onClick={() => {
+                                      void api.downloadUpdate(false).catch(() => {});
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-[10px] font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                                  >
+                                    {isDownloading || isInstalling ? (
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                    ) : installChannel === 'homebrew' ? (
+                                      <Terminal className="w-3 h-3" />
+                                    ) : (
+                                      <Download className="w-3 h-3" />
+                                    )}
+                                    <span>
+                                      {isInstalling
+                                        ? tUi(lang, 'settings_update_applying')
+                                        : isDownloading
+                                          ? updateSnapshot?.updated_via_brew
+                                            ? tUi(lang, 'settings_update_brew_upgrading')
+                                            : tUi(lang, 'settings_update_installing', {
+                                                pct: pct > 0 ? `${pct}%` : '...',
+                                              })
+                                          : installChannel === 'homebrew'
+                                            ? tUi(lang, 'settings_update_brew_btn')
+                                            : tUi(lang, 'settings_update_available', { version: info.latest_version })}
+                                    </span>
+                                  </button>
+                                  {installChannel === 'homebrew' && !isDownloading && !isInstalling && (
+                                    <button
+                                      onClick={() => {
+                                        void api.downloadUpdate(true).catch(() => {});
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.06] dark:hover:bg-white/10 text-blue-600 dark:text-blue-400 text-[10px] font-medium transition-colors cursor-pointer"
+                                    >
+                                      {tUi(lang, 'settings_update_switch_native')}
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                              <button
+                                onClick={() => void api.openExternalUrl(info.download_url)}
+                                title={tUi(lang, 'settings_update_manual_download')}
+                                className="p-1 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.06] dark:hover:bg-white/10 text-gray-600 dark:text-zinc-300 transition-colors cursor-pointer"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1">
+                              <Check className="w-3 h-3" />
+                              {tUi(lang, 'settings_update_latest', { version: info.latest_version })}
+                            </span>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    {errText && !isChecking && (
+                      <div className="px-3 py-2 rounded-xl bg-rose-50/90 dark:bg-rose-500/10 border border-rose-200/70 dark:border-rose-500/20 text-[10.5px] text-rose-700 dark:text-rose-300 text-left break-words">
+                        {errText}
+                      </div>
+                    )}
+
+                    {info && !isChecking && info.release_notes.trim().length > 0 && (
+                      <ReleaseNotesView
+                        notes={info.release_notes}
+                        lang={lang}
+                        title={tUi(lang, 'settings_update_release_notes', { version: info.latest_version })}
+                        publishedAt={info.published_at}
+                        variant="comfortable"
+                      />
+                    )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
 
               <div className="text-center text-[10px] text-gray-400 dark:text-zinc-500 font-sans pt-1">
                 Copyright © 2025-2026 Antigravity. All rights reserved.

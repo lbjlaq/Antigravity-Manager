@@ -1,4 +1,5 @@
 mod tray;
+mod updater;
 
 use am_core::config::{AppConfig, UiStateConfig};
 use am_core::stats::MasterAnalyticsReport;
@@ -7,7 +8,7 @@ use am_core::types::{Account, ActiveHostStatus, QuotaSummary, TargetHost};
 use am_core::{AntigravityManager, SystemInfo};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use tauri_plugin_updater::UpdaterExt;
+use updater::{UpdateController, UpdateSnapshot};
 
 struct DaemonWakeup(Arc<tokio::sync::Notify>);
 
@@ -258,8 +259,21 @@ fn save_app_config(
         } else {
             config.ui_state.clone()
         };
+        let preserved_last_check = if config.update.last_check_time == 0 {
+            existing.update.last_check_time
+        } else {
+            config.update.last_check_time
+        };
+        let preserved_skipped = config
+            .update
+            .skipped_version
+            .clone()
+            .or_else(|| existing.update.skipped_version.clone());
+
         *existing = config;
         existing.ui_state = preserved_ui;
+        existing.update.last_check_time = preserved_last_check;
+        existing.update.skipped_version = preserved_skipped;
     })
     .map_err(|e| e.to_string())?;
     tray::sync_tray_config(&app, &saved);
@@ -397,60 +411,65 @@ fn prune_logs(_days: Option<u32>) -> Result<usize, String> {
 }
 
 #[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<am_core::UpdateInfo, String> {
-    let current = app.package_info().version.to_string();
-    am_core::check_for_updates(&current)
-        .await
-        .map_err(|e| e.to_string())
+fn get_update_state(controller: tauri::State<'_, UpdateController>) -> UpdateSnapshot {
+    controller.snapshot()
 }
 
-/// 应用内一键下载、验签、安装并重启更新（基于 tauri-plugin-updater + tauri-plugin-process）
 #[tauri::command]
-async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    let updater = app
-        .updater()
-        .map_err(|e| format!("Updater unavailable: {}", e))?;
-    let update = updater
-        .check()
+async fn check_for_updates(
+    app: tauri::AppHandle,
+    controller: tauri::State<'_, UpdateController>,
+) -> Result<am_core::UpdateInfo, String> {
+    controller.check_manual(&app).await
+}
+
+#[tauri::command]
+async fn download_update(
+    app: tauri::AppHandle,
+    controller: tauri::State<'_, UpdateController>,
+    force_native: Option<bool>,
+) -> Result<(), String> {
+    controller
+        .download_update(&app, force_native.unwrap_or(false))
         .await
-        .map_err(|e| format!("Failed to fetch update manifest: {}", e))?
-        .ok_or_else(|| "Already up to date".to_string())?;
+}
 
-    let app_for_progress = app.clone();
-    let downloaded_acc = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let downloaded_clone = downloaded_acc.clone();
+#[tauri::command]
+async fn apply_and_restart_update(
+    app: tauri::AppHandle,
+    controller: tauri::State<'_, UpdateController>,
+) -> Result<(), String> {
+    controller.apply_and_restart(&app).await
+}
 
-    update
-        .download_and_install(
-            move |chunk_len, content_len| {
-                let prev = downloaded_clone
-                    .fetch_add(chunk_len as u64, std::sync::atomic::Ordering::Relaxed);
-                let downloaded = prev + chunk_len as u64;
-                let pct = content_len
-                    .filter(|&total| total > 0)
-                    .map(|total| {
-                        ((downloaded as f64 / total as f64) * 100.0)
-                            .min(100.0)
-                            .round() as u32
-                    })
-                    .unwrap_or(0);
-                let _ = app_for_progress.emit(
-                    "updater://progress",
-                    serde_json::json!({
-                        "downloaded": downloaded,
-                        "total": content_len.unwrap_or(0),
-                        "pct": pct,
-                    }),
-                );
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| format!("Update install failed: {}", e))?;
+#[tauri::command]
+fn dismiss_update_banner(
+    app: tauri::AppHandle,
+    controller: tauri::State<'_, UpdateController>,
+) -> UpdateSnapshot {
+    controller.dismiss_banner(&app)
+}
 
-    // 必须先放行 ExitRequested 托盘常驻拦截，再触发重启
-    tray::mark_app_exiting();
-    app.restart();
+#[tauri::command]
+fn skip_update_version(
+    app: tauri::AppHandle,
+    controller: tauri::State<'_, UpdateController>,
+    version: String,
+) -> Result<UpdateSnapshot, String> {
+    controller.skip_version(&app, &version)
+}
+
+/// 兼容旧命令：一次性下载、验签、安装并重启更新
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    controller: tauri::State<'_, UpdateController>,
+    force_native: Option<bool>,
+) -> Result<(), String> {
+    controller
+        .download_update(&app, force_native.unwrap_or(false))
+        .await?;
+    controller.apply_and_restart(&app).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -474,6 +493,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(manager)
         .manage(DaemonWakeup(daemon_wakeup))
+        .manage(UpdateController::new())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -490,6 +510,7 @@ pub fn run() {
             }
             let _ = tray::init_tray(app.handle());
             tray::apply_startup_launch_policy(app.handle());
+            updater::spawn_auto_check_scheduler(app.handle().clone());
             if let Some(daemon) = daemon_cell.lock().ok().and_then(|mut g| g.take()) {
                 tauri::async_runtime::spawn(async move {
                     daemon.run_loop().await;
@@ -564,7 +585,12 @@ pub fn run() {
             get_app_version,
             open_external_url,
             prune_logs,
+            get_update_state,
             check_for_updates,
+            download_update,
+            apply_and_restart_update,
+            dismiss_update_banner,
+            skip_update_version,
             install_update,
         ])
         .build(tauri::generate_context!())

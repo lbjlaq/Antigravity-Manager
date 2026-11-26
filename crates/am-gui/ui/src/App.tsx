@@ -4,7 +4,8 @@ import { Navbar } from './components/navbar/Navbar';
 import { TabId } from './components/navbar/NavMenu';
 import { LangCode } from './i18n/constants';
 import { ensureLocaleLoaded } from './i18n';
-import { api, isTauri } from './api';
+import { api, isTauri, UpdateSnapshot } from './api';
+import { UpdatePopover } from './components/UpdatePopover';
 import {
   VALID_TABS,
   consumeFreshPendingTab,
@@ -66,11 +67,54 @@ export function App() {
     return (localStorage.getItem('am_language') as LangCode) || 'zh';
   });
   const [localeVersion, setLocaleVersion] = useState(0);
+  const [updateState, setUpdateState] = useState<UpdateSnapshot | null>(null);
+  const [updatePopoverOpen, setUpdatePopoverOpen] = useState(false);
 
   const handleLanguageChange = useCallback((newLang: LangCode) => {
     setLang(newLang);
     localStorage.setItem('am_language', newLang);
     void api.syncUiPreferences({ lang: newLang });
+  }, []);
+
+  const syncUpdateSnapshot = useCallback((snap: UpdateSnapshot) => {
+    setUpdateState(snap);
+    if (
+      snap.info?.has_update &&
+      !snap.banner_dismissed &&
+      ((snap.phase === 'available' && snap.triggered_by_auto) || snap.phase === 'ready')
+    ) {
+      setUpdatePopoverOpen(true);
+    }
+    if (snap.phase === 'idle' || snap.phase === 'up_to_date') {
+      setUpdatePopoverOpen(false);
+    }
+  }, []);
+
+  const handleUpdateDownload = useCallback((forceNative = false) => {
+    setUpdatePopoverOpen(true);
+    void api.downloadUpdate(forceNative).catch(() => {
+      // 错误详情已由 Rust UpdateController 通过 updater://state 广播并展示
+    });
+  }, []);
+
+  const handleUpdateRestart = useCallback(() => {
+    void api.applyAndRestartUpdate().catch(() => {
+      // 错误详情已由 Rust UpdateController 广播
+    });
+  }, []);
+
+  const handleUpdateClose = useCallback(() => {
+    setUpdatePopoverOpen(false);
+    void api.dismissUpdateBanner().then((snap) => {
+      if (snap) setUpdateState(snap);
+    });
+  }, []);
+
+  const handleUpdateSkip = useCallback((version: string) => {
+    setUpdatePopoverOpen(false);
+    void api.skipUpdateVersion(version).then((snap) => {
+      if (snap) setUpdateState(snap);
+    });
   }, []);
 
   // 启动时将当前前端语言同步给后端系统原生托盘菜单，并监听跨窗口 Tauri 广播与系统深浅色变化
@@ -104,6 +148,7 @@ export function App() {
     let disposed = false;
     let unlistenPrefs: (() => void) | undefined;
     let unlistenNav: (() => void) | undefined;
+    let unlistenUpdate: (() => void) | undefined;
     if (isTauri()) {
       import('@tauri-apps/api/event').then(async ({ listen }) => {
         const offPrefs = await listen<{ lang?: string; theme?: string }>('tray://prefs-synced', (evt) => {
@@ -141,11 +186,28 @@ export function App() {
             return;
           }
           unlistenNav = offNav;
+
+          const offUpdate = await listen<UpdateSnapshot>('updater://state', (evt) => {
+            if (!disposed && evt.payload) {
+              syncUpdateSnapshot(evt.payload);
+            }
+          });
+          if (disposed) {
+            offUpdate();
+            return;
+          }
+          unlistenUpdate = offUpdate;
         }
       });
     }
 
     if (!isMiniWindow) {
+      void api.getUpdateState().then((snap) => {
+        if (!disposed) {
+          syncUpdateSnapshot(snap);
+        }
+      }).catch(() => {});
+
       void hydrateUiStateFromConfig().then((hydrated) => {
         if (
           !disposed &&
@@ -171,8 +233,9 @@ export function App() {
       media?.removeEventListener?.('change', onMediaChange);
       unlistenPrefs?.();
       unlistenNav?.();
+      unlistenUpdate?.();
     };
-  }, []);
+  }, [syncUpdateSnapshot]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -322,10 +385,24 @@ export function App() {
         onThemeToggle={handleThemeToggle}
         lang={lang}
         onLanguageChange={handleLanguageChange}
+        updateState={updateState}
+        onUpdatePillClick={() => setUpdatePopoverOpen((v) => !v)}
       />
 
+      {updateState && (
+        <UpdatePopover
+          lang={lang}
+          state={updateState}
+          open={updatePopoverOpen}
+          onClose={handleUpdateClose}
+          onDownload={handleUpdateDownload}
+          onRestart={handleUpdateRestart}
+          onSkip={handleUpdateSkip}
+        />
+      )}
+
       {/* 菜单栏下方内容画布 */}
-      <main className="flex-1 overflow-y-auto px-4 py-2 relative">
+      <main className="app-scroll flex-1 overflow-y-auto px-4 py-2 relative">
         <Suspense fallback={null}>{mainPageContent}</Suspense>
       </main>
     </div>

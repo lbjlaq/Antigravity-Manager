@@ -137,13 +137,33 @@ export interface UiStateConfig {
   accounts_view_mode?: string;
 }
 
+export interface UpdateConfig {
+  auto_check: boolean;
+  check_interval_hours?: number;
+  last_check_time?: number;
+  skipped_version?: string | null;
+}
+
 export interface AppConfig {
   quota_polling: QuotaPollingConfig;
   auto_switch: AutoSwitchConfig;
   custom_paths?: CustomPathsConfig;
   tray?: TrayConfig;
   ui_state?: UiStateConfig;
+  update?: UpdateConfig;
 }
+
+export type InstallChannel = 'native' | 'homebrew' | 'manual';
+
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'up_to_date'
+  | 'available'
+  | 'downloading'
+  | 'installing'
+  | 'ready'
+  | 'error';
 
 export interface UpdateInfo {
   current_version: string;
@@ -152,6 +172,20 @@ export interface UpdateInfo {
   download_url: string;
   release_notes: string;
   published_at: string;
+  install_channel?: InstallChannel;
+}
+
+export interface UpdateSnapshot {
+  phase: UpdatePhase;
+  info: UpdateInfo | null;
+  install_channel: InstallChannel;
+  progress_pct: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  error: string | null;
+  banner_dismissed: boolean;
+  triggered_by_auto: boolean;
+  updated_via_brew: boolean;
 }
 
 export interface SystemInfo {
@@ -485,6 +519,24 @@ export const api = {
   },
 
   // 23. 检查 GitHub Releases 最新正式版在线更新 (Stable Only)
+  async getUpdateState(): Promise<UpdateSnapshot> {
+    if (!isTauri()) {
+      return {
+        phase: 'idle',
+        info: null,
+        install_channel: 'native',
+        progress_pct: 0,
+        downloaded_bytes: 0,
+        total_bytes: 0,
+        error: null,
+        banner_dismissed: false,
+        triggered_by_auto: false,
+        updated_via_brew: false,
+      };
+    }
+    return invokeTauri<UpdateSnapshot>('get_update_state');
+  },
+
   async checkForUpdates(): Promise<UpdateInfo> {
     if (!isTauri()) {
       return {
@@ -494,15 +546,38 @@ export const api = {
         download_url: 'https://github.com/lbjlaq/Antigravity-Manager/releases/tag/antigravity-manager',
         release_notes: '',
         published_at: '',
+        install_channel: 'native',
       };
     }
     return invokeTauri<UpdateInfo>('check_for_updates');
   },
 
-  // 23.1 应用内一键下载、验签、安装并重启更新
-  async installUpdate(): Promise<void> {
+  // 23.1 第一阶段：下载并验签（或通过 Homebrew Cask 升级），不提前覆盖磁盘应用包
+  async downloadUpdate(forceNative = false): Promise<void> {
     if (!isTauri()) return;
-    return invokeTauri<void>('install_update');
+    return invokeTauri<void>('download_update', { forceNative });
+  },
+
+  // 23.2 第二阶段：将已验签的更新落盘替换并安全重启
+  async applyAndRestartUpdate(): Promise<void> {
+    if (!isTauri()) return;
+    return invokeTauri<void>('apply_and_restart_update');
+  },
+
+  async dismissUpdateBanner(): Promise<UpdateSnapshot | null> {
+    if (!isTauri()) return null;
+    return invokeTauri<UpdateSnapshot>('dismiss_update_banner');
+  },
+
+  async skipUpdateVersion(version: string): Promise<UpdateSnapshot | null> {
+    if (!isTauri()) return null;
+    return invokeTauri<UpdateSnapshot>('skip_update_version', { version });
+  },
+
+  // 23.3 兼容接口：应用内一键下载、验签、安装并重启更新
+  async installUpdate(forceNative = false): Promise<void> {
+    if (!isTauri()) return;
+    return invokeTauri<void>('install_update', { forceNative });
   },
 
   // 24. 托盘与悬浮窗控制接口

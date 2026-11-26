@@ -3,6 +3,7 @@ import { NavLogo } from './NavLogo';
 import { NavMenu, TabId } from './NavMenu';
 import { NavActions } from './NavActions';
 import { LangCode } from '../../i18n/constants';
+import { UpdateSnapshot } from '../../api';
 
 interface NavbarProps {
   currentTab: TabId;
@@ -11,6 +12,8 @@ interface NavbarProps {
   onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
   lang: string;
   onLanguageChange: (lang: LangCode) => void;
+  updateState?: UpdateSnapshot | null;
+  onUpdatePillClick?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -20,6 +23,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onThemeToggle,
   lang,
   onLanguageChange,
+  updateState,
+  onUpdatePillClick,
 }) => {
   const isMac =
     typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
@@ -49,6 +54,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               onThemeToggle={onThemeToggle}
               lang={lang}
               onLanguageChange={onLanguageChange}
+              updateState={updateState}
+              onUpdatePillClick={onUpdatePillClick}
             />
           </div>
         </div>

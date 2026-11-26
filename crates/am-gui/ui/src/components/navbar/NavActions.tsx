@@ -1,14 +1,17 @@
 import React from 'react';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, ArrowUpCircle, Loader2, RotateCcw } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LANGUAGES, LangCode } from '../../i18n/constants';
 import { tUi } from '../../i18n/ui';
+import { UpdateSnapshot } from '../../api';
 
 interface NavActionsProps {
   theme: 'light' | 'dark';
   onThemeToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
   lang: string;
   onLanguageChange: (lang: LangCode) => void;
+  updateState?: UpdateSnapshot | null;
+  onUpdatePillClick?: () => void;
 }
 
 export const NavActions: React.FC<NavActionsProps> = ({
@@ -16,11 +19,63 @@ export const NavActions: React.FC<NavActionsProps> = ({
   onThemeToggle,
   lang,
   onLanguageChange,
+  updateState,
+  onUpdatePillClick,
 }) => {
   const currentLangObj = LANGUAGES.find((l) => l.code === lang) || LANGUAGES[0];
 
+  const showUpdatePill =
+    !!updateState?.info?.has_update &&
+    (updateState.phase === 'available' ||
+      updateState.phase === 'downloading' ||
+      updateState.phase === 'installing' ||
+      updateState.phase === 'ready' ||
+      updateState.phase === 'error');
+
   return (
     <div className="flex items-center gap-2 select-none">
+      {/* 极简更新状态胶囊（仅发现新版本 / 下载中 / 待重启时呈现） */}
+      {showUpdatePill && updateState?.info && (
+        <button
+          type="button"
+          onClick={onUpdatePillClick}
+          className={`h-8 px-2.5 rounded-full text-[11px] font-semibold inline-flex items-center gap-1.5 transition-all duration-150 cursor-pointer border ${
+            updateState.phase === 'ready'
+              ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-500/80 shadow-xs'
+              : updateState.phase === 'error'
+                ? 'bg-rose-500/10 hover:bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/25'
+                : 'bg-emerald-500/10 hover:bg-emerald-500/18 text-emerald-700 dark:text-emerald-400 border-emerald-500/25'
+          }`}
+          title={tUi(
+            lang,
+            updateState.phase === 'ready' ? 'update_banner_ready_title' : 'update_banner_title'
+          )}
+        >
+          {updateState.phase === 'downloading' || updateState.phase === 'installing' ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span className="font-mono">
+                {updateState.phase === 'installing'
+                  ? '...'
+                  : updateState.progress_pct > 0
+                    ? `${updateState.progress_pct}%`
+                    : `v${updateState.info.latest_version}`}
+              </span>
+            </>
+          ) : updateState.phase === 'ready' ? (
+            <>
+              <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+              <span>{tUi(lang, 'update_nav_ready')}</span>
+            </>
+          ) : (
+            <>
+              <ArrowUpCircle className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-mono">v{updateState.info.latest_version}</span>
+            </>
+          )}
+        </button>
+      )}
+
       {/* 语言选择下拉菜单 (Radix UI) - 保持与主分支一致的胶囊文字与精致下拉 */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>

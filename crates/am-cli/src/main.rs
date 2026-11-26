@@ -238,8 +238,20 @@ enum Commands {
         ids: Vec<String>,
     },
 
-    /// 🔄 Check for Antigravity Manager updates
-    Update,
+    /// 🔄 Check for Antigravity Manager updates (supports Homebrew upgrade & config toggles)
+    Update {
+        /// Output update status as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Perform upgrade immediately when supported (e.g. Homebrew Cask on macOS)
+        #[arg(long)]
+        install: bool,
+
+        /// Configure startup automatic update check (on / off)
+        #[arg(long, value_parser = ["on", "off"])]
+        auto_check: Option<String>,
+    },
 
     /// 🩺 Inspect system diagnostics and host installation status
     Doctor,
@@ -368,19 +380,80 @@ async fn main() -> Result<()> {
                     .bold()
             );
         }
-        Some(Commands::Update) => {
+        Some(Commands::Update {
+            json,
+            install,
+            auto_check,
+        }) => {
+            if let Some(mode) = auto_check {
+                let enabled = mode == "on";
+                am_core::AppConfig::update(|cfg| {
+                    cfg.update.auto_check = enabled;
+                })?;
+                if json {
+                    println!("{}", serde_json::json!({ "auto_check": enabled }));
+                } else {
+                    println!(
+                        "{}",
+                        format!(
+                            "⚙️ Startup auto-check for updates set to: {}",
+                            if enabled { "ON" } else { "OFF" }
+                        )
+                        .cyan()
+                    );
+                }
+                return Ok(());
+            }
+
             let current = env!("CARGO_PKG_VERSION");
             let info = am_core::check_for_updates(current).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+                return Ok(());
+            }
+
             if info.has_update {
                 println!(
                     "{}",
                     format!(
-                        "🆕 Update available: v{} -> v{} ({})",
-                        info.current_version, info.latest_version, info.download_url
+                        "🆕 Update available: v{} -> v{} (channel: {:?})",
+                        info.current_version, info.latest_version, info.install_channel
                     )
                     .green()
                     .bold()
                 );
+                if !info.release_notes.trim().is_empty() {
+                    println!("\n{}\n", info.release_notes.trim());
+                }
+                if install {
+                    if info.install_channel == am_core::InstallChannel::Homebrew {
+                        println!(
+                            "{}",
+                            "🍺 Upgrading via Homebrew Cask (antigravity-manager)...".cyan()
+                        );
+                        let out = am_core::brew_upgrade_cask().await?;
+                        if !out.is_empty() {
+                            println!("{}", out);
+                        }
+                        println!("{}", "✅ Homebrew upgrade completed.".green().bold());
+                    } else {
+                        println!(
+                            "{}",
+                            format!(
+                                "ℹ️ In-app hot update is available in the Antigravity Manager GUI, or download directly:\n   {}",
+                                info.download_url
+                            )
+                            .yellow()
+                        );
+                    }
+                } else if info.install_channel == am_core::InstallChannel::Homebrew {
+                    println!(
+                        "Run `am update --install` or `brew upgrade --cask {}` to upgrade.",
+                        am_core::HOMEBREW_CASK_NAME
+                    );
+                } else {
+                    println!("Download / Release notes: {}", info.download_url);
+                }
             } else {
                 println!(
                     "{}",
