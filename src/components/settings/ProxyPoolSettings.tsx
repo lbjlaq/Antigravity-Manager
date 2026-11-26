@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { request } from '../../utils/request';
 import { showToast } from '../common/ToastContainer';
@@ -24,6 +24,10 @@ export default function ProxyPoolSettings({ config, onChange }: ProxyPoolSetting
     const [isTesting, setIsTesting] = useState(false);
     const [accountBindings, setAccountBindings] = useState<Record<string, string>>({});
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const configRef = useRef(config);
+    configRef.current = config;
+    const onChangeRef = useRef(onChange);
+    onChangeRef.current = onChange;
 
     // Fetch bindings and accounts on mount
     useEffect(() => {
@@ -39,43 +43,40 @@ export default function ProxyPoolSettings({ config, onChange }: ProxyPoolSetting
     }, [isBindingManagerOpen]);
 
     // [FIX] Polling for proxy pool status
-    // Now only updates volatile status (is_healthy, latency) to avoid race condition regressions
+    // Only updates volatile status (is_healthy, latency) from latest configRef to avoid clobbering concurrent edits
     useEffect(() => {
-        let interval: any;
-        if (config.enabled) { // Only poll if proxy pool is enabled
-            interval = setInterval(async () => {
-                try {
-                    const liveConfig = await request<ProxyPoolConfig>('get_proxy_pool_config');
-                    if (liveConfig && liveConfig.proxies) {
-                        // Create a map for quick lookups
-                        const liveMap = new Map(liveConfig.proxies.map(p => [p.id, p]));
+        if (!config.enabled) return;
 
-                        // Check if any status actually changed
-                        let hasChanges = false;
-                        const updatedProxies = config.proxies.map(p => {
-                            const live = liveMap.get(p.id);
-                            if (live && (live.is_healthy !== p.is_healthy || live.latency !== p.latency || live.last_check_time !== p.last_check_time)) {
-                                hasChanges = true;
-                                return { ...p, is_healthy: live.is_healthy, latency: live.latency, last_check_time: live.last_check_time };
-                            }
-                            return p;
-                        });
+        const pollStatus = async () => {
+            if (document.visibilityState === 'hidden') return;
+            try {
+                const liveConfig = await request<ProxyPoolConfig>('get_proxy_pool_config');
+                if (liveConfig && liveConfig.proxies) {
+                    const latestConfig = configRef.current;
+                    const liveMap = new Map(liveConfig.proxies.map(p => [p.id, p]));
 
-                        if (hasChanges) {
-                            // Only update volatile status, DO NOT trigger heavy onChange which saves to disk
-                            // This internal change will eventually be captured by next manual save or 
-                            // simply keep the UI fresh without risking rolling back user's structural changes (add/delete)
-                            onChange({ ...config, proxies: updatedProxies }, true); // Pass 'true' as silent flag if onChange supports it, or use a separate state
+                    let hasChanges = false;
+                    const updatedProxies = latestConfig.proxies.map(p => {
+                        const live = liveMap.get(p.id);
+                        if (live && (live.is_healthy !== p.is_healthy || live.latency !== p.latency || live.last_check_time !== p.last_check_time)) {
+                            hasChanges = true;
+                            return { ...p, is_healthy: live.is_healthy, latency: live.latency, last_check_time: live.last_check_time };
                         }
+                        return p;
+                    });
+
+                    if (hasChanges) {
+                        onChangeRef.current({ ...latestConfig, proxies: updatedProxies }, true);
                     }
-                } catch (e) {
-                    // Ignore if service not running or other errors
-                    console.error('Failed to poll proxy pool config:', e);
                 }
-            }, 5000); // Poll every 5s
-        }
+            } catch (e) {
+                console.error('Failed to poll proxy pool config:', e);
+            }
+        };
+
+        const interval = setInterval(pollStatus, 5000);
         return () => clearInterval(interval);
-    }, [config.enabled, config.proxies]); // Depend on config.enabled and config.proxies to re-evaluate polling
+    }, [config.enabled]);
 
     const fetchBindings = async () => {
         try {
