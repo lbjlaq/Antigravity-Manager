@@ -12,7 +12,7 @@ import {
   CheckCircle2,
   ArrowUpDown,
   Fingerprint,
-  ChevronDown,
+  MoreHorizontal,
   Check,
   X,
   ExternalLink,
@@ -1145,98 +1145,122 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
         </div>
       )}
 
-      {/* 顶部自适应工具栏 */}
-      <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] rounded-xl p-2.5 px-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
-        {/* 左侧：搜索框 + 订阅分类胶囊 (全部/Pro/Free/异常) + 标签下拉 */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-44">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+      {/* 顶部 Apple HIG 极简单行工具栏（统一 28px 控件基线，12 种语言恒定不折行） */}
+      <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] rounded-xl px-3 py-2 shadow-2xs flex items-center justify-between gap-2 min-w-0">
+        {/* 左侧：聚焦微扩搜索框 + 订阅分类分段胶囊 */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className="relative h-7 w-36 focus-within:w-48 xl:w-44 xl:focus-within:w-56 shrink-0 transition-[width] duration-200 ease-out">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={tUi(lang, 'search_placeholder')}
-              className="w-full pl-8 pr-2.5 py-1 text-[11px] rounded-lg bg-gray-100/80 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/50 dark:focus:border-blue-400/50 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500 outline-none transition-all duration-150"
+              className="w-full h-7 pl-8 pr-6 text-[11px] rounded-lg bg-gray-100/85 dark:bg-[#1a1b1f] border border-transparent focus:border-blue-500/40 dark:focus:border-blue-400/40 focus:bg-white dark:focus:bg-[#14151a] text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500 outline-none transition-all duration-150"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200 hover:bg-gray-200/70 dark:hover:bg-zinc-700/70 transition-colors cursor-pointer"
+                aria-label="Clear search"
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            )}
           </div>
 
-          {/* 分类快捷药丸 Tab 切换 */}
-          <div className="flex items-center p-0.5 bg-gray-100/80 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5 text-[11px]">
+          {/* 分类快捷分段胶囊 */}
+          <div className="h-7 flex items-center p-0.5 bg-gray-100/85 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5 text-[11px] min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => setFilterTab('all')}
-              className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+              className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                 filterTab === 'all'
                   ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
                   : 'text-gray-500 hover:text-gray-900 dark:text-zinc-400 dark:hover:text-zinc-100'
               }`}
             >
-              {tUi(lang, 'all')} <span className="opacity-60 text-[9.5px]">({tabCounts.all})</span>
+              <span>{tUi(lang, 'all')}</span>
+              <span className="tabular-nums opacity-55 text-[10px]">{tabCounts.all}</span>
             </button>
             {tabCounts.ultra > 0 && (
               <button
                 onClick={() => setFilterTab('ultra')}
-                className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                   filterTab === 'ultra'
                     ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-2xs font-semibold'
                     : 'text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
                 }`}
               >
-                ULTRA <span className="opacity-85 text-[9.5px]">({tabCounts.ultra})</span>
+                <span>ULTRA</span>
+                <span className="tabular-nums opacity-80 text-[10px]">{tabCounts.ultra}</span>
               </button>
             )}
             <button
               onClick={() => setFilterTab('pro')}
-              className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+              className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                 filterTab === 'pro'
                   ? 'bg-blue-600 text-white shadow-2xs font-semibold'
                   : 'text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400'
               }`}
             >
-              PRO <span className="opacity-80 text-[9.5px]">({tabCounts.pro})</span>
+              <span>PRO</span>
+              <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.pro}</span>
             </button>
             <button
               onClick={() => setFilterTab('free')}
-              className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+              className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                 filterTab === 'free'
                   ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
                   : 'text-gray-500 hover:text-gray-900 dark:text-zinc-400 dark:hover:text-zinc-100'
               }`}
             >
-              FREE <span className="opacity-60 text-[9.5px]">({tabCounts.free})</span>
+              <span>FREE</span>
+              <span className="tabular-nums opacity-55 text-[10px]">{tabCounts.free}</span>
             </button>
             {tabCounts.warning > 0 && (
               <button
                 onClick={() => setFilterTab('warning')}
-                className={`px-2.5 py-0.5 rounded-md font-medium transition-all cursor-pointer ${
+                className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                   filterTab === 'warning'
                     ? 'bg-rose-500 text-white shadow-2xs font-semibold'
                     : 'text-rose-500 hover:text-rose-600 dark:text-rose-400'
                 }`}
               >
-                {tUi(lang, 'errors')} <span className="opacity-80 text-[9.5px]">({tabCounts.warning})</span>
+                <span>{tUi(lang, 'errors')}</span>
+                <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.warning}</span>
               </button>
             )}
           </div>
+        </div>
 
-          {/* 标签微型过滤 */}
+        {/* 右侧：视图与筛选无边框图标组 | 刷新与更多操作 | 唯一蓝底主 CTA */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* 标签过滤（未筛选时纯图标，激活时淡紫胶囊显示选中标签） */}
           {allTags.length > 0 && (
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button className="px-2 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1 transition-colors shadow-2xs outline-none cursor-pointer">
-                  <Tag className="w-3 h-3 text-purple-500" />
-                  <span>{selectedTag === 'all' ? tUi(lang, 'tag') : selectedTag}</span>
-                  <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+                <button
+                  className={
+                    selectedTag === 'all'
+                      ? 'h-7 w-7 rounded-lg flex items-center justify-center text-gray-500 dark:text-zinc-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-gray-100/90 dark:hover:bg-white/[0.06] transition-colors outline-none cursor-pointer'
+                      : 'h-7 px-2 rounded-lg bg-purple-50 dark:bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-200/70 dark:border-purple-500/25 text-[11px] font-medium flex items-center gap-1 max-w-[96px] transition-colors outline-none cursor-pointer'
+                  }
+                  title={selectedTag === 'all' ? tUi(lang, 'tag') : `${tUi(lang, 'tag')}: ${selectedTag}`}
+                >
+                  <Tag className="w-3.5 h-3.5 shrink-0" />
+                  {selectedTag !== 'all' && <span className="truncate">{selectedTag}</span>}
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  align="start"
+                  align="end"
                   sideOffset={6}
-                  className="w-36 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
+                  className="w-40 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
                 >
                   <DropdownMenu.Item
                     onClick={() => setSelectedTag('all')}
-                    className={`px-2 py-1 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                    className={`px-2 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
                       selectedTag === 'all'
                         ? 'bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-semibold'
                         : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -1250,7 +1274,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     <DropdownMenu.Item
                       key={t}
                       onClick={() => setSelectedTag(t)}
-                      className={`px-2 py-1 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
+                      className={`px-2 py-1.5 rounded-lg flex items-center justify-between cursor-pointer outline-none ${
                         selectedTag === t
                           ? 'bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400 font-semibold'
                           : 'text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -1264,28 +1288,30 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
           )}
-        </div>
 
-        {/* 右侧：排序切换 + 列表/卡片视图切换器 + 操作按钮组 */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* 全局排序下拉胶囊（列表视图与卡片视图统一可用） */}
+          {/* 全局排序图标触发器（非默认排序时右上角蓝点提示，悬停显示当前排序方式） */}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <button
-                className="px-2 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1 transition-colors shadow-2xs outline-none cursor-pointer"
-                title={tUi(lang, 'acc_drag_reorder')}
-              >
-                <ArrowUpDown className="w-3 h-3 text-blue-500" />
-                <span>
-                  {sortMode === 'health_default'
+                className={`relative h-7 w-7 rounded-lg flex items-center justify-center transition-colors outline-none cursor-pointer ${
+                  sortMode !== 'health_default'
+                    ? 'text-blue-600 dark:text-blue-400 bg-blue-50/80 dark:bg-blue-500/10 hover:bg-blue-100/70 dark:hover:bg-blue-500/20'
+                    : 'text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 hover:bg-gray-100/90 dark:hover:bg-white/[0.06]'
+                }`}
+                title={`${
+                  sortMode === 'health_default'
                     ? tUi(lang, 'sort_health')
                     : sortMode === 'name_asc'
                     ? 'A-Z'
                     : sortMode === 'tier_desc'
                     ? tUi(lang, 'sort_tier')
-                    : tUi(lang, 'sort_custom')}
-                </span>
-                <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+                    : tUi(lang, 'sort_custom')
+                } · ${tUi(lang, 'acc_drag_reorder')}`}
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                {sortMode !== 'health_default' && (
+                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-blue-500" />
+                )}
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
@@ -1359,13 +1385,13 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
 
-          {/* 列表 / 卡片 风格切换胶囊 */}
-          <div className="flex items-center p-0.5 bg-gray-100/80 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5 mr-0.5">
+          {/* 列表 / 卡片 视图切换胶囊 */}
+          <div className="h-7 flex items-center p-0.5 bg-gray-100/85 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5">
             <button
               onClick={() => handleToggleViewMode('table')}
-              className={`p-1 rounded-md transition-all cursor-pointer ${
+              className={`h-6 w-6 rounded-md flex items-center justify-center transition-all cursor-pointer ${
                 viewMode === 'table'
-                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
+                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs'
                   : 'text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200'
               }`}
               title={tUi(lang, 'table_view')}
@@ -1374,9 +1400,9 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             </button>
             <button
               onClick={() => handleToggleViewMode('card')}
-              className={`p-1 rounded-md transition-all cursor-pointer ${
+              className={`h-6 w-6 rounded-md flex items-center justify-center transition-all cursor-pointer ${
                 viewMode === 'card'
-                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs font-semibold'
+                  ? 'bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-2xs'
                   : 'text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200'
               }`}
               title={tUi(lang, 'card_view')}
@@ -1385,39 +1411,62 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             </button>
           </div>
 
+          <div className="w-px h-4 bg-slate-200/90 dark:bg-white/10 mx-0.5 shrink-0" />
+
+          {/* 刷新全量配额（无边框纯图标按钮） */}
           <button
             onClick={handleRefreshAll}
             disabled={isRefreshing}
-            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs cursor-pointer"
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 hover:bg-gray-100/90 dark:hover:bg-white/[0.06] disabled:opacity-50 transition-colors cursor-pointer"
             title={tUi(lang, 'refresh_quotas')}
+            aria-label={tUi(lang, 'refresh_quotas')}
           >
-            <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
-            <span>{tUi(lang, 'refresh_quotas')}</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
           </button>
 
-          <button
-            onClick={() => setActiveModal({ type: 'export' })}
-            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs cursor-pointer"
-            title={tUi(lang, 'export')}
-          >
-            <Download className="w-3 h-3" />
-            <span>{tUi(lang, 'export')}</span>
-          </button>
+          {/* 更多管理操作（收纳导入 / 导出低频动作） */}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                className="h-7 w-7 rounded-lg flex items-center justify-center text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 hover:bg-gray-100/90 dark:hover:bg-white/[0.06] transition-colors outline-none cursor-pointer"
+                title={`${tUi(lang, 'export')} / ${tUi(lang, 'import')}`}
+                aria-label={`${tUi(lang, 'export')} / ${tUi(lang, 'import')}`}
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={6}
+                className="w-44 p-1 bg-white dark:bg-[#1a1b20] border border-gray-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 text-[11px] animate-in fade-in-0 zoom-in-95 duration-100"
+              >
+                <DropdownMenu.Item
+                  onClick={() => setActiveModal({ type: 'import' })}
+                  className="px-2.5 py-1.5 rounded-lg flex items-center gap-2 text-gray-700 dark:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800 cursor-pointer outline-none"
+                >
+                  <Upload className="w-3.5 h-3.5 text-gray-500 dark:text-zinc-400 shrink-0" />
+                  <span className="truncate">{tUi(lang, 'import')}</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onClick={() => setActiveModal({ type: 'export' })}
+                  className="px-2.5 py-1.5 rounded-lg flex items-center gap-2 text-gray-700 dark:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800 cursor-pointer outline-none"
+                >
+                  <Download className="w-3.5 h-3.5 text-gray-500 dark:text-zinc-400 shrink-0" />
+                  <span className="truncate">{tUi(lang, 'export')}</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
 
-          <button
-            onClick={() => setActiveModal({ type: 'import' })}
-            className="px-2.5 py-1 rounded-lg border border-gray-200/80 dark:border-white/10 bg-white dark:bg-[#1a1b20] hover:bg-gray-50 dark:hover:bg-zinc-800 text-[11px] font-medium text-gray-700 dark:text-zinc-300 flex items-center gap-1.2 transition-colors shadow-2xs cursor-pointer"
-            title={tUi(lang, 'import')}
-          >
-            <Upload className="w-3 h-3" />
-            <span>{tUi(lang, 'import')}</span>
-          </button>
+          <div className="w-px h-4 bg-slate-200/90 dark:bg-white/10 mx-0.5 shrink-0" />
 
+          {/* 唯一蓝底主 CTA */}
           <button
             onClick={() => setActiveModal({ type: 'oauth' })}
-            className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold flex items-center gap-1.2 shadow-xs shadow-blue-500/20 transition-all cursor-pointer"
+            className="h-7 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-[11px] font-semibold flex items-center gap-1.5 shadow-xs shadow-blue-500/20 transition-all cursor-pointer whitespace-nowrap shrink-0"
           >
-            <Plus className="w-3 h-3" />
+            <Plus className="w-3.5 h-3.5 stroke-[2.25]" />
             <span>{tUi(lang, 'add_account')}</span>
           </button>
         </div>
