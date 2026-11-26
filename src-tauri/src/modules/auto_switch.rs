@@ -380,7 +380,9 @@ pub async fn check_and_auto_switch_classic(
 
     // 2. 冷却时间防震荡检查
     {
-        let last_switch = LAST_CLASSIC_AUTO_SWITCH.lock().unwrap();
+        let last_switch = LAST_CLASSIC_AUTO_SWITCH
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(last_time) = *last_switch {
             if last_time.elapsed().as_secs() < AUTO_SWITCH_COOLDOWN_SECS {
                 logger::log_info(
@@ -449,7 +451,9 @@ pub async fn check_and_auto_switch_classic(
 
     // 8. 记录冷却锁
     {
-        let mut last_switch = LAST_CLASSIC_AUTO_SWITCH.lock().unwrap();
+        let mut last_switch = LAST_CLASSIC_AUTO_SWITCH
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *last_switch = Some(Instant::now());
     }
 

@@ -35,13 +35,13 @@ fn save_warmup_history(history: &HashMap<String, i64>) {
 }
 
 pub fn record_warmup_history(key: &str, timestamp: i64) {
-    let mut history = WARMUP_HISTORY.lock().unwrap();
+    let mut history = WARMUP_HISTORY.lock().unwrap_or_else(|e| e.into_inner());
     history.insert(key.to_string(), timestamp);
     save_warmup_history(&history);
 }
 
 pub fn check_cooldown(key: &str, cooldown_seconds: i64) -> bool {
-    let history = WARMUP_HISTORY.lock().unwrap();
+    let history = WARMUP_HISTORY.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(&last_ts) = history.get(key) {
         let now = chrono::Utc::now().timestamp();
         now - last_ts < cooldown_seconds
@@ -349,7 +349,7 @@ pub fn start_scheduler(
             // Regularly clean up history (keep last 30 days)
             {
                 let now_ts = Utc::now().timestamp();
-                let mut history = WARMUP_HISTORY.lock().unwrap();
+                let mut history = WARMUP_HISTORY.lock().unwrap_or_else(|e| e.into_inner());
                 let cutoff = now_ts - 30 * 86400;
                 history.retain(|_, &mut ts| ts > cutoff);
             }
