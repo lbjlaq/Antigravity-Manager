@@ -367,6 +367,24 @@ impl SwitchEngine {
         }
     }
 
+    /// 从 JWT `id_token` 的 payload 段安全提取 `email` 声明（无网络调用、无验签需求）
+    pub fn extract_email_from_jwt(jwt: &str) -> Option<String> {
+        use base64::{engine::general_purpose, Engine as _};
+        let payload_b64 = jwt.trim().split('.').nth(1)?;
+        let decoded = general_purpose::URL_SAFE_NO_PAD
+            .decode(payload_b64)
+            .or_else(|_| general_purpose::URL_SAFE.decode(payload_b64))
+            .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(payload_b64))
+            .or_else(|_| general_purpose::STANDARD.decode(payload_b64))
+            .ok()?;
+        let val: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+        val.get("email")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.contains('@'))
+            .map(|s| s.to_string())
+    }
+
     /// 解析 Keyring / OAuth JSON 载荷中的 `(refresh_token, email)`
     pub fn parse_credential_payload(raw: &str) -> Option<(Option<String>, Option<String>)> {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -395,7 +413,17 @@ impl SwitchEngine {
             .and_then(|v| v.as_str())
             .or_else(|| val.get("email").and_then(|v| v.as_str()))
             .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                val.get("id_token")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        val.get("token")
+                            .and_then(|t| t.get("id_token"))
+                            .and_then(|v| v.as_str())
+                    })
+                    .and_then(Self::extract_email_from_jwt)
+            });
 
         if rt.is_none() && email.is_none() {
             return None;
@@ -403,19 +431,18 @@ impl SwitchEngine {
         Some((rt, email))
     }
 
-    /// 跨平台仅读取系统级钥匙串/凭据管理器中的 `(refresh_token, email)`（不回退文件，对齐主分支 2.0+ 经典款与 CLI 探测）
-    pub fn read_system_keyring_credential() -> Option<(Option<String>, Option<String>)> {
+    /// 跨平台读取系统级钥匙串/凭据管理器中指定 `(service, account)` 的 `(refresh_token, email)`
+    /// - macOS: Keychain (`security find-generic-password -s <service> -a <account> -w`)
+    /// - Windows: Credential Manager (`CredReadW("<service>:<account>")`)
+    /// - Linux: Secret Service (`secret-tool lookup service <service> username <account>`, 带 5s 超时保护)
+    pub fn read_keyring_entry(
+        service: &str,
+        account: &str,
+    ) -> Option<(Option<String>, Option<String>)> {
         #[cfg(target_os = "macos")]
         {
             let output = std::process::Command::new("security")
-                .args([
-                    "find-generic-password",
-                    "-s",
-                    "gemini",
-                    "-a",
-                    "antigravity",
-                    "-w",
-                ])
+                .args(["find-generic-password", "-s", service, "-a", account, "-w"])
                 .output()
                 .ok()?;
             if !output.status.success() {
@@ -463,7 +490,8 @@ impl SwitchEngine {
                 fn CredFree(buffer: *mut std::ffi::c_void);
             }
 
-            let target_wide: Vec<u16> = std::ffi::OsStr::new("gemini:antigravity")
+            let target = format!("{}:{}", service, account);
+            let target_wide: Vec<u16> = std::ffi::OsStr::new(&target)
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
@@ -489,7 +517,7 @@ impl SwitchEngine {
             use std::sync::mpsc;
 
             let child = std::process::Command::new("secret-tool")
-                .args(["lookup", "service", "gemini", "username", "antigravity"])
+                .args(["lookup", "service", service, "username", account])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
@@ -519,19 +547,59 @@ impl SwitchEngine {
 
         #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
+            let _ = (service, account);
             None
         }
     }
 
+    /// 跨平台仅读取系统级钥匙串/凭据管理器中的 `(refresh_token, email)`（不回退文件，对齐主分支 2.0+ 经典款与 CLI 探测）
+    pub fn read_system_keyring_credential() -> Option<(Option<String>, Option<String>)> {
+        Self::read_keyring_entry("gemini", "antigravity")
+    }
+
+    /// 读取桌面端文件凭据回退 `~/.gemini/jetski-standalone-oauth-token`（当系统 Keyring 不可用或被拒访问时使用）
+    pub fn read_jetski_standalone_credential() -> Option<(Option<String>, Option<String>)> {
+        let home = dirs::home_dir()?;
+        let path = home.join(".gemini").join("jetski-standalone-oauth-token");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                return Self::parse_credential_payload(&content);
+            }
+        }
+        None
+    }
+
+    /// 检测本机是否安装/使用过 Antigravity CLI (`~/.gemini/antigravity-cli`)
+    pub fn has_antigravity_cli_dir() -> bool {
+        dirs::home_dir()
+            .map(|h| h.join(".gemini").join("antigravity-cli").is_dir())
+            .unwrap_or(false)
+    }
+
     /// 读取 `agy` CLI 独立专属凭据文件 `~/.gemini/antigravity-cli/antigravity-oauth-token`（严格隔离，不混读经典款共享文件）
     pub fn read_cli_exclusive_credential() -> Option<(Option<String>, Option<String>)> {
-        let home = dirs::home_dir()?;
-        let cli_dir = home.join(".gemini").join("antigravity-cli");
-        let candidates = [
-            cli_dir.join("antigravity-oauth-token"),
-            cli_dir.join("antigravity-oauth-token.antigravity.bak"),
-            cli_dir.join("antigravity-oauth-token.bak"),
-        ];
+        let mut candidates = Vec::new();
+        let cfg = crate::config::AppConfig::load();
+        if let Some(custom) = cfg
+            .custom_paths
+            .cli
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let p = std::path::PathBuf::from(custom);
+            if p.is_file() {
+                candidates.push(p);
+            } else {
+                candidates.push(p.join("antigravity-oauth-token"));
+            }
+        }
+        if let Some(home) = dirs::home_dir() {
+            let cli_dir = home.join(".gemini").join("antigravity-cli");
+            candidates.push(cli_dir.join("antigravity-oauth-token"));
+            candidates.push(cli_dir.join("antigravity-oauth-token.antigravity.bak"));
+            candidates.push(cli_dir.join("antigravity-oauth-token.bak"));
+        }
         for path in &candidates {
             if path.exists() {
                 if let Ok(content) = fs::read_to_string(path) {
@@ -544,13 +612,58 @@ impl SwitchEngine {
         None
     }
 
-    /// 读取 ACP 插件专属凭据 `~/.gemini/antigravity-acp/acp_token.json`
-    pub fn read_acp_plugin_credential() -> Option<(Option<String>, Option<String>)> {
+    /// 读取 Gemini/Antigravity CLI 回退文件凭据（`~/.gemini/oauth_creds.json` 与 `~/.gemini/google_accounts.json`）
+    pub fn read_gemini_cli_fallback_credential() -> Option<(Option<String>, Option<String>)> {
         let home = dirs::home_dir()?;
-        let candidates = [
-            home.join(".gemini/antigravity-acp/acp_token.json"),
-            home.join(".antigravity/acp-daemon.json"),
-        ];
+        let gemini_dir = home.join(".gemini");
+        let oauth_creds = gemini_dir.join("oauth_creds.json");
+        if oauth_creds.exists() {
+            if let Ok(content) = fs::read_to_string(&oauth_creds) {
+                if let Some(parsed) = Self::parse_credential_payload(&content) {
+                    return Some(parsed);
+                }
+            }
+        }
+        let google_accounts = gemini_dir.join("google_accounts.json");
+        if google_accounts.exists() {
+            if let Ok(content) = fs::read_to_string(&google_accounts) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(active) = val
+                        .get("active")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty() && s.contains('@'))
+                    {
+                        return Some((None, Some(active.to_string())));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// 读取 ACP 插件专属凭据 `~/.gemini/antigravity-acp/acp_token.json`（跨平台支持系统 Keyring `gemini:antigravity-acp` 回退）
+    pub fn read_acp_plugin_credential() -> Option<(Option<String>, Option<String>)> {
+        let mut candidates = Vec::new();
+        let cfg = crate::config::AppConfig::load();
+        if let Some(custom) = cfg
+            .custom_paths
+            .plugin
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let p = std::path::PathBuf::from(custom);
+            if p.is_file() {
+                candidates.push(p);
+            } else {
+                candidates.push(p.join("acp_token.json"));
+            }
+        }
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join(".gemini/antigravity-acp/acp_token.json"));
+            candidates.push(home.join(".antigravity/acp-daemon.json"));
+        }
         for path in &candidates {
             if path.exists() {
                 if let Ok(content) = fs::read_to_string(path) {
@@ -560,6 +673,7 @@ impl SwitchEngine {
                 }
             }
         }
-        None
+
+        Self::read_keyring_entry("gemini", "antigravity-acp")
     }
 }

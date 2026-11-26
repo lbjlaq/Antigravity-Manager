@@ -621,9 +621,15 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
     table.apply_modifier(UTF8_ROUND_CORNERS);
     table.set_header(vec![
         Cell::new("Target Host").fg(Color::Cyan),
+        Cell::new("Active Account").fg(Color::Green),
         Cell::new("Running").fg(Color::Yellow),
         Cell::new("Description").fg(Color::White),
     ]);
+
+    let fmt_account = |acc: &Option<String>| match acc {
+        Some(email) if !email.trim().is_empty() => Cell::new(email).fg(Color::Green),
+        _ => Cell::new("-").fg(Color::DarkGrey),
+    };
 
     let app_status = match (&hosts.app_running, &hosts.app_version) {
         (true, Some(v)) => format!("🟢 Yes (v{})", v),
@@ -641,18 +647,21 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity App (Classic)"),
+        fmt_account(&hosts.app_account),
         Cell::new(app_status),
         Cell::new("Official Desktop App (Target: app)"),
     ]));
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity IDE"),
+        fmt_account(&hosts.ide_account),
         Cell::new(ide_status),
         Cell::new("VSCode-based IDE (Target: ide)"),
     ]));
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity Plugin (ACP)"),
+        fmt_account(&hosts.plugin_account),
         Cell::new(if hosts.plugin_running {
             "🟢 Yes"
         } else {
@@ -663,7 +672,12 @@ fn handle_current(manager: &AntigravityManager) -> Result<()> {
 
     table.add_row(Row::from(vec![
         Cell::new("Antigravity CLI (agy)"),
-        Cell::new("🟢 Ready"),
+        fmt_account(&hosts.agy_account),
+        Cell::new(if hosts.agy_running {
+            "🟢 Yes"
+        } else {
+            "🟢 Ready"
+        }),
         Cell::new("Standalone Terminal CLI (Target: cli / agy)"),
     ]));
 

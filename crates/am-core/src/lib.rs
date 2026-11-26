@@ -675,113 +675,221 @@ impl AntigravityManager {
                 None
             };
 
-        // 1. Antigravity IDE：优先解析 state.vscdb 中 Protobuf 同步状态 (antigravityUnifiedStateSync.oauthToken) 的真实 RT
-        // 严禁对 IDE 读取系统 Keyring，避免被经典款/CLI 串号污染
-        if let Some(ide_rt) =
+        let ide_sqlite_email =
             switcher::SwitchEngine::extract_refresh_token_from_sqlite("Antigravity IDE")
-        {
-            if let Some((_, email)) = find_by_rt(&ide_rt) {
-                status.ide_account = Some(email);
-            }
-        }
-        if status.ide_account.is_none() {
-            status.ide_account =
-                switcher::SwitchEngine::read_account_from_sqlite("Antigravity IDE");
-        }
-        if status.ide_account.is_none() {
-            if let Some(ref id) = idx_ide {
-                status.ide_account = find_email_by_id(id);
-            }
-        }
+                .and_then(|rt| find_by_rt(&rt).map(|(_, email)| email))
+                .or_else(|| switcher::SwitchEngine::read_account_from_sqlite("Antigravity IDE"));
 
-        // 2. 读取系统 Keyring（Antigravity 2.0+ 原生经典版与 CLI 共享凭据源）
+        let ide_app_storage_email = if ide_sqlite_email.is_none() {
+            switcher::SwitchEngine::read_app_storage_account("Antigravity IDE", status.ide_running)
+        } else {
+            None
+        };
+
         let keyring_resolved =
-            switcher::SwitchEngine::read_system_keyring_credential().and_then(resolve_cred);
+            switcher::SwitchEngine::read_system_keyring_credential().and_then(&resolve_cred);
+        let standalone_resolved = if keyring_resolved.is_none() {
+            switcher::SwitchEngine::read_jetski_standalone_credential().and_then(&resolve_cred)
+        } else {
+            None
+        };
 
-        // 3. Antigravity 原生桌面版 (App)：>= 2.0.0 使用系统 Keyring，< 2.0.0 使用旧版 state.vscdb
+        let app_storage_email =
+            switcher::SwitchEngine::read_app_storage_account("Antigravity", status.app_running);
+
         let is_classic_v2 = status
             .app_version
             .as_deref()
             .map(|v| version::compare_version(v, "2.0.0") != std::cmp::Ordering::Less)
             .unwrap_or(true);
 
+        let classic_sqlite_email = if !is_classic_v2 || status.app_version.is_none() {
+            switcher::SwitchEngine::extract_refresh_token_from_sqlite("Antigravity")
+                .and_then(|rt| find_by_rt(&rt).map(|(_, email)| email))
+                .or_else(|| switcher::SwitchEngine::read_account_from_sqlite("Antigravity"))
+        } else {
+            None
+        };
+
+        let cli_dir_exists = switcher::SwitchEngine::has_antigravity_cli_dir();
+        let cli_exclusive_resolved =
+            switcher::SwitchEngine::read_cli_exclusive_credential().and_then(&resolve_cred);
+        let cli_fallback_resolved = if cli_exclusive_resolved.is_none()
+            && keyring_resolved.is_none()
+            && (status.agy_running || cli_dir_exists || idx_agy.is_some())
+        {
+            switcher::SwitchEngine::read_gemini_cli_fallback_credential().and_then(&resolve_cred)
+        } else {
+            None
+        };
+
+        let acp_resolved =
+            switcher::SwitchEngine::read_acp_plugin_credential().and_then(&resolve_cred);
+
+        let idx_curr_email = idx_curr.as_deref().and_then(&find_email_by_id);
+        let idx_app_email = idx_app.as_deref().and_then(&find_email_by_id);
+        let idx_ide_email = idx_ide.as_deref().and_then(&find_email_by_id);
+        let idx_agy_email = idx_agy.as_deref().and_then(&find_email_by_id);
+        let idx_acp_email = idx_acp.as_deref().and_then(&find_email_by_id);
+
+        Self::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target,
+                idx_curr_email,
+                idx_app,
+                idx_app_email,
+                idx_ide,
+                idx_ide_email,
+                idx_agy,
+                idx_agy_email,
+                idx_acp_email,
+                ide_sqlite_email,
+                ide_app_storage_email,
+                keyring_resolved,
+                standalone_resolved,
+                app_storage_email,
+                classic_sqlite_email,
+                cli_dir_exists,
+                cli_exclusive_resolved,
+                cli_fallback_resolved,
+                acp_resolved,
+            },
+        );
+
+        status
+    }
+
+    /// 根据各宿主独立/共享凭据信号归属每个宿主的当前生效账号（纯函数，便于覆盖全场景单测）
+    fn apply_host_credential_signals(
+        status: &mut ActiveHostStatus,
+        signals: HostCredentialSignals,
+    ) {
+        let email_eq = |a: Option<&str>, b: &str| -> bool {
+            a.map(|x| x.eq_ignore_ascii_case(b)).unwrap_or(false)
+        };
+
+        // 1. Antigravity IDE：严禁读取系统 Keyring，优先 state.vscdb -> IDE app_storage.json -> idx_ide
+        status.ide_account = signals
+            .ide_sqlite_email
+            .or(signals.ide_app_storage_email)
+            .or(signals.idx_ide_email.clone());
+
+        // 2. Antigravity 原生桌面版 (App)：>= 2.0.0 使用系统 Keyring（及 jetski-standalone 文件回退）+ App 专属 app_storage.json
+        let is_classic_v2 = status
+            .app_version
+            .as_deref()
+            .map(|v| version::compare_version(v, "2.0.0") != std::cmp::Ordering::Less)
+            .unwrap_or(true);
+
+        let shared_desktop_cred = signals
+            .keyring_resolved
+            .as_ref()
+            .or(signals.standalone_resolved.as_ref());
+        let app_present = status.app_running
+            || status.app_version.is_some()
+            || signals.app_storage_email.is_some()
+            || signals.idx_app.is_some();
+
         if is_classic_v2 {
-            if let Some((ref k_id_opt, ref k_email)) = keyring_resolved {
-                // 仅当最近切换并非 agy/ide（即 classic/all/外部登录），或经典版索引显式匹配时，才由 App 认领共享 Keyring，
-                // 避免切 IDE 或 CLI 写入共享 Keyring 时连带污染 App 显示状态。
-                if !matches!(idx_target.as_deref(), Some("agy" | "ide"))
-                    || (k_id_opt.is_some() && idx_app == *k_id_opt)
-                {
+            if let Some((ref k_id_opt, ref k_email)) = shared_desktop_cred {
+                let confirmed_by_app_storage =
+                    email_eq(signals.app_storage_email.as_deref(), k_email);
+                let confirmed_by_idx_app = (k_id_opt.is_some() && signals.idx_app == *k_id_opt)
+                    || email_eq(signals.idx_app_email.as_deref(), k_email);
+
+                let matches_recent_ide_switch = signals.idx_target.as_deref() == Some("ide")
+                    && ((k_id_opt.is_some() && signals.idx_ide == *k_id_opt)
+                        || email_eq(signals.idx_ide_email.as_deref(), k_email)
+                        || email_eq(status.ide_account.as_deref(), k_email));
+                let matches_recent_agy_switch = signals.idx_target.as_deref() == Some("agy")
+                    && ((k_id_opt.is_some() && signals.idx_agy == *k_id_opt)
+                        || email_eq(signals.idx_agy_email.as_deref(), k_email));
+
+                let has_distinct_app_record =
+                    signals.app_storage_email.is_some() || signals.idx_app.is_some();
+
+                let allow_shared_cred = if confirmed_by_app_storage || confirmed_by_idx_app {
+                    true
+                } else if matches_recent_ide_switch {
+                    // Antigravity 2.0+ 与 Antigravity IDE 2.6+ 共享系统 Keyring：
+                    // 若 App 已安装/运行且无冲突的专属记录，直接反映真实生效的共享 Keyring；
+                    // 若 App 未安装，或已有明确不同的 App 专属记录，则避免误覆盖。
+                    app_present && !has_distinct_app_record
+                } else if matches_recent_agy_switch {
+                    status.app_running && !has_distinct_app_record
+                } else {
+                    // classic/all/外部原生登录（或 Keyring 与最近 ide/agy 切换账号不同）
+                    app_present || (status.ide_account.is_none() && signals.idx_agy.is_none())
+                };
+
+                if allow_shared_cred {
                     status.app_account = Some(k_email.clone());
                 }
             }
-        } else {
-            if let Some(app_rt) =
-                switcher::SwitchEngine::extract_refresh_token_from_sqlite("Antigravity")
-            {
-                if let Some((_, email)) = find_by_rt(&app_rt) {
-                    status.app_account = Some(email);
-                }
+
+            if status.app_account.is_none() {
+                status.app_account = signals.app_storage_email.clone();
             }
             if status.app_account.is_none() {
-                status.app_account =
-                    switcher::SwitchEngine::read_account_from_sqlite("Antigravity");
+                status.app_account = signals.idx_app_email.clone();
             }
-        }
-        if status.app_account.is_none() {
-            if let Some(ref id) = idx_app {
-                status.app_account = find_email_by_id(id);
+            if status.app_account.is_none() && status.app_version.is_none() {
+                status.app_account = signals.classic_sqlite_email.clone();
             }
+        } else {
+            status.app_account = signals
+                .classic_sqlite_email
+                .or(signals.app_storage_email.clone())
+                .or(signals.idx_app_email.clone());
         }
 
-        // 4. Antigravity CLI (agy)：优先读取 ~/.gemini/antigravity-cli/antigravity-oauth-token，不盲目用 Keyring 污染未配置的 CLI
-        if let Some((_, cli_email)) =
-            switcher::SwitchEngine::read_cli_exclusive_credential().and_then(resolve_cred)
-        {
+        // 3. Antigravity CLI (agy)：
+        // 优先专属文件 antigravity-oauth-token；原生 agy CLI 在无独立文件时直接读取系统 Keyring，
+        // 仅当确认本机使用过/运行着 CLI 时才认领共享 Keyring，避免污染未安装 CLI 的环境。
+        let cli_present = status.agy_running || signals.cli_dir_exists || signals.idx_agy.is_some();
+        if let Some((_, cli_email)) = signals.cli_exclusive_resolved {
             status.agy_account = Some(cli_email);
-        } else if let Some((ref k_id_opt, ref k_email)) = keyring_resolved {
-            if idx_target.as_deref() == Some("agy") || (k_id_opt.is_some() && idx_agy == *k_id_opt)
-            {
+        } else if let Some((ref k_id_opt, ref k_email)) = signals.keyring_resolved {
+            let explicit_agy = signals.idx_target.as_deref() == Some("agy")
+                || (k_id_opt.is_some() && signals.idx_agy == *k_id_opt)
+                || email_eq(signals.idx_agy_email.as_deref(), k_email);
+            if explicit_agy || (cli_present && signals.idx_agy.is_none()) {
                 status.agy_account = Some(k_email.clone());
             }
         }
         if status.agy_account.is_none() {
-            if let Some(ref id) = idx_agy {
-                status.agy_account = find_email_by_id(id);
+            status.agy_account = signals.idx_agy_email.clone();
+        }
+        if status.agy_account.is_none() && cli_present {
+            if let Some((_, fb_email)) = signals.cli_fallback_resolved {
+                status.agy_account = Some(fb_email);
             }
         }
 
-        // 5. ACP 插件 (Plugin)：优先读取 ~/.gemini/antigravity-acp/acp_token.json 真实 RT
-        if let Some((_, acp_email)) =
-            switcher::SwitchEngine::read_acp_plugin_credential().and_then(resolve_cred)
-        {
+        // 4. ACP 插件 (Plugin)：优先 acp_token.json / macOS Keychain (gemini:antigravity-acp) -> idx_acp
+        if let Some((_, acp_email)) = signals.acp_resolved {
             status.plugin_account = Some(acp_email);
         }
         if status.plugin_account.is_none() {
-            if let Some(ref id) = idx_acp {
-                status.plugin_account = find_email_by_id(id);
-            }
+            status.plugin_account = signals.idx_acp_email;
         }
 
-        // 6. 兼容旧版单一 current_account_id 兜底
+        // 5. 兼容旧版单一 current_account_id 兜底
         if status.app_account.is_none()
             && status.ide_account.is_none()
             && status.agy_account.is_none()
             && status.plugin_account.is_none()
         {
-            if let Some(ref curr_id) = idx_curr {
-                if let Some(email) = find_email_by_id(curr_id) {
-                    match idx_target.as_deref() {
-                        Some("ide") => status.ide_account = Some(email),
-                        Some("agy" | "cli") => status.agy_account = Some(email),
-                        Some("acp" | "plugin") => status.plugin_account = Some(email),
-                        _ => status.app_account = Some(email),
-                    }
+            if let Some(email) = signals.idx_curr_email {
+                match signals.idx_target.as_deref() {
+                    Some("ide") => status.ide_account = Some(email),
+                    Some("agy" | "cli") => status.agy_account = Some(email),
+                    Some("acp" | "plugin") => status.plugin_account = Some(email),
+                    _ => status.app_account = Some(email),
                 }
             }
         }
-
-        status
     }
 
     /// 解除账号的 403 / 验证锁定
@@ -1268,4 +1376,199 @@ pub struct SystemInfo {
     pub cli_installed: bool,
     pub cli_path: String,
     pub cli_live: bool,
+}
+
+#[derive(Debug, Default)]
+struct HostCredentialSignals {
+    idx_target: Option<String>,
+    idx_curr_email: Option<String>,
+    idx_app: Option<String>,
+    idx_app_email: Option<String>,
+    idx_ide: Option<String>,
+    idx_ide_email: Option<String>,
+    idx_agy: Option<String>,
+    idx_agy_email: Option<String>,
+    idx_acp_email: Option<String>,
+    ide_sqlite_email: Option<String>,
+    ide_app_storage_email: Option<String>,
+    keyring_resolved: Option<(Option<String>, String)>,
+    standalone_resolved: Option<(Option<String>, String)>,
+    app_storage_email: Option<String>,
+    classic_sqlite_email: Option<String>,
+    cli_dir_exists: bool,
+    cli_exclusive_resolved: Option<(Option<String>, String)>,
+    cli_fallback_resolved: Option<(Option<String>, String)>,
+    acp_resolved: Option<(Option<String>, String)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_status() -> ActiveHostStatus {
+        ActiveHostStatus {
+            app_account: None,
+            app_running: false,
+            app_version: None,
+            ide_account: None,
+            ide_running: false,
+            ide_version: None,
+            plugin_account: None,
+            plugin_running: false,
+            agy_account: None,
+            agy_running: false,
+        }
+    }
+
+    #[test]
+    fn app_v2_detects_account_when_last_target_was_ide_and_idx_app_is_none() {
+        let mut status = empty_status();
+        status.app_running = true;
+        status.app_version = Some("2.35.2".to_string());
+        status.ide_running = true;
+        status.ide_version = Some("2.8.0".to_string());
+
+        AntigravityManager::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target: Some("ide".to_string()),
+                idx_ide: Some("id-c".to_string()),
+                idx_ide_email: Some("cunioson@gmail.com".to_string()),
+                ide_sqlite_email: Some("cunioson@gmail.com".to_string()),
+                keyring_resolved: Some((
+                    Some("id-c".to_string()),
+                    "cunioson@gmail.com".to_string(),
+                )),
+                app_storage_email: Some("cunioson@gmail.com".to_string()),
+                cli_dir_exists: true,
+                acp_resolved: Some((Some("id-p".to_string()), "galalnine@gmail.com".to_string())),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(status.app_account.as_deref(), Some("cunioson@gmail.com"));
+        assert_eq!(status.ide_account.as_deref(), Some("cunioson@gmail.com"));
+        assert_eq!(status.agy_account.as_deref(), Some("cunioson@gmail.com"));
+        assert_eq!(
+            status.plugin_account.as_deref(),
+            Some("galalnine@gmail.com")
+        );
+    }
+
+    #[test]
+    fn app_v2_keeps_own_account_when_ide_switches_elsewhere() {
+        let mut status = empty_status();
+        status.app_running = true;
+        status.app_version = Some("2.35.2".to_string());
+        status.ide_running = true;
+
+        AntigravityManager::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target: Some("ide".to_string()),
+                idx_app: Some("id-a".to_string()),
+                idx_app_email: Some("app@gmail.com".to_string()),
+                idx_ide: Some("id-b".to_string()),
+                idx_ide_email: Some("ide@gmail.com".to_string()),
+                ide_sqlite_email: Some("ide@gmail.com".to_string()),
+                keyring_resolved: Some((Some("id-b".to_string()), "ide@gmail.com".to_string())),
+                app_storage_email: Some("app@gmail.com".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(status.app_account.as_deref(), Some("app@gmail.com"));
+        assert_eq!(status.ide_account.as_deref(), Some("ide@gmail.com"));
+    }
+
+    #[test]
+    fn app_not_installed_is_not_polluted_by_ide_or_cli_keyring() {
+        let mut status = empty_status();
+        status.ide_running = true;
+        status.ide_version = Some("2.8.0".to_string());
+
+        AntigravityManager::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target: Some("ide".to_string()),
+                idx_ide: Some("id-b".to_string()),
+                idx_ide_email: Some("ide@gmail.com".to_string()),
+                ide_sqlite_email: Some("ide@gmail.com".to_string()),
+                keyring_resolved: Some((Some("id-b".to_string()), "ide@gmail.com".to_string())),
+                cli_dir_exists: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(status.app_account, None);
+        assert_eq!(status.ide_account.as_deref(), Some("ide@gmail.com"));
+        assert_eq!(status.agy_account, None);
+    }
+
+    #[test]
+    fn app_detects_external_native_login_even_when_idx_target_is_stale_ide() {
+        let mut status = empty_status();
+        status.app_running = true;
+        status.app_version = Some("2.35.2".to_string());
+
+        AntigravityManager::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target: Some("ide".to_string()),
+                idx_ide: Some("id-b".to_string()),
+                idx_ide_email: Some("ide@gmail.com".to_string()),
+                ide_sqlite_email: Some("ide@gmail.com".to_string()),
+                keyring_resolved: Some((None, "external@gmail.com".to_string())),
+                app_storage_email: Some("external@gmail.com".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(status.app_account.as_deref(), Some("external@gmail.com"));
+        assert_eq!(status.ide_account.as_deref(), Some("ide@gmail.com"));
+    }
+
+    #[test]
+    fn app_falls_back_to_standalone_file_or_app_storage_when_keyring_unavailable() {
+        let mut status = empty_status();
+        status.app_running = true;
+        status.app_version = Some("2.35.2".to_string());
+
+        AntigravityManager::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target: Some("ide".to_string()),
+                keyring_resolved: None,
+                standalone_resolved: None,
+                app_storage_email: Some("fallback@gmail.com".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(status.app_account.as_deref(), Some("fallback@gmail.com"));
+    }
+
+    #[test]
+    fn cli_prefers_exclusive_token_over_shared_keyring() {
+        let mut status = empty_status();
+        status.app_running = true;
+        status.app_version = Some("2.35.2".to_string());
+
+        AntigravityManager::apply_host_credential_signals(
+            &mut status,
+            HostCredentialSignals {
+                idx_target: Some("classic".to_string()),
+                keyring_resolved: Some((Some("id-app".to_string()), "app@gmail.com".to_string())),
+                cli_dir_exists: true,
+                cli_exclusive_resolved: Some((
+                    Some("id-cli".to_string()),
+                    "cli@gmail.com".to_string(),
+                )),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(status.app_account.as_deref(), Some("app@gmail.com"));
+        assert_eq!(status.agy_account.as_deref(), Some("cli@gmail.com"));
+    }
 }

@@ -7,31 +7,70 @@ use std::time::Duration;
 use sysinfo::System;
 
 impl SwitchEngine {
-    /// 解析指定应用在不同操作系统的配置存储根目录
+    /// 返回宿主目录名候选（兼容 Linux 大小写敏感、Windows/macOS 不同打包命名）
+    fn host_folder_candidates(app_folder: &str) -> Vec<&str> {
+        let mut names = vec![app_folder];
+        let defaults: &[&str] = if app_folder.contains("IDE") {
+            &[
+                "Antigravity IDE",
+                "antigravity-ide",
+                "antigravity_ide",
+                "AntigravityIDE",
+            ]
+        } else {
+            &["Antigravity", "antigravity"]
+        };
+        for name in defaults {
+            if !names.contains(name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// 解析指定应用在不同操作系统的配置存储根目录（优先尊重 Settings 自定义路径，自动兼容 Win/Linux/macOS 目录命名变体）
     pub fn resolve_app_user_storage_dir(app_folder: &str) -> Option<PathBuf> {
-        #[cfg(target_os = "macos")]
-        {
-            dirs::home_dir().map(|h| {
-                h.join("Library/Application Support")
-                    .join(app_folder)
-                    .join("User/globalStorage")
-            })
+        let is_ide = app_folder.contains("IDE");
+        let cfg = crate::config::AppConfig::load();
+        let custom = if is_ide {
+            cfg.custom_paths.ide.as_deref()
+        } else {
+            cfg.custom_paths.app.as_deref()
+        };
+        if let Some(custom_dir) = custom.map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(PathBuf::from(custom_dir));
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            dirs::config_dir().map(|c| c.join(app_folder).join("User/globalStorage"))
-        }
+        let base_dir: PathBuf = {
+            #[cfg(target_os = "macos")]
+            {
+                dirs::home_dir()?.join("Library/Application Support")
+            }
+            #[cfg(target_os = "windows")]
+            {
+                dirs::config_dir().or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))?
+            }
+            #[cfg(target_os = "linux")]
+            {
+                dirs::config_dir().or_else(|| dirs::home_dir().map(|h| h.join(".config")))?
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+            {
+                return None;
+            }
+        };
 
-        #[cfg(target_os = "linux")]
-        {
-            dirs::config_dir().map(|c| c.join(app_folder).join("User/globalStorage"))
-        }
+        let candidates: Vec<PathBuf> = Self::host_folder_candidates(app_folder)
+            .into_iter()
+            .map(|folder| base_dir.join(folder).join("User").join("globalStorage"))
+            .collect();
 
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            None
-        }
+        candidates
+            .iter()
+            .find(|p| p.join("state.vscdb").exists())
+            .or_else(|| candidates.iter().find(|p| p.exists()))
+            .cloned()
+            .or_else(|| candidates.into_iter().next())
     }
 
     /// 注入 VS Code 体系 state.vscdb（采用现代化 Protobuf Sentinel 编码与 busy_timeout 防锁）
@@ -220,6 +259,7 @@ impl SwitchEngine {
         .ok()?;
 
         // 1. 优先解析新版格式 (>= 1.16.5): antigravityUnifiedStateSync.oauthToken -> Field 3 (refresh_token)
+        //    若 oauthTokenInfoSentinelKey 未命中，回退读取同 topic 下的 authStateWithContextSentinelKey JSON token.refreshToken
         if let Ok(outer_b64) = conn.query_row::<String, _, _>(
             "SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.oauthToken'",
             [],
@@ -238,6 +278,27 @@ impl SwitchEngine {
                             if !trimmed.is_empty() {
                                 return Some(trimmed.to_string());
                             }
+                        }
+                    }
+                }
+            }
+            if let Ok((sentinel_key, auth_state_bytes)) =
+                protobuf::decode_unified_state_entry_with_target(
+                    &outer_b64,
+                    Some("authStateWithContextSentinelKey"),
+                )
+            {
+                if sentinel_key == "authStateWithContextSentinelKey" {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&auth_state_bytes)
+                    {
+                        if let Some(rt) = val
+                            .get("token")
+                            .and_then(|t| t.get("refreshToken"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            return Some(rt.to_string());
                         }
                     }
                 }
@@ -326,7 +387,7 @@ impl SwitchEngine {
             }
         }
 
-        // 2. 次选从 onboarding 用户名读取
+        // 3. 次选从 onboarding 用户名读取
         let onboarding_user: Option<String> = conn
             .query_row(
                 "SELECT value FROM ItemTable WHERE key = 'agy.onboarding.lastLoginUsername' OR key = 'jetski.onboarding.lastLoginUsername'",
@@ -336,8 +397,172 @@ impl SwitchEngine {
             .ok();
 
         if let Some(user) = onboarding_user {
-            if !user.is_empty() && user.contains('@') {
-                return Some(user);
+            let trimmed = user.trim();
+            if !trimmed.is_empty() && trimmed.contains('@') {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        // 4. 兜底从 antigravityUnifiedStateSync.oauthToken 的 id_token JWT 解析 email
+        if let Ok(outer_b64) = conn.query_row::<String, _, _>(
+            "SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.oauthToken'",
+            [],
+            |r| r.get(0),
+        ) {
+            if let Ok((sentinel_key, oauth_info_blob)) =
+                protobuf::decode_unified_state_entry_with_target(
+                    &outer_b64,
+                    Some("oauthTokenInfoSentinelKey"),
+                )
+            {
+                if sentinel_key == "oauthTokenInfoSentinelKey" {
+                    if let Ok(Some(id_token_bytes)) = protobuf::find_field(&oauth_info_blob, 5) {
+                        if let Ok(id_token) = String::from_utf8(id_token_bytes) {
+                            if let Some(email) = Self::extract_email_from_jwt(&id_token) {
+                                return Some(email);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// 收集指定宿主的标准与自定义 `app_storage.json` 候选路径（无 OS 进程表扫描，轻量极速）
+    fn collect_standard_app_storage_paths(app_folder: &str) -> Vec<PathBuf> {
+        let mut candidate_paths = Vec::new();
+        let is_ide = app_folder.contains("IDE");
+
+        // 1) 用户在 Settings 中配置的自定义存储目录（如 .../User/globalStorage 或自定义 profile 根目录）
+        let cfg = crate::config::AppConfig::load();
+        let custom = if is_ide {
+            cfg.custom_paths.ide.as_deref()
+        } else {
+            cfg.custom_paths.app.as_deref()
+        };
+        if let Some(custom_dir) = custom.map(str::trim).filter(|s| !s.is_empty()) {
+            let p = PathBuf::from(custom_dir);
+            candidate_paths.push(p.join("app_storage.json"));
+            if let Some(parent) = p.parent() {
+                candidate_paths.push(parent.join("app_storage.json"));
+                if let Some(grandparent) = parent.parent() {
+                    candidate_paths.push(grandparent.join("app_storage.json"));
+                }
+            }
+        }
+
+        // 2) 各操作系统标准安装目录
+        let folder_names = Self::host_folder_candidates(app_folder);
+
+        #[cfg(target_os = "macos")]
+        if let Some(home) = dirs::home_dir() {
+            for folder in &folder_names {
+                candidate_paths.push(
+                    home.join("Library/Application Support")
+                        .join(folder)
+                        .join("app_storage.json"),
+                );
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(app_data) =
+                dirs::data_dir().or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+            {
+                for folder in &folder_names {
+                    candidate_paths.push(app_data.join(folder).join("app_storage.json"));
+                }
+            }
+            if let Some(local_data) = dirs::data_local_dir() {
+                for folder in &folder_names {
+                    candidate_paths.push(local_data.join(folder).join("app_storage.json"));
+                }
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(config_dir) =
+            dirs::config_dir().or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        {
+            for folder in &folder_names {
+                candidate_paths.push(config_dir.join(folder).join("app_storage.json"));
+            }
+        }
+
+        candidate_paths
+    }
+
+    fn read_email_from_app_storage_file(path: &Path) -> Option<String> {
+        if !path.exists() {
+            return None;
+        }
+        let content = fs::read_to_string(path).ok()?;
+        let data: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&content).ok()?;
+        for key in [
+            "agy.onboarding.lastLoginUsername",
+            "jetski.onboarding.lastLoginUsername",
+        ] {
+            if let Some(email) = data
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && s.contains('@'))
+            {
+                return Some(email.to_string());
+            }
+        }
+        None
+    }
+
+    /// 从客户端专属 `app_storage.json` 读取当前宿主最近登录邮箱（App 与 IDE 目录完全隔离，互不串号）
+    pub fn read_app_storage_account(
+        app_folder: &str,
+        check_running_process: bool,
+    ) -> Option<String> {
+        let mut visited = std::collections::HashSet::new();
+        for path in Self::collect_standard_app_storage_paths(app_folder) {
+            if !visited.insert(path.clone()) {
+                continue;
+            }
+            if let Some(email) = Self::read_email_from_app_storage_file(&path) {
+                return Some(email);
+            }
+        }
+
+        // 若标准/自定义路径未命中且宿主正在运行，按需回退探测 --user-data-dir / Portable 模式路径
+        if check_running_process {
+            let is_ide = app_folder.contains("IDE");
+            let mut sys = System::new();
+            Self::refresh_processes_minimal(&mut sys, false);
+            let roots = if is_ide {
+                Self::get_ide_main_pids(&sys)
+            } else {
+                Self::get_classic_main_pids(&sys)
+            };
+            for pid_u32 in roots {
+                if let Some(process) = sys.process(sysinfo::Pid::from_u32(pid_u32)) {
+                    if let Some(user_data_dir) = Self::extract_user_data_dir_from_cmd(process.cmd())
+                    {
+                        let p = user_data_dir.join("app_storage.json");
+                        if visited.insert(p.clone()) {
+                            if let Some(email) = Self::read_email_from_app_storage_file(&p) {
+                                return Some(email);
+                            }
+                        }
+                    }
+                    if let Some(exe_parent) = process.exe().and_then(|p| p.parent()) {
+                        let p = exe_parent.join("data/user-data/app_storage.json");
+                        if visited.insert(p.clone()) {
+                            if let Some(email) = Self::read_email_from_app_storage_file(&p) {
+                                return Some(email);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -399,36 +624,8 @@ impl SwitchEngine {
             }
         }
 
-        // 2) 各操作系统标准安装目录
-        let folder_names = if is_ide {
-            vec!["Antigravity IDE", "antigravity-ide", "AntigravityIDE"]
-        } else {
-            vec!["Antigravity", "antigravity"]
-        };
-
-        #[cfg(target_os = "macos")]
-        if let Some(home) = dirs::home_dir() {
-            for folder in &folder_names {
-                candidate_paths.push(home.join(format!(
-                    "Library/Application Support/{}/app_storage.json",
-                    folder
-                )));
-            }
-        }
-
-        #[cfg(target_os = "windows")]
-        if let Some(app_data) = dirs::data_dir() {
-            for folder in &folder_names {
-                candidate_paths.push(app_data.join(format!("{}/app_storage.json", folder)));
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        if let Some(config_dir) = dirs::config_dir() {
-            for folder in &folder_names {
-                candidate_paths.push(config_dir.join(format!("{}/app_storage.json", folder)));
-            }
-        }
+        // 2) 各操作系统标准与自定义安装目录
+        candidate_paths.extend(Self::collect_standard_app_storage_paths(app_folder));
 
         let tos_str = if is_gcp_tos { "true" } else { "false" };
         let mut visited = std::collections::HashSet::new();

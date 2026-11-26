@@ -158,12 +158,19 @@ pub fn locate_target_executable(target: TargetHost) -> Option<PathBuf> {
             &["Antigravity"]
         };
 
+        let mut base_dirs = Vec::new();
         if let Some(local_app) = dirs::data_local_dir() {
+            base_dirs.push(local_app.join("Programs"));
+        }
+        for env_key in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(pf) = std::env::var_os(env_key) {
+                base_dirs.push(PathBuf::from(pf));
+            }
+        }
+
+        for base in base_dirs {
             for folder in folder_names {
-                let exe = local_app
-                    .join("Programs")
-                    .join(folder)
-                    .join(format!("{}.exe", folder));
+                let exe = base.join(folder).join(format!("{}.exe", folder));
                 if exe.exists() {
                     return Some(exe);
                 }
@@ -173,23 +180,32 @@ pub fn locate_target_executable(target: TargetHost) -> Option<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        let standard_roots = if is_ide {
+        let mut standard_roots: Vec<PathBuf> = if is_ide {
             vec![
-                "/opt/Antigravity IDE",
-                "/opt/antigravity-ide",
-                "/usr/share/antigravity-ide",
+                PathBuf::from("/opt/Antigravity IDE"),
+                PathBuf::from("/opt/antigravity-ide"),
+                PathBuf::from("/usr/share/antigravity-ide"),
+                PathBuf::from("/usr/lib/antigravity-ide"),
+                PathBuf::from("/usr/bin/antigravity-ide"),
             ]
         } else {
             vec![
-                "/opt/Antigravity",
-                "/opt/antigravity",
-                "/usr/share/antigravity",
-                "/usr/lib/antigravity",
+                PathBuf::from("/opt/Antigravity"),
+                PathBuf::from("/opt/antigravity"),
+                PathBuf::from("/usr/share/antigravity"),
+                PathBuf::from("/usr/lib/antigravity"),
+                PathBuf::from("/usr/bin/antigravity"),
             ]
         };
+        if let Some(home) = dirs::home_dir() {
+            if is_ide {
+                standard_roots.push(home.join(".local/share/antigravity-ide"));
+            } else {
+                standard_roots.push(home.join(".local/share/antigravity"));
+            }
+        }
 
-        for root in standard_roots {
-            let p = PathBuf::from(root);
+        for p in standard_roots {
             if p.exists() {
                 return Some(p);
             }
@@ -343,6 +359,12 @@ fn get_version_linux(exe_path: &Path) -> Result<AntigravityVersion> {
         candidate_json_paths.push(p.join("product.json"));
     };
 
+    if real_exe.is_dir() {
+        add_parent_candidates(&real_exe);
+    }
+    if exe_path.is_dir() && exe_path != real_exe.as_path() {
+        add_parent_candidates(exe_path);
+    }
     if let Some(parent) = real_exe.parent() {
         add_parent_candidates(parent);
     }

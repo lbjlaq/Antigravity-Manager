@@ -327,7 +327,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
           if (!acc) {
             return {
               id: '',
-              email: 'not_configured',
+              email: tUi(lang, 'mini_no_account'),
               name: tUi(lang, 'dash_not_linked'),
               tag: tUi(lang, 'dash_pending'),
               claude: 0,
