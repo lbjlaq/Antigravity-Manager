@@ -62,10 +62,6 @@ body:not(.mini-window) {
   background-color: #FAFBFC;
 }
 
-.dark body:not(.mini-window) {
-  background-color: #09090b;
-}
-
 /* LobeHub UI flex center fallback for @lobehub/icons avatar components */
 .lobe-flex {
   display: flex !important;
@@ -77,10 +73,11 @@ body:not(.mini-window) {
   display: block;
 }
 
-/* Dark mode override for body strictly */
+/* Dark mode override for root and body strictly */
+html.dark:not(.mini-window),
 .dark body:not(.mini-window) {
-  background-color: #0f172a;
-  color: #f8fafc;
+  background-color: #0b0c0e;
+  color: #f4f4f5;
 }
 
 #root {
@@ -253,4 +250,20 @@ a {
   font-family: 'Effra', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
+}
+
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-bounce {
+    animation: none;
+  }
 }

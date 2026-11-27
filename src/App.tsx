@@ -16,6 +16,7 @@ import { UpdateNotification } from './components/UpdateNotification';
 import SuggestionDeleteThinkingModal from './components/common/SuggestionDeleteThinkingModal';
 import DebugConsole from './components/debug/DebugConsole';
 import { useEffect, useState } from 'react';
+import { MotionConfig } from 'framer-motion';
 import { useConfigStore, normalizeLanguageCode } from './stores/useConfigStore';
 import { useAccountStore } from './stores/useAccountStore';
 import { useViewStore } from './stores/useViewStore';
@@ -101,6 +102,7 @@ function App() {
     const currentLang = normalizeLanguageCode(i18n.language);
     if (targetLang !== currentLang) {
       i18n.changeLanguage(targetLang);
+      document.documentElement.lang = targetLang;
       document.documentElement.dir = targetLang === 'ar' ? 'rtl' : 'ltr';
     }
   }, [config?.language]);
@@ -203,6 +205,7 @@ function App() {
           if (cfg.language) {
             const normalized = normalizeLanguageCode(cfg.language);
             i18n.changeLanguage(normalized);
+            document.documentElement.lang = normalized;
             document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
           }
         }
@@ -225,6 +228,7 @@ function App() {
           if (cfg.language) {
             const normalized = normalizeLanguageCode(cfg.language);
             i18n.changeLanguage(normalized);
+            document.documentElement.lang = normalized;
             document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
           }
         }
@@ -254,6 +258,7 @@ function App() {
         const lang = event.payload.language;
         const normalized = normalizeLanguageCode(lang);
         i18n.changeLanguage(normalized);
+        document.documentElement.lang = normalized;
         document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
         const current = useConfigStore.getState().config;
         if (current) {
@@ -363,31 +368,35 @@ function App() {
       }
     }
     return (
-      <AdminAuthGuard>
-        <ThemeManager />
-        <MiniView />
-      </AdminAuthGuard>
+      <MotionConfig reducedMotion="user">
+        <AdminAuthGuard>
+          <ThemeManager />
+          <MiniView />
+        </AdminAuthGuard>
+      </MotionConfig>
     );
   }
 
   return (
-    <AdminAuthGuard>
-      <ThemeManager />
-      <ZoomManager />
-      <DebugConsole />
-      <SuggestionDeleteThinkingModal />
-      {showUpdateNotification && (
-        <UpdateNotification
-          manualTrigger={isManualUpdateTrigger}
-          manualTriggerSeq={manualUpdateTriggerSeq}
-          onClose={() => {
-            setShowUpdateNotification(false);
-            setIsManualUpdateTrigger(false);
-          }}
-        />
-      )}
-      <RouterProvider router={router} />
-    </AdminAuthGuard>
+    <MotionConfig reducedMotion="user">
+      <AdminAuthGuard>
+        <ThemeManager />
+        <ZoomManager />
+        <DebugConsole />
+        <SuggestionDeleteThinkingModal />
+        {showUpdateNotification && (
+          <UpdateNotification
+            manualTrigger={isManualUpdateTrigger}
+            manualTriggerSeq={manualUpdateTriggerSeq}
+            onClose={() => {
+              setShowUpdateNotification(false);
+              setIsManualUpdateTrigger(false);
+            }}
+          />
+        )}
+        <RouterProvider router={router} />
+      </AdminAuthGuard>
+    </MotionConfig>
   );
 }
 

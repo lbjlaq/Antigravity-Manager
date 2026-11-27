@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, startTransition } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId, startTransition } from 'react';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../utils/request';
 import { isTauri } from '../utils/env';
@@ -100,57 +100,61 @@ function CollapsibleCard({
     allowInteractionWhenDisabled = false,
 }: CollapsibleCardProps) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+    const panelId = useId();
     const { t } = useTranslation();
 
     return (
         <div className="bg-white dark:bg-base-100 rounded-xl shadow-xs border border-gray-200/80 dark:border-base-200 overflow-hidden transition-all duration-200 hover:shadow-sm">
-            <div
-                className="px-5 py-3.5 flex items-center justify-between cursor-pointer bg-gray-50/70 dark:bg-base-200 hover:bg-gray-100/70 dark:hover:bg-base-300/70 transition-colors"
-                onClick={(e) => {
-                    // Prevent toggle when clicking the switch or right element
-                    if ((e.target as HTMLElement).closest('.no-expand')) return;
-                    setIsExpanded(!isExpanded);
-                }}
-            >
-                <div className="flex items-center gap-3">
-                    <div className="text-gray-500 dark:text-gray-400">
+            <div className="px-5 py-3.5 flex items-center justify-between gap-3 bg-gray-50/70 dark:bg-base-200 hover:bg-gray-100/70 dark:hover:bg-base-300/70 transition-colors">
+                <button
+                    type="button"
+                    aria-expanded={isExpanded}
+                    aria-controls={panelId}
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    className="flex-1 min-w-0 flex items-center gap-3 text-start rounded-lg py-0.5 -mx-1.5 px-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                    <div className="text-gray-500 dark:text-gray-400 shrink-0" aria-hidden="true">
                         {icon}
                     </div>
-                    <span className="font-semibold text-sm text-gray-900 dark:text-white">
+                    <span className="font-semibold text-sm text-gray-900 dark:text-white truncate">
                         {title}
                     </span>
                     {enabled !== undefined && (
-                        <div className={cn('text-xs px-2.5 py-0.5 rounded-full font-medium border', enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800/60' : 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-base-200 dark:text-gray-400 dark:border-base-300')}>
+                        <div className={cn('text-xs px-2.5 py-0.5 rounded-full font-medium border shrink-0', enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800/60' : 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-base-200 dark:text-gray-400 dark:border-base-300')}>
                             {enabled ? t('common.enabled') : t('common.disabled')}
                         </div>
                     )}
-                </div>
-
-                <div className="flex items-center gap-4 no-expand">
-                    {rightElement}
-
-                    {enabled !== undefined && onToggle && (
-                        <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                                type="checkbox"
-                                className="toggle toggle-sm bg-gray-200 dark:bg-base-300 border-gray-300 dark:border-base-300 checked:bg-blue-600 checked:border-blue-600"
-                                checked={enabled}
-                                onChange={(e) => onToggle(e.target.checked)}
-                            />
-                        </div>
-                    )}
-
-                    <button
-                        className={cn('p-1.5 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-base-200 transition-all duration-200', isExpanded ? 'rotate-180' : '')}
+                    <span
+                        className={cn('ms-auto p-1 rounded-lg text-gray-500 dark:text-gray-400 transition-transform duration-200 shrink-0', isExpanded ? 'rotate-180' : '')}
+                        aria-hidden="true"
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="m6 9 6 6 6-6" />
                         </svg>
-                    </button>
-                </div>
+                    </span>
+                </button>
+
+                {(rightElement || (enabled !== undefined && onToggle)) && (
+                    <div className="flex items-center gap-4 shrink-0">
+                        {rightElement}
+
+                        {enabled !== undefined && onToggle && (
+                            <div className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    aria-label={title}
+                                    className="toggle toggle-sm bg-gray-200 dark:bg-base-300 border-gray-300 dark:border-base-300 checked:bg-blue-600 checked:border-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                                    checked={enabled}
+                                    onChange={(e) => onToggle(e.target.checked)}
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <div
+                id={panelId}
                 className={`transition-all duration-300 ease-in-out border-t border-gray-200/80 dark:border-base-200 ${isExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'
                     }`}
             >
