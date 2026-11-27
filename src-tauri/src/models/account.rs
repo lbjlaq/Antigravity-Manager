@@ -105,6 +105,84 @@ pub(crate) fn resolve_model_priority_group(
     }
 }
 
+/// 账号级模型访问策略模式 (Fixes #4004)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelAccessMode {
+    #[default]
+    All,
+    Allow,
+    Deny,
+}
+
+/// 账号级模型访问控制规则配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ModelAccessRule {
+    #[serde(default)]
+    pub mode: ModelAccessMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<String>,
+}
+
+impl ModelAccessRule {
+    /// 判定指定模型是否满足该账号的模型访问规则
+    pub fn allows(&self, model: &str) -> bool {
+        match self.mode {
+            ModelAccessMode::All => true,
+            ModelAccessMode::Allow => {
+                if self.patterns.is_empty() {
+                    false
+                } else {
+                    self.patterns.iter().any(|p| wildcard_match(p, model))
+                }
+            }
+            ModelAccessMode::Deny => {
+                if self.patterns.is_empty() {
+                    true
+                } else {
+                    !self.patterns.iter().any(|p| wildcard_match(p, model))
+                }
+            }
+        }
+    }
+}
+
+/// 高性能通用通配符匹配算法（支持 `*` 匹配零或多个字符、`?` 匹配单个字符，大小写不敏感，O(1) 辅助内存，零堆分配）
+pub fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p_bytes = pattern.trim().as_bytes();
+    let t_bytes = text.trim().as_bytes();
+    let mut p_idx = 0;
+    let mut t_idx = 0;
+    let mut star_idx = None;
+    let mut match_idx = 0;
+
+    while t_idx < t_bytes.len() {
+        if p_idx < p_bytes.len()
+            && (p_bytes[p_idx] == b'?'
+                || p_bytes[p_idx].to_ascii_lowercase() == t_bytes[t_idx].to_ascii_lowercase())
+        {
+            p_idx += 1;
+            t_idx += 1;
+        } else if p_idx < p_bytes.len() && p_bytes[p_idx] == b'*' {
+            star_idx = Some(p_idx);
+            match_idx = t_idx;
+            p_idx += 1;
+        } else if let Some(star) = star_idx {
+            p_idx = star + 1;
+            match_idx += 1;
+            t_idx = match_idx;
+        } else {
+            return false;
+        }
+    }
+
+    while p_idx < p_bytes.len() && p_bytes[p_idx] == b'*' {
+        p_idx += 1;
+    }
+
+    p_idx == p_bytes.len()
+}
+
 /// Iteratively strip known thinking/tier suffixes (e.g. `gemini-4-hydrogen-tiered-high`
 /// -> `gemini-4-hydrogen-tiered` -> `gemini-4-hydrogen`).
 fn strip_all_tier_suffixes(model: &str) -> Vec<String> {
@@ -659,6 +737,9 @@ pub struct Account {
         deserialize_with = "deserialize_model_priorities"
     )]
     pub model_priorities: HashMap<String, u8>,
+    /// Optional account-level model access whitelist/blacklist rule (Fixes #4004)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_access: Option<ModelAccessRule>,
     pub token: TokenData,
     /// 可选的设备指纹，用于切换账号时固定机器信息
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -760,6 +841,7 @@ impl Account {
             name: None,
             priority: default_priority(),
             model_priorities: HashMap::new(),
+            model_access: None,
             token,
             device_profile: None,
             device_history: Vec::new(),
@@ -2178,5 +2260,75 @@ mod tests {
 
         account.validation_blocked_until = Some(0);
         assert!(account.is_validation_block_active(999));
+    }
+
+    #[test]
+    fn test_wildcard_match_patterns() {
+        // 精确匹配
+        assert!(wildcard_match("claude-3-7-sonnet", "claude-3-7-sonnet"));
+        assert!(!wildcard_match("claude-3-7-sonnet", "claude-3-5-sonnet"));
+
+        // 大小写不敏感
+        assert!(wildcard_match("Claude-*", "claude-3-7-sonnet"));
+        assert!(wildcard_match("gemini-*", "GEMINI-2.5-PRO"));
+
+        // 单星号全匹配
+        assert!(wildcard_match("*", "anything"));
+        assert!(wildcard_match("*", ""));
+
+        // 前缀通配
+        assert!(wildcard_match("claude*", "claude-3-5-sonnet"));
+        assert!(wildcard_match("claude-*", "claude-3-5-sonnet"));
+        assert!(!wildcard_match("claude-*", "gemini-flash"));
+
+        // 后缀通配
+        assert!(wildcard_match("*-flash", "gemini-2.5-flash"));
+        assert!(wildcard_match("*-flash*", "gemini-2.5-flash-thinking"));
+
+        // 包含通配
+        assert!(wildcard_match("*pro*", "gemini-2.5-pro"));
+        assert!(wildcard_match("*pro*", "claude-3-pro-max"));
+        assert!(!wildcard_match("*pro*", "gemini-flash"));
+
+        // 问号单字符匹配
+        assert!(wildcard_match("gemini-?.?-flash", "gemini-2.5-flash"));
+        assert!(!wildcard_match("gemini-?.?-flash", "gemini-20.5-flash"));
+
+        // 多星号混合
+        assert!(wildcard_match(
+            "gemini-*-flash-*",
+            "gemini-2.5-flash-thinking"
+        ));
+        assert!(!wildcard_match("gemini-*-flash-*", "gemini-2.5-flash"));
+    }
+
+    #[test]
+    fn test_model_access_rules() {
+        // Mode::All 默认允许所有
+        let all_rule = ModelAccessRule {
+            mode: ModelAccessMode::All,
+            patterns: vec!["claude*".into()],
+        };
+        assert!(all_rule.allows("claude-3-7-sonnet"));
+        assert!(all_rule.allows("gemini-2.5-pro"));
+
+        // Mode::Allow 白名单
+        let allow_rule = ModelAccessRule {
+            mode: ModelAccessMode::Allow,
+            patterns: vec!["claude*".into(), "gemini-*-flash*".into()],
+        };
+        assert!(allow_rule.allows("claude-3-5-sonnet"));
+        assert!(allow_rule.allows("gemini-2.5-flash-thinking"));
+        assert!(!allow_rule.allows("gemini-2.5-pro"));
+
+        // Mode::Deny 黑名单
+        let deny_rule = ModelAccessRule {
+            mode: ModelAccessMode::Deny,
+            patterns: vec!["*opus*".into(), "gemini-*-pro*".into()],
+        };
+        assert!(!deny_rule.allows("claude-opus-4-6"));
+        assert!(!deny_rule.allows("gemini-2.5-pro"));
+        assert!(deny_rule.allows("claude-3-5-sonnet"));
+        assert!(deny_rule.allows("gemini-2.5-flash"));
     }
 }

@@ -726,6 +726,12 @@ pub async fn save_config(
         tracing::debug!("已同步热更新管理服务器 (Admin Server) 配置");
     }
 
+    // [NEW Issue #4004] 同步热更新所有活跃 TokenManager 的模型账号绑定规则
+    for tm in proxy_state.active_token_managers().await {
+        tm.update_model_bindings(config.proxy.model_bindings.clone())
+            .await;
+    }
+
     Ok(())
 }
 
@@ -1763,6 +1769,59 @@ pub async fn update_account_label(account_id: String, label: String) -> Result<(
             label
         }
     ));
+
+    Ok(())
+}
+
+/// 更新账号模型访问规则 (Fixes #4004)
+#[tauri::command]
+pub async fn update_account_model_access(
+    account_id: String,
+    model_access: Option<crate::models::account::ModelAccessRule>,
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+) -> Result<(), String> {
+    modules::logger::log_info(&format!(
+        "更新账号模型访问规则: {} -> {:?}",
+        account_id, model_access
+    ));
+
+    // 1. 读取账号文件
+    let data_dir = modules::account::get_data_dir()?;
+    let account_path = data_dir
+        .join("accounts")
+        .join(format!("{}.json", account_id));
+
+    if !account_path.exists() {
+        return Err(format!("账号文件不存在: {}", account_id));
+    }
+
+    let content =
+        std::fs::read_to_string(&account_path).map_err(|e| format!("读取账号文件失败: {}", e))?;
+
+    let mut account_json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析账号文件失败: {}", e))?;
+
+    // 2. 更新 model_access 字段
+    match &model_access {
+        Some(rule) => {
+            account_json["model_access"] =
+                serde_json::to_value(rule).map_err(|e| format!("序列化模型访问规则失败: {}", e))?;
+        }
+        None => {
+            account_json["model_access"] = serde_json::Value::Null;
+        }
+    }
+
+    // 3. 保存到磁盘
+    let json_str = serde_json::to_string_pretty(&account_json)
+        .map_err(|e| format!("序列化账号数据失败: {}", e))?;
+    std::fs::write(&account_path, json_str).map_err(|e| format!("写入账号文件失败: {}", e))?;
+
+    // 4. 通知 TokenManager 重新加载该账号
+    crate::proxy::server::trigger_account_reload(&account_id);
+    for tm in proxy_state.active_token_managers().await {
+        let _ = tm.reload_account(&account_id).await;
+    }
 
     Ok(())
 }

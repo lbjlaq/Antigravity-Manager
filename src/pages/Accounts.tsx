@@ -60,6 +60,7 @@ function Accounts() {
     warmUpAccount,
     updateAccountLabel,
     updateAccountPriority,
+    updateAccountModelAccess,
     updateAccountProjectId,
     autoFetchAccountProjectId,
   } = useAccountStore();
@@ -1239,6 +1240,7 @@ function Accounts() {
         account={accounts.find(a => a.id === detailsAccount?.id) || null}
         onClose={() => setDetailsAccount(null)}
         onUpdatePriority={updateAccountPriority}
+        onUpdateModelAccess={updateAccountModelAccess}
         onUpdateProjectId={updateAccountProjectId}
         onAutoFetchProjectId={autoFetchAccountProjectId}
       />

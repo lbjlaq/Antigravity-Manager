@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Account, ActiveClientsStatus, ModelPriorities } from '../types/account';
+import { Account, ActiveClientsStatus, ModelPriorities, ModelAccessRule } from '../types/account';
 import * as accountService from '../services/accountService';
 import {
     sanitizeAccountForCache,
@@ -40,6 +40,7 @@ interface AccountState {
     warmUpAccount: (accountId: string) => Promise<string>;
     updateAccountLabel: (accountId: string, label: string) => Promise<void>;
     updateAccountPriority: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>;
+    updateAccountModelAccess: (accountId: string, modelAccess: ModelAccessRule | null) => Promise<void>;
     updateAccountProjectId: (accountId: string, projectId: string) => Promise<void>;
     autoFetchAccountProjectId: (accountId: string) => Promise<string>;
     removeForbiddenModel: (accountId: string, model?: string) => Promise<boolean>;
@@ -474,6 +475,21 @@ export const useAccountStore = create<AccountState>((set, get) => ({
                                 }
                               : {}),
                       }
+                    : state.currentAccount,
+        }));
+    },
+
+    updateAccountModelAccess: async (accountId, modelAccess) => {
+        await accountService.updateAccountModelAccess(accountId, modelAccess);
+        set(state => ({
+            accounts: state.accounts.map(account =>
+                account.id === accountId
+                    ? { ...account, model_access: modelAccess || undefined }
+                    : account
+            ),
+            currentAccount:
+                state.currentAccount?.id === accountId
+                    ? { ...state.currentAccount, model_access: modelAccess || undefined }
                     : state.currentAccount,
         }));
     },

@@ -215,9 +215,18 @@ pub struct ProxyToken {
     pub is_gcp_tos: bool,
     /// [NEW Issue #3960] 原始未归一化的订阅等级代码 (如 "GCP_GE_PAYGO_TIER")
     pub raw_tier: Option<String>,
+    /// [NEW Issue #4004] 账号级模型访问规则 (All / Allow / Deny)
+    pub model_access: Option<crate::models::account::ModelAccessRule>,
 }
 
 impl ProxyToken {
+    /// 目标模型是否允许被该账号访问 (Fixes #4004)
+    pub fn allows_model(&self, model: &str) -> bool {
+        self.model_access
+            .as_ref()
+            .map_or(true, |rule| rule.allows(model))
+    }
+
     /// 判定当前账号是否处于 GCP PAYGO 计费层级或具备企业自费项目
     pub fn is_paygo(&self) -> bool {
         if let Some(ref raw) = self.raw_tier {
@@ -402,6 +411,7 @@ pub struct TokenManager {
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
     session_accounts: Arc<DashMap<String, SessionAccountBinding>>, // 新增：会话与账号映射 (SessionID -> AccountID, TTL + cap)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
+    model_bindings: Arc<tokio::sync::RwLock<Vec<crate::proxy::config::ModelAccountBinding>>>, // [NEW Issue #4004] 模型账号绑定规则
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
 
     // [NEW] 按账号分配的同步刷新锁。
@@ -461,6 +471,7 @@ impl TokenManager {
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
+            model_bindings: Arc::new(tokio::sync::RwLock::new(Vec::new())), // [NEW Issue #4004]
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
                 crate::models::CircuitBreakerConfig::default(),
             )),
@@ -2754,6 +2765,10 @@ impl TokenManager {
             model_quota_windows,
             is_gcp_tos,
             raw_tier,
+            model_access: account
+                .get("model_access")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok()),
         }))
     }
 
@@ -4462,6 +4477,77 @@ impl TokenManager {
                 );
             }
             return Err(self.empty_pool_error());
+        }
+
+        // [NEW Issue #4004] 账号级模型访问规则过滤 (Account-level Model Access Rule)
+        tokens_snapshot.retain(|t| t.allows_model(target_model));
+        if tokens_snapshot.is_empty() {
+            tracing::warn!(
+                "[Scheduler] All accounts rejected target model '{}' by account-level model access rules",
+                target_model
+            );
+            return Err(format!(
+                "No accounts allowed to access model '{}' due to account-level access rules",
+                target_model
+            ));
+        }
+
+        // [NEW Issue #4004] 全局模型账号绑定处理 (Model Account Bindings - 特异性仲裁与两阶段收敛)
+        if let Some(binding) = self.find_best_model_binding(target_model).await {
+            match binding.policy {
+                crate::proxy::config::ModelBindingPolicy::Exclusive => {
+                    let before_count = tokens_snapshot.len();
+                    tokens_snapshot.retain(|t| binding.account_ids.contains(&t.account_id));
+                    if tokens_snapshot.is_empty() {
+                        tracing::warn!(
+                            "[Scheduler] Target model '{}' is exclusively bound to {:?}, but none of those accounts are active/eligible in pool (candidates before: {})",
+                            target_model,
+                            binding.account_ids,
+                            before_count
+                        );
+                        return Err(format!(
+                            "Exclusive model binding for '{}' has no active or eligible accounts in pool (configured: {:?}, available before filter: {})",
+                            target_model, binding.account_ids, before_count
+                        ));
+                    }
+                }
+                crate::proxy::config::ModelBindingPolicy::Priority => {
+                    // 两阶段候选集收敛：若绑定的优先账号子集中有未限流、未进 QoS 小黑屋且具备有效额度的账号，优先收敛
+                    let priority_candidates: Vec<ProxyToken> = tokens_snapshot
+                        .iter()
+                        .filter(|t| binding.account_ids.contains(&t.account_id))
+                        .cloned()
+                        .collect();
+
+                    let norm_target =
+                        crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                            .unwrap_or_else(|| target_model.to_string());
+
+                    let has_healthy_priority = priority_candidates.iter().any(|t| {
+                        !self
+                            .rate_limit_tracker
+                            .is_rate_limited(&t.account_id, Some(&norm_target))
+                            && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
+                            && Self::has_candidate_quota_admission(t, &norm_target)
+                    });
+
+                    if has_healthy_priority {
+                        tracing::debug!(
+                            "[Scheduler] Target model '{}' soft-pinned to priority accounts {:?}, converging to {} healthy candidate(s)",
+                            target_model,
+                            binding.account_ids,
+                            priority_candidates.len()
+                        );
+                        tokens_snapshot = priority_candidates;
+                    } else {
+                        tracing::info!(
+                            "[Scheduler] Priority accounts {:?} for model '{}' are busy/exhausted, gracefully falling back to general pool",
+                            binding.account_ids,
+                            target_model
+                        );
+                    }
+                }
+            }
         }
 
         // [NEW] 1. 动态能力过滤 (Capability-First Dynamic Discovery)
@@ -7705,6 +7791,64 @@ impl TokenManager {
         self.preferred_account_id.read().await.clone()
     }
 
+    /// 更新模型账号绑定规则列表 (Fixes #4004)
+    pub async fn update_model_bindings(
+        &self,
+        bindings: Vec<crate::proxy::config::ModelAccountBinding>,
+    ) {
+        let mut slot = self.model_bindings.write().await;
+        tracing::info!(
+            "[Scheduler] Updated model account bindings: {} rule(s)",
+            bindings.len()
+        );
+        *slot = bindings;
+    }
+
+    /// 获取当前模型账号绑定规则列表
+    pub async fn get_model_bindings(&self) -> Vec<crate::proxy::config::ModelAccountBinding> {
+        self.model_bindings.read().await.clone()
+    }
+
+    /// 查找与目标模型最匹配的绑定规则（特异性最高者胜出；同特异性下 Exclusive 强绑定优于 Priority，Fixes #4004）
+    pub async fn find_best_model_binding(
+        &self,
+        target_model: &str,
+    ) -> Option<crate::proxy::config::ModelAccountBinding> {
+        let bindings = self.model_bindings.read().await;
+        let mut best: Option<(usize, bool, crate::proxy::config::ModelAccountBinding)> = None;
+
+        for b in bindings
+            .iter()
+            .filter(|b| b.enabled && !b.account_ids.is_empty())
+        {
+            if crate::models::account::wildcard_match(&b.pattern, target_model) {
+                let specificity = b.pattern.chars().count()
+                    - b.pattern.matches('*').count()
+                    - b.pattern.matches('?').count();
+                let is_exclusive = b.policy == crate::proxy::config::ModelBindingPolicy::Exclusive;
+
+                let should_replace = match &best {
+                    None => true,
+                    Some((best_spec, best_exclusive, _)) => {
+                        if specificity > *best_spec {
+                            true
+                        } else if specificity == *best_spec {
+                            is_exclusive && !*best_exclusive
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if should_replace {
+                    best = Some((specificity, is_exclusive, b.clone()));
+                }
+            }
+        }
+
+        best.map(|(_, _, b)| b)
+    }
+
     /// 使用 Authorization Code 交换 Refresh Token (Web OAuth)
     pub async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<String, String> {
         crate::modules::oauth::exchange_code(code, redirect_uri)
@@ -10168,6 +10312,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         }
     }
 
@@ -10561,6 +10706,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         }
     }
 
@@ -11192,6 +11338,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
 
         // 账号 2: PRO 订阅，经定时刷新成功上报 Claude 5.5 模型配额
@@ -11232,6 +11379,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
 
         // 验证辅助函数检测
@@ -11452,6 +11600,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
 
         std::fs::write(
@@ -11530,6 +11679,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
 
         manager.tokens.insert(token.account_id.clone(), token);
@@ -13184,6 +13334,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
 
         manager.tokens.insert(token.account_id.clone(), token);
@@ -15108,6 +15259,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
         manager.tokens.insert("acc-active".to_string(), tok);
         let future_reset =
@@ -15189,6 +15341,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         };
         manager.tokens.insert("acc-toggle".to_string(), tok);
         manager
@@ -15416,6 +15569,7 @@ mod tests {
             model_quota_windows: HashMap::new(),
             is_gcp_tos: false,
             raw_tier: None,
+            model_access: None,
         }
     }
 
@@ -15689,6 +15843,183 @@ mod tests {
             "session_accounts exceeded hard cap: {} > {}",
             manager.session_accounts_len(),
             MAX_SESSION_ACCOUNTS
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_model_binding_specificity_arbitration() {
+        let manager = TokenManager::new(PathBuf::from("/tmp/test_binding"));
+        let bindings = vec![
+            crate::proxy::config::ModelAccountBinding {
+                id: "b1".to_string(),
+                pattern: "gemini-*".to_string(),
+                account_ids: vec!["acc1".to_string()],
+                policy: crate::proxy::config::ModelBindingPolicy::Priority,
+                enabled: true,
+            },
+            crate::proxy::config::ModelAccountBinding {
+                id: "b2".to_string(),
+                pattern: "gemini-*-pro*".to_string(),
+                account_ids: vec!["acc2".to_string()],
+                policy: crate::proxy::config::ModelBindingPolicy::Exclusive,
+                enabled: true,
+            },
+            crate::proxy::config::ModelAccountBinding {
+                id: "b3".to_string(),
+                pattern: "claude*".to_string(),
+                account_ids: vec!["acc3".to_string()],
+                policy: crate::proxy::config::ModelBindingPolicy::Priority,
+                enabled: true,
+            },
+            crate::proxy::config::ModelAccountBinding {
+                id: "b4".to_string(),
+                pattern: "claude*".to_string(),
+                account_ids: vec!["acc4".to_string()],
+                policy: crate::proxy::config::ModelBindingPolicy::Exclusive,
+                enabled: true,
+            },
+        ];
+        manager.update_model_bindings(bindings).await;
+
+        // gemini-2.5-pro 命中 b1 和 b2，b2 (gemini-*-pro*) 特异性更高胜出，策略应为 Exclusive
+        let best_gemini = manager.find_best_model_binding("gemini-2.5-pro").await;
+        assert!(best_gemini.is_some());
+        assert_eq!(best_gemini.as_ref().unwrap().id, "b2");
+        assert_eq!(
+            best_gemini.as_ref().unwrap().policy,
+            crate::proxy::config::ModelBindingPolicy::Exclusive
+        );
+
+        // gemini-2.5-flash 仅命中 b1
+        let best_flash = manager.find_best_model_binding("gemini-2.5-flash").await;
+        assert!(best_flash.is_some());
+        assert_eq!(best_flash.as_ref().unwrap().id, "b1");
+
+        // claude-3-7-sonnet 命中 b3 和 b4 (特异性相同)，同特异性下 Exclusive (b4) 优先于 Priority (b3)
+        let best_claude = manager.find_best_model_binding("claude-3-7-sonnet").await;
+        assert!(best_claude.is_some());
+        assert_eq!(best_claude.as_ref().unwrap().id, "b4");
+        assert_eq!(
+            best_claude.as_ref().unwrap().policy,
+            crate::proxy::config::ModelBindingPolicy::Exclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_account_model_access_and_binding_pipeline() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-pipeline-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        // 账号 1: 仅允许 Claude 系列白名单
+        let acc1_json = serde_json::json!({
+            "id": "acc-claude-only",
+            "email": "claude@test.com",
+            "token": {
+                "access_token": "atk1",
+                "refresh_token": "rtk1",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "disabled": false,
+            "quota": {
+                "models": [
+                    { "name": "claude-3-7-sonnet", "percentage": 100, "reset_time": "2026-12-31T00:00:00Z" },
+                    { "name": "gemini-2.5-flash", "percentage": 100, "reset_time": "2026-12-31T00:00:00Z" }
+                ]
+            },
+            "model_access": {
+                "mode": "allow",
+                "patterns": ["claude*"]
+            },
+            "created_at": now,
+            "last_used": now
+        });
+
+        // 账号 2: 禁用 Claude 黑名单（仅跑 Gemini）
+        let acc2_json = serde_json::json!({
+            "id": "acc-gemini-only",
+            "email": "gemini@test.com",
+            "token": {
+                "access_token": "atk2",
+                "refresh_token": "rtk2",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "disabled": false,
+            "quota": {
+                "models": [
+                    { "name": "claude-3-7-sonnet", "percentage": 100, "reset_time": "2026-12-31T00:00:00Z" },
+                    { "name": "gemini-2.5-flash", "percentage": 100, "reset_time": "2026-12-31T00:00:00Z" }
+                ]
+            },
+            "model_access": {
+                "mode": "deny",
+                "patterns": ["claude*"]
+            },
+            "created_at": now,
+            "last_used": now
+        });
+
+        std::fs::write(
+            accounts_dir.join("acc-claude-only.json"),
+            serde_json::to_string_pretty(&acc1_json).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            accounts_dir.join("acc-gemini-only.json"),
+            serde_json::to_string_pretty(&acc2_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+
+        let excluded = HashSet::new();
+
+        // 1. 请求 claude-3-7-sonnet: 只有 acc-claude-only 允许，acc-gemini-only 应该被过滤
+        let (token, _, email, _, _) = manager
+            .get_token_filtered("claude", false, None, "claude-3-7-sonnet", &excluded)
+            .await
+            .unwrap();
+        assert_eq!(email, "claude@test.com");
+        assert_eq!(token, "atk1");
+
+        // 2. 请求 gemini-2.5-flash: 只有 acc-gemini-only 允许，acc-claude-only 应该被白名单过滤
+        let (token, _, email, _, _) = manager
+            .get_token_filtered("gemini", false, None, "gemini-2.5-flash", &excluded)
+            .await
+            .unwrap();
+        assert_eq!(email, "gemini@test.com");
+        assert_eq!(token, "atk2");
+
+        // 3. 配置 Exclusive 绑定: gemini-* 专属绑定给不存在的账号 acc-nobody
+        manager
+            .update_model_bindings(vec![crate::proxy::config::ModelAccountBinding {
+                id: "ex1".to_string(),
+                pattern: "gemini-*".to_string(),
+                account_ids: vec!["acc-nobody".to_string()],
+                policy: crate::proxy::config::ModelBindingPolicy::Exclusive,
+                enabled: true,
+            }])
+            .await;
+
+        // 请求 gemini-2.5-flash: 专属排他绑定拦截，清晰报错
+        let err = manager
+            .get_token_filtered("gemini", false, None, "gemini-2.5-flash", &excluded)
+            .await;
+        assert!(err.is_err());
+        let err_msg = err.unwrap_err();
+        assert!(
+            err_msg.contains("Exclusive model binding"),
+            "error message must clearly indicate exclusive binding: {}",
+            err_msg
         );
 
         let _ = std::fs::remove_dir_all(&tmp_root);

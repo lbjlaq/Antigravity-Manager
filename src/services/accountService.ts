@@ -1,5 +1,5 @@
 import i18n from '../i18n';
-import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult, ModelPriorities } from '../types/account';
+import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult, ModelPriorities, ModelAccessRule } from '../types/account';
 export type { ImportAccountEntry, BatchImportResult };
 import { request as invoke } from '../utils/request';
 import { normalizeModelPrioritiesPayload } from '../utils/modelPriority';
@@ -314,6 +314,11 @@ export async function exportAccounts(accountIds: string[]): Promise<ExportAccoun
 // 自定义标签相关
 export async function updateAccountLabel(accountId: string, label: string): Promise<void> {
     return await invoke('update_account_label', { accountId, label });
+}
+
+// 账号模型访问规则 (Fixes #4004)
+export async function updateAccountModelAccess(accountId: string, modelAccess: ModelAccessRule | null): Promise<void> {
+    return await invoke('update_account_model_access', { accountId, modelAccess });
 }
 
 // GCP 项目 ID 相关
