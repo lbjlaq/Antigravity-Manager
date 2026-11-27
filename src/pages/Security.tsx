@@ -66,32 +66,34 @@ const Security: React.FC = () => {
                 )}
             </div>
 
-            <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 mt-2">
-                <div className="flex border-b border-gray-100 dark:border-base-200">
-                    {tabs.map((tab) => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id as any)}
-                            className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors relative ${activeTab === tab.id
-                                ? 'text-blue-600 dark:text-blue-400'
-                                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-                                }`}
-                        >
-                            <tab.icon size={18} />
-                            {tab.label}
-                            {activeTab === tab.id && (
-                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400" />
-                            )}
-                        </button>
-                    ))}
+            <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 mt-2">
+                <div role="tablist" className="flex border-b border-gray-100 dark:border-base-200 shrink-0">
+                    {tabs.map((tab) => {
+                        const isSelected = activeTab === tab.id;
+                        return (
+                            <button
+                                key={tab.id}
+                                type="button"
+                                role="tab"
+                                aria-selected={isSelected}
+                                onClick={() => setActiveTab(tab.id as any)}
+                                className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${isSelected
+                                    ? 'text-blue-600 dark:text-blue-400'
+                                    : 'text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                                    }`}
+                            >
+                                <tab.icon size={18} aria-hidden="true" />
+                                {tab.label}
+                                {isSelected && (
+                                    <div className="absolute bottom-0 inset-x-0 h-0.5 bg-blue-600 dark:bg-blue-400" aria-hidden="true" />
+                                )}
+                            </button>
+                        );
+                    })}
                 </div>
-                <div className="p-0">
-                    {/* Content is rendered here, often components handle their own padding/layout */}
+                <div className="flex-1 overflow-hidden flex flex-col">
+                    {renderContent()}
                 </div>
-            </div>
-
-            <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200">
-                {renderContent()}
             </div>
         </motion.div>
     );
