@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
 import { Save, AlertTriangle, Shield, ShieldCheck } from 'lucide-react';
 import { showToast } from '../common/ToastContainer';
+import { useConfigStore } from '../../stores/useConfigStore';
 
 interface IpBlacklistConfig {
     enabled: boolean;
@@ -47,6 +48,7 @@ export const SecurityConfig: React.FC = () => {
         setSaving(true);
         try {
             await invoke('update_security_config', { config });
+            await useConfigStore.getState().loadConfig();
             showToast(t('security.config.save_success'), 'success');
         } catch (e) {
             console.error('Failed to save security config', e);

@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
+import { useConfigStore } from '../../stores/useConfigStore';
 import { Trash2, Search, X, ChevronLeft, ChevronRight, RefreshCw, User, Clock, Settings, HardDrive, Database, Check, FileWarning } from 'lucide-react';
 
 import { AppConfig, ExperimentalConfig } from '../../types/config';
@@ -733,11 +734,10 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
 
             if (config && config.proxy) {
                 setAppConfig(config);
+                useConfigStore.getState().setConfigLocal(config);
                 setIsLoggingEnabled(config.proxy.enable_logging);
                 const healthLogsEnabled = !!config.proxy.capture_health_logs;
                 setCaptureHealthLogs(healthLogsEnabled);
-                await invoke('set_proxy_monitor_enabled', { enabled: config.proxy.enable_logging });
-                await invoke('set_proxy_capture_health_logs', { enabled: healthLogsEnabled });
             }
 
             const errorsOnly = searchFilter === '__ERROR__';
@@ -807,13 +807,15 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const toggleLogging = async () => {
         const newState = !isLoggingEnabled;
         try {
-            const config = await invoke<AppConfig>('load_config');
-            if (config && config.proxy) {
-                config.proxy.enable_logging = newState;
-                await invoke('save_config', { config });
-                await invoke('set_proxy_monitor_enabled', { enabled: newState });
-                setIsLoggingEnabled(newState);
-            }
+            await invoke('set_proxy_monitor_enabled', { enabled: newState });
+            setIsLoggingEnabled(newState);
+            setAppConfig(prev =>
+                prev ? { ...prev, proxy: { ...prev.proxy, enable_logging: newState } } : prev
+            );
+            useConfigStore.getState().syncConfigLocal(cfg => ({
+                ...cfg,
+                proxy: { ...cfg.proxy, enable_logging: newState },
+            }));
         } catch (e) {
             console.error("Failed to toggle logging", e);
         }
@@ -822,14 +824,16 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const toggleCaptureHealthLogs = async () => {
         const newState = !captureHealthLogs;
         try {
-            const config = await invoke<AppConfig>('load_config');
-            if (config && config.proxy) {
-                config.proxy.capture_health_logs = newState;
-                await invoke('save_config', { config });
-                await invoke('set_proxy_capture_health_logs', { enabled: newState });
-                setCaptureHealthLogs(newState);
-                loadData(1, filter, accountFilter);
-            }
+            await invoke('set_proxy_capture_health_logs', { enabled: newState });
+            setCaptureHealthLogs(newState);
+            setAppConfig(prev =>
+                prev ? { ...prev, proxy: { ...prev.proxy, capture_health_logs: newState } } : prev
+            );
+            useConfigStore.getState().syncConfigLocal(cfg => ({
+                ...cfg,
+                proxy: { ...cfg.proxy, capture_health_logs: newState },
+            }));
+            loadData(1, filter, accountFilter);
         } catch (e) {
             console.error("Failed to toggle capture health logs", e);
         }
@@ -1067,6 +1071,13 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         setIsSavingConfig(true);
         try {
             await invoke('save_config', { config: appConfig });
+            const refreshed = await invoke<AppConfig>('load_config').catch(() => null);
+            if (refreshed && typeof refreshed === 'object' && refreshed.proxy) {
+                setAppConfig(refreshed);
+                useConfigStore.getState().setConfigLocal(refreshed);
+            } else {
+                await useConfigStore.getState().loadConfig();
+            }
             setSaveSuccess(true);
             fetchDbDiskSize();
             fetchErrorLogDiskSize();

@@ -5,6 +5,7 @@ import { X, RefreshCw, Link2, Unlink } from 'lucide-react';
 import { request } from '../../../utils/request';
 import { showToast } from '../../common/ToastContainer';
 import { useAccountStore } from '../../../stores/useAccountStore';
+import { useConfigStore } from '../../../stores/useConfigStore';
 import { ProxyEntry } from '../../../types/config';
 
 interface ProxyBindingManagerProps {
@@ -52,11 +53,34 @@ export default function ProxyBindingManager({ isOpen, onClose, proxies }: ProxyB
                 const newBindings = { ...bindings };
                 delete newBindings[accountId];
                 setBindings(newBindings);
+                useConfigStore.getState().syncConfigLocal(cfg =>
+                    cfg.proxy.proxy_pool
+                        ? {
+                              ...cfg,
+                              proxy: {
+                                  ...cfg.proxy,
+                                  proxy_pool: { ...cfg.proxy.proxy_pool, account_bindings: newBindings },
+                              },
+                          }
+                        : cfg
+                );
                 showToast(t('settings.proxy_pool.binding.unbind_success', 'Unbound successfully'), 'success');
             } else {
                 // Bind
                 await request('bind_account_proxy', { accountId, proxyId });
-                setBindings({ ...bindings, [accountId]: proxyId });
+                const newBindings = { ...bindings, [accountId]: proxyId };
+                setBindings(newBindings);
+                useConfigStore.getState().syncConfigLocal(cfg =>
+                    cfg.proxy.proxy_pool
+                        ? {
+                              ...cfg,
+                              proxy: {
+                                  ...cfg.proxy,
+                                  proxy_pool: { ...cfg.proxy.proxy_pool, account_bindings: newBindings },
+                              },
+                          }
+                        : cfg
+                );
                 showToast(t('settings.proxy_pool.binding.bind_success', 'Bound successfully'), 'success');
             }
         } catch (error) {

@@ -553,7 +553,7 @@ pub async fn save_config(
         config.proxy.saved_user_agent = Some(crate::constants::sanitize_egress_user_agent(ua));
     }
 
-    modules::save_app_config(&config)?;
+    let config = modules::config::save_generic_app_config(config)?;
 
     crate::modules::logger::set_internal_error_log_budget_bytes(
         config.proxy.internal_error_log_retention.budget_bytes(),
@@ -588,6 +588,9 @@ pub async fn save_config(
     crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
         &config.proxy.prompt_rewrite,
     );
+    crate::proxy::pipeline::rotation::set_request_429_grace_ms(
+        config.proxy.scheduling.resolve_request_429_grace_ms(),
+    );
     crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
     crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());
     crate::proxy::update_stream_timeout_config(config.proxy.stream_timeouts.clone());
@@ -601,9 +604,10 @@ pub async fn save_config(
         Some(config.proxy.experimental.enable_global_compaction_strip),
     );
 
-    // 同步健康检查日志捕获开关
+    // 同步监控开关与健康检查日志捕获开关
     let monitor_lock = proxy_state.monitor.read().await;
     if let Some(monitor) = monitor_lock.as_ref() {
+        monitor.set_enabled(config.proxy.enable_logging);
         monitor.set_capture_health_logs(config.proxy.capture_health_logs);
     }
 
@@ -668,6 +672,11 @@ pub async fn save_config(
         instance
             .token_manager
             .set_silent_mode(crate::modules::config::is_silent_mode_effective(&config));
+        // 更新调度策略配置
+        instance
+            .token_manager
+            .update_sticky_config(config.proxy.scheduling.clone())
+            .await;
         // 更新熔断配置
         instance
             .token_manager
@@ -704,6 +713,11 @@ pub async fn save_config(
             .axum_server
             .token_manager
             .set_silent_mode(crate::modules::config::is_silent_mode_effective(&config));
+        admin
+            .axum_server
+            .token_manager
+            .update_sticky_config(config.proxy.scheduling.clone())
+            .await;
         admin
             .axum_server
             .token_manager
@@ -1582,12 +1596,14 @@ pub async fn toggle_proxy_status(
             if pref_id.as_deref() == Some(&account_id) {
                 tm.set_preferred_account(None).await;
 
-                if let Ok(mut cfg) = crate::modules::config::load_app_config() {
+                let _ = crate::modules::config::update_app_config_if(|cfg| {
                     if cfg.proxy.preferred_account_id.as_deref() == Some(&account_id) {
                         cfg.proxy.preferred_account_id = None;
-                        let _ = crate::modules::config::save_app_config(&cfg);
+                        true
+                    } else {
+                        false
                     }
-                }
+                });
             }
         } else {
             // 手动重新启用时，清理遗留 QoS 隔离/失败计数/模型临时熔断/内存限流锁定
