@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, Network, Activity, BarChart3, Settings, Lock, KeyRound } from 'lucide-react';
+import { LayoutDashboard, Users, KeySquare, Network, Activity, BarChart3, Settings, Lock, KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
 import { isTauri, isLinux } from '../../utils/env';
@@ -25,7 +25,7 @@ function Navbar() {
         { path: '/apikey-fun', label: t('nav.apikey_fun', '中转站'), icon: KeyRound, priority: 'high' },
         { path: '/monitor', label: t('nav.call_records'), icon: Activity, priority: 'medium' },
         { path: '/token-stats', label: t('nav.token_stats', 'Token 统计'), icon: BarChart3, priority: 'low' },
-        { path: '/user-token', label: t('nav.user_token', 'User Tokens'), icon: Users, priority: 'low' },
+        { path: '/user-token', label: t('nav.user_token', 'User Tokens'), icon: KeySquare, priority: 'low' },
         { path: '/security', label: t('nav.security'), icon: Lock, priority: 'low' },
         { path: '/settings', label: t('nav.settings'), icon: Settings, priority: 'high' },
     ];
@@ -37,7 +37,7 @@ function Navbar() {
         const newTheme = config.theme === 'light' ? 'dark' : 'light';
 
         // Use View Transition API if supported, but skip on Linux (may cause crash)
-        if ('startViewTransition' in document && !isLinux()) {
+        if ('startViewTransition' in document && !isLinux() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
             const x = event.clientX;
             const y = event.clientY;
             const endRadius = Math.hypot(
@@ -82,7 +82,7 @@ function Navbar() {
     };
 
     return (
-        <nav
+        <header
             style={{ position: 'sticky', top: 0, zIndex: 50 }}
             className="pt-9 transition-all duration-200 bg-[#FAFBFC] dark:bg-base-300"
         >
@@ -117,7 +117,7 @@ function Navbar() {
                     />
                 </div>
             </div>
-        </nav>
+        </header>
     );
 }
 

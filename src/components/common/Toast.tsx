@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Info, AlertTriangle, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -12,6 +13,7 @@ export interface ToastProps {
 }
 
 const Toast = ({ id, message, type, duration = 3000, onClose }: ToastProps) => {
+    const { t } = useTranslation();
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
@@ -29,10 +31,10 @@ const Toast = ({ id, message, type, duration = 3000, onClose }: ToastProps) => {
 
     const getIcon = () => {
         switch (type) {
-            case 'success': return <CheckCircle className="w-5 h-5 text-green-500" />;
-            case 'error': return <XCircle className="w-5 h-5 text-red-500" />;
-            case 'warning': return <AlertTriangle className="w-5 h-5 text-yellow-500" />;
-            case 'info': default: return <Info className="w-5 h-5 text-blue-500" />;
+            case 'success': return <CheckCircle className="w-5 h-5 text-green-500 shrink-0" aria-hidden="true" />;
+            case 'error': return <XCircle className="w-5 h-5 text-red-500 shrink-0" aria-hidden="true" />;
+            case 'warning': return <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" aria-hidden="true" />;
+            case 'info': default: return <Info className="w-5 h-5 text-blue-500 shrink-0" aria-hidden="true" />;
         }
     };
 
@@ -47,16 +49,19 @@ const Toast = ({ id, message, type, duration = 3000, onClose }: ToastProps) => {
 
     return (
         <div
+            role={type === 'error' ? 'alert' : 'status'}
             className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border transition-all duration-300 transform ${getStyles()} ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}
             style={{ minWidth: '300px' }}
         >
             {getIcon()}
             <p className="flex-1 text-sm font-medium text-gray-700 dark:text-base-content">{message}</p>
             <button
+                type="button"
+                aria-label={t('common.close', 'Close')}
                 onClick={() => { setIsVisible(false); setTimeout(() => onClose(id), 300); }}
-                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
             </button>
         </div>
     );

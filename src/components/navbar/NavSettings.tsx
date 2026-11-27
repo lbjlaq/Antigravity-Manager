@@ -41,6 +41,7 @@ export function NavSettings({
             <div className="hidden min-[480px]:flex items-center gap-2">
                 {/* 迷你视图切换按钮 */}
                 <button
+                    type="button"
                     onClick={() => {
                         if (isTauri()) {
                             invoke('show_mini_view').catch(() => {});
@@ -48,22 +49,25 @@ export function NavSettings({
                             setMiniView(true);
                         }
                     }}
-                    className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors"
+                    className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                     title={t('nav.mini_view', 'Mini View')}
+                    aria-label={t('nav.mini_view', 'Mini View')}
                 >
-                    <Minimize2 className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+                    <Minimize2 className="w-5 h-5 text-gray-700 dark:text-gray-300" aria-hidden="true" />
                 </button>
 
                 {/* 主题切换按钮 */}
                 <button
+                    type="button"
                     onClick={onThemeToggle}
-                    className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors"
+                    className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                     title={theme === 'light' ? t('nav.theme_to_dark') : t('nav.theme_to_light')}
+                    aria-label={theme === 'light' ? t('nav.theme_to_dark') : t('nav.theme_to_light')}
                 >
                     {theme === 'light' ? (
-                        <Moon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+                        <Moon className="w-5 h-5 text-gray-700 dark:text-gray-300" aria-hidden="true" />
                     ) : (
-                        <Sun className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+                        <Sun className="w-5 h-5 text-gray-700 dark:text-gray-300" aria-hidden="true" />
                     )}
                 </button>
 
@@ -77,11 +81,13 @@ export function NavSettings({
                 {/* 登出按钮 - 仅 Web 模式显示 */}
                 {!isTauri() && (
                     <button
+                        type="button"
                         onClick={handleLogout}
-                        className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 flex items-center justify-center transition-colors"
+                        className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                         title={t('nav.logout', '登出')}
+                        aria-label={t('nav.logout', '登出')}
                     >
-                        <LogOut className="w-5 h-5 text-red-600 dark:text-red-400" />
+                        <LogOut className="w-5 h-5 text-red-600 dark:text-red-400" aria-hidden="true" />
                     </button>
                 )}
             </div>
