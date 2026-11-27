@@ -910,6 +910,7 @@ fn apply_account_credentials(
     is_ide: bool,
     active_exe_path: Option<&std::path::Path>,
 ) -> Result<(), String> {
+    process::ensure_antigravity_log_directories();
     let mut use_keyring = false;
 
     // 硬防护（issue #3762、issue #3770、issue #3778）：

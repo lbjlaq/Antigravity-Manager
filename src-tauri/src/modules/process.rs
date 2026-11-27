@@ -1293,6 +1293,33 @@ pub fn is_client_executable_missing(err: &str) -> bool {
         || lower.contains("application not found")
 }
 
+/// Ensure Antigravity log directories exist across platforms (Fixes #4057: ENOENT language_server.log).
+pub fn ensure_antigravity_log_directories() {
+    if let Some(home) = dirs::home_dir() {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::fs::create_dir_all(home.join("Library/Logs/Antigravity"));
+            let _ = std::fs::create_dir_all(home.join("Library/Logs/Antigravity IDE"));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(appdata) = dirs::data_dir() {
+                let _ = std::fs::create_dir_all(appdata.join("Antigravity/logs"));
+                let _ = std::fs::create_dir_all(appdata.join("Antigravity IDE/logs"));
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::fs::create_dir_all(home.join(".config/Antigravity/logs"));
+            let _ = std::fs::create_dir_all(home.join(".config/Antigravity IDE/logs"));
+            let _ = std::fs::create_dir_all(home.join(".local/share/Antigravity/logs"));
+            let _ = std::fs::create_dir_all(home.join(".local/state/Antigravity/logs"));
+        }
+    }
+}
+
 /// Start Antigravity with optional snapshot path & args fallback
 #[allow(unused_mut)]
 pub fn start_antigravity_with_fallback_path(
@@ -1300,6 +1327,7 @@ pub fn start_antigravity_with_fallback_path(
     preferred_path: Option<&std::path::Path>,
     preferred_args: Option<&[String]>,
 ) -> Result<(), String> {
+    ensure_antigravity_log_directories();
     crate::modules::logger::log_info(&format!(
         "Starting Antigravity ({:?}, preferred_path: {:?})...",
         target_ide, preferred_path
@@ -2089,6 +2117,16 @@ pub fn get_antigravity_cli_executable_path() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ensure_antigravity_log_directories() {
+        ensure_antigravity_log_directories();
+        #[cfg(target_os = "macos")]
+        if let Some(home) = dirs::home_dir() {
+            assert!(home.join("Library/Logs/Antigravity").exists());
+            assert!(home.join("Library/Logs/Antigravity IDE").exists());
+        }
+    }
 
     #[test]
     fn matches_target_client_prefers_ide_markers_from_executable_path() {

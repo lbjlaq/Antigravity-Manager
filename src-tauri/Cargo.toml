@@ -48,7 +48,7 @@ tokio = { version = "1", features = ["full"] }
 url = "2.5.7"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-fs = "2.4.5"
-image = { version = "0.25.9", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25.9", default-features = false, features = ["png", "webp", "bmp"] }
 thiserror = "2.0.17"
 
 # 反代服务依赖

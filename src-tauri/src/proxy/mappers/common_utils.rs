@@ -1398,6 +1398,7 @@ mod tests {
             detect_mime_from_bytes(b"%PDF-1.7\n%"),
             Some("application/pdf")
         );
+        assert_eq!(detect_mime_from_bytes(b"BM\x3a\0\0\0"), Some("image/bmp"));
         assert_eq!(detect_mime_from_bytes(b"invalid"), None);
     }
 
@@ -1435,6 +1436,38 @@ mod tests {
         let res_no_mime = validate_and_sanitize_inline_data(None, valid_png_b64);
         assert!(res_no_mime.is_some());
         assert_eq!(res_no_mime.unwrap().0, "image/png");
+
+        // 6. Base64 with internal whitespace and newlines (RFC 2045 format, Issue #4106)
+        let b64_with_newlines = format!("{}\r\n  {}\n", &valid_png_b64[..40], &valid_png_b64[40..]);
+        let res_whitespace =
+            validate_and_sanitize_inline_data(Some("image/png"), &b64_with_newlines);
+        assert!(res_whitespace.is_some());
+        let (mime, clean_data) = res_whitespace.unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(clean_data, valid_png_b64);
+
+        // 7. JPEG with trailing metadata/padding bytes after EOI marker (WeChat mobile/clipboard, Issue #4106)
+        let jpeg_with_padding_b64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//ZAAAAAA==";
+        let res_jpeg = validate_and_sanitize_inline_data(Some("image/jpeg"), jpeg_with_padding_b64);
+        assert!(res_jpeg.is_some());
+        assert_eq!(res_jpeg.unwrap().0, "image/jpeg");
+
+        // 8. Normalization of image/jpg to image/jpeg
+        let res_jpg = validate_and_sanitize_inline_data(Some("image/jpg"), jpeg_with_padding_b64);
+        assert!(res_jpg.is_some());
+        assert_eq!(res_jpg.unwrap().0, "image/jpeg");
+
+        // 9. BMP transcoding to PNG (Windows clipboard / WeChat desktop, Issue #4106)
+        let bmp_b64 = "Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAADEDgAAxA4AAAAAAAAAAAAAAAD/AAD/AAAAAP8AAP8AAA==";
+        let res_bmp = validate_and_sanitize_inline_data(Some("image/bmp"), bmp_b64);
+        assert!(res_bmp.is_some());
+        let (bmp_mime, bmp_png_b64) = res_bmp.unwrap();
+        assert_eq!(bmp_mime, "image/png");
+        // Verify output is valid PNG
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine as _;
+        let decoded_png = STANDARD.decode(&bmp_png_b64).unwrap();
+        assert!(decoded_png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 
     #[test]
@@ -1638,7 +1671,9 @@ mod tests {
 pub fn parse_markdown_images_to_parts(text: &str) -> Vec<Value> {
     let mut parts = Vec::new();
     // Match ![...](data:image/...;base64,...)
-    if let Ok(re) = regex::Regex::new(r"!\[.*?\]\(data:(image/[^;]+);base64,([a-zA-Z0-9+/=]+)\)") {
+    if let Ok(re) =
+        regex::Regex::new(r"!\[.*?\]\(data:(image/[^;]+);base64,([a-zA-Z0-9+/=\r\n\t ]+)\)")
+    {
         let mut last_match = 0;
 
         for cap in re.captures_iter(text) {
@@ -1691,6 +1726,7 @@ pub const SUPPORTED_TOOL_IMAGE_MIMES: &[&str] = &[
     "image/jpg",
     "image/webp",
     "image/gif",
+    "image/bmp",
 ];
 
 #[inline]
@@ -1782,7 +1818,9 @@ pub fn extract_multimodal_from_tool_text(raw_text: &str, extra_parts: &mut Vec<V
 
     // 3. 严格检测 Markdown 图片语法：![alt](data:image/...;base64,...)
     // 只有明确采用 Markdown 图片语法的结构才允许解构提取，绝不从普通文本/终端输出中模糊切词匹配
-    if let Ok(re) = regex::Regex::new(r"!\[.*?\]\(data:(image/[^;]+);base64,([a-zA-Z0-9+/=]+)\)") {
+    if let Ok(re) =
+        regex::Regex::new(r"!\[.*?\]\(data:(image/[^;]+);base64,([a-zA-Z0-9+/=\r\n\t ]+)\)")
+    {
         let mut clean_text = String::new();
         let mut last_match = 0;
         let mut found_image = false;
@@ -1826,12 +1864,14 @@ pub fn extract_multimodal_from_tool_text(raw_text: &str, extra_parts: &mut Vec<V
 pub fn detect_mime_from_bytes(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
+    } else if bytes.starts_with(b"\xff\xd8") {
         Some("image/jpeg")
     } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
         Some("image/gif")
     } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Some("image/webp")
+    } else if bytes.starts_with(b"BM") {
+        Some("image/bmp")
     } else if bytes.starts_with(b"%PDF-") {
         Some("application/pdf")
     } else if bytes.len() >= 12
@@ -1856,11 +1896,25 @@ pub fn validate_and_sanitize_inline_data(
         return None;
     }
 
+    // Strip internal ASCII whitespace (e.g. RFC 2045 MIME newlines \r\n, spaces, tabs)
+    let has_internal_whitespace = clean_b64.bytes().any(|b| b.is_ascii_whitespace());
+    let sanitized_b64 = if has_internal_whitespace {
+        let mut s = String::with_capacity(clean_b64.len());
+        for b in clean_b64.bytes() {
+            if !b.is_ascii_whitespace() {
+                s.push(b as char);
+            }
+        }
+        std::borrow::Cow::Owned(s)
+    } else {
+        std::borrow::Cow::Borrowed(clean_b64)
+    };
+
     // 优先检查坏图片黑名单：若已被上游判定为 Unable to process input image，直接拦截防御
-    if is_corrupted_image(clean_b64) {
+    if is_corrupted_image(&sanitized_b64) {
         tracing::warn!(
             "[Image-Defense] Rejected known corrupted image by SHA-256 fingerprint (len: {})",
-            clean_b64.len()
+            sanitized_b64.len()
         );
         return None;
     }
@@ -1868,11 +1922,11 @@ pub fn validate_and_sanitize_inline_data(
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     // Try decoding base64 to check validity and magic bytes
-    let decoded_bytes = match STANDARD.decode(clean_b64) {
+    let decoded_bytes = match STANDARD.decode(sanitized_b64.as_bytes()) {
         Ok(bytes) => bytes,
         Err(_) => {
             use base64::engine::general_purpose::URL_SAFE;
-            match URL_SAFE.decode(clean_b64) {
+            match URL_SAFE.decode(sanitized_b64.as_bytes()) {
                 Ok(bytes) => bytes,
                 Err(_) => return None,
             }
@@ -1891,7 +1945,7 @@ pub fn validate_and_sanitize_inline_data(
 
     if !is_audio_or_video {
         // For images/documents, require at least 8 decoded bytes and 8 base64 chars
-        if clean_b64.len() < 8 || decoded_bytes.len() < 8 {
+        if sanitized_b64.len() < 8 || decoded_bytes.len() < 8 {
             return None;
         }
     }
@@ -1901,10 +1955,10 @@ pub fn validate_and_sanitize_inline_data(
 
     // Enforce image magic bytes & structural integrity verification:
     // If MIME is declared as image/*, or if no MIME was declared,
-    // the decoded bytes MUST match a known image magic signature (PNG, JPEG, GIF, WEBP, HEIC)
+    // the decoded bytes MUST match a known image magic signature (PNG, JPEG, GIF, WEBP, HEIC, BMP)
     // AND must satisfy structural completeness constraints (e.g. PNG IEND block, JPEG EOI marker, minimum size).
     // Arbitrary text, truncated fragments (e.g. 21-byte broken PNGs), or corrupted payloads must be rejected!
-    let final_mime = match (declared_mime, inferred_mime) {
+    let mut final_mime = match (declared_mime, inferred_mime) {
         // Image format: magic bytes MUST be detected and confirm it is an image
         (Some(m), Some(inferred)) if m.starts_with("image/") => {
             if inferred.starts_with("image/") {
@@ -1935,6 +1989,10 @@ pub fn validate_and_sanitize_inline_data(
         _ => return None,
     };
 
+    if final_mime == "image/jpg" {
+        final_mime = "image/jpeg".to_string();
+    }
+
     // Deep structural completeness & truncation defense for raster images:
     // Prevent truncated header-only fragments (like a 21-byte cut PNG) from penetrating upstream.
     if final_mime.starts_with("image/") {
@@ -1942,12 +2000,9 @@ pub fn validate_and_sanitize_inline_data(
         match final_mime.as_str() {
             "image/png" => {
                 // A valid 1x1 minimal PNG is at least 67 bytes, and MUST terminate with an IEND chunk (b"IEND\xae\x42\x60\x82").
-                // Require at least 50 bytes and ensure b"IEND" chunk marker exists near the end.
-                if len < 50
-                    || !decoded_bytes[len.saturating_sub(16)..]
-                        .windows(4)
-                        .any(|w| w == b"IEND")
-                {
+                // Require at least 50 bytes and ensure b"IEND" chunk marker exists.
+                // Trailing ancillary chunks or metadata padding may follow IEND.
+                if len < 50 || !decoded_bytes.windows(4).any(|w| w == b"IEND") {
                     tracing::debug!(
                         "[Image-Defense] Rejected truncated or malformed PNG (len: {}, missing IEND chunk)",
                         len
@@ -1955,9 +2010,10 @@ pub fn validate_and_sanitize_inline_data(
                     return None;
                 }
             }
-            "image/jpeg" | "image/jpg" => {
-                // A valid minimal JPEG is at least 107 bytes and MUST terminate with EOI marker \xff\xd9.
-                if len < 64 || !decoded_bytes.ends_with(b"\xff\xd9") {
+            "image/jpeg" => {
+                // A valid minimal JPEG is at least 64 bytes and MUST terminate with EOI marker \xff\xd9.
+                // Mobile cameras (iOS/Android) and WeChat frequently append trailing metadata or null padding bytes after \xff\xd9.
+                if len < 64 || !decoded_bytes.windows(2).any(|w| w == b"\xff\xd9") {
                     tracing::debug!(
                         "[Image-Defense] Rejected truncated or malformed JPEG (len: {}, missing EOI marker \\xff\\xd9)",
                         len
@@ -1966,8 +2022,9 @@ pub fn validate_and_sanitize_inline_data(
                 }
             }
             "image/gif" => {
-                // A valid GIF is at least 35 bytes and ends with trailer byte 0x3b ';'.
-                if len < 32 || !decoded_bytes.ends_with(b"\x3b") {
+                // A valid GIF is at least 32 bytes and ends with trailer byte 0x3b ';'.
+                // Check if trailer byte exists near the end (allowing trailing padding).
+                if len < 32 || !decoded_bytes.iter().rev().take(64).any(|&b| b == 0x3b) {
                     tracing::debug!(
                         "[Image-Defense] Rejected truncated or malformed GIF (len: {}, missing trailer 0x3b)",
                         len
@@ -1994,11 +2051,40 @@ pub fn validate_and_sanitize_inline_data(
                     return None;
                 }
             }
+            "image/bmp" => {
+                // Transcode BMP to PNG for upstream Gemini compatibility
+                if len < 54 {
+                    tracing::debug!("[Image-Defense] Rejected truncated BMP (len: {} < 54)", len);
+                    return None;
+                }
+                match image::load_from_memory_with_format(&decoded_bytes, image::ImageFormat::Bmp) {
+                    Ok(img) => {
+                        let mut png_buf = Vec::new();
+                        if img
+                            .write_to(
+                                &mut std::io::Cursor::new(&mut png_buf),
+                                image::ImageFormat::Png,
+                            )
+                            .is_ok()
+                        {
+                            let converted_b64 = STANDARD.encode(&png_buf);
+                            return Some(("image/png".to_string(), converted_b64));
+                        } else {
+                            tracing::warn!("[Image-Defense] Failed to transcode BMP to PNG");
+                            return None;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[Image-Defense] Failed to decode BMP image: {}", e);
+                        return None;
+                    }
+                }
+            }
             _ => {}
         }
     }
 
-    Some((final_mime, clean_b64.to_string()))
+    Some((final_mime, sanitized_b64.into_owned()))
 }
 
 pub const MAX_LOCAL_MEDIA_BYTES: usize = 20 * 1024 * 1024;
