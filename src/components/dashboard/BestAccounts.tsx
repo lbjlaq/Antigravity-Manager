@@ -4,15 +4,18 @@ import { Account, ActiveClientsStatus, getAccountTier } from '../../types/accoun
 import { isAccountAbnormal } from '../../utils/accountStatus';
 import { extractGroupQuotaPercentage, findQuotaModel } from '../../config/modelConfig';
 import { useTranslation } from 'react-i18next';
+import { ClientTarget } from '../../utils/dashboardGreeting';
 
 interface BestAccountsProps {
     accounts: Account[];
     currentAccountId?: string;
     activeClients?: ActiveClientsStatus;
+    selectedClient?: ClientTarget;
+    onSelectClient?: (client: ClientTarget) => void;
     onSwitch?: (accountId: string, targetIde?: string) => void;
 }
 
-type TargetIdeType = 'classic' | 'ide' | 'agy' | 'acp';
+type TargetIdeType = ClientTarget;
 
 /** 提取指定模型类别在当前 5h 窗口内的最关键可用配额百分比 */
 function get5HourQuota(
@@ -51,9 +54,24 @@ function get5HourQuota(
     return 0;
 }
 
-function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: BestAccountsProps) {
+function BestAccounts({
+    accounts,
+    currentAccountId,
+    activeClients,
+    selectedClient,
+    onSelectClient,
+    onSwitch,
+}: BestAccountsProps) {
     const { t } = useTranslation();
-    const [targetIde, setTargetIde] = useState<TargetIdeType>('classic');
+    const [internalTargetIde, setInternalTargetIde] = useState<TargetIdeType>('classic');
+    const targetIde = selectedClient ?? internalTargetIde;
+    const handleSelectTarget = (next: TargetIdeType) => {
+        if (onSelectClient) {
+            onSelectClient(next);
+        } else {
+            setInternalTargetIde(next);
+        }
+    };
 
     const clientTargets = [
         {
@@ -193,14 +211,16 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
                         return (
                             <button
                                 key={target.key}
-                                onClick={() => setTargetIde(target.key)}
-                                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                type="button"
+                                aria-pressed={isSelected}
+                                onClick={() => handleSelectTarget(target.key)}
+                                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                                     isSelected
                                         ? target.activeBg
                                         : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200/60 dark:hover:bg-white/5'
                                 }`}
                             >
-                                <Icon className="w-3.5 h-3.5" />
+                                <Icon className="w-3.5 h-3.5" aria-hidden="true" />
                                 <span>{target.label}</span>
                             </button>
                         );
@@ -213,22 +233,24 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
                 {bestGeminiRender && (
                     <div className="flex items-center justify-between p-2.5 bg-green-50 dark:bg-emerald-500/[0.08] rounded-xl border border-green-100 dark:border-emerald-500/30">
                         <div className="flex-1 min-w-0">
-                            <div className="text-[10px] text-green-600 dark:text-emerald-400 font-semibold mb-0.5">{t('dashboard.for_gemini')}</div>
+                            <div className="text-[11px] text-emerald-800 dark:text-emerald-300 font-semibold mb-0.5">{t('dashboard.for_gemini')}</div>
                             <div className="font-medium text-sm text-gray-900 dark:text-zinc-100 truncate" title={bestGeminiRender.email}>
                                 {bestGeminiRender.email}
                             </div>
                         </div>
                         <div className="ml-2 flex items-center gap-2">
-                            <div className="px-2.5 py-0.5 bg-green-500 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border dark:border-emerald-500/40 text-white text-xs font-bold font-mono rounded-full shadow-xs">
+                            <div className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 text-xs font-bold font-mono tabular-nums rounded-full shadow-xs">
                                 {bestGeminiRender.geminiQuota}%
                             </div>
                             {onSwitch && (
                                 <button
+                                    type="button"
                                     onClick={() => onSwitch(bestGeminiRender.id, targetIde)}
-                                    className="p-1 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-white/80 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                    className="p-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-white/80 dark:hover:bg-white/10 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                                    aria-label={t('dashboard.switch_this_to_target', { target: currentTargetName })}
                                     title={t('dashboard.switch_this_to_target', { target: currentTargetName })}
                                 >
-                                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                                    <ArrowRightLeft className="w-3.5 h-3.5" aria-hidden="true" />
                                 </button>
                             )}
                         </div>
@@ -239,22 +261,24 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
                 {bestClaudeRender && (
                     <div className="flex items-center justify-between p-2.5 bg-cyan-50 dark:bg-cyan-500/[0.08] rounded-xl border border-cyan-100 dark:border-cyan-500/30">
                         <div className="flex-1 min-w-0">
-                            <div className="text-[10px] text-cyan-600 dark:text-cyan-400 font-semibold mb-0.5">{t('dashboard.for_claude')}</div>
+                            <div className="text-[11px] text-cyan-800 dark:text-cyan-300 font-semibold mb-0.5">{t('dashboard.for_claude')}</div>
                             <div className="font-medium text-sm text-gray-900 dark:text-zinc-100 truncate" title={bestClaudeRender.email}>
                                 {bestClaudeRender.email}
                             </div>
                         </div>
                         <div className="ml-2 flex items-center gap-2">
-                            <div className="px-2.5 py-0.5 bg-cyan-500 dark:bg-cyan-500/20 dark:text-cyan-300 dark:border dark:border-cyan-500/40 text-white text-xs font-bold font-mono rounded-full shadow-xs">
+                            <div className="px-2.5 py-0.5 bg-cyan-100 text-cyan-800 border border-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-300 dark:border-cyan-500/40 text-xs font-bold font-mono tabular-nums rounded-full shadow-xs">
                                 {bestClaudeRender.claudeQuota}%
                             </div>
                             {onSwitch && (
                                 <button
+                                    type="button"
                                     onClick={() => onSwitch(bestClaudeRender.id, targetIde)}
-                                    className="p-1 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-white/80 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                    className="p-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-white/80 dark:hover:bg-white/10 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                                    aria-label={t('dashboard.switch_this_to_target', { target: currentTargetName })}
                                     title={t('dashboard.switch_this_to_target', { target: currentTargetName })}
                                 >
-                                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                                    <ArrowRightLeft className="w-3.5 h-3.5" aria-hidden="true" />
                                 </button>
                             )}
                         </div>
@@ -271,7 +295,8 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
             {(bestGeminiRender || bestClaudeRender) && onSwitch && (
                 <div className="mt-auto pt-3">
                     <button
-                        className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-md shadow-blue-900/30 dark:shadow-blue-950/50 flex items-center justify-center gap-1.5"
+                        type="button"
+                        className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-md shadow-blue-900/30 dark:shadow-blue-950/50 flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                         onClick={() => {
                             let targetId: string | undefined;
                             if (!bestGeminiRender) {

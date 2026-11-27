@@ -24,6 +24,12 @@ import { useConfigStore } from '../stores/useConfigStore';
 import { Account } from '../types/account';
 import { isAccountAbnormal } from '../utils/accountStatus';
 import { DashboardQuotaView } from '../utils/quotaDisplay';
+import {
+    ClientTarget,
+    extractAccountDisplayName,
+    resolveActiveClientAccount,
+    resolveInitialClientTarget,
+} from '../utils/dashboardGreeting';
 
 function Dashboard() {
     const { t } = useTranslation();
@@ -37,7 +43,7 @@ function Dashboard() {
         fetchActiveClients,
         switchAccount,
         addAccount,
-        refreshQuota,
+        refreshAllQuotas,
         loading
     } = useAccountStore();
     const { config, saveConfig } = useConfigStore();
@@ -340,14 +346,35 @@ function Dashboard() {
     };
 
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [selectedClient, setSelectedClient] = useState<ClientTarget>(() =>
+        resolveInitialClientTarget(activeClients)
+    );
+    const hasManualClientSelectionRef = useRef(false);
 
-    const handleRefreshCurrent = async () => {
-        if (!currentAccount) return;
+    useEffect(() => {
+        if (!hasManualClientSelectionRef.current) {
+            setSelectedClient(resolveInitialClientTarget(activeClients));
+        }
+    }, [activeClients]);
+
+    const handleSelectClient = (client: ClientTarget) => {
+        hasManualClientSelectionRef.current = true;
+        setSelectedClient(client);
+    };
+
+    const greetingName = useMemo(() => {
+        const activeAccount =
+            resolveActiveClientAccount(selectedClient, accounts, activeClients, currentAccount) ||
+            currentAccount;
+        return extractAccountDisplayName(activeAccount);
+    }, [selectedClient, accounts, activeClients, currentAccount]);
+
+    const handleRefreshPool = async () => {
+        if (accounts.length === 0) return;
 
         setIsRefreshing(true);
         try {
-            await refreshQuota(currentAccount.id);
-            // 刷新成功后重新获取最新数据
+            await refreshAllQuotas();
             await fetchCurrentAccount();
             showToast(t('dashboard.toast.refresh_success'), 'success');
         } catch (error) {
@@ -371,23 +398,25 @@ function Dashboard() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900 dark:text-base-content">
-                            {currentAccount
-                                ? t('dashboard.hello').replace('用户', currentAccount.name || currentAccount.email.split('@')[0])
-                                : t('dashboard.hello')
-                            }
+                            {greetingName
+                                ? t('dashboard.hello_named', { name: greetingName })
+                                : t('dashboard.hello')}
                         </h1>
                     </div>
 
-                    {/* 刷新额度与添加账号操作 */}
+                    {/* 刷新全部配额与添加账号操作 */}
                     <div className="flex items-center gap-2">
                         <button
-                            className={`px-3 py-1.5 bg-blue-500 text-white text-xs font-medium rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-1.5 shadow-sm ${isRefreshing || !currentAccount ? 'opacity-70 cursor-not-allowed' : ''}`}
-                            onClick={handleRefreshCurrent}
-                            disabled={isRefreshing || !currentAccount}
-                            title={isRefreshing ? t('dashboard.refreshing') : t('dashboard.refresh_quota')}
+                            type="button"
+                            className={`px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-xl hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${isRefreshing || accounts.length === 0 ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                            onClick={handleRefreshPool}
+                            disabled={isRefreshing || accounts.length === 0}
+                            title={isRefreshing ? t('dashboard.refreshing') : t('accounts.refresh_all', 'Refresh All')}
                         >
-                            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                            <span className="hidden sm:inline">{isRefreshing ? t('dashboard.refreshing') : t('dashboard.refresh_quota')}</span>
+                            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                            <span className="hidden sm:inline">
+                                {isRefreshing ? t('dashboard.refreshing') : t('accounts.refresh_all', 'Refresh All')}
+                            </span>
                         </button>
                         <AddAccountDialog onAdd={handleAddAccount} />
                     </div>
@@ -489,47 +518,17 @@ function Dashboard() {
                                 <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
                                     qosAutoJail
                                         ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold'
-                                        : 'bg-gray-200 dark:bg-white/[0.08] text-gray-400 dark:text-zinc-500'
+                                        : 'bg-gray-200 dark:bg-white/[0.08] text-gray-600 dark:text-zinc-400'
                                 }`}>
                                     {qosAutoJail ? t('dashboard.qos_auto_jail_badge_on', '开') : t('dashboard.qos_auto_jail_badge_off', '关')}
                                 </span>
                             </button>
                         </div>
                     </div>
-
-                            {/* 右侧：纯粹通透的大字 KPI 矩阵 (Requests · Avg response · Spend 灵感) */}
-                            <div className="flex items-center gap-5 sm:gap-6 text-right">
-                                <div>
-                                    <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-gray-900 dark:text-white leading-none">
-                                        {stats.total}
-                                    </div>
-                                    <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium mt-1">
-                                        {t('dashboard.total_accounts', '总账号纳管')}
-                                    </div>
-                                </div>
-                                <div className="h-6 w-px bg-gray-200 dark:bg-white/[0.08]" />
-                                <div>
-                                    <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-emerald-600 dark:text-emerald-400 leading-none">
-                                        {stats.proxyOnline}
-                                    </div>
-                                    <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium mt-1">
-                                        {t('dashboard.proxy_online_unit', '反代服务在线')}
-                                    </div>
-                                </div>
-                                <div className="h-6 w-px bg-gray-200 dark:bg-white/[0.08]" />
-                                <div>
-                                    <div className="text-xl sm:text-2xl font-black font-mono tracking-tight text-blue-600 dark:text-blue-400 leading-none">
-                                        {Math.round((stats.available / (stats.total || 1)) * 100)}%
-                                    </div>
-                                    <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium mt-1">
-                                        {t('dashboard.normal_rate', '健康正常率')}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                </div>
 
                 <div className="space-y-4">
-                        {/* 核心 Bento 4 卡矩阵 (纯黑极简风格) */}
+                        {/* 核心 Bento 4 卡矩阵 */}
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5 items-stretch">
                             {/* 卡片 1: 账号底座资产 */}
                             <motion.div
@@ -540,29 +539,29 @@ function Dashboard() {
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-transparent dark:border-emerald-500/20">
-                                                <Zap className="w-4 h-4" />
+                                            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-transparent dark:border-emerald-500/20">
+                                                <Zap className="w-4 h-4" aria-hidden="true" />
                                             </div>
                                             <span className="text-xs font-bold text-gray-800 dark:text-zinc-200">
                                                 {t('dashboard.accounts_health', '账号底座资产')}
                                             </span>
                                         </div>
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-500/30">
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono tabular-nums font-bold bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-500/30">
                                             {stats.available}/{stats.total}
                                         </span>
                                     </div>
 
                                     {/* 核心大数字 */}
                                     <div>
-                                        <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-gray-900 dark:text-white">
+                                        <div className="text-3xl sm:text-4xl font-black font-mono tabular-nums tracking-tight text-gray-900 dark:text-white">
                                             {stats.available}
-                                            <span className="text-sm font-sans font-normal text-gray-400 dark:text-zinc-400 ml-1.5">
+                                            <span className="text-sm font-sans font-normal text-gray-500 dark:text-zinc-400 ml-1.5">
                                                 / {stats.total} {t('dashboard.available_accounts_unit', '可用')}
                                             </span>
                                         </div>
-                                        <div className="text-[11px] text-gray-400 dark:text-zinc-400 mt-1 font-medium">
+                                        <div className="text-[11px] text-gray-600 dark:text-zinc-400 mt-1 font-medium">
                                             {stats.proxyOnline > 0
-                                                ? t('dashboard.proxy_joined_pool', { count: stats.proxyOnline, defaultValue: `✓ ${stats.proxyOnline} 个账号已加入反代服务池` })
+                                                ? t('dashboard.proxy_joined_pool', { count: stats.proxyOnline, defaultValue: `${stats.proxyOnline} 个账号已加入反代服务池` })
                                                 : t('dashboard.disabled_accounts_desc', '手动停用/待开启')
                                             }
                                         </div>
@@ -579,21 +578,20 @@ function Dashboard() {
 
                                 {/* 底部操作栏胶囊 */}
                                 <div className="pt-3 mt-3 border-t border-gray-100 dark:border-white/[0.08] flex items-center justify-between text-xs">
-                                    <span className="text-[11px] text-gray-400 dark:text-zinc-400 font-mono font-medium">
+                                    <span className="text-[11px] text-gray-600 dark:text-zinc-400 font-mono tabular-nums font-medium">
                                         {Math.round((stats.available / (stats.total || 1)) * 100)}% {t('dashboard.asset_rate', '资产率')}
                                     </span>
                                     <button
                                         type="button"
                                         onClick={() => navigate('/accounts')}
-                                        className="px-3 py-1 bg-gray-900 hover:bg-gray-800 dark:bg-white/10 dark:hover:bg-white/15 text-white text-[11px] font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                                        className="px-3 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-white/10 dark:hover:bg-white/15 text-gray-800 dark:text-zinc-200 text-[11px] font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                                     >
                                         <span>{t('dashboard.view_all_accounts', '查看账号')}</span>
-                                        <ArrowRight className="w-3 h-3" />
+                                        <ArrowRight className="w-3 h-3" aria-hidden="true" />
                                     </button>
                                 </div>
                             </motion.div>
 
-                            {/* 卡片 2: Gemini 算力池 */}
                             {/* 卡片 2: Gemini 算力池 */}
                             <motion.div
                                 whileHover={{ y: -2 }}
@@ -603,8 +601,8 @@ function Dashboard() {
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-transparent dark:border-emerald-500/20">
-                                                <Sparkles className="w-4 h-4" />
+                                            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-transparent dark:border-emerald-500/20">
+                                                <Sparkles className="w-4 h-4" aria-hidden="true" />
                                             </div>
                                             <span className="text-xs font-bold text-gray-800 dark:text-zinc-200">
                                                 {t('accounts.quota_group_gemini', 'Gemini 模型')}
@@ -613,7 +611,7 @@ function Dashboard() {
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                             geminiQuotaValue >= 50
                                                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border dark:border-emerald-500/30'
-                                                : 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 dark:border dark:border-amber-500/30'
+                                                : 'bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300 dark:border dark:border-amber-500/30'
                                         }`}>
                                             {geminiQuotaValue >= 50 ? t('dashboard.quota_sufficient_short', '充足') : t('dashboard.quota_tight_short', '偏紧')}
                                         </span>
@@ -622,10 +620,10 @@ function Dashboard() {
                                     {/* 核心大字 (随 quotaView 联动) */}
                                     <div className="flex items-baseline justify-between">
                                         <div>
-                                            <span className="text-3xl font-black font-mono tracking-tight text-gray-900 dark:text-white">
+                                            <span className="text-3xl font-black font-mono tabular-nums tracking-tight text-gray-900 dark:text-white">
                                                 {geminiQuotaValue}%
                                             </span>
-                                            <span className="text-[11px] text-gray-400 dark:text-zinc-400 block mt-0.5">
+                                            <span className="text-[11px] text-gray-600 dark:text-zinc-400 block mt-0.5">
                                                 {geminiQuotaLabel}
                                             </span>
                                         </div>
@@ -638,17 +636,17 @@ function Dashboard() {
                                             <button
                                                 type="button"
                                                 onClick={() => setQuotaView('5h')}
-                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
+                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                                                     quotaView === '5h'
                                                         ? 'bg-emerald-500/10 border-emerald-500/30 dark:bg-emerald-500/20 dark:border-emerald-500/50 shadow-xs'
                                                         : 'bg-gray-50/70 hover:bg-gray-100/70 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] border-gray-100 dark:border-white/[0.08]'
                                                 }`}
                                             >
                                                 <div className="flex items-center justify-between text-[11px] mb-1.5">
-                                                    <span className={`text-[10px] font-medium ${quotaView === '5h' ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-gray-400 dark:text-zinc-400'}`}>
+                                                    <span className={`text-[10px] font-medium ${quotaView === '5h' ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-gray-600 dark:text-zinc-400'}`}>
                                                         {t('dashboard.view_mode_5h', '5H 滚动')}
                                                     </span>
-                                                    <span className={`font-mono text-xs font-bold ${quotaView === '5h' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-zinc-200'}`}>
+                                                    <span className={`font-mono tabular-nums text-xs font-bold ${quotaView === '5h' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-zinc-200'}`}>
                                                         {stats.gemini.avg5h}%
                                                     </span>
                                                 </div>
@@ -664,17 +662,17 @@ function Dashboard() {
                                             <button
                                                 type="button"
                                                 onClick={() => setQuotaView('weekly')}
-                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
+                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
                                                     quotaView === 'weekly'
                                                         ? 'bg-teal-500/10 border-teal-500/30 dark:bg-teal-500/20 dark:border-teal-500/50 shadow-xs'
                                                         : 'bg-gray-50/70 hover:bg-gray-100/70 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] border-gray-100 dark:border-white/[0.08]'
                                                 }`}
                                             >
                                                 <div className="flex items-center justify-between text-[11px] mb-1.5">
-                                                    <span className={`text-[10px] font-medium ${quotaView === 'weekly' ? 'text-teal-700 dark:text-teal-300 font-bold' : 'text-gray-400 dark:text-zinc-400'}`}>
+                                                    <span className={`text-[10px] font-medium ${quotaView === 'weekly' ? 'text-teal-700 dark:text-teal-300 font-bold' : 'text-gray-600 dark:text-zinc-400'}`}>
                                                         {t('dashboard.view_mode_weekly', '7天周配额')}
                                                     </span>
-                                                    <span className={`font-mono text-xs font-bold ${quotaView === 'weekly' ? 'text-teal-700 dark:text-teal-300' : 'text-gray-700 dark:text-zinc-200'}`}>
+                                                    <span className={`font-mono tabular-nums text-xs font-bold ${quotaView === 'weekly' ? 'text-teal-700 dark:text-teal-300' : 'text-gray-700 dark:text-zinc-200'}`}>
                                                         {stats.gemini.avgWeekly}%
                                                     </span>
                                                 </div>
@@ -689,11 +687,11 @@ function Dashboard() {
                                     </div>
                                 </div>
 
-                                <div className="pt-2.5 mt-2 border-t border-gray-100 dark:border-white/[0.08] text-[10px] text-gray-400 dark:text-zinc-400 flex items-center justify-between">
+                                <div className="pt-2.5 mt-2 border-t border-gray-100 dark:border-white/[0.08] text-[10px] text-gray-600 dark:text-zinc-400 flex items-center justify-between">
                                     <span>{t('dashboard.gemini_group_desc', '包含 Pro / Flash / 绘图')}</span>
                                     {stats.gemini.zeroWeeklyCount > 0 && (
-                                        <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-0.5">
-                                            <AlertTriangle size={10} /> {stats.gemini.zeroWeeklyCount} {t('dashboard.circuit_break', '熔断')}
+                                        <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-0.5 tabular-nums">
+                                            <AlertTriangle size={10} aria-hidden="true" /> {stats.gemini.zeroWeeklyCount} {t('dashboard.circuit_break', '熔断')}
                                         </span>
                                     )}
                                 </div>
@@ -708,8 +706,8 @@ function Dashboard() {
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            <div className="p-1.5 rounded-lg bg-cyan-50 dark:bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-transparent dark:border-cyan-500/20">
-                                                <Bot className="w-4 h-4" />
+                                            <div className="p-1.5 rounded-lg bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 border border-transparent dark:border-cyan-500/20">
+                                                <Bot className="w-4 h-4" aria-hidden="true" />
                                             </div>
                                             <span className="text-xs font-bold text-gray-800 dark:text-zinc-200">
                                                 {t('accounts.quota_group_claude', 'Claude & GPT')}
@@ -717,10 +715,10 @@ function Dashboard() {
                                         </div>
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                             claudeQuotaValue === null
-                                                ? 'bg-gray-100 text-gray-500 dark:bg-white/10 dark:text-zinc-400'
+                                                ? 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-zinc-400'
                                                 : claudeQuotaValue >= 50
                                                     ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border dark:border-emerald-500/30'
-                                                    : 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 dark:border dark:border-amber-500/30'
+                                                    : 'bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300 dark:border dark:border-amber-500/30'
                                         }`}>
                                             {claudeQuotaValue === null ? '-' : (claudeQuotaValue >= 50 ? t('dashboard.quota_sufficient_short', '充足') : t('dashboard.quota_tight_short', '偏紧'))}
                                         </span>
@@ -729,10 +727,10 @@ function Dashboard() {
                                     {/* 核心大字 (随 quotaView 联动) */}
                                     <div className="flex items-baseline justify-between">
                                         <div>
-                                            <span className="text-3xl font-black font-mono tracking-tight text-gray-900 dark:text-white">
+                                            <span className="text-3xl font-black font-mono tabular-nums tracking-tight text-gray-900 dark:text-white">
                                                 {claudeQuotaValue !== null ? `${claudeQuotaValue}%` : '-'}
                                             </span>
-                                            <span className="text-[11px] text-gray-400 dark:text-zinc-400 block mt-0.5">
+                                            <span className="text-[11px] text-gray-600 dark:text-zinc-400 block mt-0.5">
                                                 {claudeQuotaLabel}
                                             </span>
                                         </div>
@@ -745,17 +743,17 @@ function Dashboard() {
                                             <button
                                                 type="button"
                                                 onClick={() => setQuotaView('5h')}
-                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
+                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                                                     quotaView === '5h'
                                                         ? 'bg-cyan-500/10 border-cyan-500/30 dark:bg-cyan-500/20 dark:border-cyan-500/50 shadow-xs'
                                                         : 'bg-gray-50/70 hover:bg-gray-100/70 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] border-gray-100 dark:border-white/[0.08]'
                                                 }`}
                                             >
                                                 <div className="flex items-center justify-between text-[11px] mb-1.5">
-                                                    <span className={`text-[10px] font-medium ${quotaView === '5h' ? 'text-cyan-700 dark:text-cyan-300 font-bold' : 'text-gray-400 dark:text-zinc-400'}`}>
+                                                    <span className={`text-[10px] font-medium ${quotaView === '5h' ? 'text-cyan-700 dark:text-cyan-300 font-bold' : 'text-gray-600 dark:text-zinc-400'}`}>
                                                         {t('dashboard.view_mode_5h', '5H 滚动')}
                                                     </span>
-                                                    <span className={`font-mono text-xs font-bold ${quotaView === '5h' ? 'text-cyan-700 dark:text-cyan-300' : 'text-gray-700 dark:text-zinc-200'}`}>
+                                                    <span className={`font-mono tabular-nums text-xs font-bold ${quotaView === '5h' ? 'text-cyan-700 dark:text-cyan-300' : 'text-gray-700 dark:text-zinc-200'}`}>
                                                         {hasClaudePool ? `${stats.claude.avg5h}%` : '-'}
                                                     </span>
                                                 </div>
@@ -771,17 +769,17 @@ function Dashboard() {
                                             <button
                                                 type="button"
                                                 onClick={() => setQuotaView('weekly')}
-                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
+                                                className={`p-2 rounded-xl border text-left transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                                                     quotaView === 'weekly'
                                                         ? 'bg-indigo-500/10 border-indigo-500/30 dark:bg-indigo-500/20 dark:border-indigo-500/50 shadow-xs'
                                                         : 'bg-gray-50/70 hover:bg-gray-100/70 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] border-gray-100 dark:border-white/[0.08]'
                                                 }`}
                                             >
                                                 <div className="flex items-center justify-between text-[11px] mb-1.5">
-                                                    <span className={`text-[10px] font-medium ${quotaView === 'weekly' ? 'text-indigo-700 dark:text-indigo-300 font-bold' : 'text-gray-400 dark:text-zinc-400'}`}>
+                                                    <span className={`text-[10px] font-medium ${quotaView === 'weekly' ? 'text-indigo-700 dark:text-indigo-300 font-bold' : 'text-gray-600 dark:text-zinc-400'}`}>
                                                         {t('dashboard.view_mode_weekly', '7天周配额')}
                                                     </span>
-                                                    <span className={`font-mono text-xs font-bold ${quotaView === 'weekly' ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-zinc-200'}`}>
+                                                    <span className={`font-mono tabular-nums text-xs font-bold ${quotaView === 'weekly' ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-zinc-200'}`}>
                                                         {hasClaudePool ? `${stats.claude.avgWeekly}%` : '-'}
                                                     </span>
                                                 </div>
@@ -796,11 +794,11 @@ function Dashboard() {
                                     </div>
                                 </div>
 
-                                <div className="pt-2.5 mt-2 border-t border-gray-100 dark:border-white/[0.08] text-[10px] text-gray-400 dark:text-zinc-400 flex items-center justify-between">
+                                <div className="pt-2.5 mt-2 border-t border-gray-100 dark:border-white/[0.08] text-[10px] text-gray-600 dark:text-zinc-400 flex items-center justify-between">
                                     <span>{t('dashboard.claude_group_desc', '第三方多模态池')}</span>
                                     {stats.claude.zeroWeeklyCount > 0 && (
-                                        <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-0.5">
-                                            <AlertTriangle size={10} /> {stats.claude.zeroWeeklyCount} {t('dashboard.circuit_break', '熔断')}
+                                        <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-0.5 tabular-nums">
+                                            <AlertTriangle size={10} aria-hidden="true" /> {stats.claude.zeroWeeklyCount} {t('dashboard.circuit_break', '熔断')}
                                         </span>
                                     )}
                                 </div>
@@ -810,15 +808,23 @@ function Dashboard() {
                             <motion.div
                                 whileHover={{ y: -2 }}
                                 transition={{ duration: 0.15 }}
+                                role="button"
+                                tabIndex={0}
                                 onClick={() => navigate('/accounts', { state: { filter: 'abnormal' } })}
-                                className="bg-white dark:bg-[#15161b] rounded-2xl p-5 shadow-sm dark:shadow-xl dark:shadow-black/40 border border-gray-100 dark:border-white/[0.10] flex flex-col justify-between cursor-pointer group hover:border-purple-300 dark:hover:border-purple-800/60 transition-colors"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        navigate('/accounts', { state: { filter: 'abnormal' } });
+                                    }
+                                }}
+                                className="bg-white dark:bg-[#15161b] rounded-2xl p-5 shadow-sm dark:shadow-xl dark:shadow-black/40 border border-gray-100 dark:border-white/[0.10] flex flex-col justify-between cursor-pointer group hover:border-purple-300 dark:hover:border-purple-800/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
                                 title={t('dashboard.view_abnormal_accounts', '点击前往账号列表查看异常与风控详情')}
                             >
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            <div className="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-transparent dark:border-purple-500/20">
-                                                <Activity className="w-4 h-4" />
+                                            <div className="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-transparent dark:border-purple-500/20">
+                                                <Activity className="w-4 h-4" aria-hidden="true" />
                                             </div>
                                             <span className="text-xs font-bold text-gray-800 dark:text-zinc-200">
                                                 {t('dashboard.health_and_risk', '健康度 & 风控')}
@@ -839,28 +845,28 @@ function Dashboard() {
                                     {/* 核心大字 */}
                                     <div className="flex items-baseline justify-between">
                                         <div>
-                                            <span className="text-3xl font-black font-mono tracking-tight text-gray-900 dark:text-white">
+                                            <span className="text-3xl font-black font-mono tabular-nums tracking-tight text-gray-900 dark:text-white">
                                                 {Math.round((stats.available / (stats.total || 1)) * 100)}%
                                             </span>
-                                            <span className="text-[11px] text-gray-400 dark:text-zinc-400 block mt-0.5">
+                                            <span className="text-[11px] text-gray-600 dark:text-zinc-400 block mt-0.5">
                                                 {t('dashboard.health_available_rate', '健康可用率')}
                                             </span>
                                         </div>
                                     </div>
 
-                                    {/* Promptly 风格的连续竖状胶囊柱阵列 */}
+                                    {/* 按实际账号规模（上限 12 格）量化健康胶囊柱 */}
                                     <div className="pt-2">
                                         {(() => {
                                             const total = stats.total || 1;
+                                            const barCount = stats.total > 0 && stats.total < 12 ? stats.total : 12;
                                             const availableCount = stats.available;
                                             const abnormalCount = stats.abnormal;
                                             const disabledCount = Math.max(0, stats.total - availableCount - abnormalCount);
 
-                                            // 12格最大余额法精确量化
                                             const shares = [
-                                                { type: 'available', count: availableCount, raw: (availableCount / total) * 12 },
-                                                { type: 'disabled', count: disabledCount, raw: (disabledCount / total) * 12 },
-                                                { type: 'abnormal', count: abnormalCount, raw: (abnormalCount / total) * 12 },
+                                                { type: 'available', count: availableCount, raw: (availableCount / total) * barCount },
+                                                { type: 'disabled', count: disabledCount, raw: (disabledCount / total) * barCount },
+                                                { type: 'abnormal', count: abnormalCount, raw: (abnormalCount / total) * barCount },
                                             ];
 
                                             const bars = shares.map((s) => ({
@@ -870,18 +876,17 @@ function Dashboard() {
                                                 count: s.count > 0 ? Math.max(1, Math.floor(s.raw)) : 0,
                                             }));
 
-                                            // 纠偏保证总格数恒等于 12
                                             let currentTotal = bars.reduce((acc, b) => acc + b.count, 0);
-                                            if (currentTotal > 12) {
-                                                while (currentTotal > 12) {
+                                            if (currentTotal > barCount) {
+                                                while (currentTotal > barCount) {
                                                     const candidates = bars.filter((b) => b.count > 1).sort((a, b) => a.remainder - b.remainder);
                                                     if (candidates.length > 0) {
                                                         candidates[0].count--;
                                                         currentTotal--;
                                                     } else break;
                                                 }
-                                            } else if (currentTotal < 12) {
-                                                while (currentTotal < 12) {
+                                            } else if (currentTotal < barCount) {
+                                                while (currentTotal < barCount) {
                                                     const candidates = [...bars].sort((a, b) => b.remainder - a.remainder);
                                                     candidates[0].count++;
                                                     currentTotal++;
@@ -896,12 +901,12 @@ function Dashboard() {
                                                     className="flex items-center justify-between gap-1 h-14 px-2 py-2 bg-gray-50 dark:bg-black/40 rounded-xl border border-gray-100 dark:border-white/[0.08]"
                                                     title={`${availableCount} ${t('dashboard.available_accounts_unit', '可用')} · ${disabledCount} ${t('dashboard.disabled_accounts', '停用')} · ${abnormalCount} ${t('dashboard.abnormal_accounts', '异常')}`}
                                                 >
-                                                    {Array.from({ length: 12 }).map((_, idx) => {
+                                                    {Array.from({ length: barCount }).map((_, idx) => {
                                                         let colorClass = 'bg-gray-200 dark:bg-white/10';
                                                         if (idx < availableBars) {
-                                                            colorClass = 'bg-gray-900 dark:bg-zinc-200';
-                                                        } else if (idx >= 12 - abnormalBars) {
-                                                            colorClass = 'bg-rose-500 animate-pulse dark:shadow-[0_0_8px_rgba(244,63,94,0.6)]';
+                                                            colorClass = 'bg-emerald-600 dark:bg-emerald-400';
+                                                        } else if (idx >= barCount - abnormalBars) {
+                                                            colorClass = 'bg-rose-500 motion-safe:animate-pulse dark:shadow-[0_0_8px_rgba(244,63,94,0.6)]';
                                                         }
 
                                                         return (
@@ -917,14 +922,14 @@ function Dashboard() {
                                     </div>
                                 </div>
 
-                                <div className="pt-2.5 mt-2 border-t border-gray-100 dark:border-white/[0.08] text-[10px] text-gray-400 dark:text-zinc-400 flex items-center justify-between">
+                                <div className="pt-2.5 mt-2 border-t border-gray-100 dark:border-white/[0.08] text-[10px] text-gray-600 dark:text-zinc-400 flex items-center justify-between">
                                     <span>
                                         {stats.abnormal > 0
                                             ? t('dashboard.abnormal_accounts_has_risk', '⚠ 需处理风控验证 / 封禁')
                                             : t('dashboard.abnormal_accounts_no_risk', '✓ 零风控异常账号')
                                         }
                                     </span>
-                                    <span className="font-mono font-bold text-gray-700 dark:text-zinc-200">
+                                    <span className="font-mono tabular-nums font-bold text-gray-700 dark:text-zinc-200">
                                         {stats.available}/{stats.total}
                                     </span>
                                 </div>
@@ -938,12 +943,16 @@ function Dashboard() {
                         account={currentAccount}
                         accounts={accounts}
                         activeClients={activeClients}
+                        selectedClient={selectedClient}
+                        onSelectClient={handleSelectClient}
                         onSwitch={(targetIde) => navigate('/accounts', { state: { targetIde } })}
                     />
                     <BestAccounts
                         accounts={accounts}
                         currentAccountId={currentAccount?.id}
                         activeClients={activeClients}
+                        selectedClient={selectedClient}
+                        onSelectClient={handleSelectClient}
                         onSwitch={handleSwitch}
                     />
                 </div>

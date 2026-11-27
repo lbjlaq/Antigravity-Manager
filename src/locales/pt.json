@@ -115,7 +115,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Olá, Usuário 👋",
+        "hello": "Olá",
+        "hello_named": "Olá, {{name}}",
         "refresh_quota": "Atualizar Cota",
         "refreshing": "Atualizando...",
         "total_accounts": "Total de Contas",

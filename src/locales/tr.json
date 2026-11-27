@@ -114,7 +114,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Merhaba, Kullanıcı 👋",
+        "hello": "Merhaba",
+        "hello_named": "Merhaba, {{name}}",
         "refresh_quota": "Kotayı Yenile",
         "refreshing": "Yenileniyor...",
         "total_accounts": "Toplam Hesap",

@@ -115,7 +115,8 @@
         "mini_view": "미니 뷰"
     },
     "dashboard": {
-        "hello": "안녕하세요, 사용자님 👋",
+        "hello": "안녕하세요",
+        "hello_named": "안녕하세요, {{name}}님",
         "refresh_quota": "할당량 새로고침",
         "refreshing": "새로고침 중...",
         "total_accounts": "총 계정 수",

@@ -113,7 +113,8 @@
         "mini_view": "迷你悬浮窗"
     },
     "dashboard": {
-        "hello": "你好, 用户 👋",
+        "hello": "你好",
+        "hello_named": "你好，{{name}}",
         "refresh_quota": "刷新配额",
         "refreshing": "刷新中...",
         "total_accounts": "总账号数",

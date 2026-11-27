@@ -115,7 +115,8 @@
         "mini_view": "ミニビュー"
     },
     "dashboard": {
-        "hello": "こんにちは 👋",
+        "hello": "こんにちは",
+        "hello_named": "こんにちは、{{name}}",
         "refresh_quota": "クォータ更新",
         "refreshing": "更新中...",
         "total_accounts": "合計アカウント数",

@@ -113,7 +113,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "مرحبًا، المستخدم 👋",
+        "hello": "مرحبًا",
+        "hello_named": "مرحبًا، {{name}}",
         "refresh_quota": "تحديث الحصة",
         "refreshing": "جاري التحديث...",
         "total_accounts": "إجمالي الحسابات",
