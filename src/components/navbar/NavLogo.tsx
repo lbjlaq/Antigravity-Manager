@@ -6,11 +6,17 @@ export function NavLogo() {
     const { t } = useTranslation();
 
     return (
-        <Link to="/" draggable="false" className="flex w-full min-w-0 items-center gap-2 text-xl font-semibold text-gray-900 dark:text-base-content">
+        <Link
+            to="/"
+            draggable="false"
+            aria-label={t('common.app_name', 'Antigravity Tools')}
+            className="flex w-full min-w-0 items-center gap-2 text-xl font-semibold text-gray-900 dark:text-base-content rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
             <div className="relative flex items-center justify-center">
                 <img
                     src={LogoIcon}
-                    alt="Logo"
+                    alt=""
+                    aria-hidden="true"
                     className="w-8 h-8 cursor-pointer active:scale-95 transition-transform relative z-10"
                     draggable="false"
                 />

@@ -27,16 +27,18 @@ export function NavMenu({ navItems }: NavMenuProps) {
     return (
         <>
             {/* 文字胶囊 (≥ 1120px) */}
-            <nav className="max-[1119px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            <nav aria-label="Primary" className="max-[1119px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
                 {visibleNavItems.map((item) => {
                     const isApiKeyFun = item.path === '/apikey-fun';
                     const showEventBadge = isApiKeyFun && isDouble11Active();
+                    const active = isActive(location.pathname, item.path);
 
                     return (
                         <Link
                             key={item.path}
                             to={item.path}
                             draggable="false"
+                            aria-current={active ? 'page' : undefined}
                             className={`
                                 ${showEventBadge ? 'pl-3.5 pr-2 xl:pl-5 xl:pr-2.5' : 'px-4 xl:px-6'}
                                 py-2 
@@ -48,7 +50,8 @@ export function NavMenu({ navItems }: NavMenuProps) {
                                 inline-flex
                                 items-center
                                 gap-1.5
-                                ${isActive(location.pathname, item.path)
+                                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
+                                ${active
                                     ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
                                     : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-base-content dark:hover:bg-base-100'
                                 }
@@ -66,73 +69,33 @@ export function NavMenu({ navItems }: NavMenuProps) {
                 })}
             </nav>
 
-            {/* 图标胶囊 (880px - 1120px) - Logo 显示文字 */}
-            <nav className="max-[879px]:hidden min-[1120px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
-                {visibleNavItems.map((item) => (
-                    <Link
-                        key={item.path}
-                        to={item.path}
-                        draggable="false"
-                        className={`
-                            p-2
-                            rounded-full
-                            transition-all
-                            ${isActive(location.pathname, item.path)
-                                ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
-                                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-base-content dark:hover:bg-base-100'
-                            }
-                        `}
-                        title={item.label}
-                    >
-                        <item.icon className="w-5 h-5" />
-                    </Link>
-                ))}
-            </nav>
-
-            {/* 图标胶囊 (640px - 880px) - Logo 隐藏文字 */}
-            <nav className="max-[639px]:hidden min-[880px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
-                {visibleNavItems.map((item) => (
-                    <Link
-                        key={item.path}
-                        to={item.path}
-                        draggable="false"
-                        className={`
-                            p-2
-                            rounded-full
-                            transition-all
-                            ${isActive(location.pathname, item.path)
-                                ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
-                                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-base-content dark:hover:bg-base-100'
-                            }
-                        `}
-                        title={item.label}
-                    >
-                        <item.icon className="w-5 h-5" />
-                    </Link>
-                ))}
-            </nav>
-
-            {/* 图标胶囊 (480px - 640px) */}
-            <nav className="max-[479px]:hidden min-[640px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
-                {visibleNavItems.map((item) => (
-                    <Link
-                        key={item.path}
-                        to={item.path}
-                        draggable="false"
-                        className={`
-                            p-2
-                            rounded-full
-                            transition-all
-                            ${isActive(location.pathname, item.path)
-                                ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
-                                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-base-content dark:hover:bg-base-100'
-                            }
-                        `}
-                        title={item.label}
-                    >
-                        <item.icon className="w-5 h-5" />
-                    </Link>
-                ))}
+            {/* 图标胶囊 (480px - 1120px) */}
+            <nav aria-label="Primary icon navigation" className="max-[479px]:hidden min-[1120px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+                {visibleNavItems.map((item) => {
+                    const active = isActive(location.pathname, item.path);
+                    return (
+                        <Link
+                            key={item.path}
+                            to={item.path}
+                            draggable="false"
+                            aria-label={item.label}
+                            aria-current={active ? 'page' : undefined}
+                            className={`
+                                p-2
+                                rounded-full
+                                transition-all
+                                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
+                                ${active
+                                    ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
+                                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-base-content dark:hover:bg-base-100'
+                                }
+                            `}
+                            title={item.label}
+                        >
+                            <item.icon className="w-5 h-5" aria-hidden="true" />
+                        </Link>
+                    );
+                })}
             </nav>
 
             {/* 图标+文字下拉 (375px - 480px) */}

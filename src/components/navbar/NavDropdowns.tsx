@@ -26,6 +26,24 @@ export function useClickOutside(
     }, [ref, handler]);
 }
 
+function useEscapeDismiss(
+    isOpen: boolean,
+    onClose: () => void,
+    restoreFocusRef: React.RefObject<HTMLButtonElement | null>
+) {
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                onClose();
+                restoreFocusRef.current?.focus();
+            }
+        };
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, [isOpen, onClose, restoreFocusRef]);
+}
+
 // 语言下拉菜单组件
 interface LanguageDropdownProps {
     currentLanguage: string;
@@ -48,9 +66,11 @@ export function LanguageDropdown({
 }: LanguageDropdownProps) {
     const [isOpen, setIsOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const { t } = useTranslation();
 
     useClickOutside(menuRef, () => setIsOpen(false));
+    useEscapeDismiss(isOpen, () => setIsOpen(false), triggerRef);
 
     const activeLang = findMatchingLanguage(currentLanguage, languages);
 
@@ -62,8 +82,13 @@ export function LanguageDropdown({
     return (
         <div className={`relative ${className}`} ref={menuRef}>
             <button
+                ref={triggerRef}
+                type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors"
+                aria-label={t('settings.general.language')}
+                aria-expanded={isOpen}
+                aria-haspopup="menu"
+                className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 title={t('settings.general.language')}
             >
                 <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
@@ -73,15 +98,18 @@ export function LanguageDropdown({
 
             {/* 下拉菜单 (强制右对齐并限制在视口内，彻底解决向右溢出被窗口边缘遮蔽的问题) */}
             {isOpen && (
-                <div className="absolute right-0 mt-2 w-36 bg-white dark:bg-base-200 rounded-xl shadow-xl border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right z-50">
+                <div role="menu" className="absolute end-0 mt-2 w-36 bg-white dark:bg-base-200 rounded-xl shadow-xl border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-end z-50">
                     {languages.map((lang) => {
                         const isSelected = activeLang.code === lang.code;
                         return (
                             <button
                                 key={lang.code}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={isSelected}
                                 onClick={() => handleLanguageChange(lang.code)}
-                                className={`w-full px-4 py-2 text-left text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors ${isSelected
-                                    ? 'text-blue-500 font-medium bg-blue-50 dark:bg-blue-900/10'
+                                className={`w-full px-4 py-2 text-start text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${isSelected
+                                    ? 'text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/10'
                                     : 'text-gray-700 dark:text-gray-300'
                                     }`}
                             >
@@ -90,7 +118,7 @@ export function LanguageDropdown({
                                     <span className="text-xs opacity-70">{lang.label}</span>
                                 </div>
                                 {isSelected && (
-                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" aria-hidden="true"></span>
                                 )}
                             </button>
                         );
@@ -119,8 +147,10 @@ export function NavigationDropdown({
 }: NavigationDropdownProps) {
     const [isOpen, setIsOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
 
     useClickOutside(menuRef, () => setIsOpen(false));
+    useEscapeDismiss(isOpen, () => setIsOpen(false), triggerRef);
 
     const handleNavItemClick = () => {
         setIsOpen(false);
@@ -136,39 +166,47 @@ export function NavigationDropdown({
     return (
         <div className="relative" ref={menuRef}>
             <button
+                ref={triggerRef}
+                type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 px-3 py-2 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 transition-colors"
+                aria-label={currentItem.label}
+                aria-expanded={isOpen}
+                aria-haspopup="menu"
+                className="flex items-center gap-2 px-3 py-2 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
-                <CurrentIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+                <CurrentIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" aria-hidden="true" />
                 {/* 根据 showLabel 控制文字显示 */}
                 {showLabel && (
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                         {currentItem.label}
                     </span>
                 )}
-                <ChevronDown className={`w-3 h-3 text-gray-700 dark:text-gray-300 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-3 h-3 text-gray-700 dark:text-gray-300 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
 
             {/* 下拉菜单 */}
             {isOpen && (
-                <div className="absolute left-1/2 -translate-x-1/2 mt-2 w-48 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border-2 border-gray-200 dark:border-gray-700 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top">
+                <div role="menu" className="absolute left-1/2 -translate-x-1/2 mt-2 w-48 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border-2 border-gray-200 dark:border-gray-700 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top">
                     {navItems.map((item) => {
                         const isApiKeyFun = item.path === '/apikey-fun';
                         const showEventBadge = isApiKeyFun && isDouble11Active();
+                        const active = isActive(item.path);
 
                         return (
                             <Link
                                 key={item.path}
                                 to={item.path}
+                                role="menuitem"
+                                aria-current={active ? 'page' : undefined}
                                 draggable="false"
                                 onClick={handleNavItemClick}
-                                className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors ${isActive(item.path)
-                                    ? 'text-blue-500 font-medium bg-blue-50 dark:bg-blue-900/10'
+                                className={`w-full px-4 py-2.5 text-start text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${active
+                                    ? 'text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/10'
                                     : 'text-gray-700 dark:text-gray-300'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
-                                    <item.icon className="w-4 h-4" />
+                                    <item.icon className="w-4 h-4" aria-hidden="true" />
                                     <span>{item.label}</span>
                                 </div>
                                 {/* [TEMPORARY_EVENT: DOUBLE11_2026] 菜单栏微型活动标签 */}
@@ -204,10 +242,12 @@ export function MoreDropdown({
 }: MoreDropdownProps) {
     const [isOpen, setIsOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const { t } = useTranslation();
     const { setMiniView } = useViewStore();
 
     useClickOutside(menuRef, () => setIsOpen(false));
+    useEscapeDismiss(isOpen, () => setIsOpen(false), triggerRef);
 
     const activeLang = findMatchingLanguage(currentLanguage, languages);
 
@@ -230,18 +270,25 @@ export function MoreDropdown({
     return (
         <div className="relative" ref={menuRef}>
             <button
+                ref={triggerRef}
+                type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors"
+                aria-label={t('nav.more', '更多')}
+                aria-expanded={isOpen}
+                aria-haspopup="menu"
+                className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 title={t('nav.more', '更多')}
             >
-                <MoreVertical className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+                <MoreVertical className="w-5 h-5 text-gray-700 dark:text-gray-300" aria-hidden="true" />
             </button>
 
             {/* 下拉菜单 (强制右对齐防遮蔽) */}
             {isOpen && (
-                <div className="absolute right-0 mt-2 w-44 bg-white dark:bg-base-200 rounded-xl shadow-xl border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right z-50">
+                <div role="menu" className="absolute end-0 mt-2 w-44 bg-white dark:bg-base-200 rounded-xl shadow-xl border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-end z-50">
                     {/* 迷你视图 */}
                     <button
+                        type="button"
+                        role="menuitem"
                         onClick={() => {
                             if (isTauri()) {
                                 invoke('show_mini_view').catch(() => {});
@@ -250,21 +297,23 @@ export function MoreDropdown({
                             }
                             setIsOpen(false);
                         }}
-                        className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-base-100 transition-colors text-gray-700 dark:text-gray-300"
+                        className="w-full px-4 py-2.5 text-start text-sm flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-base-100 transition-colors text-gray-700 dark:text-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
                     >
-                        <Minimize2 className="w-4 h-4" />
+                        <Minimize2 className="w-4 h-4" aria-hidden="true" />
                         <span>{t('nav.mini_view', 'Mini View')}</span>
                     </button>
 
                     {/* 主题切换 */}
                     <button
+                        type="button"
+                        role="menuitem"
                         onClick={handleThemeToggle}
-                        className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-base-100 transition-colors text-gray-700 dark:text-gray-300"
+                        className="w-full px-4 py-2.5 text-start text-sm flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-base-100 transition-colors text-gray-700 dark:text-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
                     >
                         {theme === 'light' ? (
-                            <Moon className="w-4 h-4" />
+                            <Moon className="w-4 h-4" aria-hidden="true" />
                         ) : (
-                            <Sun className="w-4 h-4" />
+                            <Sun className="w-4 h-4" aria-hidden="true" />
                         )}
                         <span>{theme === 'light' ? t('nav.theme_to_dark') : t('nav.theme_to_light')}</span>
                     </button>
@@ -278,9 +327,12 @@ export function MoreDropdown({
                         return (
                             <button
                                 key={lang.code}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={isSelected}
                                 onClick={() => handleLanguageChange(lang.code)}
-                                className={`w-full px-4 py-2 text-left text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors ${isSelected
-                                    ? 'text-blue-500 font-medium bg-blue-50 dark:bg-blue-900/10'
+                                className={`w-full px-4 py-2 text-start text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${isSelected
+                                    ? 'text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/10'
                                     : 'text-gray-700 dark:text-gray-300'
                                     }`}
                             >
@@ -289,7 +341,7 @@ export function MoreDropdown({
                                     <span className="text-xs opacity-70">{lang.label}</span>
                                 </div>
                                 {isSelected && (
-                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" aria-hidden="true"></span>
                                 )}
                             </button>
                         );
@@ -300,10 +352,12 @@ export function MoreDropdown({
                         <>
                             <div className="my-1 border-t border-gray-100 dark:border-base-100"></div>
                             <button
+                                type="button"
+                                role="menuitem"
                                 onClick={handleLogout}
-                                className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-red-600 dark:text-red-400"
+                                className="w-full px-4 py-2.5 text-start text-sm flex items-center gap-3 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-red-600 dark:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500"
                             >
-                                <LogOut className="w-4 h-4" />
+                                <LogOut className="w-4 h-4" aria-hidden="true" />
                                 <span>{t('nav.logout', '登出')}</span>
                             </button>
                         </>
