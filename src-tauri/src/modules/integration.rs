@@ -331,6 +331,8 @@ mod macos_keychain_ffi {
             new_acl: *mut SecACLRef,
         ) -> OSStatus;
         fn SecACLUpdateAuthorizations(acl: SecACLRef, authorizations: CFArrayRef) -> OSStatus;
+        fn SecKeychainGetUserInteractionAllowed(state: *mut Boolean) -> OSStatus;
+        fn SecKeychainSetUserInteractionAllowed(state: Boolean) -> OSStatus;
     }
 
     fn make_cf_string(s: &str) -> Result<CfGuard, String> {
@@ -600,6 +602,31 @@ mod macos_keychain_ffi {
         .map_err(|(_, msg)| msg)
     }
 
+    static USER_INTERACTION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct ScopedNoKeychainUi {
+        prev_allowed: Boolean,
+    }
+
+    impl ScopedNoKeychainUi {
+        fn enter() -> Self {
+            let mut prev: Boolean = 1;
+            unsafe {
+                let _ = SecKeychainGetUserInteractionAllowed(&mut prev);
+                let _ = SecKeychainSetUserInteractionAllowed(0);
+            }
+            Self { prev_allowed: prev }
+        }
+    }
+
+    impl Drop for ScopedNoKeychainUi {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = SecKeychainSetUserInteractionAllowed(self.prev_allowed);
+            }
+        }
+    }
+
     pub(super) enum SilentKeychainRead {
         Found(String),
         NotFound,
@@ -635,8 +662,18 @@ mod macos_keychain_ffi {
             return SilentKeychainRead::NeedsSubprocessFallback;
         };
 
+        // `kSecUseAuthenticationUIFail` only applies to Data Protection keychains on macOS;
+        // legacy file-based keychains ignore it and still pop up modal dialogs on partition
+        // mismatch. Disable user interaction around `SecItemCopyMatching` so `apple-tool:`
+        // items fall back silently to `/usr/bin/security find-generic-password` without prompting.
         let mut result_raw: CFTypeRef = std::ptr::null();
-        let status = unsafe { SecItemCopyMatching(query.as_ptr(), &mut result_raw) };
+        let status = {
+            let _lock = USER_INTERACTION_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let _no_ui = ScopedNoKeychainUi::enter();
+            unsafe { SecItemCopyMatching(query.as_ptr(), &mut result_raw) }
+        };
         match status {
             ERR_SEC_SUCCESS => {
                 let Some(data_guard) = (unsafe { CfGuard::from_create(result_raw) }) else {
@@ -654,8 +691,10 @@ mod macos_keychain_ffi {
                 SilentKeychainRead::Found(String::from_utf8_lossy(bytes).trim().to_string())
             }
             ERR_SEC_ITEM_NOT_FOUND => SilentKeychainRead::NotFound,
-            ERR_SEC_INTERACTION_NOT_ALLOWED => SilentKeychainRead::NeedsSubprocessFallback,
-            ERR_SEC_AUTH_FAILED | ERR_SEC_USER_CANCELED => SilentKeychainRead::Denied(status),
+            ERR_SEC_INTERACTION_NOT_ALLOWED | ERR_SEC_AUTH_FAILED => {
+                SilentKeychainRead::NeedsSubprocessFallback
+            }
+            ERR_SEC_USER_CANCELED => SilentKeychainRead::Denied(status),
             _ => SilentKeychainRead::NeedsSubprocessFallback,
         }
     }
@@ -682,12 +721,90 @@ mod macos_keychain_ffi {
 }
 
 #[cfg(target_os = "macos")]
+fn is_safe_security_arg(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_graphic() && !matches!(b, b'"' | b'\'' | b'\\'))
+}
+
+#[cfg(target_os = "macos")]
+fn try_write_macos_keychain_via_security_stdin(service: &str, account: &str, secret: &str) -> bool {
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    // `/usr/bin/security -i` caps stdin lines around 4095 bytes; keep a comfortable margin
+    // while using `-w <secret>` directly for safe ASCII tokens (e.g. `go-keyring-base64:...`)
+    // so payloads aren't doubled by hex encoding and still inherit the `apple-tool:` partition.
+    const MAX_SECURITY_STDIN_LINE: usize = 3900;
+
+    if !is_safe_security_arg(service) || !is_safe_security_arg(account) {
+        return false;
+    }
+
+    let cmd_line = if is_safe_security_arg(secret) {
+        format!(
+            "add-generic-password -U -s {} -a {} -w {} -A\n",
+            service, account, secret
+        )
+    } else {
+        if secret.len() > 1900 {
+            return false;
+        }
+        let mut hex_secret = String::with_capacity(secret.len() * 2);
+        for b in secret.as_bytes() {
+            let _ = write!(&mut hex_secret, "{:02x}", b);
+        }
+        format!(
+            "add-generic-password -U -s {} -a {} -X {} -A\n",
+            service, account, hex_secret
+        )
+    };
+
+    if cmd_line.len() > MAX_SECURITY_STDIN_LINE {
+        return false;
+    }
+
+    let Ok(mut child) = Command::new("security")
+        .arg("-i")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    else {
+        return false;
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if stdin.write_all(cmd_line.as_bytes()).is_err() {
+            let _ = child.wait();
+            return false;
+        }
+    } else {
+        let _ = child.wait();
+        return false;
+    }
+
+    match child.wait_with_output() {
+        Ok(output) => {
+            output.status.success() && String::from_utf8_lossy(&output.stderr).trim().is_empty()
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn write_macos_keychain_generic_password(
     service: &str,
     account: &str,
     secret: &str,
 ) -> Result<(), String> {
-    let res = macos_keychain_ffi::write_generic_password(service, account, secret);
+    let res = if try_write_macos_keychain_via_security_stdin(service, account, secret) {
+        Ok(())
+    } else {
+        macos_keychain_ffi::write_generic_password(service, account, secret)
+    };
     // Invalidate even if writing fails (e.g. after SecItemDelete) so the coordinator does
     // not serve a stale cached credential.
     invalidate_system_keychain_cache(service, account);
@@ -3651,6 +3768,36 @@ mod tests {
         macos_keychain_ffi::delete_generic_password(&service, account);
 
         assert_eq!(outcome, KeychainLookupOutcome::Found(payload));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_macos_keychain_apple_tool_and_sub_4kb_roundtrip_without_ui_prompt() {
+        let service = format!("antigravity-test-sub4k-{}", uuid::Uuid::new_v4());
+        let account = "agy-oauth-token";
+        let payload = format!("go-keyring-base64:{}", "B".repeat(2_400));
+
+        write_macos_keychain_generic_password(&service, account, &payload)
+            .expect("sub-4KB Keychain write via security -i should succeed");
+
+        let cli_read = Command::new("security")
+            .args(["find-generic-password", "-s", &service, "-a", account, "-w"])
+            .output()
+            .expect("security find-generic-password should run");
+        assert!(
+            cli_read.status.success(),
+            "security CLI should read item without prompting: stderr={}",
+            String::from_utf8_lossy(&cli_read.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&cli_read.stdout).trim(), payload);
+
+        let app_read = read_macos_keychain_generic_password(&service, account, true);
+        let _ = Command::new("security")
+            .args(["delete-generic-password", "-s", &service, "-a", account])
+            .output();
+        macos_keychain_ffi::delete_generic_password(&service, account);
+
+        assert_eq!(app_read, KeychainLookupOutcome::Found(payload));
     }
 
     #[test]
