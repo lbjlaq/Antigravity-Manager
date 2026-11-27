@@ -3,8 +3,19 @@ export interface UpstreamProxyConfig {
     url: string;
 }
 
+export type ModelBindingPolicy = 'exclusive' | 'priority';
+
+export interface ModelAccountBinding {
+    id: string;
+    pattern: string;
+    account_ids: string[];
+    policy: ModelBindingPolicy;
+    enabled: boolean;
+}
+
 export interface ProxyConfig {
     enabled: boolean;
+    model_bindings?: ModelAccountBinding[];
     allow_lan_access?: boolean;
     auth_mode?: 'off' | 'strict' | 'all_except_health' | 'auto';
     port: number;

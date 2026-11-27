@@ -45,6 +45,8 @@ pub use config::update_multimodal_config;
 pub use config::update_stream_timeout_config;
 pub use config::update_thinking_budget_config;
 pub use config::update_upload_timeout_config;
+pub use config::ModelAccountBinding;
+pub use config::ModelBindingPolicy;
 pub use config::ProxyAuthMode;
 pub use config::ProxyConfig;
 pub use config::ProxyPoolConfig;

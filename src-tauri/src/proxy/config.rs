@@ -1367,11 +1367,49 @@ fn default_image_per_account_concurrency() -> usize {
     4
 }
 
+/// 模型账号绑定调度策略 (Fixes #4004)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelBindingPolicy {
+    /// 专属排他模式：该模型模式只能由指定账号提供服务，若无可用账号则阻断，不外溢
+    #[default]
+    Exclusive,
+    /// 优先调度模式：优先由指定账号提供服务，若均不可用或繁忙，降级回退到全池通用账号
+    Priority,
+}
+
+/// 模型账号绑定规则条目 (Fixes #4004)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelAccountBinding {
+    /// 唯一规则 ID
+    #[serde(default = "default_model_binding_id")]
+    pub id: String,
+    /// 模型通配符模式 (如 `claude*`, `gemini-*-flash*`, `*pro*`)
+    pub pattern: String,
+    /// 绑定的账号 ID 列表
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+    /// 调度策略 (Exclusive 专属 / Priority 优先)
+    #[serde(default)]
+    pub policy: ModelBindingPolicy,
+    /// 是否启用
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_model_binding_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// 反代服务配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     /// 是否启用反代服务
     pub enabled: bool,
+
+    /// 全局模型账号绑定规则列表 (Model Account Bindings)
+    #[serde(default)]
+    pub model_bindings: Vec<ModelAccountBinding>,
 
     /// 是否允许局域网访问
     /// - false: 仅本机访问 127.0.0.1（默认，隐私优先）
@@ -1671,6 +1709,7 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            model_bindings: Vec::new(),
             allow_lan_access: false, // 默认仅本机访问，隐私优先
             bind_host: None,
             auth_mode: ProxyAuthMode::default(),

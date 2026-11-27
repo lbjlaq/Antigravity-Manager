@@ -357,6 +357,20 @@
         "forbidden_badge": "403",
         "forbidden_tooltip": "API 返回 403 Forbidden，账号无权使用 Gemini Code Assist",
         "forbidden_msg": "账号无权限，已跳过自动刷新",
+        "model_access": {
+            "title": "模型准入控制",
+            "desc": "控制当前账号允许或拒绝处理的模型请求。未配置时默认响应所有模型。",
+            "mode_all": "全部允许 (默认)",
+            "mode_allow": "仅允许白名单",
+            "mode_deny": "拒绝黑名单",
+            "badge_allow": "白名单",
+            "badge_deny": "黑名单",
+            "empty_allow_hint": "未添加任何模式，将无法响应任何模型请求",
+            "empty_deny_hint": "未添加任何模式，将不阻止任何模型",
+            "presets": "快捷通配符:",
+            "pattern_placeholder": "如 *claude*, gemini-2.5*"
+        },
+        "model_access_updated": "模型准入规则已更新",
         "status": {
             "forbidden": "403 Forbidden",
             "disabled": "账号已禁用",
@@ -1747,6 +1761,25 @@
             "original_placeholder": "原始名 (如 gemini-3.x-flash，x必须大于8)",
             "wildcard_rule_notice": "通配符规则（x 必须大于 8，如 3.9、3.10 自动转为 3.x-flash-tiered）",
             "wildcard_only_gemini_3x": "仅允许内置通配符 gemini-3.x-flash（x 必须大于 8），其他请填写具体模型 ID"
+        },
+        "model_bindings": {
+            "title": "全局模型-账号定向绑定",
+            "subtitle": "针对特定模型或通配符规则，将请求锁定或优先分配给指定账号集合。",
+            "add_rule": "添加定向绑定",
+            "empty": "暂无定向绑定规则，所有模型遵循全局负载均衡与账号准入策略。",
+            "pattern_label": "模型匹配模式 (通配符)",
+            "pattern_placeholder": "如 *claude*, *gemini*pro*, *opus*",
+            "policy_label": "调度策略",
+            "policy_exclusive": "专属锁定 (Exclusive)",
+            "policy_exclusive_desc": "仅由指定账号处理；指定账号全部满额或故障时直接失败，绝不外溢至其他账号",
+            "policy_priority": "优先调度 (Priority)",
+            "policy_priority_desc": "优先调度指定账号；当指定账号满额或进入冷却小黑屋时，优雅降级回退到常规账号池",
+            "accounts_label": "绑定账号集合",
+            "accounts_selected": "已选择 {{count}} 个账号",
+            "select_all": "全选",
+            "deselect_all": "清空选择",
+            "enabled_label": "启用状态",
+            "specificity_tip": "特异度评分: {{spec}} (非通配符字符越多优先级越高；相同特异度下专属策略优先)"
         },
         "examples": {
             "title": "使用示例"
