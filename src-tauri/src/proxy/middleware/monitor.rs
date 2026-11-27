@@ -1120,9 +1120,14 @@ pub async fn monitor_middleware(
     let _logging_enabled = state.monitor.is_enabled();
 
     let method = request.method().to_string();
+    let path = request.uri().path();
     let uri = crate::proxy::payload_audit::redact_uri(&request.uri().to_string());
 
-    if uri.contains("event_logging") || uri.contains("/api/") || uri.starts_with("/internal/") {
+    if uri.contains("event_logging")
+        || uri.contains("/api/")
+        || uri.starts_with("/internal/")
+        || matches!(path, "/health" | "/healthz" | "/api/health")
+    {
         return next.run(request).await;
     }
 

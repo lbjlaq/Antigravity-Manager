@@ -363,10 +363,43 @@ pub async fn run_headless_server(
     // 账号在 internal_start_proxy_service 中已完成加载，异步刷新一次全量配额
     modules::startup_refresh::spawn_startup_quota_refresh(None, proxy_state.clone());
 
-    // Wait for Ctrl-C
-    tokio::signal::ctrl_c().await.ok();
-    info!("Headless mode shutting down");
+    // Wait for Ctrl-C / SIGTERM for clean Docker & systemd shutdown
+    let signal_name = wait_for_shutdown_signal().await;
+    info!(
+        "Headless mode received {}, shutting down proxy service cleanly...",
+        signal_name
+    );
+    commands::proxy::shutdown_headless_service(&proxy_state).await;
+    info!("Headless mode shutdown complete");
     Ok(())
+}
+
+async fn wait_for_shutdown_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => "SIGINT",
+                    _ = sigterm.recv() => "SIGTERM",
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to install SIGTERM handler ({}); falling back to SIGINT only",
+                    err
+                );
+                let _ = tokio::signal::ctrl_c().await;
+                "SIGINT"
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "SIGINT"
+    }
 }
 
 fn credential_state(value: &str) -> &'static str {

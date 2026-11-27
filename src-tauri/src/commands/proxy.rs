@@ -594,6 +594,33 @@ pub async fn stop_proxy_service(state: State<'_, ProxyServiceState>) -> Result<(
     Ok(())
 }
 
+/// 优雅关闭无头模式下的反代与管理服务（用于 SIGINT/SIGTERM）。
+/// 绝不修改 `gui_config.json`（保留 `auto_start` 等持久化配置），并释放监听端口与后台任务。
+pub async fn shutdown_headless_service(state: &ProxyServiceState) {
+    let instance_opt = {
+        let mut instance_lock = state.instance.write().await;
+        instance_lock.take()
+    };
+    if let Some(instance) = instance_opt {
+        instance.token_manager.abort_background_tasks().await;
+        instance.axum_server.set_running(false).await;
+    }
+
+    let admin_opt = {
+        let mut admin_lock = state.admin_server.write().await;
+        admin_lock.take()
+    };
+    if let Some(admin) = admin_opt {
+        admin
+            .axum_server
+            .token_manager
+            .abort_background_tasks()
+            .await;
+        admin.axum_server.set_running(false).await;
+        admin.stop().await;
+    }
+}
+
 pub(crate) fn snapshot_proxy_status(state: &ProxyServiceState) -> ProxyStatus {
     // 优先检查启动标志，避免被写锁阻塞
     if state.starting.load(Ordering::SeqCst) {
@@ -1384,6 +1411,12 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_service_state_helpers_cover_admin_only_and_deduplicate() {
+        let _config_guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let temp_dir =
             std::env::temp_dir().join(format!("abv_proxy_state_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -1554,5 +1587,105 @@ mod tests {
             std::env::remove_var("ABV_DATA_DIR");
         }
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_headless_service_does_not_mutate_auto_start() {
+        let _config_guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct EnvRestore(Option<String>, std::path::PathBuf);
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                if let Some(ref prev) = self.0 {
+                    std::env::set_var("ABV_DATA_DIR", prev);
+                } else {
+                    std::env::remove_var("ABV_DATA_DIR");
+                }
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let prev_data_dir = std::env::var("ABV_DATA_DIR").ok();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ag_headless_shutdown_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let mut app_cfg = crate::models::AppConfig::new();
+        app_cfg.proxy.auto_start = true;
+        // Seed gui_config.json BEFORE publishing temp_dir via ABV_DATA_DIR so no concurrent
+        // reader can observe an empty data dir and initialize default auto_start=false.
+        std::fs::write(
+            temp_dir.join("gui_config.json"),
+            serde_json::to_string_pretty(&app_cfg).expect("serialize seeded config"),
+        )
+        .expect("write seeded config");
+        let _restore = EnvRestore(prev_data_dir, temp_dir.clone());
+        std::env::set_var("ABV_DATA_DIR", &temp_dir);
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let mut cfg = ProxyConfig::default();
+        cfg.port = port;
+        cfg.allow_lan_access = false;
+
+        let state = ProxyServiceState::new();
+        let cf_state = Arc::new(crate::commands::cloudflared::CloudflaredState::new());
+        ensure_admin_server(
+            cfg.clone(),
+            &state,
+            crate::modules::integration::SystemManager::Headless,
+            cf_state,
+        )
+        .await
+        .expect("start admin server");
+
+        // Populate state.instance (matching internal_start_proxy_service) so shutdown_headless_service
+        // exercises both the instance_opt and admin_opt teardown paths.
+        let axum_server = {
+            let admin_lock = state.admin_server.read().await;
+            admin_lock.as_ref().unwrap().axum_server.clone()
+        };
+        axum_server.set_running(true).await;
+        {
+            let mut instance_lock = state.instance.write().await;
+            *instance_lock = Some(ProxyServiceInstance {
+                config: cfg,
+                token_manager: axum_server.token_manager.clone(),
+                axum_server: axum_server.clone(),
+            });
+        }
+        assert!(state.instance.read().await.is_some());
+        assert!(*axum_server.is_running.read().await);
+
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_ok(),
+            "listener should accept connections before shutdown"
+        );
+
+        shutdown_headless_service(&state).await;
+
+        assert!(state.admin_server.read().await.is_none());
+        assert!(state.instance.read().await.is_none());
+        assert!(
+            !*axum_server.is_running.read().await,
+            "shutdown_headless_service must mark axum_server as not running"
+        );
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", port)).is_ok(),
+            "listener port must be released after headless shutdown"
+        );
+        let after_cfg = crate::modules::config::load_app_config().expect("reload config");
+        assert!(
+            after_cfg.proxy.auto_start,
+            "shutdown_headless_service must not overwrite auto_start in gui_config.json"
+        );
     }
 }

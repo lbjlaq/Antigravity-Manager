@@ -770,7 +770,7 @@ impl AxumServer {
 
         // 2. 构建管理 API (强制鉴权)
         let admin_routes = Router::new()
-            .route("/health", get(health_check_handler))
+            .route("/health", get(admin_health_check_handler))
             .route(
                 "/accounts",
                 get(admin_list_accounts).post(admin_add_account),
@@ -1455,13 +1455,224 @@ fn bind_tcp_listener(host: &str, port: u16) -> Result<tokio::net::TcpListener, S
 
 // ===== API 处理器 (旧代码已移除，由 src/proxy/handlers/* 接管) =====
 
-/// 健康检查处理器
-async fn health_check_handler() -> Response {
+#[derive(Debug, Default, Deserialize)]
+struct HealthQuery {
+    deep: Option<String>,
+}
+
+impl HealthQuery {
+    fn is_deep(&self) -> bool {
+        self.deep
+            .as_deref()
+            .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DeepHealthSnapshot {
+    running: bool,
+    locks: bool,
+    db: bool,
+}
+
+impl DeepHealthSnapshot {
+    fn ready(self) -> bool {
+        self.running && self.locks && self.db
+    }
+}
+
+const DEEP_HEALTH_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3);
+
+static DEEP_HEALTH_CACHE: once_cell::sync::Lazy<
+    std::sync::Mutex<Option<(std::time::Instant, DeepHealthSnapshot)>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(None));
+
+static DEEP_HEALTH_REFRESH_GATE: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+static DEEP_DB_PING_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn shallow_health_response() -> Response {
     Json(serde_json::json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION")
     }))
     .into_response()
+}
+
+async fn is_deep_health_allowed(
+    state: &AppState,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: &axum::http::HeaderMap,
+    is_admin_route: bool,
+) -> bool {
+    let addr = peer.map(|axum::extract::Extension(axum::extract::ConnectInfo(addr))| addr);
+    if crate::proxy::middleware::ip_filter::is_unproxied_direct_loopback_parts(addr, headers) {
+        return true;
+    }
+    if is_admin_route {
+        if let Ok(security) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), state.security.read()).await
+        {
+            return crate::proxy::middleware::auth::is_admin_headers_authorized(&security, headers);
+        }
+    }
+    false
+}
+
+async fn evaluate_deep_health(state: &AppState) -> DeepHealthSnapshot {
+    if let Ok(cache) = DEEP_HEALTH_CACHE.lock() {
+        if let Some((captured_at, snapshot)) = *cache {
+            if captured_at.elapsed() < DEEP_HEALTH_CACHE_TTL {
+                return snapshot;
+            }
+        }
+    }
+
+    // Single-flight refresh gate: coalesce concurrent probes so Probe B waits for Probe A's
+    // fresh snapshot instead of tripping a spurious 503 or poisoning DEEP_HEALTH_CACHE.
+    let Ok(_refresh_guard) = tokio::time::timeout(
+        std::time::Duration::from_millis(1200),
+        DEEP_HEALTH_REFRESH_GATE.lock(),
+    )
+    .await
+    else {
+        return DeepHealthSnapshot {
+            running: false,
+            locks: false,
+            db: false,
+        };
+    };
+
+    // Double-check cache after acquiring the single-flight gate.
+    if let Ok(cache) = DEEP_HEALTH_CACHE.lock() {
+        if let Some((captured_at, snapshot)) = *cache {
+            if captured_at.elapsed() < DEEP_HEALTH_CACHE_TTL {
+                return snapshot;
+            }
+        }
+    }
+
+    let running = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        state.is_running.read(),
+    )
+    .await
+    .map(|guard| *guard)
+    .unwrap_or(false);
+
+    let async_locks_ok = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+        let _mapping = state.custom_mapping.read().await;
+        let _security = state.security.read().await;
+        let _pref = state.token_manager.get_preferred_account().await;
+    })
+    .await
+    .is_ok();
+    let catalog_locks_ok = crate::models::official_model::OfficialModelCatalog::try_health_check();
+    let locks = async_locks_ok && catalog_locks_ok;
+
+    // Single-flight DB ping: never pile up blocking threads if a prior SQLite probe timed out.
+    let (db, db_probe_executed) = if DEEP_DB_PING_IN_FLIGHT
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_ok()
+    {
+        struct InFlightReset;
+        impl Drop for InFlightReset {
+            fn drop(&mut self) {
+                DEEP_DB_PING_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        // Construct guard before spawn_blocking so even a dropped/cancelled task clears the flag.
+        let reset = InFlightReset;
+        let ok = tokio::time::timeout(
+            std::time::Duration::from_millis(1000),
+            tokio::task::spawn_blocking(move || {
+                let _reset = reset;
+                crate::modules::proxy_db::ping().is_ok()
+            }),
+        )
+        .await
+        .ok()
+        .and_then(|res| res.ok())
+        .unwrap_or(false);
+        (ok, true)
+    } else {
+        // A prior timed-out blocking ping is still stuck; report degraded without caching.
+        (false, false)
+    };
+
+    let snapshot = DeepHealthSnapshot { running, locks, db };
+    if db_probe_executed {
+        if let Ok(mut cache) = DEEP_HEALTH_CACHE.lock() {
+            *cache = Some((std::time::Instant::now(), snapshot));
+        }
+    }
+    snapshot
+}
+
+async fn handle_health_check(
+    state: AppState,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
+    query: Option<Query<HealthQuery>>,
+    is_admin_route: bool,
+) -> Response {
+    let want_deep = query.as_ref().is_some_and(|Query(q)| q.is_deep());
+    if !want_deep {
+        return shallow_health_response();
+    }
+
+    if !is_deep_health_allowed(&state, peer, &headers, is_admin_route).await {
+        return shallow_health_response();
+    }
+
+    let snapshot = evaluate_deep_health(&state).await;
+    let ready = snapshot.ready();
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "status": if ready { "ok" } else { "degraded" },
+            "version": env!("CARGO_PKG_VERSION"),
+            "ready": ready,
+            "checks": {
+                "running": snapshot.running,
+                "locks": snapshot.locks,
+                "db": snapshot.db
+            }
+        })),
+    )
+        .into_response()
+}
+
+/// 公开健康检查处理器（`/health`、`/healthz`；默认浅探针，直连 loopback 可选 `?deep=1`）
+async fn health_check_handler(
+    State(state): State<AppState>,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
+    query: Option<Query<HealthQuery>>,
+) -> Response {
+    handle_health_check(state, peer, headers, query, false).await
+}
+
+/// 管理端健康检查处理器（`/api/health`；直连 loopback 或合法管理员凭据支持 `?deep=1`）
+async fn admin_health_check_handler(
+    State(state): State<AppState>,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    headers: axum::http::HeaderMap,
+    query: Option<Query<HealthQuery>>,
+) -> Response {
+    handle_health_check(state, peer, headers, query, true).await
 }
 
 /// 静默成功处理器 (用于拦截遥测日志等)
@@ -6233,6 +6444,244 @@ mod admin_parity_tests {
                 .unwrap_err()
                 .0,
             StatusCode::FORBIDDEN
+        );
+    }
+
+    fn build_health_test_state(data_dir: std::path::PathBuf) -> super::AppState {
+        let token_manager = std::sync::Arc::new(crate::proxy::TokenManager::new(data_dir));
+        let monitor = std::sync::Arc::new(crate::proxy::monitor::ProxyMonitor::new(100, None));
+        let mut proxy_cfg = crate::proxy::config::ProxyConfig::default();
+        proxy_cfg.api_key = "sk-test-health-key".to_string();
+        proxy_cfg.admin_password = Some("admin-secret-health".to_string());
+        let proxy_pool_state =
+            std::sync::Arc::new(tokio::sync::RwLock::new(proxy_cfg.proxy_pool.clone()));
+        let proxy_pool_manager = std::sync::Arc::new(
+            crate::proxy::proxy_pool::ProxyPoolManager::new(proxy_pool_state.clone()),
+        );
+        let upstream = std::sync::Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
+            Some(proxy_cfg.upstream_proxy.clone()),
+            Some(proxy_pool_manager.clone()),
+        ));
+        let integration = crate::modules::integration::SystemManager::Headless;
+        super::AppState {
+            token_manager,
+            custom_mapping: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.custom_mapping.clone(),
+            )),
+            request_timeout: 30,
+            upstream_proxy: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.upstream_proxy.clone(),
+            )),
+            upstream,
+            monitor,
+            experimental: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.experimental.clone(),
+            )),
+            debug_logging: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.debug_logging.clone(),
+            )),
+            switching: std::sync::Arc::new(tokio::sync::RwLock::new(false)),
+            account_service: std::sync::Arc::new(
+                crate::modules::account_service::AccountService::new(integration.clone()),
+            ),
+            integration,
+            security: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::proxy::ProxySecurityConfig::from_proxy_config(&proxy_cfg),
+            )),
+            cloudflared_state: std::sync::Arc::new(
+                crate::commands::cloudflared::CloudflaredState::new(),
+            ),
+            is_running: std::sync::Arc::new(tokio::sync::RwLock::new(true)),
+            port: 8045,
+            proxy_pool_state,
+            proxy_pool_manager,
+            only_raw_quota_models: std::sync::Arc::new(tokio::sync::RwLock::new(false)),
+            image_scheduler: super::build_image_scheduler(Vec::new(), 1),
+        }
+    }
+
+    async fn response_json(
+        resp: axum::response::Response,
+    ) -> (axum::http::StatusCode, serde_json::Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("read body");
+        let val = serde_json::from_slice(&bytes).expect("parse json");
+        (status, val)
+    }
+
+    #[tokio::test]
+    async fn health_handler_shallow_and_deep_modes_behave_safely() {
+        use axum::http::{HeaderMap, HeaderValue, StatusCode};
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let _config_guard = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct EnvRestore(Option<String>, std::path::PathBuf);
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                if let Some(ref prev) = self.0 {
+                    std::env::set_var("ABV_DATA_DIR", prev);
+                } else {
+                    std::env::remove_var("ABV_DATA_DIR");
+                }
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let prev_env = std::env::var("ABV_DATA_DIR").ok();
+        let temp_dir =
+            std::env::temp_dir().join(format!("ag_health_test_{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let _restore = EnvRestore(prev_env, temp_dir.clone());
+        std::env::set_var("ABV_DATA_DIR", &temp_dir);
+
+        let state = build_health_test_state(temp_dir.clone());
+        state.monitor.set_enabled(true);
+        let app = axum::Router::new()
+            .route("/health", get(super::health_check_handler))
+            .route("/api/health", get(super::admin_health_check_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::proxy::middleware::monitor::monitor_middleware,
+            ))
+            .with_state(state.clone());
+
+        // 1. Shallow /health and malformed/unexpected queries always return legacy 200 without 400
+        for uri in ["/health", "/health?foo=bar", "/health?deep=invalid"] {
+            let req = axum::http::Request::builder()
+                .uri(uri)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let (status, body) = response_json(app.clone().oneshot(req).await.unwrap()).await;
+            assert_eq!(status, StatusCode::OK, "uri={uri}");
+            assert_eq!(body["status"], "ok");
+            assert!(
+                body.get("ready").is_none(),
+                "shallow response must stay backward compatible"
+            );
+        }
+
+        // 2a. Remote unauthenticated /health?deep=1 stays shallow (no DoS / info exposure)
+        let mut req = axum::http::Request::builder()
+            .uri("/health?deep=1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            "192.168.1.99:50000"
+                .parse::<std::net::SocketAddr>()
+                .unwrap(),
+        ));
+        let (status, body) = response_json(app.clone().oneshot(req).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.get("ready").is_none());
+
+        // 2b. Reverse-proxied loopback (127.0.0.1 + X-Forwarded-For) must ALSO stay shallow
+        let mut req = axum::http::Request::builder()
+            .uri("/health?deep=1")
+            .header("x-forwarded-for", HeaderValue::from_static("203.0.113.10"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            "127.0.0.1:50009".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        let (status, body) = response_json(app.clone().oneshot(req).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.get("ready").is_none(),
+            "proxied loopback request must not trigger public deep health"
+        );
+
+        // 3a. Direct loopback /health?deep=1 and ?deep=true return 200 + ready=true when running
+        for uri in ["/health?deep=1", "/health?deep=true"] {
+            if let Ok(mut c) = super::DEEP_HEALTH_CACHE.lock() {
+                *c = None;
+            }
+            let mut req = axum::http::Request::builder()
+                .uri(uri)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            req.extensions_mut().insert(axum::extract::ConnectInfo(
+                "127.0.0.1:50001".parse::<std::net::SocketAddr>().unwrap(),
+            ));
+            let (status, body) = response_json(app.clone().oneshot(req).await.unwrap()).await;
+            assert_eq!(status, StatusCode::OK, "uri={uri} body={body}");
+            assert_eq!(body["status"], "ok");
+            assert_eq!(body["ready"], true);
+            assert_eq!(body["checks"]["running"], true);
+            assert_eq!(body["checks"]["locks"], true);
+            assert_eq!(body["checks"]["db"], true);
+        }
+
+        // 3b. Concurrent cold-cache deep health probes coalesce cleanly (no spurious 503/poisoning)
+        if let Ok(mut c) = super::DEEP_HEALTH_CACHE.lock() {
+            *c = None;
+        }
+        let (snap_a, snap_b) = tokio::join!(
+            super::evaluate_deep_health(&state),
+            super::evaluate_deep_health(&state),
+        );
+        assert!(snap_a.ready(), "probe A must succeed: {:?}", snap_a);
+        assert!(
+            snap_b.ready(),
+            "probe B must coalesce cleanly: {:?}",
+            snap_b
+        );
+
+        // 4. Remote authenticated /api/health?deep=1 succeeds with admin_password, and reports 503 when stopped
+        *state.is_running.write().await = false;
+        if let Ok(mut c) = super::DEEP_HEALTH_CACHE.lock() {
+            *c = None;
+        }
+        let mut req = axum::http::Request::builder()
+            .uri("/api/health?deep=1")
+            .header("x-api-key", HeaderValue::from_static("admin-secret-health"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            "198.51.100.5:50002"
+                .parse::<std::net::SocketAddr>()
+                .unwrap(),
+        ));
+        let (status, body) = response_json(app.clone().oneshot(req).await.unwrap()).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["status"], "degraded");
+        assert_eq!(body["ready"], false);
+        assert_eq!(body["checks"]["running"], false);
+
+        // 4b. Direct loopback /health?deep=1 returning 503 must bypass monitor_middleware (no DB log write)
+        let mut req = axum::http::Request::builder()
+            .uri("/health?deep=1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            "127.0.0.1:50008".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        let (status, _) = response_json(app.clone().oneshot(req).await.unwrap()).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            state.monitor.get_logs(10).await.is_empty(),
+            "monitor_middleware must exempt /health and /api/health 503 responses from logging"
+        );
+
+        // 5. Remote /api/health?deep=1 with wrong key falls back to shallow (never triggers deep checks)
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("wrong-key"));
+        assert!(
+            !super::is_deep_health_allowed(
+                &state,
+                Some(axum::extract::Extension(axum::extract::ConnectInfo(
+                    "198.51.100.5:50003".parse().unwrap(),
+                ))),
+                &headers,
+                true,
+            )
+            .await
         );
     }
 }

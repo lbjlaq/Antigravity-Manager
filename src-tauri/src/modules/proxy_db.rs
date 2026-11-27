@@ -166,6 +166,39 @@ fn connect_db() -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// Lightweight read-only SQLite liveness probe for deep health checks.
+/// Avoids creating/modifying the DB file or applying heavy write pragmas, while
+/// reading `sqlite_master` so SQLite actually opens page 1, acquires a shared
+/// read lock, and enforces `busy_timeout`.
+pub fn ping() -> Result<(), String> {
+    let db_path = get_proxy_db_path()?;
+    ping_path(&db_path)
+}
+
+fn ping_path(db_path: &std::path::Path) -> Result<(), String> {
+    use rusqlite::OptionalExtension;
+
+    if !db_path.exists() {
+        let dir_ok = db_path.parent().map(|p| p.is_dir()).unwrap_or(false);
+        return if dir_ok {
+            Ok(())
+        } else {
+            Err("proxy_db data directory missing".to_string())
+        };
+    }
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "busy_timeout", 500)
+        .map_err(|e| e.to_string())?;
+    conn.query_row("SELECT 1 FROM sqlite_master LIMIT 1", [], |_| Ok(()))
+        .optional()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 fn reset_proxy_log_write_db() {
     if let Some(slot) = PROXY_LOG_WRITE_DB.get() {
         if let Ok(mut guard) = slot.lock() {
@@ -3619,4 +3652,81 @@ pub fn get_token_usage_by_ip(limit: usize, hours: i64) -> Result<Vec<IpTokenStat
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod ping_tests {
+    use super::*;
+
+    struct TempEnvGuard {
+        prev: Option<String>,
+        dir: PathBuf,
+    }
+
+    impl Drop for TempEnvGuard {
+        fn drop(&mut self) {
+            if let Some(ref prev) = self.prev {
+                std::env::set_var("ABV_DATA_DIR", prev);
+            } else {
+                std::env::remove_var("ABV_DATA_DIR");
+            }
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn ping_covers_missing_initialized_corrupt_and_locked_db() {
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env_lock = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("ABV_DATA_DIR").ok();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ag_proxy_db_ping_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let _restore = TempEnvGuard {
+            prev,
+            dir: temp_dir.clone(),
+        };
+        std::env::set_var("ABV_DATA_DIR", &temp_dir);
+
+        // 1. Missing DB file inside an existing data dir is OK (first-boot pre-init)
+        assert!(ping().is_ok());
+
+        // 2. Missing/unusable parent dir fails without mutating process-global ABV_DATA_DIR
+        let missing_db = temp_dir.join("nonexistent_subdir").join("proxy_logs.db");
+        assert!(ping_path(&missing_db).is_err());
+        let blocker_file = temp_dir.join("not_a_dir");
+        std::fs::write(&blocker_file, b"file").unwrap();
+        assert!(ping_path(&blocker_file.join("proxy_logs.db")).is_err());
+
+        // 3. Initialized WAL DB succeeds
+        init_db().expect("init proxy_db");
+        assert!(ping().is_ok());
+
+        // 4. Exclusively locked DB (journal_mode=DELETE + BEGIN EXCLUSIVE) blocks readers and fails once busy_timeout expires
+        let db_path = get_proxy_db_path().unwrap();
+        let locker = Connection::open(&db_path).expect("open locker connection");
+        locker
+            .execute_batch("PRAGMA journal_mode = DELETE; BEGIN EXCLUSIVE;")
+            .expect("acquire exclusive lock");
+        let locked_res = ping();
+        let _ = locker.execute_batch("ROLLBACK;");
+        drop(locker);
+        assert!(
+            locked_res.is_err(),
+            "ping must fail when SQLite is exclusively locked"
+        );
+
+        // 5. Corrupted DB file fails page-1 schema read
+        std::fs::write(&db_path, b"not-a-valid-sqlite-header-payload").unwrap();
+        assert!(
+            ping().is_err(),
+            "ping must fail when SQLite file is corrupted"
+        );
+    }
 }
