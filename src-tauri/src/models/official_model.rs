@@ -481,7 +481,7 @@ impl OfficialModelCatalog {
             models: state.live_models.clone(),
             account_tiered_models: state.account_tiered_models.clone(),
             deprecated_model_ids: state.deprecated_model_ids.clone(),
-            resolved_background_model: Self::resolved_background_model(),
+            resolved_background_model: Self::resolved_background_model_from_state(state),
         }
     }
 
@@ -724,6 +724,31 @@ impl OfficialModelCatalog {
     /// 获取当前首选的后台轻量模型（含内存/磁盘 last-known-good）。
     pub fn resolved_background_model() -> Option<String> {
         Self::background_model_candidates().into_iter().next()
+    }
+
+    /// 持有 `live_recommended_store` 写锁期间可安全调用的后台轻量模型推导：
+    /// 仅依赖已持有的 `&LiveCatalogState` 与独立锁（`DYNAMIC_CATALOG` / `RESOLVED_BACKGROUND_MODEL`），
+    /// 绝不重入 `live_recommended_store`，否则 std RwLock 写锁内同步申请读锁会同线程自死锁。
+    fn resolved_background_model_from_state(state: &LiveCatalogState) -> Option<String> {
+        let catalog_guard = DYNAMIC_CATALOG.read().ok();
+        let catalog_ref = catalog_guard.as_deref().unwrap_or(&state.live_models);
+        Self::derive_background_candidates(
+            &state.account_tiered_models,
+            &state.deprecated_model_ids,
+            catalog_ref,
+        )
+        .into_iter()
+        .next()
+        .or_else(|| {
+            RESOLVED_BACKGROUND_MODEL
+                .read()
+                .ok()
+                .and_then(|lkg| lkg.clone())
+                .filter(|id| {
+                    !id.trim().is_empty()
+                        && !crate::proxy::common::model_gate::is_retired_model_id(id)
+                })
+        })
     }
 
     fn is_excluded_internal_model(id: &str) -> bool {
