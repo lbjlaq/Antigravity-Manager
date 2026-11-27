@@ -115,7 +115,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Hello, User 👋",
+        "hello": "Welcome",
+        "hello_named": "Hello, {{name}}",
         "refresh_quota": "Refresh Quota",
         "refreshing": "Refreshing...",
         "total_accounts": "Total Accounts",

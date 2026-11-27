@@ -115,7 +115,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Привет, Пользователь 👋",
+        "hello": "Здравствуйте",
+        "hello_named": "Привет, {{name}}",
         "refresh_quota": "Обновить квоту",
         "refreshing": "Обновление...",
         "total_accounts": "Всего аккаунтов",

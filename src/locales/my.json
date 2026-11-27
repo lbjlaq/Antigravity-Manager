@@ -113,7 +113,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Hai, Pengguna 👋",
+        "hello": "Selamat datang",
+        "hello_named": "Hai, {{name}}",
         "refresh_quota": "Muat Semula Kuota",
         "refreshing": "Memuat semula...",
         "total_accounts": "Jumlah Akaun",

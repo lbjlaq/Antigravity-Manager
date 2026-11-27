@@ -114,7 +114,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Xin chào, Bạn 👋",
+        "hello": "Xin chào",
+        "hello_named": "Xin chào, {{name}}",
         "refresh_quota": "Làm mới Hạn mức",
         "refreshing": "Đang làm mới...",
         "total_accounts": "Tổng số Tài khoản",

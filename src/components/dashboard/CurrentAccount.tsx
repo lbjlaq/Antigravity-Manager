@@ -19,46 +19,48 @@ import { getGroupQuotaSummaries, GroupQuotaSummary } from '../../utils/quotaDisp
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isArgonModel } from '../../utils/modelCategory';
+import {
+    ClientTarget,
+    getClientAccountId as resolveClientAccountId,
+    resolveActiveClientAccount,
+    resolveInitialClientTarget,
+} from '../../utils/dashboardGreeting';
 
 interface CurrentAccountProps {
     account?: Account | null;
     accounts?: Account[];
     activeClients?: ActiveClientsStatus;
     quotaView?: string;
+    selectedClient?: ClientTarget;
+    onSelectClient?: (client: ClientTarget) => void;
     onSwitch?: (targetIde?: string) => void;
 }
 
-type ClientTab = 'classic' | 'ide' | 'agy' | 'acp';
+type ClientTab = ClientTarget;
 
 function CurrentAccount({
     account,
     accounts = [],
     activeClients,
+    selectedClient,
+    onSelectClient,
     onSwitch
 }: CurrentAccountProps) {
     const { t } = useTranslation();
 
-    // 默认定位到有活跃账号的 Tab，优先经典款或 IDE
-    const [activeTab, setActiveTab] = useState<ClientTab>(() => {
-        if (activeClients?.classic_account_id) return 'classic';
-        if (activeClients?.ide_account_id) return 'ide';
-        if (activeClients?.agy_account_id) return 'agy';
-        if (activeClients?.acp_account_id) return 'acp';
-        return 'classic';
-    });
-
-    const getClientAccountId = (tab: ClientTab) => {
-        switch (tab) {
-            case 'classic':
-                return activeClients?.classic_account_id;
-            case 'ide':
-                return activeClients?.ide_account_id;
-            case 'agy':
-                return activeClients?.agy_account_id;
-            case 'acp':
-                return activeClients?.acp_account_id;
+    const [internalTab, setInternalTab] = useState<ClientTab>(() =>
+        resolveInitialClientTarget(activeClients)
+    );
+    const activeTab = selectedClient ?? internalTab;
+    const handleSelectTab = (tab: ClientTab) => {
+        if (onSelectClient) {
+            onSelectClient(tab);
+        } else {
+            setInternalTab(tab);
         }
     };
+
+    const getClientAccountId = (tab: ClientTab) => resolveClientAccountId(tab, activeClients);
 
     const clientTabs = [
         {
@@ -95,20 +97,10 @@ function CurrentAccount({
         },
     ];
 
-    const currentClientAccountId = getClientAccountId(activeTab);
-
-    // 根据当前选中的 Tab 检索账号实体
-    const displayedAccount = useMemo(() => {
-        if (currentClientAccountId && accounts.length > 0) {
-            const found = accounts.find((a) => a.id === currentClientAccountId);
-            if (found) return found;
-        }
-        // 回退机制：若为经典款且未单独匹配到 ID，则使用原 account 作为容底
-        if (activeTab === 'classic' && account) {
-            return account;
-        }
-        return null;
-    }, [currentClientAccountId, accounts, activeTab, account]);
+    const displayedAccount = useMemo(
+        () => resolveActiveClientAccount(activeTab, accounts, activeClients, account),
+        [activeTab, accounts, activeClients, account]
+    );
 
     const tier = displayedAccount ? getAccountTier(displayedAccount) : 'free';
     const groupSummaries: GroupQuotaSummary[] = displayedAccount
@@ -153,21 +145,24 @@ function CurrentAccount({
                         return (
                             <button
                                 key={tab.key}
-                                onClick={() => setActiveTab(tab.key)}
+                                type="button"
+                                aria-pressed={isActive}
+                                onClick={() => handleSelectTab(tab.key)}
                                 title={tab.tooltip}
-                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                                     isActive
                                         ? tab.activeBg
                                         : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200/60 dark:hover:bg-white/5'
                                 }`}
                             >
-                                <Icon className="w-3.5 h-3.5" />
+                                <Icon className="w-3.5 h-3.5" aria-hidden="true" />
                                 <span>{tab.label}</span>
                                 {hasAccount && (
                                     <span
                                         className={`w-1.5 h-1.5 rounded-full ${
                                             isActive ? 'bg-white' : 'bg-emerald-500'
                                         }`}
+                                        aria-hidden="true"
                                     />
                                 )}
                             </button>
@@ -288,7 +283,8 @@ function CurrentAccount({
                     {onSwitch && (
                         <div className="pt-2">
                             <button
-                                className="w-full px-3 py-1.5 text-xs text-gray-700 dark:text-zinc-300 border border-gray-200 dark:border-white/[0.12] rounded-lg hover:bg-gray-50 dark:hover:bg-white/[0.06] active:scale-[0.98] transition-all cursor-pointer"
+                                type="button"
+                                className="w-full px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-zinc-300 border border-gray-200 dark:border-white/[0.12] rounded-lg hover:bg-gray-50 dark:hover:bg-white/[0.06] active:scale-[0.98] transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                                 onClick={() => onSwitch(activeTab)}
                             >
                                 {t('dashboard.switch_account', '切换账号')}

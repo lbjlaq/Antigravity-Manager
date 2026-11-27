@@ -114,7 +114,8 @@
         "mini_view": "迷你懸浮窗"
     },
     "dashboard": {
-        "hello": "你好, 使用者 👋",
+        "hello": "你好",
+        "hello_named": "你好，{{name}}",
         "refresh_quota": "重新整理配額",
         "refreshing": "重新整理中...",
         "total_accounts": "總帳號數",

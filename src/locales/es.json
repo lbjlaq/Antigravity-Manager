@@ -115,7 +115,8 @@
         "mini_view": "Mini View"
     },
     "dashboard": {
-        "hello": "Hola, Usuario 👋",
+        "hello": "Hola",
+        "hello_named": "Hola, {{name}}",
         "refresh_quota": "Actualizar Cuota",
         "refreshing": "Actualizando...",
         "total_accounts": "Total de Cuentas",
