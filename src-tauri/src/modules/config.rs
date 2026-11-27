@@ -1,9 +1,15 @@
+use once_cell::sync::Lazy;
 use serde_json;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use super::account::get_data_dir;
 use crate::models::AppConfig;
+
+/// Process-wide lock serializing read-modify-write updates to `gui_config.json`
+/// so concurrent admin endpoints and generic `save_config` calls never interleave.
+static CONFIG_WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 static CLI_SILENT_MODE_OVERRIDE: AtomicBool = AtomicBool::new(false);
 
@@ -44,20 +50,23 @@ pub fn is_silent_mode_enabled() -> bool {
 
 const CONFIG_FILE: &str = "gui_config.json";
 
-/// Load application configuration
-pub fn load_app_config() -> Result<AppConfig, String> {
+/// Load application configuration without acquiring `CONFIG_WRITE_LOCK`.
+/// Callers performing read-modify-write must hold `CONFIG_WRITE_LOCK`.
+fn load_app_config_unlocked(auto_persist_on_change: bool) -> Result<AppConfig, String> {
     let data_dir = get_data_dir()?;
     let config_path = data_dir.join(CONFIG_FILE);
 
     if !config_path.exists() {
         let config = AppConfig::new();
         // [FIX #1460] Persist initial config to prevent new API Key on every refresh
-        if let Err(e) = save_app_config(&config) {
-            tracing::warn!(
-                "Failed to persist initial config to {}: {}. An in-memory config will be used; the next start may generate a new API key if the file is still missing.",
-                config_path.display(),
-                e
-            );
+        if auto_persist_on_change {
+            if let Err(e) = save_app_config_unlocked(&config) {
+                tracing::warn!(
+                    "Failed to persist initial config to {}: {}. An in-memory config will be used; the next start may generate a new API key if the file is still missing.",
+                    config_path.display(),
+                    e
+                );
+            }
         }
         return Ok(config);
     }
@@ -68,14 +77,42 @@ pub fn load_app_config() -> Result<AppConfig, String> {
     let (config, modified) = parse_and_migrate_config(&content)?;
 
     // If migration occurred or empty config was generated, auto-save once to clean up the file
-    if modified {
-        if let Err(e) = save_app_config(&config) {
+    if modified && auto_persist_on_change {
+        if let Err(e) = save_app_config_unlocked(&config) {
             tracing::warn!(
                 "Failed to persist healed or migrated config to {}: {}. An in-memory config will be used; the next start may generate a new API key if the file is still empty.",
                 config_path.display(),
                 e
             );
         }
+    }
+
+    Ok(config)
+}
+
+/// Load application configuration
+pub fn load_app_config() -> Result<AppConfig, String> {
+    let data_dir = get_data_dir()?;
+    let config_path = data_dir.join(CONFIG_FILE);
+
+    if !config_path.exists() {
+        let _guard = CONFIG_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        return load_app_config_unlocked(true);
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("failed_to_read_config_file: {}", e))?;
+
+    let (config, modified) = parse_and_migrate_config(&content)?;
+
+    if modified {
+        let _guard = CONFIG_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Re-read under lock so migration write never clobbers a concurrent mutation.
+        return load_app_config_unlocked(true);
     }
 
     Ok(config)
@@ -376,8 +413,7 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
     Ok((config, modified))
 }
 
-/// Save application configuration (atomic write)
-pub fn save_app_config(config: &AppConfig) -> Result<(), String> {
+fn save_app_config_unlocked(config: &AppConfig) -> Result<(), String> {
     let data_dir = get_data_dir()?;
     let config_path = data_dir.join(CONFIG_FILE);
 
@@ -386,6 +422,132 @@ pub fn save_app_config(config: &AppConfig) -> Result<(), String> {
 
     crate::utils::fs::write_atomic(&config_path, content.as_bytes())
         .map_err(|e| format!("failed_to_save_config: {}", e))
+}
+
+/// Save application configuration (atomic write, serialized by `CONFIG_WRITE_LOCK`)
+pub fn save_app_config(config: &AppConfig) -> Result<(), String> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    save_app_config_unlocked(config)
+}
+
+/// Atomically read-modify-write `gui_config.json` under `CONFIG_WRITE_LOCK`.
+pub fn update_app_config<F>(mutator: F) -> Result<AppConfig, String>
+where
+    F: FnOnce(&mut AppConfig),
+{
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cfg = load_app_config_unlocked(false)?;
+    mutator(&mut cfg);
+    save_app_config_unlocked(&cfg)?;
+    Ok(cfg)
+}
+
+/// Atomically read-modify-write `gui_config.json` under `CONFIG_WRITE_LOCK`,
+/// returning an error from `mutator` without writing if validation fails.
+pub fn try_update_app_config<F, T>(mutator: F) -> Result<(AppConfig, T), String>
+where
+    F: FnOnce(&mut AppConfig) -> Result<T, String>,
+{
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cfg = load_app_config_unlocked(false)?;
+    let out = mutator(&mut cfg)?;
+    save_app_config_unlocked(&cfg)?;
+    Ok((cfg, out))
+}
+
+/// Atomically read-modify-write `gui_config.json` under `CONFIG_WRITE_LOCK`,
+/// skipping disk write when `mutator` returns `false`.
+pub fn update_app_config_if<F>(mutator: F) -> Result<(AppConfig, bool), String>
+where
+    F: FnOnce(&mut AppConfig) -> bool,
+{
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cfg = load_app_config_unlocked(false)?;
+    let changed = mutator(&mut cfg);
+    if changed {
+        save_app_config_unlocked(&cfg)?;
+    }
+    Ok((cfg, changed))
+}
+
+/// Persist a generic full-`AppConfig` payload (from `save_config` / `POST /api/config`)
+/// while preserving fields owned exclusively by dedicated endpoints or backend config
+/// (`preferred_account_id`, `security_monitor`, `image_scheduler`, `proxy_pool.account_bindings`)
+/// from the latest on-disk `gui_config.json` so stale frontend snapshots cannot revert them.
+pub fn save_generic_app_config(mut incoming: AppConfig) -> Result<AppConfig, String> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let data_dir = get_data_dir()?;
+    let config_path = data_dir.join(CONFIG_FILE);
+    if config_path.exists() {
+        if let Ok(disk) = load_app_config_unlocked(false) {
+            incoming.proxy.preferred_account_id = disk.proxy.preferred_account_id;
+            incoming.proxy.security_monitor = disk.proxy.security_monitor;
+            incoming.proxy.image_scheduler = disk.proxy.image_scheduler;
+            incoming.proxy.proxy_pool.account_bindings = disk.proxy.proxy_pool.account_bindings;
+        }
+    }
+
+    save_app_config_unlocked(&incoming)?;
+    Ok(incoming)
+}
+
+#[cfg(test)]
+pub(crate) struct TestDataDirGuard {
+    _env_lock: std::sync::MutexGuard<'static, ()>,
+    _config_lock: std::sync::MutexGuard<'static, ()>,
+    prev_env: Option<String>,
+    pub dir: std::path::PathBuf,
+}
+
+#[cfg(test)]
+impl TestDataDirGuard {
+    pub fn new(prefix: &str) -> Self {
+        // Acquire TEST_CONFIG_LOCK before SHARED_TEST_ENV_LOCK (same order as commands::proxy::tests)
+        // so tests writing gui_config.json via ProxyPoolManager::persist_bindings() cannot race ABV_DATA_DIR.
+        let config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let env_lock = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev_env = std::env::var("ABV_DATA_DIR").ok();
+        let dir = std::env::temp_dir().join(format!(
+            "ag_test_{}_{}",
+            prefix,
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp test data dir");
+        std::env::set_var("ABV_DATA_DIR", &dir);
+        Self {
+            _env_lock: env_lock,
+            _config_lock: config_lock,
+            prev_env,
+            dir,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDataDirGuard {
+    fn drop(&mut self) {
+        if let Some(ref prev) = self.prev_env {
+            std::env::set_var("ABV_DATA_DIR", prev);
+        } else {
+            std::env::remove_var("ABV_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 #[cfg(test)]
@@ -472,5 +634,95 @@ mod tests {
         let mut cfg = AppConfig::new();
         cfg.silent_mode = true;
         assert!(is_silent_mode_effective(&cfg));
+    }
+
+    #[test]
+    fn test_save_generic_app_config_preserves_dedicated_fields() {
+        let _guard = TestDataDirGuard::new("preserve_dedicated");
+
+        // 1. Seed disk with dedicated-endpoint-owned fields set to authoritative values
+        let mut on_disk = AppConfig::new();
+        on_disk.proxy.preferred_account_id = None;
+        on_disk.proxy.security_monitor.blacklist.enabled = true;
+        on_disk.proxy.security_monitor.blacklist.block_message = "authoritative-block".to_string();
+        on_disk.proxy.image_scheduler.per_account_concurrency = 4;
+        on_disk
+            .proxy
+            .proxy_pool
+            .account_bindings
+            .insert("acc-1".to_string(), "proxy-a".to_string());
+        save_app_config(&on_disk).expect("seed disk config");
+
+        // 2. Simulate a stale frontend AppConfig snapshot attempting to save an unrelated theme edit
+        let mut stale = AppConfig::new();
+        stale.theme = "dark".to_string();
+        stale.proxy.preferred_account_id = Some("stale-account-id".to_string());
+        stale.proxy.security_monitor.blacklist.enabled = false;
+        stale.proxy.security_monitor.blacklist.block_message = "stale".to_string();
+        stale.proxy.image_scheduler.per_account_concurrency = 1;
+        stale.proxy.proxy_pool.account_bindings.clear();
+
+        let saved = save_generic_app_config(stale).expect("save_generic_app_config");
+        let reloaded = load_app_config().expect("reload config");
+
+        // Unrelated edit persisted
+        assert_eq!(saved.theme, "dark");
+        assert_eq!(reloaded.theme, "dark");
+        // Dedicated-endpoint fields preserved from disk
+        assert_eq!(reloaded.proxy.preferred_account_id, None);
+        assert!(reloaded.proxy.security_monitor.blacklist.enabled);
+        assert_eq!(
+            reloaded.proxy.security_monitor.blacklist.block_message,
+            "authoritative-block"
+        );
+        assert_eq!(reloaded.proxy.image_scheduler.per_account_concurrency, 4);
+        assert_eq!(
+            reloaded
+                .proxy
+                .proxy_pool
+                .account_bindings
+                .get("acc-1")
+                .map(String::as_str),
+            Some("proxy-a")
+        );
+    }
+
+    #[test]
+    fn test_update_app_config_if_skips_write_when_unchanged() {
+        let guard = TestDataDirGuard::new("update_if_noop");
+        let mut initial = AppConfig::new();
+        initial.proxy.enable_logging = true;
+        initial.theme = "light".to_string();
+        save_app_config(&initial).expect("seed disk config");
+
+        let config_path = guard.dir.join(CONFIG_FILE);
+        let bytes_before = std::fs::read(&config_path).expect("read seeded config bytes");
+        let (_, changed_noop) = update_app_config_if(|cfg| {
+            // Mutate an unrelated field while returning false: if the guard were bypassed,
+            // raw bytes on disk and reloaded theme would diverge.
+            cfg.theme = "unsaved-mutation".to_string();
+            false
+        })
+        .expect("noop update");
+        assert!(!changed_noop);
+        assert_eq!(
+            std::fs::read(&config_path).expect("read config bytes after noop"),
+            bytes_before
+        );
+        assert_eq!(load_app_config().unwrap().theme, "light");
+
+        let (updated, changed_real) = update_app_config_if(|cfg| {
+            if cfg.proxy.enable_logging {
+                cfg.proxy.enable_logging = false;
+                true
+            } else {
+                false
+            }
+        })
+        .expect("real update");
+        assert!(changed_real);
+        assert!(!updated.proxy.enable_logging);
+        assert!(config_path.exists());
+        assert!(!load_app_config().unwrap().proxy.enable_logging);
     }
 }

@@ -704,19 +704,21 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     }
                     "toggle_lightweight" => {
                         tauri::async_runtime::spawn(async move {
-                            if let Ok(mut config) = modules::load_app_config() {
+                            match modules::config::update_app_config(|config| {
                                 config.lightweight_mode = !config.lightweight_mode;
-                                if let Err(e) = modules::save_app_config(&config) {
-                                    modules::logger::log_error(&format!(
-                                        "Failed to toggle lightweight mode: {}",
-                                        e
-                                    ));
-                                } else {
+                            }) {
+                                Ok(config) => {
                                     modules::logger::log_info(&format!(
                                         "Lightweight mode toggled to {}",
                                         config.lightweight_mode
                                     ));
                                     let _ = app_handle.emit("config://updated", ());
+                                }
+                                Err(e) => {
+                                    modules::logger::log_error(&format!(
+                                        "Failed to toggle lightweight mode: {}",
+                                        e
+                                    ));
                                 }
                             }
                         });
