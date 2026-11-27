@@ -12,6 +12,49 @@ use tokio::sync::RwLock;
 
 use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
 
+/// Verify admin credentials directly from request headers (reusing the exact
+/// constant-time secret comparison and ciphertext guard from `auth_middleware`).
+pub(crate) fn is_admin_headers_authorized(
+    security: &crate::proxy::ProxySecurityConfig,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    let active_secret = match security.admin_password.as_deref() {
+        Some(pwd) if !pwd.is_empty() => pwd,
+        _ => security.api_key.as_str(),
+    };
+    if active_secret.is_empty() || crate::utils::crypto::is_undecrypted_ciphertext(active_secret) {
+        return false;
+    }
+
+    let provided = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .map(|raw| {
+            let trimmed = raw.trim();
+            if let Some(stripped) = trimmed.strip_prefix("Bearer ") {
+                stripped.trim()
+            } else if let Some(stripped) = trimmed.strip_prefix("bearer ") {
+                stripped.trim()
+            } else if trimmed.eq_ignore_ascii_case("bearer") {
+                ""
+            } else {
+                trimmed
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-api-key")
+                .and_then(|h| h.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        });
+
+    provided
+        .map(|token| constant_time_eq(token, active_secret))
+        .unwrap_or(false)
+}
+
 /// 从请求中提取 API Key / Token
 /// 支持提取顺序：
 /// 1. Authorization header (Bearer token / Raw token)
@@ -639,6 +682,9 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = crate::modules::user_token_db::init_db();
 
         let security = Arc::new(RwLock::new(ProxySecurityConfig {
@@ -739,5 +785,59 @@ mod tests {
             .unwrap();
         let admin_resp = admin_app.oneshot(admin_req).await.unwrap();
         assert_eq!(admin_resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_is_admin_headers_authorized_variants() {
+        use axum::http::{HeaderMap, HeaderValue};
+
+        let make_cfg = |api_key: &str, admin_password: Option<&str>| ProxySecurityConfig {
+            auth_mode: ProxyAuthMode::Strict,
+            api_key: api_key.to_string(),
+            admin_password: admin_password.map(str::to_string),
+            allow_lan_access: true,
+            port: 8045,
+            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+        };
+
+        // 1. When admin_password is set, Authorization (Bearer/bearer/raw) and x-api-key match admin_password,
+        //    while api_key alone is rejected.
+        let cfg_with_admin = make_cfg("sk-api", Some("adm-secret"));
+        for (hdr_name, hdr_val) in [
+            ("authorization", "Bearer adm-secret"),
+            ("authorization", "bearer adm-secret"),
+            ("authorization", "adm-secret"),
+            ("x-api-key", "adm-secret"),
+        ] {
+            let mut h = HeaderMap::new();
+            h.insert(hdr_name, HeaderValue::from_str(hdr_val).unwrap());
+            assert!(
+                is_admin_headers_authorized(&cfg_with_admin, &h),
+                "expected authorized for {hdr_name}: {hdr_val}"
+            );
+        }
+        let mut api_only = HeaderMap::new();
+        api_only.insert("x-api-key", HeaderValue::from_static("sk-api"));
+        assert!(!is_admin_headers_authorized(&cfg_with_admin, &api_only));
+
+        // 2. When admin_password is None or empty, falls back to api_key.
+        for admin_pw in [None, Some("")] {
+            let cfg_fallback = make_cfg("sk-api", admin_pw);
+            let mut h = HeaderMap::new();
+            h.insert("authorization", HeaderValue::from_static("Bearer sk-api"));
+            assert!(is_admin_headers_authorized(&cfg_fallback, &h));
+        }
+
+        // 3. Rejects undecrypted ciphertext and empty secrets.
+        let cfg_cipher = make_cfg("ag_enc_v2_abc.def", Some("ag_enc_v2_abc.def"));
+        let mut h_cipher = HeaderMap::new();
+        h_cipher.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer ag_enc_v2_abc.def"),
+        );
+        assert!(!is_admin_headers_authorized(&cfg_cipher, &h_cipher));
+
+        let cfg_empty = make_cfg("", None);
+        assert!(!is_admin_headers_authorized(&cfg_empty, &HeaderMap::new()));
     }
 }

@@ -947,6 +947,15 @@ impl OfficialModelCatalog {
         }
     }
 
+    /// 非阻塞探测内部所有 `std::sync::RwLock` 目录锁是否可立即获取读锁。
+    /// 用于深度健康检查快速发现重入写锁死锁（如 Issue #4103），且不会泄漏阻塞线程。
+    pub fn try_health_check() -> bool {
+        let catalog_ok = DYNAMIC_CATALOG.try_read().is_ok();
+        let live_store_ok = Self::live_recommended_store().try_read().is_ok();
+        let bg_model_ok = RESOLVED_BACKGROUND_MODEL.try_read().is_ok();
+        catalog_ok && live_store_ok && bg_model_ok
+    }
+
     /// 根据用户传入的模型 ID（官方标准 ID、别名、路由结果，以及大小写不敏感的精确名）
     /// 获取对应的官方模型结构体。未命中时返回 None，由调用方使用 `default_model()`。
     pub fn get(model_id: &str) -> Option<OfficialModelInfo> {
@@ -1455,5 +1464,35 @@ mod tests {
                 "gemini-4-alpha-low".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_try_health_check_detects_write_lock() {
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // When uncontended, non-blocking lock probe succeeds.
+        assert!(OfficialModelCatalog::try_health_check());
+
+        // Holding a write guard on live_recommended_store immediately fails try_health_check
+        // without blocking the caller thread.
+        let _live_write = OfficialModelCatalog::live_recommended_store()
+            .write()
+            .unwrap();
+        assert!(!OfficialModelCatalog::try_health_check());
+        drop(_live_write);
+
+        // Holding a write guard on DYNAMIC_CATALOG also fails immediately.
+        let _catalog_write = DYNAMIC_CATALOG.write().unwrap();
+        assert!(!OfficialModelCatalog::try_health_check());
+        drop(_catalog_write);
+
+        // Holding a write guard on RESOLVED_BACKGROUND_MODEL also fails immediately.
+        let _bg_write = RESOLVED_BACKGROUND_MODEL.write().unwrap();
+        assert!(!OfficialModelCatalog::try_health_check());
+        drop(_bg_write);
+
+        assert!(OfficialModelCatalog::try_health_check());
     }
 }
