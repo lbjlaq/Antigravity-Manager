@@ -287,34 +287,35 @@ pub async fn bind_account_proxy_persistent(
         return pool.bind_account_to_proxy(account_id, proxy_id).await;
     }
 
-    let mut app_config = crate::modules::config::load_app_config()
-        .map_err(|e| format!("Failed to load config for proxy binding: {}", e))?;
-    let entry = app_config
-        .proxy
-        .proxy_pool
-        .proxies
-        .iter()
-        .find(|p| p.id == proxy_id)
-        .ok_or_else(|| format!("Proxy {} not found", proxy_id))?
-        .clone();
+    crate::modules::config::try_update_app_config(|app_config| {
+        let entry = app_config
+            .proxy
+            .proxy_pool
+            .proxies
+            .iter()
+            .find(|p| p.id == proxy_id)
+            .ok_or_else(|| format!("Proxy {} not found", proxy_id))?
+            .clone();
 
-    check_max_accounts_limit(
-        &entry,
-        &account_id,
+        check_max_accounts_limit(
+            &entry,
+            &account_id,
+            app_config
+                .proxy
+                .proxy_pool
+                .account_bindings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        )?;
+
         app_config
             .proxy
             .proxy_pool
             .account_bindings
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone())),
-    )?;
-
-    app_config
-        .proxy
-        .proxy_pool
-        .account_bindings
-        .insert(account_id.clone(), proxy_id.clone());
-    crate::modules::config::save_app_config(&app_config)?;
+            .insert(account_id.clone(), proxy_id.clone());
+        Ok(())
+    })
+    .map_err(|e| format!("Failed to persist proxy binding: {}", e))?;
     tracing::info!(
         "[ProxyPool] Bound account {} to proxy {} (offline config persisted)",
         account_id,
@@ -1139,6 +1140,7 @@ impl ProxyPoolManager {
     async fn persist_bindings(&self) {
         // 获取当前绑定快照
         let bindings = self.get_all_bindings_snapshot();
+        let bindings_for_disk = bindings.clone();
 
         // 更新配置中的绑定关系
         {
@@ -1146,13 +1148,11 @@ impl ProxyPoolManager {
             config.account_bindings = bindings;
         }
 
-        // 保存到磁盘
-        if let Ok(mut app_config) = crate::modules::config::load_app_config() {
-            let config = self.config.read().await;
-            app_config.proxy.proxy_pool = config.clone();
-            if let Err(e) = crate::modules::config::save_app_config(&app_config) {
-                tracing::error!("[ProxyPool] Failed to persist bindings: {}", e);
-            }
+        // 保存到磁盘（在 CONFIG_WRITE_LOCK 下仅更新 account_bindings，避免覆盖并发配置变更）
+        if let Err(e) = crate::modules::config::update_app_config(|app_config| {
+            app_config.proxy.proxy_pool.account_bindings = bindings_for_disk;
+        }) {
+            tracing::error!("[ProxyPool] Failed to persist bindings: {}", e);
         }
     }
 
@@ -1438,6 +1438,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bound_account_prevents_direct_leak_when_unhealthy() {
+        let _guard = crate::modules::config::TestDataDirGuard::new("proxy_pool_unhealthy");
         let pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
             enabled: true,
             auto_failover: true,
@@ -1474,6 +1475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bound_account_fails_over_to_healthy_pool_proxy() {
+        let _guard = crate::modules::config::TestDataDirGuard::new("proxy_pool_failover");
         let pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
             enabled: true,
             auto_failover: true,
@@ -1540,9 +1542,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_strict_mode_prevents_failover_and_rejects_disabled_or_missing_bound_proxy() {
-        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::modules::config::TestDataDirGuard::new("proxy_pool_strict");
         let pool = ProxyPoolManager::new(Arc::new(RwLock::new(ProxyPoolConfig {
             enabled: true,
             auto_failover: true,
@@ -1587,9 +1587,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_account_allows_rebinding_same_account_at_max_accounts() {
-        let _guard = crate::proxy::config::TEST_CONFIG_LOCK
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::modules::config::TestDataDirGuard::new("proxy_pool_max_accounts");
         let mut entry = make_test_proxy_entry("capped_node", "http://127.0.0.1:18083", true, true);
         entry.max_accounts = Some(1);
 

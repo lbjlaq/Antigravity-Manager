@@ -136,13 +136,11 @@ pub async fn start_proxy_service(
 
     // [FIX desktop] 对齐 Web/Docker admin_start_proxy_service (#1166):
     // 持久化 auto_start = true，确保重启后自动拉起反代服务
-    if let Ok(mut app_config) = crate::modules::config::load_app_config() {
+    match crate::modules::config::update_app_config(|app_config| {
         app_config.proxy.auto_start = true;
-        if let Err(e) = crate::modules::config::save_app_config(&app_config) {
-            tracing::warn!("[Desktop] Failed to persist auto_start=true: {}", e);
-        } else {
-            tracing::info!("[Desktop] Persisted auto_start=true to gui_config.json");
-        }
+    }) {
+        Ok(_) => tracing::info!("[Desktop] Persisted auto_start=true to gui_config.json"),
+        Err(e) => tracing::warn!("[Desktop] Failed to persist auto_start=true: {}", e),
     }
 
     Ok(result)
@@ -582,13 +580,11 @@ pub async fn stop_proxy_service(state: State<'_, ProxyServiceState>) -> Result<(
 
     // [FIX desktop] 对齐 Web/Docker admin_stop_proxy_service (#1166):
     // 持久化 auto_start = false，确保重启后不会自动拉起反代服务
-    if let Ok(mut app_config) = crate::modules::config::load_app_config() {
+    match crate::modules::config::update_app_config(|app_config| {
         app_config.proxy.auto_start = false;
-        if let Err(e) = crate::modules::config::save_app_config(&app_config) {
-            tracing::warn!("[Desktop] Failed to persist auto_start=false: {}", e);
-        } else {
-            tracing::info!("[Desktop] Persisted auto_start=false to gui_config.json");
-        }
+    }) {
+        Ok(_) => tracing::info!("[Desktop] Persisted auto_start=false to gui_config.json"),
+        Err(e) => tracing::warn!("[Desktop] Failed to persist auto_start=false: {}", e),
     }
 
     Ok(())
@@ -692,6 +688,14 @@ pub async fn set_proxy_monitor_enabled(
     state: State<'_, ProxyServiceState>,
     enabled: bool,
 ) -> Result<(), String> {
+    crate::modules::config::update_app_config_if(|cfg| {
+        if cfg.proxy.enable_logging != enabled {
+            cfg.proxy.enable_logging = enabled;
+            true
+        } else {
+            false
+        }
+    })?;
     let monitor_lock = state.monitor.read().await;
     if let Some(monitor) = monitor_lock.as_ref() {
         monitor.set_enabled(enabled);
@@ -705,6 +709,14 @@ pub async fn set_proxy_capture_health_logs(
     state: State<'_, ProxyServiceState>,
     enabled: bool,
 ) -> Result<(), String> {
+    crate::modules::config::update_app_config_if(|cfg| {
+        if cfg.proxy.capture_health_logs != enabled {
+            cfg.proxy.capture_health_logs = enabled;
+            true
+        } else {
+            false
+        }
+    })?;
     let monitor_lock = state.monitor.read().await;
     if let Some(monitor) = monitor_lock.as_ref() {
         monitor.set_capture_health_logs(enabled);
@@ -892,10 +904,12 @@ pub async fn update_model_mapping(
     }
 
     // 2. 无论是否运行，都保存到全局配置持久化
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| e)?;
-    app_config.proxy.custom_mapping = config.custom_mapping;
-    app_config.proxy.custom_mapping_expose = config.custom_mapping_expose;
-    crate::modules::config::save_app_config(&app_config).map_err(|e| e)?;
+    let custom_mapping = config.custom_mapping;
+    let custom_mapping_expose = config.custom_mapping_expose;
+    crate::modules::config::update_app_config(|app_config| {
+        app_config.proxy.custom_mapping = custom_mapping;
+        app_config.proxy.custom_mapping_expose = custom_mapping_expose;
+    })?;
 
     Ok(())
 }
@@ -960,17 +974,17 @@ pub async fn set_preferred_account(
     // 过滤空字符串为 None
     let cleaned_id = account_id.filter(|s| !s.trim().is_empty());
 
-    // 1. 更新内存状态
+    // 1. 先持久化到配置文件，避免写盘失败导致内存状态与磁盘不一致
+    let persisted_id = cleaned_id.clone();
+    crate::modules::config::update_app_config(|app_config| {
+        app_config.proxy.preferred_account_id = persisted_id;
+    })
+    .map_err(|e| format!("保存配置失败: {}", e))?;
+
+    // 2. 更新内存状态
     for tm in managers {
         tm.set_preferred_account(cleaned_id.clone()).await;
     }
-
-    // 2. 持久化到配置文件 (修复 Issue #820 自动关闭问题)
-    let mut app_config =
-        crate::modules::config::load_app_config().map_err(|e| format!("加载配置失败: {}", e))?;
-    app_config.proxy.preferred_account_id = cleaned_id.clone();
-    crate::modules::config::save_app_config(&app_config)
-        .map_err(|e| format!("保存配置失败: {}", e))?;
 
     if let Some(ref id) = cleaned_id {
         tracing::info!(

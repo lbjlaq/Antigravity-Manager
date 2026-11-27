@@ -265,7 +265,7 @@ impl axum::extract::FromRef<AppState> for Arc<RwLock<crate::proxy::ProxySecurity
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct ErrorResponse {
     error: String,
 }
@@ -2116,14 +2116,33 @@ async fn admin_save_config(
     State(state): State<AppState>,
     Json(payload): Json<SaveConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let new_config = payload.config;
-    // 1. 持久化
-    config::save_app_config(&new_config).map_err(|e| {
+    let mut new_config = payload.config;
+    // 确保保存的 User-Agent 满足最低版本要求 (>= 4.3.0)，与桌面端 save_config 保持一致
+    if let Some(ref ua) = new_config.proxy.user_agent_override {
+        new_config.proxy.user_agent_override =
+            Some(crate::constants::sanitize_egress_user_agent(ua));
+    }
+    if let Some(ref ua) = new_config.proxy.saved_user_agent {
+        new_config.proxy.saved_user_agent = Some(crate::constants::sanitize_egress_user_agent(ua));
+    }
+
+    // 1. 持久化（序列化写锁并保留专用接口管理的字段，防止旧前端快照回写覆盖）
+    let new_config = config::save_generic_app_config(new_config).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
         )
     })?;
+
+    crate::modules::logger::set_internal_error_log_budget_bytes(
+        new_config.proxy.internal_error_log_retention.budget_bytes(),
+    );
+    if let Ok(Err(e)) =
+        tokio::task::spawn_blocking(crate::modules::logger::apply_internal_error_log_retention)
+            .await
+    {
+        tracing::warn!("Failed to apply internal error log retention: {}", e);
+    }
 
     // 2. 热更新内存状态
     // 这里我们直接复用内部组件的 update 方法
@@ -2193,7 +2212,7 @@ async fn admin_save_config(
         .set_user_agent_override(new_config.proxy.user_agent_override.clone())
         .await;
 
-    // 同步 QoS 自动限流进小黑屋机制开关
+    // 同步 QoS 自动限流进小黑屋机制开关、调度策略与熔断配置
     state
         .token_manager
         .set_qos_auto_jail(new_config.proxy.qos_auto_jail);
@@ -2202,8 +2221,20 @@ async fn admin_save_config(
         .set_silent_mode(crate::modules::config::is_silent_mode_effective(
             &new_config,
         ));
+    state
+        .token_manager
+        .update_sticky_config(new_config.proxy.scheduling.clone())
+        .await;
+    crate::proxy::pipeline::rotation::set_request_429_grace_ms(
+        new_config.proxy.scheduling.resolve_request_429_grace_ms(),
+    );
+    state
+        .token_manager
+        .update_circuit_breaker_config(new_config.circuit_breaker.clone())
+        .await;
 
-    // 同步健康检查日志捕获开关
+    // 同步监控开关与健康检查日志捕获开关
+    state.monitor.set_enabled(new_config.proxy.enable_logging);
     state
         .monitor
         .set_capture_health_logs(new_config.proxy.capture_health_logs);
@@ -2341,10 +2372,9 @@ async fn admin_get_proxy_status(
 
 async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
     // 1. 持久化配置 (修复 #1166)
-    if let Ok(mut config) = crate::modules::config::load_app_config() {
+    let _ = crate::modules::config::update_app_config(|config| {
         config.proxy.auto_start = true;
-        let _ = crate::modules::config::save_app_config(&config);
-    }
+    });
 
     // 2. 确保账号已加载 (如果是第一次启动)
     if let Err(e) = state.token_manager.load_accounts().await {
@@ -2365,26 +2395,40 @@ async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoRe
 async fn admin_set_proxy_capture_health_logs(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let enabled = payload
         .get("enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    config::update_app_config_if(|cfg| {
+        if cfg.proxy.capture_health_logs != enabled {
+            cfg.proxy.capture_health_logs = enabled;
+            true
+        } else {
+            false
+        }
+    })
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
 
     if state.monitor.is_capture_health_logs() != enabled {
         state.monitor.set_capture_health_logs(enabled);
         logger::log_info(&format!("[API] 捕获健康检查日志状态已设置为: {}", enabled));
     }
 
-    StatusCode::OK
+    Ok(StatusCode::OK)
 }
 
 async fn admin_stop_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
     // 1. 持久化配置 (修复 #1166)
-    if let Ok(mut config) = crate::modules::config::load_app_config() {
+    let _ = crate::modules::config::update_app_config(|config| {
         config.proxy.auto_start = false;
-        let _ = crate::modules::config::save_app_config(&config);
-    }
+    });
 
     state.token_manager.abort_background_tasks().await;
     let mut running = state.is_running.write().await;
@@ -2412,18 +2456,13 @@ async fn admin_update_model_mapping(
     }
 
     // 2. 持久化到硬盘 (修复 #1149)
-    // 加载当前配置，更新 mapping，然后保存
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    app_config.proxy.custom_mapping = config.custom_mapping;
-    app_config.proxy.custom_mapping_expose = config.custom_mapping_expose;
-
-    crate::modules::config::save_app_config(&app_config).map_err(|e| {
+    let custom_mapping = config.custom_mapping;
+    let custom_mapping_expose = config.custom_mapping_expose;
+    crate::modules::config::update_app_config(|app_config| {
+        app_config.proxy.custom_mapping = custom_mapping;
+        app_config.proxy.custom_mapping_expose = custom_mapping_expose;
+    })
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -2484,14 +2523,11 @@ async fn admin_set_preferred_account(
     let cleaned_id = payload.account_id.filter(|s| !s.trim().is_empty());
 
     // 1. 先持久化到配置文件，避免写盘失败导致内存状态与磁盘不一致
-    let mut app_config = config::load_app_config().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    app_config.proxy.preferred_account_id = cleaned_id.clone();
-    config::save_app_config(&app_config).map_err(|e| {
+    let persisted_id = cleaned_id.clone();
+    config::update_app_config(|app_config| {
+        app_config.proxy.preferred_account_id = persisted_id;
+    })
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -2507,11 +2543,26 @@ async fn admin_set_preferred_account(
 async fn admin_set_proxy_monitor_enabled(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let enabled = payload
         .get("enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    config::update_app_config_if(|cfg| {
+        if cfg.proxy.enable_logging != enabled {
+            cfg.proxy.enable_logging = enabled;
+            true
+        } else {
+            false
+        }
+    })
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
 
     // [FIX #1269] 只有在状态真正改变时才记录日志并设置，避免重复触发导致的"重启"错觉
     if state.monitor.is_enabled() != enabled {
@@ -2519,7 +2570,7 @@ async fn admin_set_proxy_monitor_enabled(
         logger::log_info(&format!("[API] 监控状态已设置为: {}", enabled));
     }
 
-    StatusCode::OK
+    Ok(StatusCode::OK)
 }
 
 async fn admin_get_proxy_logs_count_filtered(
@@ -3857,12 +3908,14 @@ async fn admin_toggle_proxy_status(
         let pref_id = state.token_manager.get_preferred_account().await;
         if pref_id.as_deref() == Some(&account_id) {
             state.token_manager.set_preferred_account(None).await;
-            if let Ok(mut cfg) = crate::modules::config::load_app_config() {
+            let _ = crate::modules::config::update_app_config_if(|cfg| {
                 if cfg.proxy.preferred_account_id.as_deref() == Some(&account_id) {
                     cfg.proxy.preferred_account_id = None;
-                    let _ = crate::modules::config::save_app_config(&cfg);
+                    true
+                } else {
+                    false
                 }
-            }
+            });
         }
     } else {
         state.token_manager.prepare_manual_enable(&account_id);
@@ -5120,24 +5173,14 @@ async fn admin_update_security_config(
     State(state): State<AppState>,
     Json(payload): Json<UpdateSecurityConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let config = payload.config;
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
+    let security_cfg = payload.config;
+    let app_config = crate::modules::config::update_app_config(|app_config| {
+        app_config.proxy.security_monitor = security_cfg;
+    })
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )
-    })?;
-
-    app_config.proxy.security_monitor = config.clone();
-
-    crate::modules::config::save_app_config(&app_config).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
+            Json(ErrorResponse { error: e }),
         )
     })?;
 
@@ -6233,6 +6276,142 @@ mod admin_parity_tests {
                 .unwrap_err()
                 .0,
             StatusCode::FORBIDDEN
+        );
+    }
+
+    fn build_test_app_state(data_dir: std::path::PathBuf) -> super::AppState {
+        let token_manager = std::sync::Arc::new(crate::proxy::TokenManager::new(data_dir));
+        let monitor = std::sync::Arc::new(crate::proxy::monitor::ProxyMonitor::new(100, None));
+        let proxy_cfg = crate::proxy::config::ProxyConfig::default();
+        let proxy_pool_state =
+            std::sync::Arc::new(tokio::sync::RwLock::new(proxy_cfg.proxy_pool.clone()));
+        let proxy_pool_manager = std::sync::Arc::new(
+            crate::proxy::proxy_pool::ProxyPoolManager::new(proxy_pool_state.clone()),
+        );
+        let upstream = std::sync::Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
+            Some(proxy_cfg.upstream_proxy.clone()),
+            Some(proxy_pool_manager.clone()),
+        ));
+        let integration = crate::modules::integration::SystemManager::Headless;
+        super::AppState {
+            token_manager,
+            custom_mapping: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.custom_mapping.clone(),
+            )),
+            request_timeout: 30,
+            upstream_proxy: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.upstream_proxy.clone(),
+            )),
+            upstream,
+            monitor,
+            experimental: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.experimental.clone(),
+            )),
+            debug_logging: std::sync::Arc::new(tokio::sync::RwLock::new(
+                proxy_cfg.debug_logging.clone(),
+            )),
+            switching: std::sync::Arc::new(tokio::sync::RwLock::new(false)),
+            account_service: std::sync::Arc::new(
+                crate::modules::account_service::AccountService::new(integration.clone()),
+            ),
+            integration,
+            security: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::proxy::ProxySecurityConfig::from_proxy_config(&proxy_cfg),
+            )),
+            cloudflared_state: std::sync::Arc::new(
+                crate::commands::cloudflared::CloudflaredState::new(),
+            ),
+            is_running: std::sync::Arc::new(tokio::sync::RwLock::new(true)),
+            port: 8045,
+            proxy_pool_state,
+            proxy_pool_manager,
+            only_raw_quota_models: std::sync::Arc::new(tokio::sync::RwLock::new(false)),
+            image_scheduler: super::build_image_scheduler(Vec::new(), 1),
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_save_config_preserves_preferred_account_and_hot_reloads_scheduling_and_monitor()
+    {
+        let guard = crate::modules::config::TestDataDirGuard::new("admin_save_parity");
+        let state = build_test_app_state(guard.dir.clone());
+
+        // Seed config with a fixed account, then disable it via the dedicated admin endpoint
+        let mut initial = crate::models::AppConfig::new();
+        initial.proxy.preferred_account_id = Some("acc-old".to_string());
+        crate::modules::config::save_app_config(&initial).unwrap();
+
+        super::admin_set_preferred_account(
+            axum::extract::State(state.clone()),
+            axum::Json(SetPreferredAccountRequest { account_id: None }),
+        )
+        .await
+        .expect("clear preferred account");
+        assert_eq!(state.token_manager.get_preferred_account().await, None);
+
+        // Now send a stale AppConfig payload (still carrying acc-old) with updated scheduling,
+        // circuit breaker, and enable_logging=false
+        let mut stale = initial.clone();
+        stale.proxy.scheduling.mode = crate::proxy::sticky_config::SchedulingMode::Balance;
+        stale.proxy.scheduling.max_wait_seconds = 123;
+        stale.proxy.enable_logging = false;
+        stale.circuit_breaker.enabled = false;
+
+        super::admin_save_config(
+            axum::extract::State(state.clone()),
+            axum::Json(super::SaveConfigWrapper { config: stale }),
+        )
+        .await
+        .expect("admin_save_config");
+
+        // 1. Stale preferred_account_id was NOT resurrected on disk or in memory
+        let persisted = crate::modules::config::load_app_config().unwrap();
+        assert_eq!(persisted.proxy.preferred_account_id, None);
+        assert_eq!(state.token_manager.get_preferred_account().await, None);
+
+        // 2. Scheduling, circuit breaker & monitor hot-reloaded immediately in memory
+        let sticky = state.token_manager.get_sticky_config().await;
+        assert_eq!(
+            sticky.mode,
+            crate::proxy::sticky_config::SchedulingMode::Balance
+        );
+        assert_eq!(sticky.max_wait_seconds, 123);
+        assert!(
+            !state
+                .token_manager
+                .get_circuit_breaker_config()
+                .await
+                .enabled
+        );
+        assert!(!state.monitor.is_enabled());
+
+        // 3. Dedicated monitor toggles persist to disk and sync memory
+        super::admin_set_proxy_monitor_enabled(
+            axum::extract::State(state.clone()),
+            axum::Json(serde_json::json!({ "enabled": true })),
+        )
+        .await
+        .expect("enable monitor");
+        assert!(state.monitor.is_enabled());
+        assert!(
+            crate::modules::config::load_app_config()
+                .unwrap()
+                .proxy
+                .enable_logging
+        );
+
+        super::admin_set_proxy_capture_health_logs(
+            axum::extract::State(state.clone()),
+            axum::Json(serde_json::json!({ "enabled": true })),
+        )
+        .await
+        .expect("enable capture_health_logs");
+        assert!(state.monitor.is_capture_health_logs());
+        assert!(
+            crate::modules::config::load_app_config()
+                .unwrap()
+                .proxy
+                .capture_health_logs
         );
     }
 }
