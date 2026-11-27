@@ -21,6 +21,7 @@ export interface ProxyConfig {
     internal_error_log_retention?: InternalErrorLogRetentionConfig;
     debug_logging?: DebugLoggingConfig;
     upstream_proxy: UpstreamProxyConfig;
+    preferred_account_id?: string | null;
     scheduling?: StickySessionConfig;
     experimental?: ExperimentalConfig;
     user_agent_override?: string;

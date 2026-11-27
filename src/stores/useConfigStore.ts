@@ -71,6 +71,8 @@ interface ConfigState {
     // Actions
     loadConfig: () => Promise<void>;
     saveConfig: (config: AppConfig, silent?: boolean) => Promise<void>;
+    setConfigLocal: (config: AppConfig) => void;
+    syncConfigLocal: (updater: (cfg: AppConfig) => AppConfig) => void;
     updateTheme: (theme: string) => Promise<void>;
     updateLanguage: (language: string) => Promise<void>;
     toggleShowAllQuotas: () => void;
@@ -115,12 +117,22 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
         }
     },
 
+    setConfigLocal: (config: AppConfig) => {
+        set({ config });
+    },
+
+    syncConfigLocal: (updater: (cfg: AppConfig) => AppConfig) => {
+        const current = get().config;
+        if (!current) return;
+        set({ config: updater(current) });
+    },
+
     updateTheme: async (theme: string) => {
         const current = get().config;
         if (!current || current.theme === theme) return;
 
         localStorage.setItem('app-theme-preference', theme);
-        const latest = get().config || current;
+        const latest = await configService.loadConfig().catch(() => get().config || current);
         const newConfig = { ...latest, theme };
         await get().saveConfig(newConfig, true);
 
@@ -141,10 +153,12 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
         // 1. 同步切换物理布局方向
         document.documentElement.dir = normalized === 'ar' ? 'rtl' : 'ltr';
 
-        // 2. 同步立即乐观更新 store 内存态并挂载异步落盘任务
-        const latest = get().config || current;
-        const newConfig = { ...latest, language: normalized };
-        const savePromise = get().saveConfig(newConfig, true);
+        // 2. 同步乐观更新 store 内存态，落盘前拉取最新配置防止回写陈旧字段
+        set({ config: { ...current, language: normalized } });
+        const savePromise = (async () => {
+            const latest = await configService.loadConfig().catch(() => get().config || current);
+            await get().saveConfig({ ...latest, language: normalized }, true);
+        })();
 
         // 3. 切换 i18n 并等待落盘完成
         await i18n.changeLanguage(normalized);
@@ -168,14 +182,15 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
         const { config } = get();
         if (!config) return;
 
-        const hiddenItems = config.hidden_menu_items || [];
+        const latest = await configService.loadConfig().catch(() => get().config || config);
+        const hiddenItems = latest.hidden_menu_items || [];
         const isHidden = hiddenItems.includes(path);
 
         const newHiddenItems = isHidden
             ? hiddenItems.filter(item => item !== path)
             : [...hiddenItems, path];
 
-        const newConfig = { ...config, hidden_menu_items: newHiddenItems };
+        const newConfig = { ...latest, hidden_menu_items: newHiddenItems };
         await get().saveConfig(newConfig, true);
     },
 
