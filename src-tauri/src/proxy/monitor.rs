@@ -530,6 +530,11 @@ impl ProxyMonitor {
         self.capture_health_logs.load(Ordering::Relaxed)
     }
 
+    #[inline]
+    pub fn is_proxy_success_status(status: u16) -> bool {
+        status == 101 || (200..400).contains(&status)
+    }
+
     pub async fn log_request(&self, log: ProxyRequestLog) {
         if let (Some(account), Some(input), Some(output)) =
             (&log.account_email, log.input_tokens, log.output_tokens)
@@ -565,7 +570,7 @@ impl ProxyMonitor {
         if !is_health_probe {
             let mut stats = self.stats.write().await;
             stats.total_requests += 1;
-            if log.status >= 200 && log.status < 400 {
+            if Self::is_proxy_success_status(log.status) {
                 stats.success_count += 1;
             } else {
                 stats.error_count += 1;
@@ -720,5 +725,37 @@ impl ProxyMonitor {
             }
         })
         .await;
+    }
+}
+
+#[cfg(test)]
+mod http_101_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_log_request_counts_101_as_success() {
+        let _dir = prompt_log_tests::TestDataDir::new();
+        let _ = crate::modules::proxy_db::init_db();
+
+        let monitor = ProxyMonitor::new_for_test(16);
+        monitor.set_enabled(true);
+
+        let log: ProxyRequestLog = serde_json::from_value(serde_json::json!({
+            "id": "ws-101-test",
+            "timestamp": chrono::Utc::now().timestamp_millis(),
+            "method": "GET",
+            "url": "/v1/responses",
+            "status": 101,
+            "duration": 42,
+            "protocol": "openai_ws"
+        }))
+        .unwrap();
+
+        monitor.log_request(log).await;
+
+        let stats = monitor.stats.read().await.clone();
+        assert_eq!(stats.total_requests, 1);
+        assert_eq!(stats.success_count, 1);
+        assert_eq!(stats.error_count, 0);
     }
 }

@@ -12,6 +12,7 @@ import { useAccountStore } from '../../stores/useAccountStore';
 import { isTauri } from '../../utils/env';
 import { RequestDetailModal } from './RequestDetailModal';
 import { QoSStatusBadge } from '../accounts/QoSStatusBadge';
+import { isProxySuccessStatus } from '../../utils/httpStatus';
 
 // 网关前置拦截哨兵：账号列展示高亮角标与全语言可读文案
 const GATE_SENTINEL_BADGES: Record<string, { i18nKey: string; badgeClass: string }> = {
@@ -382,7 +383,7 @@ const LogTable: React.FC<LogTableProps> = ({
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-base-200">
                     {logs.map((log) => {
-                        const isSuccess = log.status >= 200 && log.status < 400;
+                        const isSuccess = isProxySuccessStatus(log.status);
                         const durationText = log.duration >= 1000 ? `${(log.duration / 1000).toFixed(2)}s` : `${log.duration}ms`;
                         const durationColor = log.duration > 5000 
                             ? 'text-amber-600 dark:text-amber-400 font-medium' 

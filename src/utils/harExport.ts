@@ -148,6 +148,7 @@ export function parseQueryStringFromUrl(url: string): HarQueryParam[] {
  */
 export function getStatusText(status: number): string {
     const map: Record<number, string> = {
+        101: 'Switching Protocols',
         200: 'OK',
         201: 'Created',
         204: 'No Content',

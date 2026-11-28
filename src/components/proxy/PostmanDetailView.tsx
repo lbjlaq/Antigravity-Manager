@@ -16,6 +16,7 @@ import { VirtualizedPayloadViewer } from './VirtualizedPayloadViewer';
 import { KeyValueHeadersTable } from './KeyValueHeadersTable';
 import { StructuredPayloadView } from './StructuredPayloadView';
 import { parseQueryStringFromUrl, parseHeadersToHarList } from '../../utils/harExport';
+import { isStrictProxySuccessStatus } from '../../utils/httpStatus';
 
 export interface PostmanDetailViewProps {
     log: ProxyRequestLog;
@@ -85,7 +86,7 @@ export const PostmanDetailView: React.FC<PostmanDetailViewProps> = ({
     );
 
     const hasUpstream = Boolean(log.upstream_request_body || log.upstream_request_headers);
-    const isSuccess = log.status >= 200 && log.status < 300;
+    const isSuccess = isStrictProxySuccessStatus(log.status);
 
     // 当前是否正停留在某个 Body 选项卡
     const isViewingBody =

@@ -2420,8 +2420,8 @@ pub fn get_stats() -> Result<crate::proxy::monitor::ProxyStats, String> {
         .query_row(
             "SELECT
             COUNT(*) as total,
-            COALESCE(SUM(CASE WHEN status >= 200 AND status < 400 THEN 1 ELSE 0 END), 0) as success,
-            COALESCE(SUM(CASE WHEN status < 200 OR status >= 400 THEN 1 ELSE 0 END), 0) as error
+            COALESCE(SUM(CASE WHEN status = 101 OR (status >= 200 AND status < 400) THEN 1 ELSE 0 END), 0) as success,
+            COALESCE(SUM(CASE WHEN status != 101 AND (status < 200 OR status >= 400) THEN 1 ELSE 0 END), 0) as error
          FROM request_logs",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -3457,14 +3457,14 @@ pub fn get_logs_count() -> Result<u64, String> {
 
 /// Get count of logs matching search filter
 /// filter: search text to match in url, method, model, or status
-/// errors_only: if true, only count logs with status < 200 or >= 400
+/// errors_only: if true, only count logs with error status (excluding 101 Switching Protocols and 2xx/3xx)
 pub fn get_logs_count_filtered(filter: &str, errors_only: bool) -> Result<u64, String> {
     let conn = connect_db()?;
 
     let filter_pattern = format!("%{}%", filter);
 
     let sql = if errors_only {
-        "SELECT COUNT(*) FROM request_logs WHERE (status < 200 OR status >= 400)"
+        "SELECT COUNT(*) FROM request_logs WHERE status != 101 AND (status < 200 OR status >= 400)"
     } else if filter.is_empty() {
         "SELECT COUNT(*) FROM request_logs"
     } else {
@@ -3486,7 +3486,7 @@ pub fn get_logs_count_filtered(filter: &str, errors_only: bool) -> Result<u64, S
 
 /// Get logs with search filter and pagination
 /// filter: search text to match in url, method, model, or status
-/// errors_only: if true, only return logs with status < 200 or >= 400
+/// errors_only: if true, only return logs with error status (excluding 101 Switching Protocols and 2xx/3xx)
 pub fn get_logs_filtered(
     filter: &str,
     errors_only: bool,
@@ -3504,7 +3504,7 @@ pub fn get_logs_filtered(
                 NULL as request_headers, NULL as upstream_request_headers, response_headers,
                 session_id, upstream_model
          FROM request_logs
-         WHERE (status < 200 OR status >= 400)
+         WHERE status != 101 AND (status < 200 OR status >= 400)
          ORDER BY timestamp DESC
          LIMIT ?1 OFFSET ?2"
     } else if filter.is_empty() {
@@ -3728,5 +3728,54 @@ mod ping_tests {
             ping().is_err(),
             "ping must fail when SQLite file is corrupted"
         );
+    }
+
+    #[test]
+    fn test_proxy_db_101_treated_as_success_not_error() {
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env_lock = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("ABV_DATA_DIR").ok();
+        let temp_dir =
+            std::env::temp_dir().join(format!("ag_proxy_db_101_{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let _restore = TempEnvGuard {
+            prev,
+            dir: temp_dir,
+        };
+        std::env::set_var("ABV_DATA_DIR", &_restore.dir);
+
+        init_db().expect("init proxy_db");
+
+        let make_log = |id: &str, method: &str, status: u16| -> ProxyRequestLog {
+            serde_json::from_value(serde_json::json!({
+                "id": id,
+                "timestamp": chrono::Utc::now().timestamp_millis(),
+                "method": method,
+                "url": "/v1/responses",
+                "status": status,
+                "duration": 15
+            }))
+            .unwrap()
+        };
+
+        save_log(make_log("log-101", "GET", 101)).expect("save 101");
+        save_log(make_log("log-200", "POST", 200)).expect("save 200");
+        save_log(make_log("log-500", "POST", 500)).expect("save 500");
+
+        let stats = get_stats().expect("get_stats");
+        assert_eq!(stats.total_requests, 3);
+        assert_eq!(stats.success_count, 2);
+        assert_eq!(stats.error_count, 1);
+
+        let err_count = get_logs_count_filtered("", true).expect("get_logs_count_filtered");
+        assert_eq!(err_count, 1);
+
+        let err_logs = get_logs_filtered("", true, 10, 0).expect("get_logs_filtered");
+        assert_eq!(err_logs.len(), 1);
+        assert_eq!(err_logs[0].id, "log-500");
     }
 }

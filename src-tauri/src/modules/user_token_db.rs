@@ -896,8 +896,8 @@ pub fn get_token_detailed_stats(
                 COALESCE(SUM(input_tokens), 0),
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
-                COALESCE(SUM(CASE WHEN status >= 200 AND status < 400 THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN status = 101 OR (status >= 200 AND status < 400) THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status != 101 AND (status < 200 OR status >= 400) THEN 1 ELSE 0 END), 0)
             FROM token_usage_logs
             WHERE token_id = ?1 AND request_time >= ?2",
             params![token_id, start_time],
@@ -1440,5 +1440,79 @@ mod tests {
             parse_allowed_account_ids(Some("12345".to_string())),
             Some(vec![])
         );
+    }
+
+    #[test]
+    fn test_token_detailed_summary_counts_101_as_success() {
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env_lock = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("ABV_DATA_DIR").ok();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ag_user_token_db_101_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        struct EnvGuard {
+            prev: Option<String>,
+            dir: PathBuf,
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                if let Some(ref p) = self.prev {
+                    std::env::set_var("ABV_DATA_DIR", p);
+                } else {
+                    std::env::remove_var("ABV_DATA_DIR");
+                }
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+        let _restore = EnvGuard {
+            prev,
+            dir: temp_dir.clone(),
+        };
+        std::env::set_var("ABV_DATA_DIR", &temp_dir);
+
+        init_db().expect("init user_token_db");
+        let token = create_token(
+            format!("Ws101User_{}", Uuid::new_v4()),
+            "never".to_string(),
+            None,
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("create token");
+
+        record_token_usage_and_ip(
+            &token.id,
+            "127.0.0.1",
+            "gpt-5.3-codex",
+            50,
+            25,
+            101,
+            Some("codex-ws".to_string()),
+        )
+        .expect("record 101");
+        record_token_usage_and_ip(
+            &token.id,
+            "127.0.0.1",
+            "gpt-5.3-codex",
+            10,
+            0,
+            500,
+            Some("codex-ws".to_string()),
+        )
+        .expect("record 500");
+
+        let stats = get_token_detailed_stats(&token.id, "7d").expect("detailed stats");
+        assert_eq!(stats.summary.total_requests, 2);
+        assert_eq!(stats.summary.success_requests, 1);
+        assert_eq!(stats.summary.failed_requests, 1);
     }
 }

@@ -22,6 +22,7 @@ import { VirtualizedPayloadViewer } from './VirtualizedPayloadViewer';
 import { extractConcisePayload } from './concisePayload';
 import { PostmanDetailView } from './PostmanDetailView';
 import { exportToHarString, downloadHarFile, exportToCurl } from '../../utils/harExport';
+import { isProxySuccessStatus } from '../../utils/httpStatus';
 
 export interface ProxyRequestLog {
     id: string;
@@ -736,7 +737,7 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
                     <div className="flex items-center gap-3 min-w-0">
                         {loadingDetail && <div className="loading loading-spinner loading-sm shrink-0"></div>}
                         <span className={`badge badge-sm font-bold text-white border-none shrink-0 shadow-xs ${
-                            log.status >= 200 && log.status < 400
+                            isProxySuccessStatus(log.status)
                                 ? 'bg-emerald-600'
                                 : 'bg-rose-600'
                         }`}>
