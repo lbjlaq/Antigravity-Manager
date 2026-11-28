@@ -244,16 +244,21 @@ impl SwitchEngine {
 
     /// 从客户端 `state.vscdb` 的 Protobuf 状态同步表 (`antigravityUnifiedStateSync.oauthToken`) 提取当前生效的真实 `refresh_token`
     pub fn extract_refresh_token_from_sqlite(app_folder: &str) -> Option<String> {
-        use base64::{engine::general_purpose, Engine as _};
-
         let user_storage = Self::resolve_app_user_storage_dir(app_folder)?;
         let db_path = user_storage.join("state.vscdb");
+        Self::extract_refresh_token_from_db_path(&db_path)
+    }
+
+    /// 从任意指定路径的 `state.vscdb` 只读提取当前生效的 `refresh_token`
+    pub fn extract_refresh_token_from_db_path(db_path: &Path) -> Option<String> {
+        use base64::{engine::general_purpose, Engine as _};
+
         if !db_path.exists() {
             return None;
         }
 
         let conn = rusqlite::Connection::open_with_flags(
-            &db_path,
+            db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .ok()?;

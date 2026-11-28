@@ -930,44 +930,75 @@ impl AntigravityManager {
         stats::StatsEngine::generate_report_in_range(&self.storage, start_ts_ms, end_ts_ms)
     }
 
-    /// 通过已有 refresh_token 手工添加账号
-    pub async fn add_account_by_token(
+    /// 统一保存 OAuth/Token 换取的账号凭证（按邮箱去重原地更新，保留历史设备指纹与标签）
+    pub async fn save_account_from_token_info(
         &self,
-        refresh_token: &str,
+        token_info: crate::types::TokenInfo,
         tags: Vec<String>,
     ) -> Result<Account> {
-        let token_info = self.oauth.refresh_access_token(refresh_token).await?;
         let user_info = self.oauth.fetch_user_info(&token_info.access_token).await?;
 
-        let id = uuid::Uuid::new_v4().to_string();
-        let device_profile = device::generate_device_profile();
+        let existing = self
+            .storage
+            .list_full_accounts()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|a| a.email.eq_ignore_ascii_case(&user_info.email));
 
-        let account = Account {
-            id: id.clone(),
-            email: user_info.email,
-            name: user_info.name,
-            priority: Some(0),
-            token: token_info,
-            device_profile: Some(device_profile),
-            quota: None,
-            tags,
-            disabled: false,
-            disabled_reason: None,
-            disabled_at: None,
-            banned: false,
-            banned_reason: None,
-            banned_at: None,
-            banned_code: None,
-            proxy_disabled: false,
-            proxy_disabled_reason: None,
-            proxy_disabled_at: None,
-            manual_proxy_disabled: false,
-            validation_blocked: false,
-            validation_blocked_until: None,
-            validation_url: None,
-            ban_appeal_url: None,
-            created_at: Some(chrono::Utc::now().timestamp()),
-            last_used: None,
+        let (id, account) = if let Some(mut acc) = existing {
+            let id = acc.id.clone();
+            if user_info
+                .name
+                .as_deref()
+                .is_some_and(|n| !n.trim().is_empty())
+            {
+                acc.name = user_info.name;
+            }
+            acc.token = token_info;
+            for tag in tags {
+                let trimmed = tag.trim().to_string();
+                if !trimmed.is_empty() && !acc.tags.contains(&trimmed) {
+                    acc.tags.push(trimmed);
+                }
+            }
+            acc.disabled = false;
+            acc.disabled_reason = None;
+            acc.disabled_at = None;
+            if acc.device_profile.is_none() {
+                acc.device_profile = Some(device::generate_device_profile());
+            }
+            (id, acc)
+        } else {
+            let id = uuid::Uuid::new_v4().to_string();
+            let device_profile = device::generate_device_profile();
+            let acc = Account {
+                id: id.clone(),
+                email: user_info.email,
+                name: user_info.name,
+                priority: Some(0),
+                token: token_info,
+                device_profile: Some(device_profile),
+                quota: None,
+                tags,
+                disabled: false,
+                disabled_reason: None,
+                disabled_at: None,
+                banned: false,
+                banned_reason: None,
+                banned_at: None,
+                banned_code: None,
+                proxy_disabled: false,
+                proxy_disabled_reason: None,
+                proxy_disabled_at: None,
+                manual_proxy_disabled: false,
+                validation_blocked: false,
+                validation_blocked_until: None,
+                validation_url: None,
+                ban_appeal_url: None,
+                created_at: Some(chrono::Utc::now().timestamp()),
+                last_used: None,
+            };
+            (id, acc)
         };
 
         self.storage.save_account(&account)?;
@@ -976,6 +1007,123 @@ impl AntigravityManager {
         self.storage
             .get_account(&id)?
             .ok_or_else(|| anyhow!("Failed to load saved account"))
+    }
+
+    /// 通过已有 refresh_token 手工添加账号（可选指定 OAuth 客户端类型）
+    pub async fn add_account_by_token_with_client(
+        &self,
+        refresh_token: &str,
+        tags: Vec<String>,
+        client_key: Option<&str>,
+    ) -> Result<Account> {
+        let token_info = self
+            .oauth
+            .refresh_access_token_with_client(refresh_token, client_key)
+            .await?;
+        self.save_account_from_token_info(token_info, tags).await
+    }
+
+    /// 通过已有 refresh_token 手工添加账号
+    pub async fn add_account_by_token(
+        &self,
+        refresh_token: &str,
+        tags: Vec<String>,
+    ) -> Result<Account> {
+        self.add_account_by_token_with_client(refresh_token, tags, None)
+            .await
+    }
+
+    /// 使用 OAuth 授权码换取令牌并保存/更新账号
+    pub async fn complete_oauth_code_exchange(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+        client_key: Option<&str>,
+    ) -> Result<Account> {
+        let token_info = self
+            .oauth
+            .exchange_code_with_client(code, redirect_uri, client_key)
+            .await?;
+        self.save_account_from_token_info(token_info, vec![]).await
+    }
+
+    /// 从本地客户端 (Antigravity / Antigravity IDE / Keyring / CLI) 只读扫描并导入账号
+    pub async fn import_accounts_from_local_db(&self) -> Result<Vec<Account>> {
+        let candidates: Vec<Option<String>> = tokio::task::spawn_blocking(|| {
+            vec![
+                switcher::SwitchEngine::extract_refresh_token_from_sqlite("Antigravity"),
+                switcher::SwitchEngine::extract_refresh_token_from_sqlite("Antigravity IDE"),
+                switcher::SwitchEngine::read_system_keyring_credential().and_then(|(rt, _)| rt),
+                switcher::SwitchEngine::read_jetski_standalone_credential().and_then(|(rt, _)| rt),
+                switcher::SwitchEngine::read_cli_exclusive_credential().and_then(|(rt, _)| rt),
+                switcher::SwitchEngine::read_gemini_cli_fallback_credential()
+                    .and_then(|(rt, _)| rt),
+                switcher::SwitchEngine::read_acp_plugin_credential().and_then(|(rt, _)| rt),
+            ]
+        })
+        .await
+        .map_err(|e| anyhow!("Local DB scan task join error: {}", e))?;
+
+        let mut unique_tokens = Vec::new();
+        for rt in candidates.into_iter().flatten() {
+            let trimmed = rt.trim().to_string();
+            if !trimmed.is_empty() && !unique_tokens.contains(&trimmed) {
+                unique_tokens.push(trimmed);
+            }
+        }
+
+        if unique_tokens.is_empty() {
+            anyhow::bail!("No logged-in Antigravity account found in local IDE/App/CLI storage");
+        }
+
+        let mut imported = Vec::new();
+        let mut last_err: Option<anyhow::Error> = None;
+        for rt in unique_tokens {
+            match self
+                .add_account_by_token_with_client(&rt, vec![], None)
+                .await
+            {
+                Ok(acc) => imported.push(acc),
+                Err(e) => {
+                    tracing::warn!("Failed to import discovered local token: {}", e);
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        if imported.is_empty() {
+            if let Some(err) = last_err {
+                return Err(err);
+            }
+            anyhow::bail!("No valid accounts could be imported from local storage");
+        }
+
+        Ok(imported)
+    }
+
+    /// 从指定自定义 state.vscdb 文件只读提取凭据并导入账号
+    pub async fn import_account_from_custom_db(
+        &self,
+        db_path: &std::path::Path,
+    ) -> Result<Account> {
+        if !db_path.exists() {
+            anyhow::bail!("Database file not found: {}", db_path.display());
+        }
+        let path_buf = db_path.to_path_buf();
+        let rt = tokio::task::spawn_blocking(move || {
+            switcher::SwitchEngine::extract_refresh_token_from_db_path(&path_buf)
+        })
+        .await
+        .map_err(|e| anyhow!("Custom DB read task join error: {}", e))?
+        .ok_or_else(|| {
+            anyhow!(
+                "No valid Antigravity refresh_token found in {}",
+                db_path.display()
+            )
+        })?;
+
+        self.add_account_by_token_with_client(&rt, vec![], None)
+            .await
     }
 
     /// 导出账号备份 JSON（对齐主分支格式：{"accounts": [{"email": "...", "refresh_token": "..."}]}）
