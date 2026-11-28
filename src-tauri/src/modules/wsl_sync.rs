@@ -267,6 +267,15 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
             PathBuf::from(format!(r"\\wsl$\{}\home", distro)),
         ];
         candidates.extend(collect_distro_user_homes(&prefixes));
+
+        // WSL 默认用户为 root 时主目录不在 \home 下，而是 <distro>\root
+        // （例如 Antigravity 2.x Hub Remote-WSL 常以 root 运行，凭据在 /root/.gemini）
+        for prefix in [r"\\wsl.localhost\", r"\\wsl$\"] {
+            let root_home = PathBuf::from(format!("{}{}\\root", prefix, distro));
+            if root_home.exists() {
+                candidates.push(root_home);
+            }
+        }
     }
 
     candidates.sort();
