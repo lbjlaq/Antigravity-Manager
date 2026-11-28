@@ -3,6 +3,24 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.6 (2026-11-28)**:
+        -   **[修复配额刷新 `RwLock` 自死锁、新增 `/health?deep=1` 深度健康检查与 Unix `SIGTERM` 优雅退出] (Fixes #4103, Fixes #4104, Ref #2200, PR #4105, PR #4110, Thanks to @koeria, @d7do7e)**:
+            -   **消除 `build_cache_snapshot` 同线程读写自死锁**: 新增 `OfficialModelCatalog::resolved_background_model_from_state(state)` 直接复用已持有的 `&LiveCatalogState`，避免 `sync_live_catalog` / `remove_live_account` 在持有 `live_recommended_store` 写锁期间重入读锁引发服务无响应，并补充真实入口 5 秒超时防死锁回归测试。(Fixes #4103, Fixes #4104, PR #4105, Thanks to @koeria)
+            -   **非破坏性深度就绪探针与 Headless 优雅退出**: 为 `/health?deep=1` 与 `/api/health?deep=1` 新增非阻塞目录锁探测（`try_health_check`）等深度就绪检查（保留默认 `/health` 向后兼容）；Headless 服务端新增 Unix `SIGTERM` 信号处理，实现无痕优雅关闭且不篡改 `gui_config.json`。(Ref #2200, Ref #4103, Ref #4104, PR #4110, Thanks to @d7do7e)
+        -   **[macOS Keychain 弹窗与 `changeAcl` 死锁根治、静默 FFI 预检与 `apple-tool:` 分区互通] (Fixes #4043, Ref #4087, PR #4097, PR #4111, PR #4114, Thanks to @zainulhasan, @cubelikeplayDaniel)**:
+            -   **静默 FFI 预检与精确 Decrypt ACL 校验**: 通过 `ScopedNoKeychainUi`（`SecKeychainSetUserInteractionAllowed(0)`）互斥序列化读写，调用 `/usr/bin/security` 前先静默校验默认钥匙串已解锁、`PartitionID` 仅含 `apple-tool:` 且无 `cdhash:`、以及 `Decrypt ACL` 通过 `SecTrustedApplicationCopyData` 明确信任 `/usr/bin/security`（或 `<ANY>`）且无密码标记，并加 5 秒子进程超时保护；被动轮询复用同一安全预检与 60s 缓存，既对 `cdhash:`/`teamid:` 与锁钥匙串保持 0 弹窗、0 子进程，又与 `agy` CLI / Antigravity 2.0 实时同步。(Fixes #4043, Ref #4087, PR #4097, PR #4111, PR #4114, Thanks to @zainulhasan, @cubelikeplayDaniel)
+            -   **先删后增写入消除 `-U` 死锁与 ACP 凭据隔离**: `<=3.9KB` 写入改为先静默删除旧条目再通过 `/usr/bin/security -i` 新增（不再传递 `-U`，彻底绕开空 `ChangeACL` 触发的 `SSKey::changeAcl` 死锁）以保住 `apple-tool:` 互通，大载荷平滑降级走原生 FFI；ACP 凭据优先读取本地 `acp_token.json`，并在 `GEMINI_HOME` 测试环境下严格隔离宿主机钥匙串。(Fixes #4043, PR #4097, PR #4111, PR #4114, Thanks to @zainulhasan, @cubelikeplayDaniel)
+        -   **[账号级别模型准入名单与全局模型定向绑定] (Fixes #4004, PR #4021, Thanks to @cubelikeplayDaniel)**:
+            -   **细粒度账号模型准入与通配符路由仲裁**: 新增账号级 `ModelAccessRule`（支持 `all` / `allow` / `deny` 及 $O(1)$ 零分配通配符匹配）与全局 `ModelAccountBinding`（支持专属独占 `exclusive` 与优先调度 `priority`，按通配符特异度与排他策略仲裁），并在账号详情、盾牌状态角标及代理路由设置中提供完整管理界面。(Fixes #4004, PR #4021, Thanks to @cubelikeplayDaniel)
+        -   **[配置写入序列化、防旧配置覆盖与 Headless 热重载同步] (Ref #4064, Ref #820, PR #4109, Thanks to @d7do7e)**:
+            -   **配置持久化原子性与前后端状态同步**: 序列化配置文件并发写入，防止通用 `save_config` 覆盖专用字段并同步 Headless 热重载状态；前端在代理/安全专用变更后同步更新 `useConfigStore`，消除陈旧状态回写覆盖。(Ref #4064, Ref #820, PR #4109, Thanks to @d7do7e)
+        -   **[剪贴板图片兼容净化与跨平台 IDE 日志目录预建] (Fixes #4106, Fixes #4057, PR #4112, Thanks to @cubelikeplayDaniel)**:
+            -   **多模态图片鲁棒性增强与启动日志目录保障**: 支持剪贴板/微信 BMP 图片内存转码为 PNG、放宽 JPEG/PNG 尾部 EXIF/填充校验、剥离 Base64 内 RFC 2045 空白并归一化 `image/jpg`；跨 macOS / Windows / Linux 预建 Antigravity IDE 日志目录以消除 `ENOENT` 启动报错。(Fixes #4106, Fixes #4057, PR #4112, Thanks to @cubelikeplayDaniel)
+        -   **[Dashboard 问候语与账号池刷新、无障碍体验与动效/暗色样式优化] (Ref #3617, Ref #3619, Ref #3768, Ref #3189, PR #4099, PR #4100, PR #4101, Thanks to @UnnamedPeople-Chin)**:
+            -   **仪表盘与交互无障碍全面改进**: 修复 Dashboard 本地化问候语、同步客户端目标 Tab 与全账号池刷新；提升导航栏、原生弹窗、Toast 与配额卡的键盘语义与对比度；尊重系统 `prefers-reduced-motion` 并统一暗色表面 CSS Token。(Ref #3617, Ref #3619, Ref #3768, Ref #3189, PR #4099, PR #4100, PR #4101, Thanks to @UnnamedPeople-Chin)
+        -   **[CI 关键路径 Rust 回归门禁与重复 PR 真机验证防线] (Ref #4043, Ref #4103, Ref #4104, PR #4114)**:
+            -   **防回归自动化门禁与工程规范加固**: 在三端 CI 启用 13 个核心模块离线 Rust 回归测试门禁（`--test-threads=1` + 5 分钟超时）及 Linux 管理端/深度健康检查测试，新增针对 OS 强耦合改动与重复修复 Issue 的 PR 真机验证提醒，并同步更新 `AGENTS.md` 与 PR 模板。(Ref #4043, Ref #4103, Ref #4104, PR #4114)
+
     *   **v5.0.5-beta.5 (2026-11-27)**:
         -   **[Keychain 原生 FFI 写入与防弹窗抑制、`cloudflared` 探测缓存及前端可见性门控] (Fixes #4043, Ref #3726, Ref #4073, PR #4087, Thanks to @zainulhasan)**:
             -   **macOS Keychain 原生 FFI 与 Linux 凭据抑制**: macOS 端改用 `Security.framework` / `CoreFoundation` 原生 FFI（`SecItemAdd` + `SecAccessCreate`）写入大体积 OAuth JSON（突破 4KB 管道限制且不暴露 `argv`）；将 `KeychainReadCoordinator` 扩展至 Linux，被动缓存 TTL 设为 60s 并在拒绝后持久抑制被动重试，同时修复 Linux `secret-tool` 良性 GTK/GLib 警告误判。(Fixes #4043, Ref #3726, PR #4087, Thanks to @zainulhasan)
