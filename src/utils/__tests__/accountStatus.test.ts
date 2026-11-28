@@ -6,6 +6,9 @@ import type { Account } from '../../types/account';
 import {
     canClearForbiddenLock,
     formatWarmUpErrorDetail,
+    isAccountAbnormal,
+    isAccountHealthy,
+    isAccountRestricted,
     isClearableProxyLockReason,
     isLocationUnsupportedReason,
 } from '../accountStatus';
@@ -218,6 +221,108 @@ test('formatWarmUpErrorDetail surfaces plain, Error, JSON, and truncated message
     const formatted = formatWarmUpErrorDetail(longMsg, 50);
     assertEqual(formatted.length <= 50, true, 'truncated length <= 50');
     assertEqual(formatted.endsWith('...'), true, 'truncated ends with ...');
+});
+
+test('isAccountRestricted matches upstream risk/ban/403 locks and excludes plain disabled/manual proxy_disabled', () => {
+    assertEqual(
+        isAccountRestricted(makeAccount({ disabled: true, disabled_reason: 'invalid_grant' })),
+        false,
+        'disabled-only is not restricted'
+    );
+    assertEqual(
+        isAccountRestricted(
+            makeAccount({
+                proxy_disabled: true,
+                manual_proxy_disabled: true,
+                proxy_disabled_reason: '用户手动禁用',
+            })
+        ),
+        false,
+        'manual proxy_disabled is not restricted'
+    );
+    assertEqual(
+        isAccountRestricted(makeAccount({ banned: true, banned_code: 'TOS_VIOLATION' })),
+        true,
+        'banned is restricted'
+    );
+    assertEqual(
+        isAccountRestricted(makeAccount({ validation_blocked: true })),
+        true,
+        'validation_blocked is restricted'
+    );
+    assertEqual(
+        isAccountRestricted(
+            makeAccount({
+                quota: { models: [], last_updated: 1700000000, is_forbidden: true },
+            })
+        ),
+        true,
+        'quota.is_forbidden is restricted'
+    );
+    assertEqual(
+        isAccountRestricted(
+            makeAccount({
+                proxy_disabled: true,
+                proxy_disabled_reason: 'Forbidden (403): denied',
+            })
+        ),
+        true,
+        'proxy_disabled 403 is restricted'
+    );
+    assertEqual(
+        isAccountRestricted(
+            makeAccount({
+                proxy_disabled: true,
+                proxy_disabled_reason: 'upstream returned 403 Forbidden',
+            })
+        ),
+        true,
+        'proxy_disabled 403 forbidden substring is restricted'
+    );
+    assertEqual(
+        isAccountRestricted(
+            makeAccount({
+                proxy_disabled: true,
+                proxy_disabled_reason: 'banned: TOS_VIOLATION',
+            })
+        ),
+        true,
+        'proxy_disabled banned: is restricted'
+    );
+});
+
+test('isAccountAbnormal includes disabled accounts while excluding plain manual proxy_disabled', () => {
+    const disabledOnly = makeAccount({
+        disabled: true,
+        disabled_reason: 'invalid_grant: Refresh failed for all OAuth clients',
+    });
+    assertEqual(isAccountAbnormal(disabledOnly), true, 'disabled-only is abnormal');
+    assertEqual(isAccountHealthy(disabledOnly), false, 'disabled-only is not healthy');
+
+    const manualProxyDisabled = makeAccount({
+        proxy_disabled: true,
+        manual_proxy_disabled: true,
+        proxy_disabled_reason: '用户手动禁用',
+    });
+    assertEqual(isAccountAbnormal(manualProxyDisabled), false, 'manual proxy_disabled is not abnormal');
+    assertEqual(isAccountHealthy(manualProxyDisabled), true, 'manual proxy_disabled remains healthy');
+
+    const quotaProt = makeAccount({
+        proxy_disabled: true,
+        proxy_disabled_reason: 'quota_protection',
+    });
+    assertEqual(isAccountAbnormal(quotaProt), false, 'quota_protection is not abnormal');
+    assertEqual(isAccountHealthy(quotaProt), true, 'quota_protection remains healthy');
+
+    const restricted = makeAccount({
+        validation_blocked: true,
+    });
+    assertEqual(isAccountAbnormal(restricted), true, 'validation_blocked is abnormal');
+    assertEqual(isAccountHealthy(restricted), false, 'validation_blocked is not healthy');
+
+    const healthy = makeAccount();
+    assertEqual(isAccountAbnormal(healthy), false, 'healthy account is not abnormal');
+    assertEqual(isAccountHealthy(healthy), true, 'healthy account is healthy');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

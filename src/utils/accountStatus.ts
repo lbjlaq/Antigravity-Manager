@@ -11,13 +11,13 @@ export function isValidationBlockActive(
 }
 
 /**
- * 账号是否处于异常状态。
+ * 账号是否受到上游风控、封禁、验证阻断或 403 锁定。
  *
- * 统一账号列表筛选与仪表盘统计口径，避免两处各自实现导致计数漂移。
- * 403 代理锁可能尚未写入 quota.is_forbidden（例如手动禁用或旧数据），
+ * 用于仪表盘风控细分统计（区分“手动/凭据停用”与“上游风控异常”）。
+ * 403 代理锁可能尚未写入 quota.is_forbidden（例如旧数据或仅写入 proxy_disabled_reason），
  * 因此同时检查 proxy_disabled_reason。
  */
-export function isAccountAbnormal(account: Account): boolean {
+export function isAccountRestricted(account: Account): boolean {
     const reason = (account.proxy_disabled_reason ?? '').toLowerCase();
     return Boolean(
         account.banned ||
@@ -31,10 +31,20 @@ export function isAccountAbnormal(account: Account): boolean {
 }
 
 /**
- * 账号是否处于健康可用状态（非异常、未停用）。
+ * 账号是否处于异常状态（凭据停用或受上游风控/403 限制）。
+ *
+ * 用于账号页「异常」筛选胶囊与全局异常状态判定；纯手动停用反代 (`proxy_disabled`)
+ * 或配额保护不计入异常。
+ */
+export function isAccountAbnormal(account: Account): boolean {
+    return Boolean(account.disabled || isAccountRestricted(account));
+}
+
+/**
+ * 账号是否处于健康可用状态（未停用且无上游风控限制）。
  */
 export function isAccountHealthy(account: Account): boolean {
-    return !account.disabled && !isAccountAbnormal(account);
+    return !isAccountAbnormal(account);
 }
 
 /** 账号是否有模型级 403 冻结 */
