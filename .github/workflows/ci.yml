@@ -83,10 +83,11 @@ jobs:
           cd src-tauri
           cargo clippy --all-targets --all-features
 
-      - name: Check Rust compilation
+      - name: Compile critical-path Rust test binary
+        timeout-minutes: 20
         run: |
           cd src-tauri
-          cargo check
+          cargo test --lib --no-run
 
       - name: Run critical-path Rust regression tests
         timeout-minutes: 5
