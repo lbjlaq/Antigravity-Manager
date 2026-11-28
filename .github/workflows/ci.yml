@@ -88,6 +88,60 @@ jobs:
           cd src-tauri
           cargo check
 
+      - name: Run critical-path Rust regression tests
+        timeout-minutes: 5
+        run: |
+          cd src-tauri
+          cargo test --lib -- --test-threads=1 models::official_model::tests models::account::tests modules::config::tests modules::integration::tests proxy::config::tests proxy::middleware::auth::tests proxy::common::model_mapping::tests proxy::common::model_gate::tests proxy::mappers::common_utils::tests proxy::tests::quota_protection proxy::tests::ultra_priority_tests utils::fs::tests utils::crypto::tests
+
+      - name: Run admin & deep-health parity tests (Linux)
+        if: startsWith(matrix.platform, 'ubuntu')
+        timeout-minutes: 5
+        run: |
+          cd src-tauri
+          cargo test --lib -- --test-threads=1 proxy::server::admin_parity_tests
+
+      - name: Real-device verification advisory for OS-coupled or repeated-fix PRs
+        if: github.event_name == 'pull_request' && startsWith(matrix.platform, 'ubuntu')
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=50 origin "${GITHUB_BASE_REF}" || true
+          CHANGED_OS_FILES=$(git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" -- \
+            src-tauri/src/modules/integration.rs \
+            src-tauri/src/modules/process.rs \
+            src-tauri/src/modules/tray.rs \
+            src-tauri/src/modules/db.rs \
+            src-tauri/src/commands/autostart.rs \
+            src-tauri/src/linux_graphics.rs \
+            src-tauri/src/linux_display_guard.rs 2>/dev/null || true)
+
+          PR_REFS=$(git log --format=%s "origin/${GITHUB_BASE_REF}..HEAD" 2>/dev/null | grep -oE '#[0-9]+' | sort -u || true)
+          REPEATED_ISSUES=""
+          for ref in $PR_REFS; do
+            PRIOR_HITS=$(git log -n 2 --oneline --grep="${ref}" "origin/${GITHUB_BASE_REF}" 2>/dev/null || true)
+            if [ -n "$PRIOR_HITS" ]; then
+              REPEATED_ISSUES="${REPEATED_ISSUES} ${ref}"
+            fi
+          done
+
+          if [ -n "$CHANGED_OS_FILES" ] || [ -n "$REPEATED_ISSUES" ]; then
+            echo "::warning title=Real-Device Verification Recommended::This PR touches OS-coupled code or revisits an already-patched issue (${REPEATED_ISSUES:-none}). Reproduce and verify the full behavior matrix on a real target host before merging."
+            {
+              echo "### Real-Device Verification Advisory"
+              echo ""
+              echo "CI cannot faithfully emulate macOS Keychain XARA partitions/ACLs, ad-hoc signing, locked keychains, or live client account switching."
+              if [ -n "$REPEATED_ISSUES" ]; then
+                echo "- **Previously patched issue reference(s) detected in base branch**: \`${REPEATED_ISSUES}\`"
+              fi
+              if [ -n "$CHANGED_OS_FILES" ]; then
+                echo "- **OS/host-coupled files modified**:"
+                echo "$CHANGED_OS_FILES" | sed 's/^/  - `/' | sed 's/$/`/'
+              fi
+              echo ""
+              echo "Before merging, confirm: (1) root cause reproduced on a real host, (2) non-negotiable behavior invariants documented in code, and (3) full scenario matrix verified on real hardware."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # Tauri 构建测试（不打包）
   build-tauri:
     name: Build Tauri App
