@@ -6,6 +6,7 @@ import { LangCode } from './i18n/constants';
 import { ensureLocaleLoaded } from './i18n';
 import { api, isTauri, UpdateSnapshot } from './api';
 import { UpdatePopover } from './components/UpdatePopover';
+import { ZoomManager } from './components/common/ZoomManager';
 import {
   VALID_TABS,
   consumeFreshPendingTab,
@@ -379,6 +380,7 @@ export function App() {
 
   return (
     <div className="w-full h-screen flex flex-col bg-[#F3F4F6] dark:bg-[#09090b] text-slate-900 dark:text-zinc-100">
+      <ZoomManager />
       {/* 顶部主分支风格 Navbar (带 pt-9 与 macOS 交通灯留白) */}
       <Navbar
         currentTab={currentTab}

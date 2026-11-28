@@ -31,6 +31,7 @@ const STORAGE_KEYS = {
   dashboardPoolPreference: 'am_dashboard_pool_preference',
   accountsSortMode: 'am_accounts_sort_mode',
   accountsViewMode: 'am_accounts_view_mode',
+  uiZoom: 'app-ui-zoom',
 } as const;
 
 const PENDING_TAB_TTL_MS = 5_000;
@@ -179,6 +180,11 @@ export function saveAccountsViewMode(mode: AccountsViewMode): void {
   schedulePatchUiState({ accounts_view_mode: mode });
 }
 
+export function saveUiZoom(zoom: number): void {
+  writeLs(STORAGE_KEYS.uiZoom, String(zoom));
+  schedulePatchUiState({ ui_zoom: zoom });
+}
+
 export interface HydratedUiState {
   lastTab: TabId | null;
   dashboardHost: HostTarget | null;
@@ -186,6 +192,7 @@ export interface HydratedUiState {
   dashboardPoolPreference: DashboardPoolPreference | null;
   accountsSortMode: AccountsSortMode | null;
   accountsViewMode: AccountsViewMode | null;
+  uiZoom: number | null;
 }
 
 let hydratePromise: Promise<HydratedUiState | null> | null = null;
@@ -230,6 +237,8 @@ export function hydrateUiStateFromConfig(): Promise<HydratedUiState | null> {
         ui.accounts_view_mode && VALID_VIEW_MODES.includes(ui.accounts_view_mode as AccountsViewMode)
           ? (ui.accounts_view_mode as AccountsViewMode)
           : null;
+      const uiZoom =
+        typeof ui.ui_zoom === 'number' && Number.isFinite(ui.ui_zoom) ? ui.ui_zoom : null;
 
       // 仅在 localStorage 尚未有本地记录时回填，保证磁盘持久化兜底生效
       if (!readStoredLastTab() && lastTab) writeLs(STORAGE_KEYS.lastTab, lastTab);
@@ -246,6 +255,9 @@ export function hydrateUiStateFromConfig(): Promise<HydratedUiState | null> {
       if (!readStoredAccountsViewMode() && accountsViewMode) {
         writeLs(STORAGE_KEYS.accountsViewMode, accountsViewMode);
       }
+      if (!readLs(STORAGE_KEYS.uiZoom) && uiZoom !== null) {
+        writeLs(STORAGE_KEYS.uiZoom, String(uiZoom));
+      }
 
       return {
         lastTab,
@@ -254,6 +266,7 @@ export function hydrateUiStateFromConfig(): Promise<HydratedUiState | null> {
         dashboardPoolPreference,
         accountsSortMode,
         accountsViewMode,
+        uiZoom,
       };
     })
     .catch(() => null);

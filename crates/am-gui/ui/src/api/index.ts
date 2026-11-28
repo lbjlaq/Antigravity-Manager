@@ -135,6 +135,7 @@ export interface UiStateConfig {
   dashboard_pool_preference?: string;
   accounts_sort_mode?: string;
   accounts_view_mode?: string;
+  ui_zoom?: number;
 }
 
 export interface UpdateConfig {

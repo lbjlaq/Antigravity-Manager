@@ -28,6 +28,7 @@
     "core:window:allow-unminimize",
     "core:window:allow-close",
     "core:window:allow-destroy",
+    "core:webview:allow-set-webview-zoom",
     "core:tray:default",
     "core:event:default",
     "autostart:allow-enable",

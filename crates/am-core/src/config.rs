@@ -218,6 +218,9 @@ pub struct UiStateConfig {
     /// 账号管理页视图模式 ("table" | "card")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accounts_view_mode: Option<String>,
+    /// 界面与字体整体等比例缩放百分比（85..=150，默认 120）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_zoom: Option<u16>,
 }
 
 impl UiStateConfig {
@@ -228,6 +231,7 @@ impl UiStateConfig {
             && self.dashboard_pool_preference.is_none()
             && self.accounts_sort_mode.is_none()
             && self.accounts_view_mode.is_none()
+            && self.ui_zoom.is_none()
     }
 
     pub fn merge_from(&mut self, patch: UiStateConfig) {
@@ -248,6 +252,9 @@ impl UiStateConfig {
         }
         if patch.accounts_view_mode.is_some() {
             self.accounts_view_mode = patch.accounts_view_mode;
+        }
+        if patch.ui_zoom.is_some() {
+            self.ui_zoom = patch.ui_zoom;
         }
     }
 }
@@ -324,5 +331,32 @@ impl AppConfig {
         mutator(&mut cfg);
         cfg.save_unlocked()?;
         Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_zoom_defaults_to_none_and_merges_roundtrip() {
+        let mut state = UiStateConfig::default();
+        assert!(state.is_empty());
+        assert_eq!(state.ui_zoom, None);
+
+        state.merge_from(UiStateConfig {
+            ui_zoom: Some(120),
+            ..Default::default()
+        });
+        assert!(!state.is_empty());
+        assert_eq!(state.ui_zoom, Some(120));
+
+        let cfg = AppConfig {
+            ui_state: state,
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&cfg).unwrap();
+        let restored: AppConfig = serde_json::from_str(&raw).unwrap();
+        assert_eq!(restored.ui_state.ui_zoom, Some(120));
     }
 }
