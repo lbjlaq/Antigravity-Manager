@@ -1431,14 +1431,26 @@ pub async fn warmup_model_directly(
     match resp {
         Ok(response) => {
             let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             if status.is_success() {
+                if let Ok(parsed) =
+                    serde_json::from_str::<crate::proxy::handlers::warmup::WarmupResponse>(&text)
+                {
+                    if !parsed.success {
+                        let detail = parsed.error.as_deref().unwrap_or(&parsed.message);
+                        crate::modules::logger::log_error(&format!(
+                            "[Warmup] ✗ {} for {} (was {}%): {} (WarmupResponse.success=false)",
+                            model_name, email, percentage, detail
+                        ));
+                        return false;
+                    }
+                }
                 crate::modules::logger::log_info(&format!(
                     "[Warmup] ✓ Triggered {} for {} (was {}%)",
                     model_name, email, percentage
                 ));
                 true
             } else {
-                let text = response.text().await.unwrap_or_default();
                 crate::modules::logger::log_error(&format!(
                     "[Warmup] ✗ {} for {} (was {}%): HTTP {} - {} (非服务端故障)",
                     model_name, email, percentage, status, text
@@ -1456,16 +1468,141 @@ pub async fn warmup_model_directly(
     }
 }
 
+pub(crate) fn is_account_eligible_for_warmup(
+    account: &crate::models::Account,
+    now_ts: i64,
+) -> bool {
+    !account.disabled
+        && !account.proxy_disabled
+        && !account.manual_proxy_disabled
+        && !account.banned
+        && !account.is_validation_block_active(now_ts)
+        && !account.quota.as_ref().is_some_and(|q| q.is_forbidden)
+}
+
+fn warmup_candidate_rank(name_lower: &str) -> u8 {
+    if name_lower.contains("flash")
+        && !name_lower.contains("thinking")
+        && !name_lower.contains("image")
+    {
+        0
+    } else if !name_lower.contains("thinking")
+        && !name_lower.contains("image")
+        && !name_lower.contains("imagen")
+    {
+        1
+    } else if name_lower.contains("thinking") {
+        2
+    } else {
+        3
+    }
+}
+
+pub(crate) fn select_models_for_manual_warmup(
+    fresh_quota: &QuotaData,
+) -> Vec<(String, String, i32)> {
+    let is_ultra = fresh_quota
+        .subscription_tier
+        .as_deref()
+        .is_some_and(|t| t.eq_ignore_ascii_case("ULTRA"));
+    let mut known_codenames: Vec<String> = Vec::new();
+    for m in &fresh_quota.models {
+        if let Some(code) = extract_g4_codename(&m.name.to_lowercase()) {
+            if !known_codenames.iter().any(|c| c == &code) {
+                known_codenames.push(code);
+            }
+        }
+    }
+
+    let groups = fresh_quota
+        .quota_groups
+        .as_deref()
+        .filter(|g| !g.is_empty());
+    let mut selected: Vec<(String, String, i32, u8)> = Vec::new();
+
+    for m in &fresh_quota.models {
+        if m.percentage < 100 {
+            continue;
+        }
+        let lower = m.name.to_lowercase();
+        let fallback_series_key = || -> Option<String> {
+            if lower.starts_with("claude") || lower.starts_with("gpt") {
+                Some("series:claude-3p".to_string())
+            } else if let Some(code) = extract_g4_codename(&lower) {
+                if code == "argon" && !is_ultra {
+                    None
+                } else {
+                    Some(format!("series:g4-{}", code))
+                }
+            } else if lower.contains("image") || lower.contains("imagen") {
+                Some("series:gemini-image".to_string())
+            } else if lower.starts_with("gemini") {
+                Some("series:gemini".to_string())
+            } else {
+                Some(format!("model:{}", lower))
+            }
+        };
+
+        let series_key = if let Some(group_list) = groups {
+            match match_quota_group_for_model_with_codenames(
+                group_list,
+                &lower,
+                is_ultra,
+                &known_codenames,
+            ) {
+                QuotaGroupMatch::SkipUnauthorized => continue,
+                QuotaGroupMatch::Matched(group) => {
+                    if let Some(code) = group.dedicated_g4_codename(&known_codenames) {
+                        format!("group:g4-{}", code)
+                    } else if group.is_third_party() {
+                        "group:3p".to_string()
+                    } else if !group.display_name.trim().is_empty() {
+                        format!("group:{}", group.display_name.trim().to_lowercase())
+                    } else {
+                        "group:gemini".to_string()
+                    }
+                }
+                QuotaGroupMatch::NoGroupKeep => match fallback_series_key() {
+                    Some(k) => k,
+                    None => continue,
+                },
+            }
+        } else {
+            match fallback_series_key() {
+                Some(k) => k,
+                None => continue,
+            }
+        };
+
+        let rank = warmup_candidate_rank(&lower);
+        if let Some(existing) = selected.iter_mut().find(|entry| entry.0 == series_key) {
+            if existing.3 > rank {
+                existing.1 = m.name.clone();
+                existing.2 = m.percentage;
+                existing.3 = rank;
+            }
+        } else {
+            selected.push((series_key, m.name.clone(), m.percentage, rank));
+        }
+    }
+
+    selected
+        .into_iter()
+        .map(|(series_key, name, pct, _)| (series_key, name, pct))
+        .collect()
+}
+
 /// Smart warmup for all accounts
 pub async fn warm_up_all_accounts() -> Result<String, String> {
     let mut retry_count = 0;
 
     loop {
         let all_accounts = crate::modules::account::list_accounts().unwrap_or_default();
-        // [FIX] 过滤掉禁用反代 / 已被上游封禁的账号
+        let now_ts = chrono::Utc::now().timestamp();
+        // Filter disabled, proxy-disabled (auto/manual), banned, forbidden, and active validation-cooldown accounts
         let target_accounts: Vec<_> = all_accounts
             .into_iter()
-            .filter(|a| !a.disabled && !a.proxy_disabled && !a.banned)
+            .filter(|a| is_account_eligible_for_warmup(a, now_ts))
             .collect();
 
         if target_accounts.is_empty() {
@@ -1506,56 +1643,56 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
             for handle in handles {
                 if let Ok(Some((id, email, token, pid, Some((fresh_quota, _))))) = handle.await {
-                    // [FIX] 预热阶段检测到 403 时，区分是否属于临时验证并使用统一禁用逻辑
                     if fresh_quota.is_forbidden {
-                        let is_validation =
-                            fresh_quota.forbidden_reason.as_deref().map_or(false, |r| {
-                                let lower = r.to_lowercase();
-                                lower.contains("validation_required")
-                                    || lower.contains("verify your account")
-                                    || lower.contains("validation_url")
-                            });
-
-                        if is_validation {
-                            crate::modules::logger::log_warn(&format!(
-                                "[Warmup] Account {} requires validation (VALIDATION_REQUIRED), skipping warmup",
-                                email
-                            ));
-                        } else {
-                            crate::modules::logger::log_warn(&format!(
-                                "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
-                                email
-                            ));
-                            let _ = crate::modules::account::mark_account_forbidden(
-                                &id,
-                                fresh_quota
-                                    .forbidden_reason
-                                    .as_deref()
-                                    .unwrap_or("Warmup: 403 Forbidden - quota fetch denied"),
-                            );
+                        let reason = fresh_quota
+                            .forbidden_reason
+                            .as_deref()
+                            .unwrap_or("Warmup: 403 Forbidden - quota fetch denied");
+                        match classify_quota_summary_403(reason) {
+                            Some(true) => {
+                                crate::modules::logger::log_warn(&format!(
+                                    "[Warmup] Account {} requires validation (VALIDATION_REQUIRED), skipping warmup",
+                                    email
+                                ));
+                            }
+                            Some(false) => {
+                                crate::modules::logger::log_warn(&format!(
+                                    "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
+                                    email
+                                ));
+                                let _ =
+                                    crate::modules::account::mark_account_forbidden(&id, reason);
+                            }
+                            None => {
+                                crate::modules::logger::log_warn(&format!(
+                                    "[Warmup] Account {} skipped warmup on non-ban 403 (location/permission)",
+                                    email
+                                ));
+                            }
                         }
                         continue;
                     }
-                    let mut account_warmed_series = std::collections::HashSet::new();
-                    for m in fresh_quota.models {
-                        if m.percentage >= 100 {
-                            let model_to_ping = m.name.clone();
 
-                            // Removed hardcoded whitelist - now warms up any model at 100%
-                            if !account_warmed_series.contains(&model_to_ping) {
-                                warmup_items.push((
-                                    id.clone(),
-                                    email.clone(),
-                                    model_to_ping.clone(),
-                                    token.clone(),
-                                    pid.clone(),
-                                    m.percentage,
-                                ));
-                                account_warmed_series.insert(model_to_ping);
-                            }
-                        } else if m.percentage >= NEAR_READY_THRESHOLD {
-                            has_near_ready_models = true;
-                        }
+                    if fresh_quota
+                        .models
+                        .iter()
+                        .any(|m| m.percentage >= NEAR_READY_THRESHOLD && m.percentage < 100)
+                    {
+                        has_near_ready_models = true;
+                    }
+
+                    for (series_key, model_to_ping, pct) in
+                        select_models_for_manual_warmup(&fresh_quota)
+                    {
+                        warmup_items.push((
+                            id.clone(),
+                            email.clone(),
+                            series_key,
+                            model_to_ping,
+                            token.clone(),
+                            pid.clone(),
+                            pct,
+                        ));
                     }
                 }
             }
@@ -1564,10 +1701,12 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         if !warmup_items.is_empty() {
             let total_before = warmup_items.len();
 
-            // Filter out models warmed up within 4 hours
-            warmup_items.retain(|(_, email, model, _, _, _)| {
-                let history_key = format!("{}:{}:100", email, model);
-                !crate::modules::scheduler::check_cooldown(&history_key, 14400)
+            // Filter out series/models warmed up within 4 hours
+            warmup_items.retain(|(_, email, series_key, model, _, _, _)| {
+                let series_history_key = format!("{}:{}:100", email, series_key);
+                let model_history_key = format!("{}:{}:100", email, model);
+                !crate::modules::scheduler::check_cooldown(&series_history_key, 14400)
+                    && !crate::modules::scheduler::check_cooldown(&model_history_key, 14400)
             });
 
             if warmup_items.is_empty() {
@@ -1593,7 +1732,7 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
             }
 
             crate::modules::logger::log_info(&format!(
-                "[Warmup] 🔥 Starting manual warmup for {} models",
+                "[Warmup] 🔥 Starting manual warmup for {} model series",
                 total
             ));
 
@@ -1601,13 +1740,9 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                 let mut success = 0;
                 let now_ts = chrono::Utc::now().timestamp();
 
-                // 按账号组织预热任务：同一账号内的多个模型必须串行执行并保持安全间隔（1.5s），
-                // 彻底杜绝因同 Token 并发涌入触发 Google 上游单会话并发互斥与 Cloud Armor WAF 403 频控拦截；
-                // 不同账号之间并发执行以保障处理效率。
-                let mut account_tasks: std::collections::HashMap<
-                    String,
-                    Vec<(String, String, String, String, String, i32)>,
-                > = std::collections::HashMap::new();
+                type WarmupTaskItem = (String, String, String, String, String, String, i32);
+                let mut account_tasks: std::collections::HashMap<String, Vec<WarmupTaskItem>> =
+                    std::collections::HashMap::new();
 
                 for item in warmup_items {
                     account_tasks.entry(item.1.clone()).or_default().push(item);
@@ -1618,7 +1753,7 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                     let handle = tokio::spawn(async move {
                         let mut local_success = 0;
                         let item_count = items.len();
-                        for (idx, (id, email, model, token, pid, pct)) in
+                        for (idx, (id, email, series_key, model, token, pid, pct)) in
                             items.into_iter().enumerate()
                         {
                             let ok = warmup_model_directly(
@@ -1633,9 +1768,12 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                             .await;
                             if ok {
                                 local_success += 1;
-                                let history_key = format!("{}:{}:100", email, model);
                                 crate::modules::scheduler::record_warmup_history(
-                                    &history_key,
+                                    &format!("{}:{}:100", email, series_key),
+                                    now_ts,
+                                );
+                                crate::modules::scheduler::record_warmup_history(
+                                    &format!("{}:{}:100", email, model),
                                     now_ts,
                                 );
                             }
@@ -1660,12 +1798,13 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                 ));
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 let _ = crate::modules::account::refresh_all_quotas_logic().await;
+                crate::modules::log_bridge::emit_accounts_refreshed();
             });
             crate::modules::logger::log_info(&format!(
-                "[Warmup] Returning to frontend: Warmup task triggered for {} models",
+                "[Warmup] Returning to frontend: Warmup task triggered for {} model series",
                 total
             ));
-            return Ok(format!("Warmup task triggered for {} models", total));
+            return Ok(format!("Warmup task triggered for {} model series", total));
         }
 
         if has_near_ready_models && retry_count < MAX_RETRIES {
@@ -1691,8 +1830,8 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         .cloned()
         .ok_or_else(|| "Account not found".to_string())?;
 
-    if account_owned.disabled || account_owned.proxy_disabled || account_owned.banned {
-        return Err("Account is disabled".to_string());
+    if !is_account_eligible_for_warmup(&account_owned, chrono::Utc::now().timestamp()) {
+        return Err("Account is disabled or temporarily blocked from warmup".to_string());
     }
 
     let email = account_owned.email.clone();
@@ -1702,81 +1841,79 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
             .await
             .map_err(|e| format!("Failed to fetch quota: {}", e))?;
 
-    // [FIX] 预热阶段检测到 403 时，区分是否属于临时验证并使用统一禁用逻辑（封禁优先于验证锁）
     if fresh_quota.is_forbidden {
-        let is_validation = fresh_quota.forbidden_reason.as_deref().is_some_and(|r| {
-            crate::models::AccountBanInfo::classify_upstream(403, r).is_none()
-                && !crate::models::account::is_location_unsupported_error(r)
-                && is_validation_challenge_body(r)
-        });
-
-        if is_validation {
-            crate::modules::logger::log_warn(&format!(
-                "[Warmup] Account {} requires validation (VALIDATION_REQUIRED), skipping warmup",
-                email
-            ));
-            return Err("Account requires validation (VALIDATION_REQUIRED)".to_string());
-        } else {
-            crate::modules::logger::log_warn(&format!(
-                "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
-                email
-            ));
-            let reason = fresh_quota
-                .forbidden_reason
-                .as_deref()
-                .unwrap_or("Warmup: 403 Forbidden - quota fetch denied");
-            let _ = crate::modules::account::mark_account_forbidden(account_id, reason);
-            return Err("Account is forbidden (403)".to_string());
-        }
-    }
-
-    let mut models_to_warm = Vec::new();
-    let mut warmed_series = std::collections::HashSet::new();
-
-    for m in fresh_quota.models {
-        if m.percentage >= 100 {
-            let model_name = m.name.clone();
-
-            // Removed hardcoded whitelist - now warms up any model at 100%
-            if !warmed_series.contains(&model_name) {
-                models_to_warm.push((model_name.clone(), m.percentage));
-                warmed_series.insert(model_name);
+        let reason = fresh_quota
+            .forbidden_reason
+            .as_deref()
+            .unwrap_or("Warmup: 403 Forbidden - quota fetch denied");
+        match classify_quota_summary_403(reason) {
+            Some(true) => {
+                crate::modules::logger::log_warn(&format!(
+                    "[Warmup] Account {} requires validation (VALIDATION_REQUIRED), skipping warmup",
+                    email
+                ));
+                return Err("Account requires validation (VALIDATION_REQUIRED)".to_string());
+            }
+            Some(false) => {
+                crate::modules::logger::log_warn(&format!(
+                    "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
+                    email
+                ));
+                let _ = crate::modules::account::mark_account_forbidden(account_id, reason);
+                return Err("Account is forbidden (403)".to_string());
+            }
+            None => {
+                crate::modules::logger::log_warn(&format!(
+                    "[Warmup] Account {} skipped warmup on non-ban 403 (location/permission)",
+                    email
+                ));
+                return Err(
+                    "Account warmup skipped due to location or permission error (403)".to_string(),
+                );
             }
         }
     }
 
+    let models_to_warm = select_models_for_manual_warmup(&fresh_quota);
     if models_to_warm.is_empty() {
         return Ok("No warmup needed".to_string());
     }
 
-    let warmed_count = models_to_warm.len();
-    let account_id_clone = account_id.to_string();
+    let total = models_to_warm.len();
+    let mut succeeded = 0;
 
-    tokio::spawn(async move {
-        for (name, pct) in models_to_warm {
-            if warmup_model_directly(
-                &token,
-                &name,
-                &pid,
-                &email,
-                pct,
-                Some(&account_id_clone),
-                true,
-            )
-            .await
-            {
-                let history_key = format!("{}:{}:100", email, name);
-                let now_ts = chrono::Utc::now().timestamp();
-                crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
-            }
+    for (idx, (series_key, name, pct)) in models_to_warm.into_iter().enumerate() {
+        if warmup_model_directly(&token, &name, &pid, &email, pct, Some(account_id), true).await {
+            succeeded += 1;
+            let now_ts = chrono::Utc::now().timestamp();
+            crate::modules::scheduler::record_warmup_history(
+                &format!("{}:{}:100", email, series_key),
+                now_ts,
+            );
+            crate::modules::scheduler::record_warmup_history(
+                &format!("{}:{}:100", email, name),
+                now_ts,
+            );
+        }
+        if idx + 1 < total {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
-        let _ = crate::modules::account::refresh_all_quotas_logic().await;
-    });
+    }
+
+    if let Ok((updated_quota, _)) =
+        fetch_quota_with_cache(&token, &email, Some(&pid), Some(account_id)).await
+    {
+        let _ = crate::modules::account::update_account_quota(account_id, updated_quota);
+    }
+    crate::modules::log_bridge::emit_accounts_refreshed();
+
+    if succeeded == 0 {
+        return Err(format!("Warmup failed for all {} model series", total));
+    }
 
     Ok(format!(
-        "Successfully triggered warmup for {} model series",
-        warmed_count
+        "Successfully warmed up {}/{} model series",
+        succeeded, total
     ))
 }
 
@@ -2333,5 +2470,84 @@ mod tests {
 
         let generic_body = r#"{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}"#;
         assert_eq!(classify_quota_summary_403(generic_body), None);
+    }
+
+    fn make_test_model_quota(name: &str, percentage: i32) -> crate::models::quota::ModelQuota {
+        crate::models::quota::ModelQuota {
+            name: name.to_string(),
+            percentage,
+            reset_time: "2026-12-01T00:00:00Z".to_string(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            model: None,
+            supported_mime_types: None,
+        }
+    }
+
+    #[test]
+    fn test_is_account_eligible_for_warmup_respects_manual_proxy_disabled_and_validation_cooldown()
+    {
+        let token = crate::models::TokenData::new(
+            "at".into(),
+            "rt".into(),
+            3600,
+            Some("u@example.com".into()),
+            Some("pid".into()),
+            None,
+            false,
+            None,
+        );
+        let mut acc = crate::models::Account::new("acc-1".into(), "u@example.com".into(), token);
+        assert!(is_account_eligible_for_warmup(&acc, 1_700_000_000));
+
+        acc.manual_proxy_disabled = true;
+        assert!(!is_account_eligible_for_warmup(&acc, 1_700_000_000));
+        acc.manual_proxy_disabled = false;
+
+        acc.validation_blocked = true;
+        acc.validation_blocked_until = Some(1_700_000_600);
+        assert!(!is_account_eligible_for_warmup(&acc, 1_700_000_100));
+        assert!(is_account_eligible_for_warmup(&acc, 1_700_000_700));
+        acc.validation_blocked = false;
+
+        let mut forbidden_quota = QuotaData::new();
+        forbidden_quota.is_forbidden = true;
+        acc.quota = Some(forbidden_quota);
+        assert!(!is_account_eligible_for_warmup(&acc, 1_700_000_000));
+    }
+
+    #[test]
+    fn test_select_models_for_manual_warmup_deduplicates_groups_and_tier_variants() {
+        let mut quota = QuotaData::new();
+        quota.subscription_tier = Some("PRO".into());
+        quota.quota_groups = Some(vec![
+            make_test_group("Gemini Models", "gemini-weekly"),
+            make_test_group("Claude and GPT models", "3p-weekly"),
+        ]);
+        quota.models = vec![
+            make_test_model_quota("gemini-2.5-pro", 100),
+            make_test_model_quota("gemini-2.5-flash", 100),
+            make_test_model_quota("gemini-3-pro-high", 100),
+            make_test_model_quota("gemini-2.5-flash-thinking", 100),
+            make_test_model_quota("claude-opus-4-6-thinking", 100),
+            make_test_model_quota("claude-sonnet-4-5", 100),
+            make_test_model_quota("gpt-oss-120b-medium", 100),
+            make_test_model_quota("gemini-4-argon-high", 100),
+        ];
+
+        let selected = select_models_for_manual_warmup(&quota);
+        assert_eq!(
+            selected.len(),
+            2,
+            "expected 1 model per quota group: {:?}",
+            selected
+        );
+        assert_eq!(selected[0].1, "gemini-2.5-flash");
+        assert_eq!(selected[1].1, "claude-sonnet-4-5");
     }
 }
