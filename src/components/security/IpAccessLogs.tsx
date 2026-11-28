@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
 import { Search, AlertTriangle } from 'lucide-react';
+import { isProxySuccessStatus } from '../../utils/httpStatus';
 
 interface IpAccessLog {
     id: string;
@@ -131,7 +132,7 @@ export const IpAccessLogs: React.FC<Props> = ({ refreshKey }) => {
                                             <AlertTriangle size={10} /> {t('security.logs.blocked')}
                                         </span>
                                     ) : (
-                                        <span className={`badge badge-xs text-white font-bold border-none shadow-xs ${log.status && log.status >= 200 && log.status < 400 ? 'bg-emerald-600' : 'bg-amber-600'}`}>
+                                        <span className={`badge badge-xs text-white font-bold border-none shadow-xs ${isProxySuccessStatus(log.status) ? 'bg-emerald-600' : 'bg-amber-600'}`}>
                                             {log.status || '-'}
                                         </span>
                                     )}

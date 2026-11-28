@@ -4,6 +4,7 @@ import { request as invoke } from '../utils/request';
 import { isTauri } from '../utils/env';
 import { copyToClipboard } from '../utils/clipboard';
 import { inferModelGroup } from '../config/modelConfig';
+import { isStrictProxySuccessStatus } from '../utils/httpStatus';
 import {
     getModelFamilyId,
     getTierLabel,
@@ -363,7 +364,7 @@ export default function ApiProxy() {
                         if (mId && !next[mId]) {
                             next[mId] = {
                                 loading: false,
-                                success: log.status >= 200 && log.status < 300,
+                                success: isStrictProxySuccessStatus(log.status),
                                 status: log.status,
                                 durationMs: log.duration,
                                 accountEmail: log.account_email,
