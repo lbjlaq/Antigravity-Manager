@@ -73,7 +73,10 @@ impl CoreDaemonService {
             account.email
         );
         match oauth
-            .refresh_access_token(&account.token.refresh_token)
+            .refresh_access_token_with_client(
+                &account.token.refresh_token,
+                account.token.oauth_client_key.as_deref(),
+            )
             .await
         {
             Ok(new_token) => {

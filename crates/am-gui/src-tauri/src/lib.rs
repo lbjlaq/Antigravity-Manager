@@ -1,3 +1,4 @@
+mod oauth_flow;
 mod tray;
 mod updater;
 
@@ -189,26 +190,93 @@ fn set_account_tags(
 
 #[tauri::command]
 async fn add_account_by_token(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AntigravityManager>,
     refresh_token: String,
     tags: Vec<String>,
+    oauth_client_key: Option<String>,
 ) -> Result<Account, String> {
-    state
-        .add_account_by_token(&refresh_token, tags)
+    let acc = state
+        .add_account_by_token_with_client(&refresh_token, tags, oauth_client_key.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("tray://accounts-changed", ());
+    Ok(acc)
+}
+
+#[tauri::command]
+async fn prepare_oauth_url(
+    app: tauri::AppHandle,
+    oauth_client_key: Option<String>,
+) -> Result<String, String> {
+    oauth_flow::prepare_oauth_url(Some(app), oauth_client_key).await
 }
 
 #[tauri::command]
 async fn start_oauth_login(
+    app: tauri::AppHandle,
+    state_mgr: tauri::State<'_, AntigravityManager>,
+    oauth_client_key: Option<String>,
+) -> Result<Account, String> {
+    let acc =
+        oauth_flow::start_oauth_login(app.clone(), state_mgr.inner(), oauth_client_key).await?;
+    let _ = app.emit("tray://accounts-changed", ());
+    Ok(acc)
+}
+
+#[tauri::command]
+async fn complete_oauth_login(
+    app: tauri::AppHandle,
     state_mgr: tauri::State<'_, AntigravityManager>,
 ) -> Result<Account, String> {
-    state_mgr
-        .login_via_oauth_loopback(|auth_url| {
-            let _ = open::that(auth_url);
-        })
+    let acc = oauth_flow::complete_oauth_login(app.clone(), state_mgr.inner()).await?;
+    let _ = app.emit("tray://accounts-changed", ());
+    Ok(acc)
+}
+
+#[tauri::command]
+async fn cancel_oauth_login() -> Result<(), String> {
+    oauth_flow::cancel_oauth_flow();
+    Ok(())
+}
+
+#[tauri::command]
+async fn submit_oauth_code(
+    app: tauri::AppHandle,
+    state_mgr: tauri::State<'_, AntigravityManager>,
+    code: String,
+    state: Option<String>,
+) -> Result<Account, String> {
+    let acc = oauth_flow::submit_oauth_code(state_mgr.inner(), code, state).await?;
+    let _ = app.emit("tray://accounts-changed", ());
+    Ok(acc)
+}
+
+#[tauri::command]
+async fn import_from_local_db(
+    app: tauri::AppHandle,
+    state_mgr: tauri::State<'_, AntigravityManager>,
+) -> Result<Vec<Account>, String> {
+    let accounts = state_mgr
+        .import_accounts_from_local_db()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("tray://accounts-changed", ());
+    Ok(accounts)
+}
+
+#[tauri::command]
+async fn import_from_custom_db(
+    app: tauri::AppHandle,
+    state_mgr: tauri::State<'_, AntigravityManager>,
+    db_path: String,
+) -> Result<Account, String> {
+    let acc = state_mgr
+        .import_account_from_custom_db(std::path::Path::new(&db_path))
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("tray://accounts-changed", ());
+    Ok(acc)
 }
 
 #[tauri::command]
@@ -927,6 +995,7 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
@@ -992,7 +1061,13 @@ pub fn run() {
             delete_accounts,
             set_account_tags,
             add_account_by_token,
+            prepare_oauth_url,
             start_oauth_login,
+            complete_oauth_login,
+            cancel_oauth_login,
+            submit_oauth_code,
+            import_from_local_db,
+            import_from_custom_db,
             regenerate_device_profile,
             clear_account_forbidden,
             disable_account,

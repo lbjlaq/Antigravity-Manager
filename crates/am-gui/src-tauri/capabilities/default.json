@@ -34,6 +34,7 @@
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
     "opener:default",
+    "dialog:allow-open",
     "updater:default",
     "process:allow-restart",
     "process:allow-exit"
