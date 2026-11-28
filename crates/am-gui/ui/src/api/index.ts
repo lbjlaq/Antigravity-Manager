@@ -67,6 +67,8 @@ export interface TokenInfo {
   token_type?: string;
   expiry_timestamp?: number;
   project_id?: string;
+  is_gcp_tos?: boolean;
+  oauth_client_key?: string;
 }
 
 export interface BackendAccount {
@@ -90,6 +92,10 @@ export interface BackendAccount {
   proxy_disabled_at?: number;
   manual_proxy_disabled?: boolean;
   validation_blocked?: boolean;
+  validation_blocked_until?: number;
+  validation_blocked_reason?: string;
+  validation_url?: string;
+  ban_appeal_url?: string;
   created_at?: number;
   last_used?: number;
 }
