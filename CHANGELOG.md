@@ -5,6 +5,28 @@
 
 ---
 
+## v0.0.6 (2026-11-28)
+
+### English
+
+- **Aligned 3-Tab Account Addition Flow & Dual-Client OAuth (PR #4123)**:
+  - Reused the 3-tab `AddAccountDialog` flow (OAuth login, Refresh Token batch import, and local/custom Antigravity IDE `state.vscdb` database import) in `am-gui` alongside dedicated `oauth_flow.rs` background loopback callbacks and browser-open capability permissions.
+  - Extended `am-core` with dual OAuth client support (`desktop` / `cli`), email-based account upsert, and local/custom SQLite DB credential extraction.
+- **Proportional UI Zoom Control & Keyboard Shortcuts**:
+  - Added proportional UI zoom scaling (`ZoomManager.tsx`, `zoom.ts`, `uiState.ts`) persisted in `am-core::config` (`ui_zoom`) with `Cmd/Ctrl + =`, `Cmd/Ctrl + -`, and `Cmd/Ctrl + 0` shortcuts, dedicated Settings zoom controls, and localized English/Chinese labels.
+- **Aligned Account Tier Badges, Abnormal Status & Responsive Quota Bars**:
+  - Aligned subscription tier badge classification (`FREE` / `PRO` / `ULTRA`), abnormal account status (`accountStatus.ts`) across Accounts, Dashboard, and MiniPopover, and responsive quota bar rendering so tight layouts keep status pills and quota bars cleanly aligned.
+
+### 中文
+
+- **对齐三标签页添加账号流程与双 OAuth 客户端支持（PR #4123）**：
+  - 在 `am-gui` 中复用三标签页 `AddAccountDialog`（OAuth 授权登录、Refresh Token 批量导入、本机/自定义 Antigravity IDE `state.vscdb` 数据库导入），并补齐 `oauth_flow.rs` 本地回环监听与外部浏览器打开权限。
+  - 在 `am-core` 中新增双 OAuth 客户端（`desktop` / `cli`）兼容、基于邮箱的账号幂等写入以及本机/自定义 SQLite 数据库凭据提取。
+- **新增等比界面缩放控制、持久化与快捷键**：
+  - 新增等比 UI 缩放控制（`ZoomManager.tsx`、`zoom.ts`、`uiState.ts`）与 `am-core::config`（`ui_zoom`）配置持久化，支持 `Cmd/Ctrl + =`、`Cmd/Ctrl + -`、`Cmd/Ctrl + 0` 快捷键及设置页缩放调节，并补齐中英双语文案。
+- **对齐订阅等级徽章、异常状态判定与响应式配额条布局**：
+  - 统一 Accounts、Dashboard 与 MiniPopover 三端的订阅等级徽章（`FREE` / `PRO` / `ULTRA`）与异常状态判定（`accountStatus.ts`），优化窄屏/紧凑布局下的响应式配额条展示。
+
 ## v0.0.5 (2026-11-28)
 
 ### English
