@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
 import { Response, SidecarApp } from 'sidecar_sdk';
 import {
   listRecentSessions,
@@ -9,6 +8,7 @@ import {
   buildUsageAnalytics,
   queryAmAccounts,
   switchAmAccount,
+  wakeAntigravityManager,
 } from '../../telemetry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -77,9 +77,7 @@ app.api('/api/switch', async (data) => {
 
 // 5. Wake Antigravity Manager main application API
 app.api('/api/wake-am', async () => {
-  if (process.platform === 'darwin') {
-    execFile('open', ['-a', 'Antigravity Manager'], () => {});
-  }
+  wakeAntigravityManager();
   return jsonRes({ ok: true });
 }, 'POST');
 

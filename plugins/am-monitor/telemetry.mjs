@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 
 const PRICING = {
   inputPerM: 1.25,
@@ -379,18 +379,72 @@ export function buildUsageAnalytics(sessions, range = 'all') {
   };
 }
 
+function resolveAmCliCandidates() {
+  const home = os.homedir();
+  const list = ['am'];
+  if (process.platform === 'win32') {
+    const localApp = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const progFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    list.push(
+      path.join(localApp, 'Antigravity Manager', 'am.exe'),
+      path.join(progFiles, 'Antigravity Manager', 'am.exe'),
+      path.join(home, '.local', 'bin', 'am.exe'),
+      path.join(home, '.cargo', 'bin', 'am.exe')
+    );
+  } else {
+    list.push(
+      path.join(home, '.local', 'bin', 'am'),
+      path.join(home, '.cargo', 'bin', 'am'),
+      '/opt/homebrew/bin/am',
+      '/usr/local/bin/am'
+    );
+  }
+  return list;
+}
+
+export function wakeAntigravityManager() {
+  if (process.platform === 'darwin') {
+    execFile('open', ['-a', 'Antigravity Manager'], () => {});
+    return;
+  }
+  if (process.platform === 'win32') {
+    const home = os.homedir();
+    const localApp = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const progFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const candidates = [
+      path.join(localApp, 'Antigravity Manager', 'am-gui.exe'),
+      path.join(localApp, 'Antigravity Manager', 'Antigravity Manager.exe'),
+      path.join(progFiles, 'Antigravity Manager', 'am-gui.exe'),
+      path.join(progFiles, 'Antigravity Manager', 'Antigravity Manager.exe'),
+    ];
+    const exe = candidates.find((p) => fs.existsSync(p));
+    if (exe) {
+      try {
+        const child = spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true });
+        child.unref();
+      } catch {}
+    }
+    return;
+  }
+  try {
+    const child = spawn('am-gui', [], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch {}
+}
+
 export function queryAmAccounts(target = 'antigravity') {
   return new Promise((resolve) => {
-    const candidates = ['am', path.join(os.homedir(), '.cargo', 'bin', process.platform === 'win32' ? 'am.exe' : 'am')];
+    const candidates = resolveAmCliCandidates();
     const tryNext = (idx) => {
       if (idx >= candidates.length) return resolve({ available: false, current_email: null, accounts: [] });
       const bin = candidates[idx];
-      execFile(bin, ['list', '--json'], { timeout: 2500 }, (err, stdout) => {
+      if (idx > 0 && !fs.existsSync(bin)) return tryNext(idx + 1);
+      execFile(bin, ['list', '--json'], { timeout: 2500, windowsHide: true }, (err, stdout) => {
         if (!err && stdout) {
           try {
             const parsed = JSON.parse(stdout);
             const accounts = Array.isArray(parsed) ? parsed : parsed.accounts || [];
-            execFile(bin, ['current'], { timeout: 2000 }, (_e2, out2) => {
+            execFile(bin, ['current'], { timeout: 2000, windowsHide: true }, (_e2, out2) => {
               const rowKey = target === 'ide' ? 'Antigravity IDE' : 'Antigravity App';
               const lines = String(out2 || '').split(/\r?\n/);
               const matchedLine = lines.find((l) => l.includes(rowKey)) || '';
@@ -409,10 +463,12 @@ export function queryAmAccounts(target = 'antigravity') {
 
 export function switchAmAccount(accountId, target = 'antigravity') {
   return new Promise((resolve) => {
-    const candidates = ['am', path.join(os.homedir(), '.cargo', 'bin', process.platform === 'win32' ? 'am.exe' : 'am')];
+    const candidates = resolveAmCliCandidates();
     const tryNext = (idx) => {
       if (idx >= candidates.length) return resolve({ ok: false, error: 'am CLI not found' });
-      execFile(candidates[idx], ['switch', accountId, '--target', target], { timeout: 6000 }, (err, stdout, stderr) => {
+      const bin = candidates[idx];
+      if (idx > 0 && !fs.existsSync(bin)) return tryNext(idx + 1);
+      execFile(bin, ['switch', accountId, '--target', target], { timeout: 6000, windowsHide: true }, (err, stdout, stderr) => {
         if (!err) return resolve({ ok: true, output: stdout });
         if (err.code === 'ENOENT') return tryNext(idx + 1);
         resolve({ ok: false, error: stderr || err.message });

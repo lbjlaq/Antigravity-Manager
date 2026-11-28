@@ -3,6 +3,16 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Windows GUI 进程派生辅助子进程时强制隐藏控制台窗口，杜绝 conhost / Windows Terminal 闪烁弹窗
+#[cfg(target_os = "windows")]
+fn hide_console_window(cmd: &mut Command) -> &mut Command {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW)
+}
+
 /// 默认绕过本地回环与内网地址（完整覆盖 localhost / 127.0.0.0/8 / 局域网 / <-loopback>，彻底杜绝 Webview 走代理报错）
 pub const DEFAULT_NO_PROXY: &str =
     "localhost,127.0.0.1,::1,127.0.0.0/8,10.0.0.0/8,192.168.0.0/16,172.16.0.0/12,*.local";
@@ -146,26 +156,87 @@ pub fn resolve_target_binary(target: TargetApp) -> Result<PathBuf, ProxyError> {
     #[cfg(target_os = "windows")]
     {
         let local_app = dirs::data_local_dir().unwrap_or_default();
-        let candidates: Vec<PathBuf> = match target {
+        let prog_files = std::env::var_os("ProgramFiles")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        let prog_files_x86 = std::env::var_os("ProgramFiles(x86)")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+
+        let mut candidates: Vec<PathBuf> = match target {
             TargetApp::AntigravityApp => vec![
-                local_app.join("Programs\\antigravity\\Antigravity.exe"),
-                local_app.join("Programs\\Antigravity\\Antigravity.exe"),
-                PathBuf::from("C:\\Program Files\\Antigravity\\Antigravity.exe"),
+                local_app.join(r"Programs\antigravity\Antigravity.exe"),
+                local_app.join(r"Programs\Antigravity\Antigravity.exe"),
+                prog_files.join(r"Antigravity\Antigravity.exe"),
+                prog_files_x86.join(r"Antigravity\Antigravity.exe"),
             ],
             TargetApp::AntigravityIde => vec![
-                local_app.join("Programs\\Antigravity IDE\\Antigravity IDE.exe"),
-                PathBuf::from("C:\\Program Files\\Antigravity IDE\\Antigravity IDE.exe"),
+                local_app.join(r"Programs\Antigravity IDE\Antigravity IDE.exe"),
+                prog_files.join(r"Antigravity IDE\Antigravity IDE.exe"),
+                prog_files_x86.join(r"Antigravity IDE\Antigravity IDE.exe"),
             ],
-            TargetApp::AgyCli => vec![
-                local_app.join("Programs\\Antigravity\\bin\\agy.cmd"),
-                PathBuf::from("agy.exe"),
-            ],
+            TargetApp::AgyCli => {
+                let mut list = vec![
+                    local_app.join(r"Programs\Antigravity\bin\agy.cmd"),
+                    local_app.join(r"Programs\antigravity\bin\agy.cmd"),
+                ];
+                if let Some(home) = dirs::home_dir() {
+                    list.push(home.join(r".local\bin\agy.cmd"));
+                    list.push(home.join(r".local\bin\agy.exe"));
+                }
+                if let Some(path_var) = std::env::var_os("PATH") {
+                    for dir in std::env::split_paths(&path_var) {
+                        list.push(dir.join("agy.cmd"));
+                        list.push(dir.join("agy.exe"));
+                    }
+                }
+                list
+            }
         };
-        for p in candidates {
+        for p in candidates.drain(..) {
             if p.exists() {
                 return Ok(p);
             }
         }
+
+        // 兜底：若用户自定义安装到非默认盘符（如 D:\...）且进程正在运行，直接从进程表反查真实 EXE 路径
+        if matches!(
+            target,
+            TargetApp::AntigravityApp | TargetApp::AntigravityIde
+        ) {
+            use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+            let expected = match target {
+                TargetApp::AntigravityApp => "Antigravity.exe",
+                TargetApp::AntigravityIde => "Antigravity IDE.exe",
+                TargetApp::AgyCli => "",
+            };
+            let mut sys = System::new();
+            sys.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new());
+            let matched_pids: Vec<sysinfo::Pid> = sys
+                .processes()
+                .iter()
+                .filter_map(|(&pid, p)| {
+                    p.name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(expected)
+                        .then_some(pid)
+                })
+                .collect();
+            if !matched_pids.is_empty() {
+                sys.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&matched_pids),
+                    ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
+                );
+                for pid in matched_pids {
+                    if let Some(exe) = sys.process(pid).and_then(|p| p.exe()) {
+                        if exe.exists() {
+                            return Ok(exe.to_path_buf());
+                        }
+                    }
+                }
+            }
+        }
+
         Err(ProxyError::AppNotFound(target.to_string()))
     }
 
@@ -229,6 +300,7 @@ pub fn launch_with_proxy(
             .unwrap_or(false);
         if is_batch_shim {
             let mut c = Command::new("cmd");
+            hide_console_window(&mut c);
             c.arg("/C").arg(&bin);
             c
         } else {
@@ -328,8 +400,20 @@ fn graceful_terminate_root_host(target: TargetApp) {
             "$procs = Get-Process -Name '{}' -ErrorAction SilentlyContinue; foreach ($p in $procs) {{ if ($p.MainWindowHandle -ne 0) {{ [void]$p.CloseMainWindow(); [void]$p.WaitForExit(2200) }} }}",
             img.trim_end_matches(".exe")
         );
-        let _ = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        let mut cmd = Command::new("powershell");
+        hide_console_window(&mut cmd);
+        let _ = cmd
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status();
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -373,6 +457,18 @@ pub fn get_app_runtime_status(target: TargetApp) -> AppRuntimeStatus {
         for line in text.lines() {
             let trimmed = line.trim();
             if trimmed.contains(needle) && !trimmed.contains("--type=") {
+                // Linux 下排除 antigravity-ide / antigravity-manager / am-gui 误匹配经典版 Antigravity
+                #[cfg(target_os = "linux")]
+                if target == TargetApp::AntigravityApp {
+                    let lower = trimmed.to_ascii_lowercase();
+                    if lower.contains("antigravity-ide")
+                        || lower.contains("antigravity ide")
+                        || lower.contains("antigravity-manager")
+                        || lower.contains("am-gui")
+                    {
+                        continue;
+                    }
+                }
                 if let Some(pid_str) = trimmed.split_whitespace().next() {
                     if let Ok(pid) = pid_str.parse::<u32>() {
                         pids.push(pid);
@@ -438,30 +534,76 @@ pub fn get_app_runtime_status(target: TargetApp) -> AppRuntimeStatus {
 
     #[cfg(target_os = "windows")]
     {
-        let proc_name = match target {
-            TargetApp::AntigravityApp => "Antigravity",
-            TargetApp::AntigravityIde => "Antigravity IDE",
+        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+        let target_names: &[&str] = match target {
+            TargetApp::AntigravityApp => &["Antigravity.exe", "Antigravity"],
+            TargetApp::AntigravityIde => &["Antigravity IDE.exe", "Antigravity IDE"],
             TargetApp::AgyCli => return AppRuntimeStatus::default(),
         };
-        let running = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &format!(
-                    "(Get-Process -Name '{}' -ErrorAction SilentlyContinue).Count -gt 0",
-                    proc_name
-                ),
-            ])
-            .output()
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .trim()
-                    .eq_ignore_ascii_case("true")
+
+        // 第一阶段：使用 NtQuerySystemInformation 轻量获取全量进程名（零子进程、零控制台弹窗、零多余 OpenProcess）
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new());
+
+        let matching_pids: Vec<sysinfo::Pid> = sys
+            .processes()
+            .iter()
+            .filter_map(|(&pid, proc_)| {
+                let name = proc_.name().to_string_lossy();
+                if target_names
+                    .iter()
+                    .any(|expected| name.eq_ignore_ascii_case(expected))
+                {
+                    Some(pid)
+                } else {
+                    None
+                }
             })
-            .unwrap_or(false);
+            .collect();
+
+        if matching_pids.is_empty() {
+            return AppRuntimeStatus::default();
+        }
+
+        // 第二阶段：仅对命中的宿主进程按需拉取 cmd + environ，探测免 TUN 代理注入状态
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&matching_pids),
+            ProcessRefreshKind::new()
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_environ(UpdateKind::OnlyIfNotSet),
+        );
+
+        for pid in matching_pids {
+            let Some(proc_) = sys.process(pid) else {
+                continue;
+            };
+            let is_helper = proc_
+                .cmd()
+                .iter()
+                .any(|arg| arg.to_string_lossy().contains("--type="));
+            if is_helper {
+                continue;
+            }
+            for entry in proc_.environ() {
+                let s = entry.to_string_lossy();
+                if let Some((key, val)) = s.split_once('=') {
+                    if (key.eq_ignore_ascii_case("HTTP_PROXY")
+                        || key.eq_ignore_ascii_case("HTTPS_PROXY"))
+                        && !val.trim().is_empty()
+                    {
+                        return AppRuntimeStatus {
+                            running: true,
+                            proxy_active: true,
+                            proxy_url: Some(val.trim().to_string()),
+                        };
+                    }
+                }
+            }
+        }
+
         return AppRuntimeStatus {
-            running,
+            running: true,
             proxy_active: false,
             proxy_url: None,
         };

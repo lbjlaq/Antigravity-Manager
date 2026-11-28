@@ -1,6 +1,6 @@
 [package]
 name = "am-gui"
-version = "0.0.4"
+version = "0.0.5"
 description = "Antigravity Manager Lightweight GUI"
 authors = ["Antigravity Team"]
 edition = "2021"

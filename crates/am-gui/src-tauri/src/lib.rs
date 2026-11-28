@@ -589,7 +589,12 @@ async fn proxy_launch_app(
         "cli" | "agy" => am_core::am_proxy::TargetApp::AgyCli,
         other => return Err(format!("未知目标应用: {}", other)),
     };
-    am_core::am_proxy::launch_with_proxy(target_app, &resolved_url, &[]).map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || {
+        am_core::am_proxy::launch_with_proxy(target_app, &resolved_url, &[])
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -622,39 +627,28 @@ async fn proxy_create_macos_wrapper(
     target: String,
     proxy_url: Option<String>,
 ) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let resolved_url = match proxy_url.filter(|s| !s.trim().is_empty()) {
-            Some(u) => u,
-            None => {
-                let guard = state.0.lock().await;
-                guard
-                    .as_ref()
-                    .map(|r| r.local_http_url())
-                    .ok_or_else(|| "请先选择一个本机代理出口".to_string())?
-            }
-        };
-        let target_app = match target.as_str() {
-            "app" => am_core::am_proxy::TargetApp::AntigravityApp,
-            "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
-            other => return Err(format!("不支持的目标: {}", other)),
-        };
-        let desktop = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Desktop"))
-            .ok_or_else(|| "无法定位桌面目录".to_string())?;
-        let path = am_core::am_proxy::platform::create_macos_wrapper_app(
-            target_app,
-            &resolved_url,
-            &desktop,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(path.display().to_string())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (state, target, proxy_url);
-        Err("桌面 Wrapper .app 仅适用于 macOS".into())
-    }
+    let resolved_url = match proxy_url.filter(|s| !s.trim().is_empty()) {
+        Some(u) => u,
+        None => {
+            let guard = state.0.lock().await;
+            guard
+                .as_ref()
+                .map(|r| r.local_http_url())
+                .ok_or_else(|| "请先选择一个本机代理出口".to_string())?
+        }
+    };
+    let target_app = match target.as_str() {
+        "app" => am_core::am_proxy::TargetApp::AntigravityApp,
+        "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
+        other => return Err(format!("不支持的目标: {}", other)),
+    };
+    let path = tokio::task::spawn_blocking(move || {
+        am_core::am_proxy::platform::create_desktop_shortcut(target_app, &resolved_url)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))??;
+    Ok(path.display().to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -670,18 +664,12 @@ struct ProxyIntegrationsPayload {
 async fn proxy_get_integrations() -> ProxyIntegrationsPayload {
     let shell_hook = am_core::am_proxy::platform::is_shell_hook_installed();
     let ide_settings_proxy = am_core::am_proxy::get_ide_settings_proxy();
-    #[cfg(target_os = "macos")]
-    let (app_wrapper, ide_wrapper) = {
-        let desktop = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Desktop"))
-            .unwrap_or_default();
-        (
-            desktop.join("Antigravity (No-TUN).app").exists(),
-            desktop.join("Antigravity IDE (No-TUN).app").exists(),
-        )
-    };
-    #[cfg(not(target_os = "macos"))]
-    let (app_wrapper, ide_wrapper) = (false, false);
+    let app_wrapper = am_core::am_proxy::platform::is_desktop_shortcut_installed(
+        am_core::am_proxy::TargetApp::AntigravityApp,
+    );
+    let ide_wrapper = am_core::am_proxy::platform::is_desktop_shortcut_installed(
+        am_core::am_proxy::TargetApp::AntigravityIde,
+    );
 
     ProxyIntegrationsPayload {
         app_wrapper,
@@ -711,16 +699,20 @@ async fn proxy_sync_ide_settings(proxy_url: Option<String>) -> Result<(), String
 #[tauri::command]
 async fn proxy_runtime_status(
 ) -> std::collections::HashMap<String, am_core::am_proxy::AppRuntimeStatus> {
-    let mut map = std::collections::HashMap::new();
-    map.insert(
-        "antigravity".to_string(),
-        am_core::am_proxy::get_app_runtime_status(am_core::am_proxy::TargetApp::AntigravityApp),
-    );
-    map.insert(
-        "ide".to_string(),
-        am_core::am_proxy::get_app_runtime_status(am_core::am_proxy::TargetApp::AntigravityIde),
-    );
-    map
+    tokio::task::spawn_blocking(|| {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "antigravity".to_string(),
+            am_core::am_proxy::get_app_runtime_status(am_core::am_proxy::TargetApp::AntigravityApp),
+        );
+        map.insert(
+            "ide".to_string(),
+            am_core::am_proxy::get_app_runtime_status(am_core::am_proxy::TargetApp::AntigravityIde),
+        );
+        map
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[derive(serde::Serialize)]
@@ -731,6 +723,11 @@ struct ContextPluginStatus {
 }
 
 fn context_plugin_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    #[cfg(target_os = "windows")]
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)?;
+    #[cfg(not(target_os = "windows"))]
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(std::path::PathBuf::from)?;
@@ -872,24 +869,12 @@ fn context_plugin_uninstall(target: String) -> Result<ContextPluginStatus, Strin
 
 #[tauri::command]
 async fn proxy_remove_macos_wrapper(target: String) -> Result<bool, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let target_app = match target.as_str() {
-            "app" => am_core::am_proxy::TargetApp::AntigravityApp,
-            "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
-            other => return Err(format!("不支持的目标: {}", other)),
-        };
-        let desktop = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Desktop"))
-            .ok_or_else(|| "无法定位桌面目录".to_string())?;
-        am_core::am_proxy::platform::remove_macos_wrapper_app(target_app, &desktop)
-            .map_err(|e| e.to_string())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = target;
-        Ok(false)
-    }
+    let target_app = match target.as_str() {
+        "app" => am_core::am_proxy::TargetApp::AntigravityApp,
+        "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
+        other => return Err(format!("不支持的目标: {}", other)),
+    };
+    am_core::am_proxy::platform::remove_desktop_shortcut(target_app).map_err(|e| e.to_string())
 }
 
 /// 兼容旧命令：一次性下载、验签、安装并重启更新

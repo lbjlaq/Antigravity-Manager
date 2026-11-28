@@ -89,10 +89,27 @@ export const Toolbox: React.FC<ToolboxProps> = ({ lang }) => {
 
   useEffect(() => {
     void refreshAll();
-    const timer = window.setInterval(() => {
-      void api.proxyRuntimeStatus().then(setRuntimeStatus).catch(() => {});
-    }, 5000);
-    return () => window.clearInterval(timer);
+    let inFlight = false;
+    const pollRuntime = () => {
+      if (document.hidden || inFlight) return;
+      inFlight = true;
+      void api
+        .proxyRuntimeStatus()
+        .then(setRuntimeStatus)
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const timer = window.setInterval(pollRuntime, 5000);
+    const onVisibility = () => {
+      if (!document.hidden) pollRuntime();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [refreshAll]);
 
   const activeProxyUrl = selectedNode ? formatProxyUrl(selectedNode) : undefined;

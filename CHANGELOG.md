@@ -5,6 +5,36 @@
 
 ---
 
+## v0.0.5 (2026-11-28)
+
+### English
+
+- **Fixed Infinite Console Window Popups on Windows Toolbox Tab (Fixes #4118)**:
+  - Replaced the 5-second Windows PowerShell `Get-Process` polling in `am-proxy::get_app_runtime_status()` with native two-phase `sysinfo` process-table inspection (`NtQuerySystemInformation` name scan + targeted `cmd`/`environ` lookup), eliminating repeated `conhost.exe` / `WindowsTerminal.exe` flashes, cutting polling overhead to sub-millisecond latency, and enabling live Windows `proxy_active` / `proxy_url` detection.
+  - Enforced `CREATE_NO_WINDOW` (`0x0800_0000`) across all remaining Windows auxiliary subprocesses (`reg query`, graceful-exit `powershell`, `cmd /C` batch shims, and `am-core::runtime::spawn_and_reap` toast notifications), plus `windowsHide: true` on `am-monitor` plugin `execFile` calls.
+  - Added an in-flight guard and `document.hidden` pause/resume (`visibilitychange`) to the Toolbox status poll, and moved `proxy_runtime_status`, `proxy_launch_app`, and desktop shortcut creation off Tokio worker threads via `spawn_blocking`.
+- **Full Windows & Linux Toolbox Parity (`No-TUN Proxy`, Desktop Shortcuts & Custom Install Paths)**:
+  - Implemented cross-platform desktop shortcuts (`create_desktop_shortcut` / `remove_desktop_shortcut` / `is_desktop_shortcut_installed`): silent zero-console Windows `.lnk` + `wscript.exe` `.vbs` launchers with native EXE icons (supporting OneDrive-redirected Desktop via `dirs::desktop_dir()`) and executable Linux `.desktop` entries alongside macOS `.app` wrappers.
+  - Added Windows listening proxy process auto-detection (`netstat -ano -p tcp` with `CREATE_NO_WINDOW` + `sysinfo` PID lookup) for custom-port Clash / Mihomo / v2rayN / FlClash / sing-box clients, and hardened `reg query` parsing for `ProxyEnable` (`0x`/`0X`) and `ProxyServer` values containing spaces or prefix collisions.
+  - Expanded Windows binary discovery (`%ProgramFiles%`, `%ProgramFiles(x86)%`, `PATH`, plus live running-process `exe()` fallback for custom drives such as `D:\`), excluded `antigravity-ide` / `antigravity-manager` / `am-gui` from Linux classic-app matching, prioritized `USERPROFILE` for Windows plugin directories, and added Windows `.exe` discovery + case-insensitive matching to `cli_statusline`.
+- **AM Monitor Plugin Efficiency & Cross-Platform Wake**:
+  - Deduplicated double `am` CLI polling in the Antigravity IDE extension with a 15-second TTL cache (invalidated immediately on account switch), expanded cross-platform `am` binary lookup paths, and added Windows/Linux support for waking the Antigravity Manager desktop app.
+
+### 中文
+
+- **彻底修复 Windows 工具箱标签页无限弹出命令行窗口（Fixes #4118）**：
+  - 将 `am-proxy::get_app_runtime_status()` 在 Windows 下每 5 秒拉起 `powershell` `Get-Process` 的探测实现替换为原生两阶段 `sysinfo` 进程表扫描（`NtQuerySystemInformation` 轻量名匹配 + 按需读取命中进程的 `cmd`/`environ`），彻底消除 `conhost.exe` / `WindowsTerminal.exe` 反复闪烁弹窗，同时将探测耗时降至毫秒级并补齐 Windows 免 TUN 代理注入态识别。
+  - 为 Windows 下其余所有后台辅助子进程统一补齐 `CREATE_NO_WINDOW (0x0800_0000)`（涵盖 `reg query`、优雅退出 `powershell`、`cmd /C` 启动器及 `am-core::runtime::spawn_and_reap` 桌面通知），并为 `am-monitor` 插件的所有 `execFile` 调用加上 `windowsHide: true`。
+  - 为工具箱前端 5 秒状态轮询增加防重入锁与后台静默（`document.hidden` 暂停、切回前景 `visibilitychange` 立即刷新），并将 `proxy_runtime_status` / `proxy_launch_app` / 桌面快捷方式创建迁入 `tokio::task::spawn_blocking` 避免阻塞异步工作线程。
+- **补齐 Windows / Linux 工具箱全能力对等（免 TUN 代理探测、无黑窗桌面图标与自定义盘符查找）**：
+  - 新增跨平台桌面快捷启动器（`create_desktop_shortcut` / `remove_desktop_shortcut` / `is_desktop_shortcut_installed`）：在 macOS `.app` 基础上补齐 Windows 无黑窗 `.lnk` + `wscript.exe` `.vbs` 快捷方式（自动复用原版 EXE 图标，支持 OneDrive 重定向桌面路径）以及 Linux 可执行 `.desktop` 入口，修复点击「桌面图标」直接报错的问题。
+  - 补齐 Windows 代理进程监听端口自动扫描（`netstat -ano -p tcp` + `CREATE_NO_WINDOW` + `sysinfo` 进程名映射），自动发现非默认端口的 Clash / Mihomo / v2rayN / FlClash / sing-box 客户端；重构 `reg query` 3 列严格解析器，修复含空格 `ProxyServer` 截断与相似键名误匹配问题。
+  - 增强 Windows 目标程序定位（覆盖 `%ProgramFiles%`、`%ProgramFiles(x86)%`、`PATH` 及自定义盘符运行态进程反查），修复 Linux 下经典版进程名误匹配 IDE/管理器、Windows `USERPROFILE` 插件目录优先级以及 `cli_statusline` 的 `.exe` 路径与大小写兼容。
+- **AM Monitor 插件减负与跨平台唤醒主程序**：
+  - 合并 Antigravity IDE 扩展每次状态栏刷新重复调用 `am` CLI 的问题并增加 15 秒 TTL 缓存（切号即刻失效），扩展三端 `am` 可执行路径查找，并补齐 Windows / Linux 一键唤醒 Antigravity Manager 主程序支持。
+
+---
+
 ## v0.0.4 (2026-11-28)
 
 ### English

@@ -4,11 +4,18 @@ use std::time::Duration;
 
 static SHARED_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-/// 异步派生短生命周期外部命令并在后台回收退出状态，防止在 macOS / Linux 下残留 `<defunct>` 僵尸进程
+/// 异步派生短生命周期外部命令并在后台回收退出状态，防止在 macOS / Linux 下残留 `<defunct>` 僵尸进程；
+/// Windows 下自动附加 `CREATE_NO_WINDOW`，防止从 GUI 进程派生控制台子进程时弹出命令行窗口
 pub fn spawn_and_reap(mut cmd: Command) {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     if let Ok(mut child) = cmd.spawn() {
         let _ = std::thread::Builder::new()
             .name("am-child-reaper".into())

@@ -55,6 +55,18 @@ pub fn resolve_am_cli_command(override_bin: Option<&str>) -> String {
             home.join(".local/bin/am-cli"),
             home.join(".cargo/bin/am"),
         ];
+        #[cfg(target_os = "windows")]
+        {
+            candidates.push(home.join(r".local\bin\am.exe"));
+            candidates.push(home.join(r".local\bin\am-cli.exe"));
+            candidates.push(home.join(r".cargo\bin\am.exe"));
+            if let Some(local_app) = dirs::data_local_dir() {
+                candidates.push(local_app.join(r"Antigravity Manager\am.exe"));
+            }
+            if let Some(pf) = std::env::var_os("ProgramFiles") {
+                candidates.push(PathBuf::from(pf).join(r"Antigravity Manager\am.exe"));
+            }
+        }
         #[cfg(target_os = "macos")]
         {
             candidates.push(PathBuf::from("/opt/homebrew/bin/am"));
@@ -84,12 +96,12 @@ fn format_statusline_command(bin: &str) -> String {
 }
 
 fn is_our_statusline_command(cmd: &str) -> bool {
-    let trimmed = cmd.trim();
-    trimmed.ends_with(" statusline")
-        && (trimmed.contains("am ")
-            || trimmed.contains("am\"")
-            || trimmed.contains("am-cli")
-            || trimmed.contains("am.exe"))
+    let lower = cmd.trim().to_ascii_lowercase();
+    lower.ends_with(" statusline")
+        && (lower.contains("am ")
+            || lower.contains("am\"")
+            || lower.contains("am-cli")
+            || lower.contains("am.exe"))
 }
 
 /// 检查 `agy` CLI 状态栏插件是否已安装
@@ -400,7 +412,7 @@ fn format_compact_tokens(n: u64) -> String {
 fn format_short_dir(path: &Path) -> String {
     if let Some(home) = dirs::home_dir() {
         if let Ok(rel) = path.strip_prefix(&home) {
-            let s = rel.to_string_lossy();
+            let s = rel.to_string_lossy().replace('\\', "/");
             return if s.is_empty() {
                 "~".to_string()
             } else {

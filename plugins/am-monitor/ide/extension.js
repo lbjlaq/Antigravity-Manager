@@ -2,12 +2,23 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 
 let statusBarItem;
 let panel;
 let telemetryModPromise;
+let amCache = { ts: 0, data: null };
+const AM_CACHE_TTL_MS = 15000;
+
+async function getCachedAmAccounts(t, force = false) {
+  const now = Date.now();
+  if (!force && amCache.data && now - amCache.ts < AM_CACHE_TTL_MS) {
+    return amCache.data;
+  }
+  const data = await t.queryAmAccounts('ide');
+  amCache = { ts: now, data };
+  return data;
+}
 
 function getTelemetry() {
   if (!telemetryModPromise) {
@@ -42,25 +53,21 @@ async function updateStatusBar(context) {
     if (pillItems.includes('tps') && rep.avg_tps > 0) parts.push(`${rep.avg_tps} t/s`);
     if (pillItems.includes('cost')) parts.push(`$${rep.estimated_cost_usd.toFixed(2)}`);
     if (pillItems.includes('turns')) parts.push(`${rep.turns.length}T`);
-    if (pillItems.includes('account') || pillItems.includes('quota')) {
-      const am = await t.queryAmAccounts('ide');
-      const curAcc = am.current_email ? am.accounts.find(a => String(a.email || '').toLowerCase() === am.current_email) : null;
-      if (pillItems.includes('account') && am.current_email) {
-        parts.push(am.current_email.split('@')[0]);
-      }
-      if (pillItems.includes('quota') && curAcc?.quota) {
-        const gp = Math.round(Number(curAcc.quota.gemini_percentage ?? 0));
-        const cp = Math.round(Number(curAcc.quota.claude_percentage ?? 0));
-        parts.push(`G${gp}% C${cp}%`);
-      }
+    const amInfo = await getCachedAmAccounts(t);
+    const curAcc = amInfo.current_email ? amInfo.accounts.find(a => String(a.email || '').toLowerCase() === amInfo.current_email) : null;
+    if (pillItems.includes('account') && amInfo.current_email) {
+      parts.push(amInfo.current_email.split('@')[0]);
+    }
+    if (pillItems.includes('quota') && curAcc?.quota) {
+      const gp = Math.round(Number(curAcc.quota.gemini_percentage ?? 0));
+      const cp = Math.round(Number(curAcc.quota.claude_percentage ?? 0));
+      parts.push(`G${gp}% C${cp}%`);
     }
     statusBarItem.text = `$(pulse) ${parts.join(' | ') || 'AM Monitor'}`;
 
     const md = new vscode.MarkdownString('', true);
     md.isTrusted = true;
     const title = sessions[0]?.title || '当前会话';
-    const amInfo = await t.queryAmAccounts('ide');
-    const curAcc = amInfo.current_email ? amInfo.accounts.find(a => String(a.email || '').toLowerCase() === amInfo.current_email) : null;
     md.appendMarkdown(`**AM Monitor** · \`${rep.model || 'Antigravity'}\`\n\n`);
     if (amInfo.current_email) {
       const tier = String(curAcc?.quota?.subscription_tier || 'FREE').toUpperCase();
@@ -123,12 +130,13 @@ function openFullPanel(context) {
       panel.webview.postMessage({ reqId: msg.reqId, data: { analytics, am } });
     } else if (msg.type === 'switch') {
       const res = await t.switchAmAccount(String(msg.account || ''), 'ide');
+      amCache = { ts: 0, data: null };
       panel.webview.postMessage({ reqId: msg.reqId, data: res });
     } else if (msg.type === 'copyCompact') {
       await vscode.env.clipboard.writeText('/compact');
       vscode.window.showInformationMessage('已复制 /compact 到剪贴板');
     } else if (msg.type === 'wakeAm') {
-      if (process.platform === 'darwin') execFile('open', ['-a', 'Antigravity Manager'], () => {});
+      t.wakeAntigravityManager();
       panel.webview.postMessage({ reqId: msg.reqId, data: { ok: true } });
     } else if (msg.type === 'setLimit') {
       await context.globalState.update('ctxLimit', Number(msg.limit || 1000000));
@@ -162,7 +170,8 @@ async function openQuickMenu(context) {
     await vscode.env.clipboard.writeText('/compact');
     vscode.window.showInformationMessage('已复制 /compact 到剪贴板');
   } else if (picked.id === 'wake') {
-    if (process.platform === 'darwin') execFile('open', ['-a', 'Antigravity Manager'], () => {});
+    const t = await getTelemetry();
+    t.wakeAntigravityManager();
   } else if (picked.id === 'panel') {
     openFullPanel(context);
   } else if (picked.id === 'pill') {
@@ -191,6 +200,7 @@ async function openQuickMenu(context) {
     );
     if (acc) {
       const res = await t.switchAmAccount(acc.id, 'ide');
+      amCache = { ts: 0, data: null };
       if (res.ok) vscode.window.showInformationMessage(`已热切换至 ${acc.label}`);
       else vscode.window.showErrorMessage(`切换失败: ${res.error}`);
     }

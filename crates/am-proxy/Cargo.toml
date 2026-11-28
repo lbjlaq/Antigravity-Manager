@@ -1,6 +1,6 @@
 [package]
 name = "am-proxy"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
 description = "Cross-platform No-TUN transparent proxy & launcher SDK for Antigravity"
 
@@ -12,3 +12,6 @@ thiserror = "2.0"
 tracing = "0.1"
 dirs = "5.0"
 url = "2.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+sysinfo = "0.31"

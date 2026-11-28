@@ -85,7 +85,74 @@ pub fn detect_listening_proxy_processes() -> Vec<ProxyNode> {
 
     #[cfg(target_os = "windows")]
     {
-        Vec::new()
+        use std::collections::HashMap;
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let mut nodes = Vec::new();
+        let output = match std::process::Command::new("netstat")
+            .args(["-ano", "-p", "tcp"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return nodes,
+        };
+
+        // 仅拉取进程名，零多余 OpenProcess 句柄
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new());
+        let pid_names: HashMap<u32, String> = sys
+            .processes()
+            .iter()
+            .map(|(pid, p)| (pid.as_u32(), p.name().to_string_lossy().to_string()))
+            .collect();
+
+        for line in output.lines() {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // TCP  127.0.0.1:7890  0.0.0.0:0  LISTENING  12345
+            if cols.len() < 5 || !cols[3].eq_ignore_ascii_case("LISTENING") {
+                continue;
+            }
+            let Ok(pid) = cols[4].parse::<u32>() else {
+                continue;
+            };
+            let Some(proc_name) = pid_names.get(&pid) else {
+                continue;
+            };
+            let lower = proc_name.to_ascii_lowercase();
+            if !KNOWN_PROXY_PROCESS_KEYWORDS
+                .iter()
+                .any(|k| lower.contains(k))
+            {
+                continue;
+            }
+            if let Some((raw_host, raw_port)) = cols[1].rsplit_once(':') {
+                if let Ok(port) = raw_port.parse::<u16>() {
+                    let host = if raw_host == "0.0.0.0" || raw_host == "[::]" || raw_host == "*" {
+                        "127.0.0.1".to_string()
+                    } else {
+                        raw_host.trim_matches(['[', ']']).to_string()
+                    };
+                    nodes.push(ProxyNode {
+                        name: format!("{} (进程监听)", proc_name.trim_end_matches(".exe")),
+                        host,
+                        port,
+                        protocol: ProxyProtocol::Http,
+                        username: None,
+                        password: None,
+                        latency_ms: None,
+                        source: ProxySource::AutoDetected,
+                    });
+                }
+            }
+        }
+        nodes
     }
 }
 
@@ -179,14 +246,36 @@ fn detect_macos_system_proxies() -> Vec<ProxyNode> {
     nodes
 }
 
+/// 解析 Windows `reg query` 标准 3 列输出: `<ValueName>    <REG_TYPE>    <ValueData>`
+#[cfg(any(target_os = "windows", test))]
+fn parse_reg_query_value<'a>(output: &'a str, key: &str) -> Option<&'a str> {
+    output.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let rest = trimmed.strip_prefix(key)?;
+        // 必须紧跟空白，避免 `ProxyServer` 误匹配 `ProxyServerOverride` 等前缀键
+        if !rest.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let after_key = rest.trim_start();
+        // 跳过 REG_DWORD / REG_SZ 等类型列，保留包含空格在内的完整值
+        let (_, val) = after_key.split_once(char::is_whitespace)?;
+        let val = val.trim();
+        (!val.is_empty()).then_some(val)
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn detect_windows_system_proxies() -> Vec<ProxyNode> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
     let mut nodes = Vec::new();
     let output = match std::process::Command::new("reg")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
     {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
@@ -194,26 +283,19 @@ fn detect_windows_system_proxies() -> Vec<ProxyNode> {
     };
 
     // 必须确认 ProxyEnable == 0x1，避免读取到已关闭的残留 ProxyServer
-    let enabled = output.lines().any(|line| {
-        line.contains("ProxyEnable")
-            && line
-                .split_whitespace()
-                .last()
-                .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
-                == Some(1)
-    });
+    let enabled = parse_reg_query_value(&output, "ProxyEnable").and_then(|v| {
+        let stripped = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X"));
+        if let Some(hex) = stripped {
+            u32::from_str_radix(hex, 16).ok()
+        } else {
+            v.parse::<u32>().ok()
+        }
+    }) == Some(1);
     if !enabled {
         return nodes;
     }
 
-    let raw_server = output.lines().find_map(|line| {
-        if line.contains("ProxyServer") {
-            line.split_whitespace().last().map(str::trim)
-        } else {
-            None
-        }
-    });
-    let Some(raw) = raw_server else {
+    let Some(raw) = parse_reg_query_value(&output, "ProxyServer") else {
         return nodes;
     };
 
@@ -625,5 +707,289 @@ pub fn remove_macos_wrapper_app(target: TargetApp, dest_dir: &Path) -> Result<bo
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+/// 跨平台定位用户桌面目录（Windows 支持 OneDrive 重定向桌面路径）
+fn resolve_desktop_dir() -> Result<PathBuf, ProxyError> {
+    dirs::desktop_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Desktop")))
+        .ok_or_else(|| ProxyError::UnsupportedPlatform("Cannot resolve Desktop directory".into()))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shortcut_names(target: TargetApp) -> Result<(&'static str, &'static str), ProxyError> {
+    match target {
+        TargetApp::AntigravityApp => Ok(("Antigravity (No-TUN).lnk", "antigravity-notun.vbs")),
+        TargetApp::AntigravityIde => {
+            Ok(("Antigravity IDE (No-TUN).lnk", "antigravity-ide-notun.vbs"))
+        }
+        TargetApp::AgyCli => Err(ProxyError::UnsupportedPlatform(
+            "Desktop shortcut is only for GUI apps".into(),
+        )),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_vbs_launcher_path(vbs_name: &str) -> Result<PathBuf, ProxyError> {
+    let base = dirs::data_local_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| ProxyError::UnsupportedPlatform("Cannot resolve LocalAppData".into()))?;
+    Ok(base
+        .join("Antigravity Manager")
+        .join("launchers")
+        .join(vbs_name))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_desktop_entry_name(target: TargetApp) -> Result<&'static str, ProxyError> {
+    match target {
+        TargetApp::AntigravityApp => Ok("Antigravity (No-TUN).desktop"),
+        TargetApp::AntigravityIde => Ok("Antigravity IDE (No-TUN).desktop"),
+        TargetApp::AgyCli => Err(ProxyError::UnsupportedPlatform(
+            "Desktop shortcut is only for GUI apps".into(),
+        )),
+    }
+}
+
+/// 跨平台在桌面创建免 TUN 外部代理启动图标（macOS `.app` / Windows 无黑窗 `.lnk` / Linux `.desktop`）
+pub fn create_desktop_shortcut(
+    target: TargetApp,
+    proxy_http_url: &str,
+) -> Result<PathBuf, ProxyError> {
+    let desktop = resolve_desktop_dir()?;
+    std::fs::create_dir_all(&desktop)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        create_macos_wrapper_app(target, proxy_http_url, &desktop)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let (lnk_name, vbs_name) = windows_shortcut_names(target)?;
+        let bin = crate::launcher::resolve_target_binary(target)?;
+        let vbs_path = windows_vbs_launcher_path(vbs_name)?;
+        if let Some(parent) = vbs_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let esc_vbs = |s: &str| s.replace('"', "\"\"");
+        let bin_str = bin.to_string_lossy();
+        let no_proxy = crate::launcher::DEFAULT_NO_PROXY;
+        // 通过 GUI 子系统 wscript.exe 运行，注入 9 个代理环境变量并静默启动原版 EXE（零黑窗）
+        let vbs_content = format!(
+            "Set sh = CreateObject(\"WScript.Shell\")\r\n\
+Set env = sh.Environment(\"Process\")\r\n\
+env(\"HTTP_PROXY\") = \"{url}\"\r\n\
+env(\"HTTPS_PROXY\") = \"{url}\"\r\n\
+env(\"ALL_PROXY\") = \"{url}\"\r\n\
+env(\"http_proxy\") = \"{url}\"\r\n\
+env(\"https_proxy\") = \"{url}\"\r\n\
+env(\"all_proxy\") = \"{url}\"\r\n\
+env(\"NO_PROXY\") = \"{no_proxy}\"\r\n\
+env(\"no_proxy\") = \"{no_proxy}\"\r\n\
+env(\"NODE_USE_ENV_PROXY\") = \"1\"\r\n\
+sh.Run \"\"\"{bin}\"\"\", 1, False\r\n",
+            url = esc_vbs(proxy_http_url),
+            no_proxy = esc_vbs(no_proxy),
+            bin = esc_vbs(&bin_str),
+        );
+        std::fs::write(&vbs_path, vbs_content)?;
+
+        let lnk_path = desktop.join(lnk_name);
+        let esc_ps = |s: &str| s.replace('\'', "''");
+        let vbs_ps = esc_ps(&vbs_path.to_string_lossy());
+        let lnk_ps = esc_ps(&lnk_path.to_string_lossy());
+        let icon_ps = esc_ps(&format!("{},0", bin_str));
+        let workdir_ps = esc_ps(
+            &bin.parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        );
+        let ps_script = format!(
+            "$ws = New-Object -ComObject WScript.Shell; \
+             $s = $ws.CreateShortcut('{lnk}'); \
+             $s.TargetPath = \"$env:SystemRoot\\System32\\wscript.exe\"; \
+             $s.Arguments = '//B //Nologo \"{vbs}\"'; \
+             $s.IconLocation = '{icon}'; \
+             if ('{wd}' -ne '') {{ $s.WorkingDirectory = '{wd}' }}; \
+             $s.Save()",
+            lnk = lnk_ps,
+            vbs = vbs_ps,
+            icon = icon_ps,
+            wd = workdir_ps,
+        );
+
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &ps_script,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()?;
+
+        if !status.success() || !lnk_path.exists() {
+            return Err(ProxyError::Protocol(
+                "Failed to create Windows desktop shortcut".into(),
+            ));
+        }
+        Ok(lnk_path)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let entry_name = linux_desktop_entry_name(target)?;
+        let bin = crate::launcher::resolve_target_binary(target)?;
+        let no_proxy = crate::launcher::DEFAULT_NO_PROXY;
+        let display_name = entry_name.trim_end_matches(".desktop");
+        let entry_path = desktop.join(entry_name);
+        let content = format!(
+            "[Desktop Entry]\n\
+Type=Application\n\
+Name={name}\n\
+Exec=env HTTP_PROXY=\"{url}\" HTTPS_PROXY=\"{url}\" ALL_PROXY=\"{url}\" http_proxy=\"{url}\" https_proxy=\"{url}\" all_proxy=\"{url}\" NO_PROXY=\"{no_proxy}\" no_proxy=\"{no_proxy}\" NODE_USE_ENV_PROXY=1 \"{bin}\" %U\n\
+Terminal=false\n\
+Categories=Development;\n",
+            name = display_name,
+            url = proxy_http_url,
+            no_proxy = no_proxy,
+            bin = bin.to_string_lossy(),
+        );
+        std::fs::write(&entry_path, content)?;
+        std::fs::set_permissions(&entry_path, std::fs::Permissions::from_mode(0o755))?;
+        Ok(entry_path)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (target, proxy_http_url);
+        Err(ProxyError::UnsupportedPlatform(
+            "Unsupported platform for desktop shortcut".into(),
+        ))
+    }
+}
+
+/// 跨平台移除桌面免 TUN 代理启动图标
+pub fn remove_desktop_shortcut(target: TargetApp) -> Result<bool, ProxyError> {
+    let desktop = resolve_desktop_dir()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        remove_macos_wrapper_app(target, &desktop)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let (lnk_name, vbs_name) = match windows_shortcut_names(target) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        let mut removed = false;
+        let lnk_path = desktop.join(lnk_name);
+        if lnk_path.exists() {
+            std::fs::remove_file(&lnk_path)?;
+            removed = true;
+        }
+        if let Ok(vbs_path) = windows_vbs_launcher_path(vbs_name) {
+            if vbs_path.exists() {
+                let _ = std::fs::remove_file(&vbs_path);
+            }
+        }
+        Ok(removed)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let entry_name = match linux_desktop_entry_name(target) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        let entry_path = desktop.join(entry_name);
+        if entry_path.exists() {
+            std::fs::remove_file(&entry_path)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = target;
+        Ok(false)
+    }
+}
+
+/// 跨平台检测桌面免 TUN 代理启动图标是否已创建
+pub fn is_desktop_shortcut_installed(target: TargetApp) -> bool {
+    let Ok(desktop) = resolve_desktop_dir() else {
+        return false;
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_name = match target {
+            TargetApp::AntigravityApp => "Antigravity (No-TUN).app",
+            TargetApp::AntigravityIde => "Antigravity IDE (No-TUN).app",
+            TargetApp::AgyCli => return false,
+        };
+        desktop.join(app_name).exists()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let Ok((lnk_name, _)) = windows_shortcut_names(target) else {
+            return false;
+        };
+        desktop.join(lnk_name).exists()
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(entry_name) = linux_desktop_entry_name(target) else {
+            return false;
+        };
+        desktop.join(entry_name).exists()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = target;
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_reg_query_value;
+
+    #[test]
+    fn test_parse_reg_query_value_exact_and_spaces() {
+        let sample = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyEnable    REG_DWORD    0x1
+    ProxyServerOverride    REG_SZ    <local>
+    ProxyServer    REG_SZ    http=127.0.0.1:7890; https=127.0.0.1:7891
+"#;
+        assert_eq!(parse_reg_query_value(sample, "ProxyEnable"), Some("0x1"));
+        assert_eq!(
+            parse_reg_query_value(sample, "ProxyServer"),
+            Some("http=127.0.0.1:7890; https=127.0.0.1:7891")
+        );
+        assert_eq!(parse_reg_query_value(sample, "NonExistent"), None);
     }
 }
