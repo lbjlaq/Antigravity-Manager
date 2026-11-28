@@ -18,6 +18,8 @@
             -   **多模态图片鲁棒性增强与启动日志目录保障**: 支持剪贴板/微信 BMP 图片内存转码为 PNG、放宽 JPEG/PNG 尾部 EXIF/填充校验、剥离 Base64 内 RFC 2045 空白并归一化 `image/jpg`；跨 macOS / Windows / Linux 预建 Antigravity IDE 日志目录以消除 `ENOENT` 启动报错。(Fixes #4106, Fixes #4057, PR #4112, Thanks to @cubelikeplayDaniel)
         -   **[Dashboard 问候语与账号池刷新、无障碍体验与动效/暗色样式优化] (Ref #3617, Ref #3619, Ref #3768, Ref #3189, PR #4099, PR #4100, PR #4101, Thanks to @UnnamedPeople-Chin)**:
             -   **仪表盘与交互无障碍全面改进**: 修复 Dashboard 本地化问候语、同步客户端目标 Tab 与全账号池刷新；提升导航栏、原生弹窗、Toast 与配额卡的键盘语义与对比度；尊重系统 `prefers-reduced-motion` 并统一暗色表面 CSS Token。(Ref #3617, Ref #3619, Ref #3768, Ref #3189, PR #4099, PR #4100, PR #4101, Thanks to @UnnamedPeople-Chin)
+        -   **[共享 2 组配额去重展示与 `Neon / Carbon` 旗舰能力徽标修复] (Ref #4048, Ref #4050)**:
+            -   **消除共享池克隆的第 3 组配额卡片与旗舰徽标错显**: 上游仅下发 2 组配额（`Gemini Models` + `Claude and GPT models`）时，不再复制第 1 组配额桶伪造重复的第 3 组 `Gemini 4 Carbon / Neon` 进度条，仅在上游真实返回独立第 3 组配额桶时才渲染第 3 组，并将共享池内的 `gemini-4-neon` / `gemini-4-carbon` 纳入 `Gemini` 组支持模型与保护状态判定；同时新增 `formatFlagshipBadgeLabel` 仅从旗舰模型提取代号，修复 Pro/Ultra 账号徽标被 `Hydrogen` 抢占误显的问题，准确展示 `Neon / Carbon`。(Ref #4048, Ref #4050)
         -   **[CI 关键路径 Rust 回归门禁与重复 PR 真机验证防线] (Ref #4043, Ref #4103, Ref #4104, PR #4114)**:
             -   **防回归自动化门禁与工程规范加固**: 在三端 CI 启用 13 个核心模块离线 Rust 回归测试门禁（`--test-threads=1` + 5 分钟超时）及 Linux 管理端/深度健康检查测试，新增针对 OS 强耦合改动与重复修复 Issue 的 PR 真机验证提醒，并同步更新 `AGENTS.md` 与 PR 模板。(Ref #4043, Ref #4103, Ref #4104, PR #4114)
 
