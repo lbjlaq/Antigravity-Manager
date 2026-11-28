@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.5-beta.7 (2026-11-28)**:
+        -   **[修复 Codex `additional_tools` / `type: "custom"` 工具透传、HTTP `101` 状态归类与账号异常筛选口径对齐] (PR #4128, Thanks to @cubelikeplayDaniel)**:
+            -   **Codex `additional_tools`、`custom` 工具与命名空间历史保真**: 在 Responses SSE / 非流式 / WebSocket 全路径合并 `input` 项中的 `additional_tools`，为 `type: "custom"` 工具合成 `{ input: string }` 参数 Schema 并将 `custom_tool_call` 的 `input` 文本解包严格限定于已注册的 `type: "custom"` 工具名（避免误伤 OpenClaw `exec` 等标准 `function` 工具）；修复 Turn 2 工具历史 `namespace` 回填、`mcp__` 前缀边界限定以及 `payload_audit` 对 `name` / `namespace` / `input` / `tools` 的脱敏保留。(PR #4128, Thanks to @cubelikeplayDaniel)
+            -   **HTTP `101 Switching Protocols` WebSocket 成功态统一归类**: 在 `ProxyMonitor`、`proxy_db`（统计与 `errors_only` 过滤）和 `user_token_db` 中将 `101` 纳入成功状态；前端新增 `httpStatus.ts` 判定与 HAR `Switching Protocols` 状态文本并更新监控列表、请求详情、Postman 视图、API 代理测活与 IP 访问日志 5 处展示，同时在隐藏健康检查日志时继续保留 `GET 101` WebSocket 记录可见。(PR #4128, Thanks to @cubelikeplayDaniel)
+            -   **账号异常筛选口径与仪表盘细分对齐**: 在 `accountStatus.ts` 中拆分 `isAccountRestricted`（上游风控 / 封禁 / 403 锁定）与 `isAccountAbnormal`（含 `disabled` 停用账号），使账号页「异常」筛选与禁用态对齐，同时保持 Dashboard 中“停用”与“上游风控异常”的独立统计分类。(PR #4128, Thanks to @cubelikeplayDaniel)
+
     *   **v5.0.5-beta.6 (2026-11-28)**:
         -   **[修复配额刷新 `RwLock` 自死锁、新增 `/health?deep=1` 深度健康检查与 Unix `SIGTERM` 优雅退出] (Fixes #4103, Fixes #4104, Ref #2200, PR #4105, PR #4110, Thanks to @koeria, @d7do7e)**:
             -   **消除 `build_cache_snapshot` 同线程读写自死锁**: 新增 `OfficialModelCatalog::resolved_background_model_from_state(state)` 直接复用已持有的 `&LiveCatalogState`，避免 `sync_live_catalog` / `remove_live_account` 在持有 `live_recommended_store` 写锁期间重入读锁引发服务无响应，并补充真实入口 5 秒超时防死锁回归测试。(Fixes #4103, Fixes #4104, PR #4105, Thanks to @koeria)
