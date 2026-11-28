@@ -197,6 +197,16 @@ fn invalidate_system_keychain_cache(service: &str, account: &str) {
     system_keychain_coordinator().invalidate(service, account);
 }
 
+/// macOS Keychain interoperability contract (Issue #4043 / PR #4097 / PR #4111 / PR #4114):
+/// 1. `agy` CLI (go-keyring) and Antigravity 2.0+ read/write `gemini:antigravity` via `/usr/bin/security`,
+///    which stamps `PartitionID = apple-tool:` and `ChangeACL = []`. Because ad-hoc/non-Apple builds of
+///    Antigravity Tools are outside `apple-tool:`, native FFI reads of `apple-tool:` items always fail with
+///    `-25293` (`errSecAuthFailed`) and native FFI writes stamp `cdhash:` (breaking `agy` CLI).
+/// 2. Therefore sub-3.9KB writes MUST delete any existing item first (`SecItemDelete` / `delete-generic-password`)
+///    and add via `/usr/bin/security -i` WITHOUT `-U` (never trigger `SSKey::changeAcl` deadlock on empty ChangeACL).
+/// 3. `/usr/bin/security` reads MUST ONLY execute after silent FFI preflight (`ScopedNoKeychainUi`) confirms:
+///    default keychain is unlocked, every PartitionID ACL contains `apple-tool:` with no `cdhash:`, and a
+///    non-passphrase Decrypt ACL explicitly allows `<ANY>` or `/usr/bin/security`, always bounded by a 5s timeout.
 #[cfg(target_os = "macos")]
 mod macos_keychain_ffi {
     use std::ffi::c_void;
@@ -210,6 +220,7 @@ mod macos_keychain_ffi {
     type CFAllocatorRef = *const c_void;
     type SecAccessRef = *const c_void;
     type SecACLRef = *const c_void;
+    type SecTrustedApplicationRef = *const c_void;
     type SecKeychainRef = *const c_void;
     type SecKeychainItemRef = *const c_void;
     type CFIndex = isize;
@@ -361,6 +372,44 @@ mod macos_keychain_ffi {
             item_ref: SecKeychainItemRef,
             access: *mut SecAccessRef,
         ) -> OSStatus;
+        fn SecTrustedApplicationCopyData(
+            app_ref: SecTrustedApplicationRef,
+            data: *mut CFDataRef,
+        ) -> OSStatus;
+    }
+
+    fn trusted_app_list_allows_security_cli(app_list: CFArrayRef) -> bool {
+        let count = unsafe { CFArrayGetCount(app_list) };
+        for idx in 0..count {
+            let app_ref = unsafe { CFArrayGetValueAtIndex(app_list, idx) };
+            if app_ref.is_null() {
+                continue;
+            }
+            let mut data_raw: CFDataRef = std::ptr::null();
+            if unsafe { SecTrustedApplicationCopyData(app_ref, &mut data_raw) } != ERR_SEC_SUCCESS
+                || data_raw.is_null()
+            {
+                continue;
+            }
+            let Some(data_guard) = (unsafe { CfGuard::from_create(data_raw) }) else {
+                continue;
+            };
+            let len = unsafe { CFDataGetLength(data_guard.as_ptr()) };
+            let ptr = unsafe { CFDataGetBytePtr(data_guard.as_ptr()) };
+            if len <= 0 || ptr.is_null() {
+                continue;
+            }
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            let trimmed = bytes
+                .split(|&b| b == 0)
+                .next()
+                .and_then(|s| std::str::from_utf8(s).ok())
+                .unwrap_or("");
+            if trimmed == "/usr/bin/security" {
+                return true;
+            }
+        }
+        false
     }
 
     fn cf_string_to_rust(s: CFStringRef) -> Option<String> {
@@ -949,7 +998,8 @@ mod macos_keychain_ffi {
             match app_list_guard {
                 None => return true,
                 Some(app_list) => {
-                    if has_partition_acl && unsafe { CFArrayGetCount(app_list.as_ptr()) } > 0 {
+                    if has_partition_acl && trusted_app_list_allows_security_cli(app_list.as_ptr())
+                    {
                         return true;
                     }
                 }
@@ -1131,7 +1181,7 @@ fn read_macos_keychain_generic_password(
     bypass_cache: bool,
 ) -> KeychainLookupOutcome {
     system_keychain_coordinator().read_with(service, account, bypass_cache, || {
-        match macos_keychain_ffi::read_generic_password_silent(service, account) {
+        let ffi_status = match macos_keychain_ffi::read_generic_password_silent(service, account) {
             macos_keychain_ffi::SilentKeychainRead::Found(secret) => {
                 return KeychainLookupOutcome::Found(secret);
             }
@@ -1152,35 +1202,24 @@ fn read_macos_keychain_generic_password(
                 return KeychainLookupOutcome::Denied(reason);
             }
             macos_keychain_ffi::SilentKeychainRead::InteractionRequired(status) => {
-                if !bypass_cache {
-                    let reason = format!(
-                        "macOS Keychain SecItemCopyMatching requires user interaction (OSStatus {})",
-                        status
-                    );
-                    crate::modules::logger::log_warn(&format!(
-                        "[Keychain] Passive read requires user interaction for {}:{}; suppressing passive probes and using local file fallback ({})",
-                        service,
-                        account,
-                        reason
-                    ));
-                    return KeychainLookupOutcome::Denied(reason);
-                }
+                // Fall through to silent FFI ACL/partition preflight below.
+                // Foreign `cdhash:`/`teamid:` items and locked keychains are rejected before
+                // spawning `/usr/bin/security` (zero modal prompts, sticky denial in coordinator);
+                // verified unlocked `apple-tool:` items safely read via `/usr/bin/security`
+                // with 5s timeout and 60s TTL cache so Dashboard stays in sync with `agy` CLI.
+                Some(status)
             }
-            macos_keychain_ffi::SilentKeychainRead::NeedsSubprocessFallback => {
-                if !bypass_cache {
-                    let reason =
-                        "macOS Keychain silent FFI read unavailable in passive mode".to_string();
-                    crate::modules::logger::log_warn(&format!(
-                        "[Keychain] {}; suppressing passive probes for {}:{}",
-                        reason, service, account
-                    ));
-                    return KeychainLookupOutcome::Denied(reason);
-                }
-            }
-        }
+            macos_keychain_ffi::SilentKeychainRead::NeedsSubprocessFallback => None,
+        };
 
         if !macos_keychain_ffi::can_read_via_security_cli_without_prompt(service, account) {
-            let reason = "macOS Keychain item is locked or lacks apple-tool partition ACL; skipping /usr/bin/security to prevent modal prompt".to_string();
+            let reason = match ffi_status {
+                Some(status) => format!(
+                    "macOS Keychain item is locked or lacks apple-tool partition ACL (FFI OSStatus {}); skipping /usr/bin/security to prevent modal prompt",
+                    status
+                ),
+                None => "macOS Keychain item is locked or lacks apple-tool partition ACL; skipping /usr/bin/security to prevent modal prompt".to_string(),
+            };
             crate::modules::logger::log_warn(&format!(
                 "[Keychain] {} for {}:{}",
                 reason, service, account
@@ -4263,13 +4302,13 @@ mod tests {
             String::from_utf8_lossy(&seed.stderr)
         );
 
-        // 1. Passive read must deny immediately without spawning `security` or prompting,
-        // and subsequent passive reads must reuse the cached denial.
+        // 1. Passive read on a verified unlocked `apple-tool:` item trusting `/usr/bin/security`
+        // must succeed without prompting and serve subsequent passive reads from cache.
         let passive_first = read_macos_keychain_generic_password(&service, account, false);
-        assert!(
-            matches!(passive_first, KeychainLookupOutcome::Denied(_)),
-            "expected Denied on apple-tool item without prompting, got {:?}",
-            passive_first
+        assert_eq!(
+            passive_first,
+            KeychainLookupOutcome::Found("agy-cli-only-token".to_string()),
+            "verified apple-tool item should be readable passively via preflight-gated /usr/bin/security without prompting"
         );
         let passive_second = read_macos_keychain_generic_password(&service, account, false);
         assert_eq!(passive_second, passive_first);
@@ -4279,13 +4318,13 @@ mod tests {
         write_macos_keychain_generic_password(&service, account, "updated-by-manager")
             .expect("overwrite of apple-tool item should succeed");
 
-        // 3. Passive read remains prompt-free (triggers file fallback in passive status detection),
-        // while authoritative read (`bypass_cache = true`) and `security` CLI both succeed.
+        // 3. Both passive read (cache invalidated on write), authoritative read (`bypass_cache = true`),
+        // and `security` CLI must all read the updated secret without prompting.
         let passive_after = read_macos_keychain_generic_password(&service, account, false);
-        assert!(
-            matches!(passive_after, KeychainLookupOutcome::Denied(_)),
-            "passive read of apple-tool item must stay prompt-free (Denied), got {:?}",
-            passive_after
+        assert_eq!(
+            passive_after,
+            KeychainLookupOutcome::Found("updated-by-manager".to_string()),
+            "passive read after write should reflect updated apple-tool item without prompting"
         );
 
         let auth_read = read_macos_keychain_generic_password(&service, account, true);
