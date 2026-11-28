@@ -537,11 +537,12 @@ pub async fn handle_warmup(
 
                 // [FIX] 预热阶段检测到 403 时，排查是否属于真正的账号封禁
                 if status_code == 403 {
+                    let error_lower = error_text.to_lowercase();
                     let is_user_location_error =
-                        error_text.contains("User location is not supported");
+                        crate::models::account::is_location_unsupported_error(&error_text);
                     let is_waf_rate_limit = error_text.contains("Cloud Armor")
                         || error_text.contains("Resource has been exhausted")
-                        || error_text.contains("rate limit")
+                        || error_lower.contains("rate limit")
                         || error_text.contains("RESOURCE_EXHAUSTED");
 
                     if !is_user_location_error && !is_waf_rate_limit {
@@ -553,16 +554,37 @@ pub async fn handle_warmup(
                         };
 
                         if !resolved_account_id.is_empty() {
-                            warn!(
-                                "[Warmup-API] 403 Forbidden detected for {}, marking forbidden status",
-                                req.email
-                            );
-                            // 关键防护（审查项 4）：统一使用 mapped_model 记录冻结 scope，确保与解冻模型完全闭环
-                            let _ = crate::modules::account::mark_account_forbidden_with_model(
-                                &resolved_account_id,
-                                &error_text,
-                                Some(&mapped_model),
-                            );
+                            let is_validation =
+                                crate::models::AccountBanInfo::classify_upstream(403, &error_text)
+                                    .is_none()
+                                    && (error_lower.contains("validation_required")
+                                        || error_lower.contains("verify your account")
+                                        || error_lower.contains("validation_url"));
+                            if is_validation {
+                                warn!(
+                                    "[Warmup-API] 403 validation challenge detected for {}, applying temporary 10m validation cooldown",
+                                    req.email
+                                );
+                                let _ = state
+                                    .token_manager
+                                    .set_validation_block_public(
+                                        &resolved_account_id,
+                                        chrono::Utc::now().timestamp() + 600,
+                                        &error_text,
+                                    )
+                                    .await;
+                            } else {
+                                warn!(
+                                    "[Warmup-API] 403 Forbidden detected for {}, marking forbidden status",
+                                    req.email
+                                );
+                                // Keep mapped_model scope aligned with unfreeze logic on probe recovery
+                                let _ = crate::modules::account::mark_account_forbidden_with_model(
+                                    &resolved_account_id,
+                                    &error_text,
+                                    Some(&mapped_model),
+                                );
+                            }
                         } else {
                             warn!(
                                 "[Warmup-API] 403 Forbidden detected for {} but could not resolve account_id, skipping mark",

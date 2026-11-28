@@ -217,7 +217,7 @@ pub fn start_scheduler(
             let mut tasks_to_run = Vec::new();
 
             for acc in &accounts {
-                if acc.disabled || acc.proxy_disabled || acc.banned {
+                if !quota::is_account_eligible_for_warmup(acc, now_ts) {
                     continue;
                 }
 
@@ -384,6 +384,10 @@ pub fn start_scheduler(
 
 /// Trigger immediate smart warmup check for a single account (e.g. on manual trigger / recovered event)
 pub async fn trigger_warmup_for_account(account: &Account) {
+    if !quota::is_account_eligible_for_warmup(account, Utc::now().timestamp()) {
+        return;
+    }
+
     let Ok((token, pid)) = quota::get_valid_token_for_warmup(account).await else {
         return;
     };
