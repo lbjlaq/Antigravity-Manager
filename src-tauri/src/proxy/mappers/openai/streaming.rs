@@ -1133,6 +1133,7 @@ pub struct CodexResponsesStreamHandler {
     reasoning_output_index: u32,
     final_usage: Option<super::models::OpenAIUsage>,
     thinking_committed: bool,
+    custom_tool_names: std::collections::HashSet<String>,
 }
 
 impl CodexResponsesStreamHandler {
@@ -1146,6 +1147,7 @@ impl CodexResponsesStreamHandler {
         >,
         cache_tool_calls: bool,
         causal_anchor: Option<String>,
+        custom_tool_names: std::collections::HashSet<String>,
     ) -> Self {
         let item_id_prefix = uuid::Uuid::new_v4().simple().to_string();
         let message_item_id = format!("msg_{}_0", &item_id_prefix[..16]);
@@ -1187,6 +1189,7 @@ impl CodexResponsesStreamHandler {
             reasoning_output_index: 0,
             final_usage: None,
             thinking_committed: false,
+            custom_tool_names,
         }
     }
 
@@ -1444,11 +1447,14 @@ impl CodexResponsesStreamHandler {
 
         let (actual_name, namespace) = split_namespace_tool_name(name);
         let tool_item_id = format!("item-{}", &Uuid::new_v4().to_string()[..16]);
-        let is_custom_tool = actual_name == "apply_patch"
-            || actual_name == "apply_patch_v2"
-            || actual_name == "shell";
+        let is_custom_tool =
+            super::is_custom_tool_name(name, &actual_name, &self.custom_tool_names);
 
-        let final_args_str = args_str.clone();
+        let final_args_str = if is_custom_tool {
+            super::extract_custom_tool_input(&args_str)
+        } else {
+            args_str.clone()
+        };
 
         let mut item_obj = json!({
             "id": &tool_item_id,
@@ -1948,6 +1954,38 @@ pub fn create_codex_sse_stream_with_anchor<S, E>(
     model: String,
     session_id: String,
     message_count: usize,
+    assistant_turn_index: usize,
+    response_id: String,
+    completion_tx: Option<
+        tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
+    >,
+    cache_tool_calls: bool,
+    causal_anchor: Option<String>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    create_codex_sse_stream_with_anchor_and_custom_tools(
+        gemini_stream,
+        model,
+        session_id,
+        message_count,
+        assistant_turn_index,
+        response_id,
+        completion_tx,
+        cache_tool_calls,
+        causal_anchor,
+        std::collections::HashSet::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_codex_sse_stream_with_anchor_and_custom_tools<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    model: String,
+    session_id: String,
+    message_count: usize,
     _assistant_turn_index: usize,
     response_id: String,
     completion_tx: Option<
@@ -1955,6 +1993,7 @@ pub fn create_codex_sse_stream_with_anchor<S, E>(
     >,
     cache_tool_calls: bool,
     causal_anchor: Option<String>,
+    custom_tool_names: std::collections::HashSet<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
@@ -1972,6 +2011,7 @@ where
         completion_tx,
         cache_tool_calls,
         causal_anchor,
+        custom_tool_names,
     );
     let config = StreamLifecycleConfig::new("openai-codex", "create_codex_sse_stream", trace_info);
     run_stream_lifecycle(gemini_stream, handler, config)
@@ -3487,5 +3527,95 @@ mod tests {
             accumulated_content
         );
         assert_eq!(parsed.unwrap(), json!({ "color": "red", "count": 3 }));
+    }
+
+    #[tokio::test]
+    async fn test_codex_sse_custom_tool_unwraps_input_and_preserves_regular_exec() {
+        let chunks = vec![json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "functions__exec",
+                            "args": { "input": "ls -la" }
+                        }
+                    }]
+                },
+                "finishReason": "STOP"
+            }]
+        })];
+
+        let custom_items: Vec<Result<Bytes, String>> = chunks
+            .iter()
+            .map(|chunk| Ok(Bytes::from(format!("data: {chunk}\n\n"))))
+            .collect();
+        let mut custom_names = std::collections::HashSet::new();
+        custom_names.insert("functions__exec".to_string());
+
+        let mut stream = create_codex_sse_stream_with_anchor_and_custom_tools(
+            Box::pin(stream::iter(custom_items)),
+            "gemini-pro-agent".to_string(),
+            "test-custom-session".to_string(),
+            0,
+            0,
+            "resp-custom-1".to_string(),
+            None,
+            false,
+            None,
+            custom_names,
+        );
+        let mut raw = String::new();
+        while let Some(item) = stream.next().await {
+            raw.push_str(&String::from_utf8_lossy(&item.expect("stream item")));
+        }
+        let events: Vec<Value> = raw
+            .lines()
+            .filter_map(|l| l.strip_prefix("data: "))
+            .filter_map(|d| serde_json::from_str::<Value>(d).ok())
+            .collect();
+
+        let delta_ev = events
+            .iter()
+            .find(|e| e["type"] == "response.custom_tool_call_input.delta")
+            .expect("custom_tool_call_input.delta");
+        assert_eq!(delta_ev["delta"], "ls -la");
+
+        let done_ev = events
+            .iter()
+            .find(|e| e["type"] == "response.custom_tool_call_input.done")
+            .expect("custom_tool_call_input.done");
+        assert_eq!(done_ev["input"], "ls -la");
+
+        let item_done = events
+            .iter()
+            .find(|e| e["type"] == "response.output_item.done")
+            .expect("output_item.done");
+        assert_eq!(item_done["item"]["type"], "custom_tool_call");
+        assert_eq!(item_done["item"]["name"], "exec");
+        assert_eq!(item_done["item"]["namespace"], "functions");
+        assert_eq!(item_done["item"]["input"], "ls -la");
+
+        // Regular function tool named `exec` without custom_tool_names remains function_call JSON
+        let regular_chunks = vec![json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "exec",
+                            "args": { "input": "ls -la" }
+                        }
+                    }]
+                },
+                "finishReason": "STOP"
+            }]
+        })];
+        let (_raw_reg, reg_events) = collect_codex_stream_with_cache(regular_chunks, false).await;
+        let reg_done = reg_events
+            .iter()
+            .find(|e| e["type"] == "response.output_item.done")
+            .expect("regular output_item.done");
+        assert_eq!(reg_done["item"]["type"], "function_call");
+        assert_eq!(reg_done["item"]["name"], "exec");
+        assert_eq!(reg_done["item"]["arguments"], "{\"input\":\"ls -la\"}");
     }
 }

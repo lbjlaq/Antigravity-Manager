@@ -60,13 +60,15 @@ fn should_preserve_tool_output(tool_name: &str, output: &str) -> bool {
         || output.contains("Expected update hunk")
 }
 
-fn qualify_namespace_tool_name(namespace_name: &str, child_name: &str) -> String {
+pub(crate) fn qualify_namespace_tool_name(namespace_name: &str, child_name: &str) -> String {
     let child = child_name.trim();
     let ns = namespace_name.trim();
     if child.is_empty() || ns.is_empty() || child.starts_with("mcp__") {
         return child.to_string();
     }
-    if child.starts_with(ns) {
+    if (ns.ends_with("__") && child.starts_with(ns))
+        || (!ns.ends_with("__") && child.starts_with(&format!("{ns}__")))
+    {
         return child.to_string();
     }
     if ns.ends_with("__") {
@@ -141,6 +143,54 @@ pub fn extract_client_tool_names(tools: &Option<Vec<Value>>) -> std::collections
         }
     }
     names
+}
+
+pub fn collect_custom_tool_names(tools: &Option<Vec<Value>>) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if let Some(tools_list) = tools {
+        for tool in flatten_tools(tools_list) {
+            if tool.get("type").and_then(|v| v.as_str()) == Some("custom") {
+                if let Some(name) = tool.get("name").and_then(|v| v.as_str()).or_else(|| {
+                    tool.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                }) {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        names.insert(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+pub fn collect_custom_tool_names_from_value(
+    tools_val: Option<&Value>,
+) -> std::collections::HashSet<String> {
+    let tools_vec = tools_val.and_then(|v| v.as_array()).cloned();
+    collect_custom_tool_names(&tools_vec)
+}
+
+pub(crate) fn is_custom_tool_name(
+    full_name: &str,
+    actual_name: &str,
+    custom_tool_names: &std::collections::HashSet<String>,
+) -> bool {
+    custom_tool_names.contains(full_name.trim())
+        || matches!(actual_name, "apply_patch" | "apply_patch_v2" | "shell")
+}
+
+pub(crate) fn extract_custom_tool_input(args_str: &str) -> String {
+    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(args_str) {
+        if map.len() == 1 {
+            if let Some(Value::String(input)) = map.get("input") {
+                return input.clone();
+            }
+        }
+    }
+    args_str.to_string()
 }
 
 pub fn transform_openai_request(
@@ -1071,7 +1121,7 @@ pub fn transform_openai_request_with_session(
         let raw_json = serde_json::to_string(original_tools).unwrap_or_default();
         if !raw_json.is_empty() {
             let key = crate::proxy::cache_manager::CacheManager::compute_tools_key(&format!(
-                "pure_tools_v3:{raw_json}"
+                "pure_tools_v4:{raw_json}"
             ));
             let cm = crate::proxy::cache_manager::global_cache_manager();
             if let Some(cached_json) = cm.lookup_tools(&key) {
@@ -1097,6 +1147,7 @@ pub fn transform_openai_request_with_session(
         if let Some(original_tools) = &request.tools {
             let tools = flatten_tools(original_tools);
             for tool in tools.iter() {
+                let is_custom_tool = tool.get("type").and_then(|v| v.as_str()) == Some("custom");
                 let mut gemini_func = if let Some(func) = tool.get("function") {
                     func.clone()
                 } else {
@@ -1168,6 +1219,20 @@ pub fn transform_openai_request_with_session(
 
                     // 递归转换 type 为大写 (符合 Protobuf 定义)
                     enforce_uppercase_types(params);
+                } else if is_custom_tool {
+                    gemini_func.as_object_mut().unwrap().insert(
+                        "parameters".to_string(),
+                        json!({
+                            "type": "OBJECT",
+                            "properties": {
+                                "input": {
+                                    "type": "STRING",
+                                    "description": "Raw string input payload for the custom tool"
+                                }
+                            },
+                            "required": ["input"]
+                        }),
+                    );
                 } else {
                     gemini_func.as_object_mut().unwrap().insert(
                         "parameters".to_string(),
@@ -3567,5 +3632,88 @@ mod tests {
         .await;
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_custom_tool_synthesizes_input_schema_and_namespace_prefix_guard() {
+        assert_eq!(
+            qualify_namespace_tool_name("functions", "functions_list"),
+            "functions__functions_list"
+        );
+        assert_eq!(
+            qualify_namespace_tool_name("functions", "functions__exec"),
+            "functions__exec"
+        );
+        assert_eq!(
+            qualify_namespace_tool_name("mcp__node_repl", "js"),
+            "mcp__node_repl__js"
+        );
+
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash-high".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIContent::String("run pwd".to_string())),
+                ..Default::default()
+            }],
+            tools: Some(vec![
+                json!({
+                    "type": "custom",
+                    "name": "exec",
+                    "description": "Execute command",
+                    "format": { "type": "text" }
+                }),
+                json!({
+                    "type": "namespace",
+                    "name": "functions",
+                    "tools": [
+                        {
+                            "type": "custom",
+                            "name": "functions_exec",
+                            "description": "Namespaced custom exec"
+                        }
+                    ]
+                }),
+                json!({
+                    "type": "function",
+                    "name": "ping",
+                    "description": "No-arg regular function"
+                }),
+            ]),
+            ..Default::default()
+        };
+
+        let custom_names = collect_custom_tool_names(&req.tools);
+        assert!(custom_names.contains("exec"));
+        assert!(custom_names.contains("functions__functions_exec"));
+        assert!(!custom_names.contains("ping"));
+
+        let (result, _, _, _) =
+            transform_openai_request(&req, "test-proj", "gemini-3.8-flash-high", None);
+        let tools_arr = result["request"]["tools"].as_array().expect("tools array");
+        let decls: Vec<&Value> = tools_arr
+            .iter()
+            .filter_map(|t| t.get("functionDeclarations").and_then(|f| f.as_array()))
+            .flatten()
+            .collect();
+        assert_eq!(decls.len(), 3);
+
+        assert_eq!(decls[0]["name"], "exec");
+        assert_eq!(decls[0]["parameters"]["type"], "OBJECT");
+        assert_eq!(
+            decls[0]["parameters"]["properties"]["input"]["type"],
+            "STRING"
+        );
+        assert_eq!(decls[0]["parameters"]["required"], json!(["input"]));
+
+        assert_eq!(decls[1]["name"], "functions__functions_exec");
+        assert_eq!(
+            decls[1]["parameters"]["properties"]["input"]["type"],
+            "STRING"
+        );
+        assert_eq!(decls[1]["parameters"]["required"], json!(["input"]));
+
+        assert_eq!(decls[2]["name"], "ping");
+        assert_eq!(decls[2]["parameters"]["properties"], json!({}));
     }
 }
