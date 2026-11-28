@@ -521,3 +521,38 @@ fn test_structured_rate_limit_reason_uses_grace_retry_even_with_quota_words() {
         "structured rate-limit reason must be treated as request-level"
     );
 }
+
+#[test]
+fn test_adaptive_retry_insufficient_g1_credits_fast_rotates_and_locks_attempt_0() {
+    use crate::proxy::handlers::common::{
+        determine_retry_strategy_adaptive, should_rotate_account,
+    };
+    use crate::proxy::pipeline::UpstreamClassification;
+
+    let g1_429 = r#"{
+        "error": {
+            "code": 429,
+            "message": "Resource has been exhausted (e.g. check quota).",
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "INSUFFICIENT_G1_CREDITS_BALANCE"
+                }
+            ]
+        }
+    }"#;
+
+    let strategy = determine_retry_strategy_adaptive(429, g1_429, None, false, true, 0, 3);
+    assert_eq!(
+        strategy,
+        RetryStrategy::FixedDelay(Duration::from_millis(50)),
+        "INSUFFICIENT_G1_CREDITS_BALANCE must trigger 50ms fast rotation instead of same-account GraceRetry"
+    );
+    assert!(should_rotate_account(429, Some(&strategy)));
+    assert!(
+        UpstreamClassification::classify(429, g1_429, None)
+            .should_lock_account_on_attempt(429, g1_429, None, 0),
+        "INSUFFICIENT_G1_CREDITS_BALANCE must lock depleted account immediately on attempt 0"
+    );
+}
