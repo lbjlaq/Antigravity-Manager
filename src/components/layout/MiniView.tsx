@@ -225,8 +225,9 @@ export default function MiniView() {
             return displayedAccount.protected_models.some(isArgonModel);
         }
         if (key === 'gemini') {
+            const hasDedicatedArgon = groupSummaries.some((s) => s.key === 'argon');
             return displayedAccount.protected_models.some(
-                (m: string) => m.toLowerCase().includes('gemini') && !isArgonModel(m)
+                (m: string) => m.toLowerCase().includes('gemini') && (!hasDedicatedArgon || !isArgonModel(m))
             );
         }
         return displayedAccount.protected_models.some(

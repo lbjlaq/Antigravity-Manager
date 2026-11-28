@@ -54,7 +54,7 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { useAccountStore } from '../../stores/useAccountStore';
 import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
-import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
+import { getGroupQuotaSummaries, formatFlagshipBadgeLabel } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { showToast } from '../common/ToastContainer';
 import { exportAccounts, releaseAccountQoSJail } from '../../services/accountService';
@@ -64,7 +64,7 @@ import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
-import { isFlagshipModel, extractGemini4Codename } from '../../utils/modelCategory';
+import { isFlagshipModel } from '../../utils/modelCategory';
 import AccountActionsModal from './AccountActionsModal';
 
 // ============================================================================
@@ -139,12 +139,16 @@ interface AccountRowContentProps {
 // 辅助函数
 // ============================================================================
 
-function isGroupProtected(protectedModels: string[] | undefined, groupKey: 'gemini' | 'claude' | 'argon'): boolean {
+function isGroupProtected(
+    protectedModels: string[] | undefined,
+    groupKey: 'gemini' | 'claude' | 'argon',
+    hasDedicatedArgon = false
+): boolean {
     if (!protectedModels || protectedModels.length === 0) return false;
     if (groupKey === 'argon') {
         return protectedModels.some(isFlagshipModel);
     } else if (groupKey === 'gemini') {
-        return protectedModels.some(m => m.toLowerCase().startsWith('gemini') && !isFlagshipModel(m));
+        return protectedModels.some(m => m.toLowerCase().startsWith('gemini') && (!hasDedicatedArgon || !isFlagshipModel(m)));
     } else {
         return protectedModels.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
     }
@@ -382,8 +386,7 @@ function AccountRowContent({
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
         const hasFlagship = hasAccountFlagshipCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isFlagshipModel);
-        const flagshipCode = supported.map(extractGemini4Codename).find(Boolean) || (hasFlagship ? (tier === 'pro' ? 'carbon' : 'neon') : null);
-        const flagshipLabel = flagshipCode ? flagshipCode.charAt(0).toUpperCase() + flagshipCode.slice(1) : (tier === 'pro' ? 'Carbon' : 'Neon');
+        const flagshipLabel = formatFlagshipBadgeLabel(supported, tier);
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
@@ -702,7 +705,7 @@ function AccountRowContent({
                                 <GroupQuotaCard
                                     key={summary.key}
                                     summary={summary}
-                                    isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, summary.key))}
+                                    isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, summary.key, groupSummaries.some(s => s.key === 'argon')))}
                                     liveLimit={summary.key === 'gemini' ? getLiveLimitForModel(account, 'gemini-pro') : getLiveLimitForModel(account, 'claude')}
                                     compact
                                 />

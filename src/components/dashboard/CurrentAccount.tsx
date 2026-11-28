@@ -118,8 +118,9 @@ function CurrentAccount({
             return displayedAccount.protected_models.some(isArgonModel);
         }
         if (key === 'gemini') {
+            const hasDedicatedArgon = groupSummaries.some((s) => s.key === 'argon');
             return displayedAccount.protected_models.some(
-                (m) => m.toLowerCase().includes('gemini') && !isArgonModel(m)
+                (m) => m.toLowerCase().includes('gemini') && (!hasDedicatedArgon || !isArgonModel(m))
             );
         }
         return displayedAccount.protected_models.some(

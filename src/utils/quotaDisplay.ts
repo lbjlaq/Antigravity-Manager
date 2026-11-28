@@ -348,7 +348,6 @@ export function getGroupQuotaSummaries(
     tier?: 'ultra' | 'pro' | 'enterprise' | 'free'
 ): GroupQuotaSummary[] {
     const isFreeTier = tier === 'free';
-    const isUltraTier = tier === 'ultra';
     const isEnterpriseTier = tier === 'enterprise';
 
     const activeFlagshipCodenames = new Set<string>(
@@ -378,15 +377,12 @@ export function getGroupQuotaSummaries(
             return target === 'claude' ? isThirdParty : !isThirdParty;
         }).flatMap(group => group?.buckets || []);
 
-        // Ultra 以及拥有 Neon/Carbon 的 Pro 账号在官方架构下若未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
-        if (target === 'argon' && directBuckets.length === 0 && (isUltraTier || tier === 'pro')) {
-            return (groups || []).filter(group => {
-                return !isDedicatedG4Group(group, knownFlagshipCodenames) && !isThirdPartyQuotaGroup(group);
-            }).flatMap(group => group?.buckets || []);
-        }
-
         return directBuckets;
     };
+
+    // 只有当上游真实下发了与当前活跃旗舰模型匹配的独立第 3 组配额桶时，才渲染第 3 组卡片；
+    // 当官方将 Neon/Carbon 等合并进通用 Gemini Models（仅 2 组）时，绝不克隆第 1 组伪造重复卡片。
+    const hasDedicatedArgonGroup = findGroupBuckets('argon').length > 0;
 
     const buildGroup = (key: 'gemini' | 'claude' | 'argon'): GroupQuotaSummary => {
         const buckets = findGroupBuckets(key);
@@ -409,7 +405,7 @@ export function getGroupQuotaSummaries(
                 if (!isSupportedDisplayModel(n) || (m as any)?.disabled) return false;
                 const isArgon = isArgonModel(n);
                 if (key === 'argon') return isArgon;
-                if (isArgon) return false;
+                if (isArgon && hasDedicatedArgonGroup) return false;
                 return key === 'claude' ? (n.startsWith('claude') || n.startsWith('gpt')) : n.startsWith('gemini');
             });
 
@@ -493,7 +489,7 @@ export function getGroupQuotaSummaries(
             if (!isSupportedDisplayModel(n) || (m as any)?.disabled) return false;
             const isArgon = isArgonModel(n);
             if (key === 'argon') return isArgon;
-            if (isArgon) return false;
+            if (isArgon && hasDedicatedArgonGroup) return false;
             return key === 'claude' ? (n.startsWith('claude') || n.startsWith('gpt')) : n.startsWith('gemini');
         });
         const { dynamicLabel, supportedModels } = summarizeSupportedModels(matchedForSummary, key);
@@ -549,8 +545,8 @@ export function getGroupQuotaSummaries(
         };
     };
 
-    // 使用统一收敛判据：综合校验 Ultra 旗舰套餐、Pro 独立分组套餐与 Free 隔离防呆
-    const hasArgon = checkArgonEligibility(groups, fallbackModels, tier);
+    // 使用统一收敛判据：仅在账号具备旗舰资格且上游真实下发了独立第 3 组配额桶时才追加第 3 组卡片
+    const hasArgon = checkArgonEligibility(groups, fallbackModels, tier) && hasDedicatedArgonGroup;
 
     const summaries: GroupQuotaSummary[] = [
         buildGroup('gemini'),
@@ -562,5 +558,41 @@ export function getGroupQuotaSummaries(
     }
 
     return summaries;
+}
+
+/**
+ * 仅从旗舰模型（排除 Hydrogen 等全档位共享模型）中提取账号能力徽标文案，
+ * 例如同时支持 Neon 与 Carbon 时返回 `Neon / Carbon`。
+ */
+export function formatFlagshipBadgeLabel(
+    supportedModels: readonly string[],
+    tier?: 'ultra' | 'pro' | 'enterprise' | 'free'
+): string {
+    const codenames = new Set<string>();
+    for (const model of supportedModels) {
+        if (!isArgonModel(model)) continue;
+        const code = extractGemini4Codename(model);
+        if (code) {
+            codenames.add(code.toLowerCase());
+        }
+    }
+
+    if (codenames.size === 0) {
+        return tier === 'pro' ? 'Carbon' : 'Neon';
+    }
+
+    const priorityOrder = ['neon', 'carbon', 'argon'];
+    const sorted = Array.from(codenames).sort((a, b) => {
+        const ia = priorityOrder.indexOf(a);
+        const ib = priorityOrder.indexOf(b);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+        return a.localeCompare(b);
+    });
+
+    return sorted
+        .map(code => code.charAt(0).toUpperCase() + code.slice(1))
+        .join(' / ');
 }
 

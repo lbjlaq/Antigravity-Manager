@@ -16,10 +16,10 @@ import { copyToClipboard } from '../../utils/clipboard';
 import AccountSwitchMenu from './AccountSwitchMenu';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
-import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
+import { getGroupQuotaSummaries, formatFlagshipBadgeLabel } from '../../utils/quotaDisplay';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
-import { extractGemini4Codename, isFlagshipModel } from '../../utils/modelCategory';
+import { isFlagshipModel } from '../../utils/modelCategory';
 import AccountActionsModal from './AccountActionsModal';
 
 interface AccountCardProps {
@@ -100,8 +100,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
     const modelCapabilities = useMemo(() => {
         const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
         const hasFlagship = hasAccountFlagshipCapability(account) || groupSummaries.some(s => s.key === 'argon') || supported.some(isFlagshipModel);
-        const flagshipCode = supported.map(extractGemini4Codename).find(Boolean) || (hasFlagship ? (tier === 'pro' ? 'carbon' : 'neon') : null);
-        const flagshipLabel = flagshipCode ? flagshipCode.charAt(0).toUpperCase() + flagshipCode.slice(1) : (tier === 'pro' ? 'Carbon' : 'Neon');
+        const flagshipLabel = formatFlagshipBadgeLabel(supported, tier);
         const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
         const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
         const hasGpt = supported.some(m => m.startsWith('gpt'));
@@ -117,7 +116,8 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
             return account.protected_models.some(isFlagshipModel);
         }
         if (key === 'gemini') {
-            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && !isFlagshipModel(m));
+            const hasDedicatedArgon = groupSummaries.some(s => s.key === 'argon');
+            return account.protected_models.some(m => m.toLowerCase().startsWith('gemini') && (!hasDedicatedArgon || !isFlagshipModel(m)));
         } else {
             return account.protected_models.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
         }

@@ -3,7 +3,7 @@
  * Run: npx tsx src/utils/__tests__/argonCapability.test.ts
  */
 import { hasAccountArgonCapability, checkArgonEligibility, type QuotaData } from '../../types/account';
-import { getGroupQuotaSummaries, getModelQuotaDisplay, isSupportedDisplayModel } from '../quotaDisplay';
+import { getGroupQuotaSummaries, getModelQuotaDisplay, isSupportedDisplayModel, formatFlagshipBadgeLabel } from '../quotaDisplay';
 import { inferModelGroup } from '../../config/modelConfig';
 import { extractGemini4Codename } from '../modelCategory';
 
@@ -58,9 +58,11 @@ test('Ultra tier without dedicated argon group has Argon capability', () => {
     assertEqual(hasAccountArgonCapability(ultraAccount), true, 'Ultra hasAccountArgonCapability');
     assertEqual(checkArgonEligibility(ultraAccount.quota.quota_groups, ultraAccount.quota.models, 'ultra'), true, 'Ultra checkArgonEligibility');
     const summaries = getGroupQuotaSummaries(ultraAccount.quota.quota_groups, ultraAccount.quota.models, 'ultra');
-    const argonSummary = summaries.find(s => s.key === 'argon');
-    assertEqual(Boolean(argonSummary), true, 'Argon summary present for Ultra');
-    assertEqual(argonSummary?.weekly?.percentage, 84, 'Argon inherits weekly quota from Gemini pool');
+    assertEqual(summaries.length, 2, 'Ultra on 2-group shared pool renders only 2 quota groups');
+    assertEqual(Boolean(summaries.find(s => s.key === 'argon')), false, 'No synthetic 3rd argon card when upstream shares Gemini Models');
+    const geminiSummary = summaries.find(s => s.key === 'gemini');
+    assertEqual(geminiSummary?.weekly?.percentage, 84, 'Shared Gemini group reports 84% weekly');
+    assertEqual(Boolean(geminiSummary?.supportedModels?.includes('gemini-4-argon')), true, 'Shared Gemini group includes flagship models');
 });
 
 // 2. Pro Tier Tests: With dedicated Argon quota group
@@ -243,8 +245,8 @@ test('getGroupQuotaSummaries generates dynamic Gemini 4 Neon label for Neon mode
     assertEqual(neonSummary?.weekly?.percentage, 88, 'Weekly percentage matches Neon group');
 });
 
-// 8. Pro Tier Tests: With Carbon models sharing general Gemini pool
-test('Pro tier with Carbon models sharing Gemini pool has Carbon capability and Gemini 4 Carbon label', () => {
+// 8. Pro Tier Tests: With Carbon/Neon models sharing general Gemini pool (2 groups only)
+test('Pro tier with Carbon/Neon models sharing Gemini pool keeps capability without duplicating a 3rd quota card', () => {
     const proCarbonAccount = {
         quota: {
             last_updated: Date.now(),
@@ -253,7 +255,7 @@ test('Pro tier with Carbon models sharing Gemini pool has Carbon capability and 
                 {
                     display_name: 'Gemini Models',
                     buckets: [
-                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 1.0, reset_time: '2026-10-27T08:00:00Z' },
+                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 0.97, reset_time: '2026-10-27T08:00:00Z' },
                         { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.91, reset_time: '2026-10-31T12:00:00Z' },
                     ]
                 },
@@ -265,8 +267,10 @@ test('Pro tier with Carbon models sharing Gemini pool has Carbon capability and 
                 }
             ],
             models: [
+                { name: 'gemini-4-hydrogen-medium', percentage: 91, reset_time: '2026-10-31T12:00:00Z' },
                 { name: 'gemini-4-carbon', percentage: 91, reset_time: '2026-10-31T12:00:00Z' },
                 { name: 'gemini-4-carbon-high', percentage: 91, reset_time: '2026-10-31T12:00:00Z' },
+                { name: 'gemini-4-neon-high', percentage: 91, reset_time: '2026-10-31T12:00:00Z' },
             ]
         } as QuotaData
     };
@@ -274,10 +278,17 @@ test('Pro tier with Carbon models sharing Gemini pool has Carbon capability and 
     assertEqual(hasAccountArgonCapability(proCarbonAccount), true, 'Pro with Carbon hasAccountArgonCapability');
     assertEqual(checkArgonEligibility(proCarbonAccount.quota.quota_groups, proCarbonAccount.quota.models, 'pro'), true, 'Pro with Carbon checkArgonEligibility');
     const summaries = getGroupQuotaSummaries(proCarbonAccount.quota.quota_groups, proCarbonAccount.quota.models, 'pro');
-    const carbonSummary = summaries.find(s => s.key === 'argon');
-    assertEqual(Boolean(carbonSummary), true, 'Flagship summary present for Pro with Carbon');
-    assertEqual(carbonSummary?.dynamicLabel, 'Gemini 4 Carbon', 'Dynamic label correctly set to Gemini 4 Carbon');
-    assertEqual(carbonSummary?.weekly?.percentage, 91, 'Carbon weekly percentage inherits from Gemini pool');
+    assertEqual(summaries.length, 2, 'Shared 2-group Pro account renders only 2 quota groups');
+    assertEqual(Boolean(summaries.find(s => s.key === 'argon')), false, 'No duplicated 3rd card when no dedicated flagship group exists');
+    const geminiSummary = summaries.find(s => s.key === 'gemini');
+    assertEqual(geminiSummary?.weekly?.percentage, 91, 'Shared Gemini pool reports 91% weekly');
+    assertEqual(Boolean(geminiSummary?.supportedModels?.includes('gemini-4-carbon-high')), true, 'Gemini supportedModels includes shared Carbon');
+    assertEqual(Boolean(geminiSummary?.supportedModels?.includes('gemini-4-neon-high')), true, 'Gemini supportedModels includes shared Neon');
+    assertEqual(
+        formatFlagshipBadgeLabel(geminiSummary?.supportedModels || [], 'pro'),
+        'Neon / Carbon',
+        'Flagship badge ignores Hydrogen and shows Neon / Carbon'
+    );
 });
 
 // 9. Pro Tier Tests: With dedicated Carbon quota group
@@ -348,10 +359,15 @@ test('Stale Gemini 4 Argon 0% group does not shadow active Neon/Carbon models on
         proAccountWithZombieArgon.quota.models,
         'pro'
     );
-    const flagshipSummary = summaries.find(s => s.key === 'argon');
-    assertEqual(Boolean(flagshipSummary), true, 'Flagship summary present');
-    assertEqual(flagshipSummary?.dynamicLabel, 'Gemini 4 Neon / Carbon', 'Dynamic label reflects active models');
-    assertEqual(flagshipSummary?.weekly?.percentage, 86, 'Active Neon/Carbon uses shared Gemini pool, not zombie Argon 0%');
+    assertEqual(summaries.length, 2, 'Zombie Argon 0% group does not produce a 3rd card');
+    assertEqual(Boolean(summaries.find(s => s.key === 'argon')), false, 'No 3rd card when only stale zombie Argon group exists');
+    const geminiSummary = summaries.find(s => s.key === 'gemini');
+    assertEqual(geminiSummary?.weekly?.percentage, 86, 'Active Neon/Carbon uses shared Gemini pool, not zombie Argon 0%');
+    assertEqual(
+        formatFlagshipBadgeLabel(geminiSummary?.supportedModels || [], 'pro'),
+        'Neon / Carbon',
+        'Flagship badge reflects active Neon / Carbon models'
+    );
 
     const neonDisplay = getModelQuotaDisplay(
         'gemini-4-neon',
