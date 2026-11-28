@@ -42,6 +42,9 @@
 
 ---
 
+> [!WARNING]
+> **账号风险警告：** [Antigravity 附加条款第 6 条](https://antigravity.google/terms)禁止使用第三方软件、工具或服务访问该服务，并提示违规账号可能被封停。本项目当前会为配额刷新请求 Google 内部接口，反代请求也会发送至 Google 服务。Google 曾告知 [T3 Code](https://github.com/pingdotgg/t3code/pull/43026) 调用 Antigravity 内部 API 可能导致账号被标记；T3 已于 **2026 年 11 月 25 日**删除配额探测。[Google 协作者在官方仓库的回复](https://github.com/google-antigravity/antigravity-cli/issues/1493)还指出，个人 Google 登录下由第三方 harness/编排器驱动，即使不读取令牌也违反第 6 条。用户曾在本项目报告 403/TOS_VIOLATION 封号：[issue #2228](https://github.com/lbjlaq/Antigravity-Manager/issues/2228)、[#3724](https://github.com/lbjlaq/Antigravity-Manager/issues/3724)、[#3990](https://github.com/lbjlaq/Antigravity-Manager/issues/3990)、[#1883](https://github.com/lbjlaq/Antigravity-Manager/issues/1883)。**使用配额刷新或反代可能导致 Google 账号受限或封停。**合规替代方式是使用 [Gemini API key](https://ai.google.dev/gemini-api/docs/api-key) 或 [Google Cloud](https://cloud.google.com/vertex-ai/generative-ai/docs/start/quickstarts/quickstart-multimodal)。
+
 **Antigravity Tools** 是一个专为开发者和 AI 爱好者设计的全功能桌面应用。它将多账号管理、协议转换和智能请求调度完美结合，为您提供一个稳定、极速且成本低廉的 **本地 AI 中转站**。
 
 通过本应用，您可以将常见的 Web 端 Session (Google/Anthropic) 转化为标准化的 API 接口，消除不同厂商间的协议鸿沟。

@@ -269,9 +269,9 @@ impl AppConfig {
         Self {
             language: crate::modules::i18n::default_language(),
             theme: "system".to_string(),
-            auto_refresh: true,
+            auto_refresh: false,
             refresh_interval: 10,
-            startup_refresh: true,
+            startup_refresh: false,
             refresh_concurrency: 5,
             refresh_slide_delay_secs: 0.2,
             auto_sync: false,
@@ -339,6 +339,8 @@ mod tests {
     #[test]
     fn startup_refresh_defaults_are_backward_compatible() {
         let config = AppConfig::new();
+        assert!(!config.startup_refresh);
+
         let mut value = serde_json::to_value(&config).unwrap();
         value.as_object_mut().unwrap().remove("startup_refresh");
         value.as_object_mut().unwrap().remove("refresh_concurrency");
@@ -353,6 +355,15 @@ mod tests {
         let restored: AppConfig = serde_json::from_str(&saved).unwrap();
         assert!(!restored.startup_refresh);
         assert_eq!(restored.refresh_concurrency, 10);
+    }
+
+    #[test]
+    fn new_install_background_quota_requests_are_disabled_by_default() {
+        let config = AppConfig::new();
+        assert!(!config.auto_refresh);
+        assert!(!config.startup_refresh);
+        assert!(!config.scheduled_warmup.enabled);
+        assert!(!config.auto_sync);
     }
 
     #[test]

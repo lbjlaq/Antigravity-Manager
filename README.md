@@ -42,6 +42,9 @@
 
 ---
 
+> [!WARNING]
+> **Account risk notice:** The [Antigravity Additional Terms, Section 6](https://antigravity.google/terms) prohibit using third-party software, tools, or services to access the service and warn that accounts may be suspended. This project currently requests Google internal endpoints for quota refresh and sends relay traffic to Google services. Google has told [T3 Code](https://github.com/pingdotgg/t3code/pull/43026) that calling Antigravity internal APIs can flag accounts; T3 removed its quota probes on **November 25, 2026**. A [Google collaborator's response](https://github.com/google-antigravity/antigravity-cli/issues/1493) further says that third-party harnesses/orchestrators using personal Google sign-in violate Section 6 even without token access. Users have reported 403/TOS_VIOLATION suspensions in [#2228](https://github.com/lbjlaq/Antigravity-Manager/issues/2228), [#3724](https://github.com/lbjlaq/Antigravity-Manager/issues/3724), [#3990](https://github.com/lbjlaq/Antigravity-Manager/issues/3990), and [#1883](https://github.com/lbjlaq/Antigravity-Manager/issues/1883). **Using quota refresh or the relay may put your Google account at risk.** For compliant access, use a [Gemini API key](https://ai.google.dev/gemini-api/docs/api-key) or [Google Cloud](https://cloud.google.com/vertex-ai/generative-ai/docs/start/quickstarts/quickstart-multimodal).
+
 **Antigravity Tools** is an all-in-one desktop application designed for developers and AI enthusiasts. It perfectly combines multi-account management, protocol conversion, and smart request scheduling to provide you with a stable, high-speed, and low-cost **Local AI Relay Station**.
 
 By leveraging this app, you can transform common Web Sessions (Google/Anthropic) into standardized API interfaces, completely eliminating the protocol gap between different providers.
