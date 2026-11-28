@@ -2532,12 +2532,22 @@ pub async fn handle_chat_completions(
         client_budget
     };
 
-    let effort_hint: Option<String> = openai_req
+    let raw_effort: Option<String> = openai_req
         .reasoning_effort
         .as_ref()
         .map(|s| s.to_string())
         .or_else(|| openai_req.reasoning.as_ref().and_then(|r| r.effort.clone()))
         .or_else(|| openai_req.thinking.as_ref().and_then(|t| t.effort.clone()));
+    let raw_effort_signal = raw_effort.clone().or_else(|| {
+        if client_switch.is_disabled() {
+            Some("none".to_string())
+        } else {
+            None
+        }
+    });
+    let thinking_intent =
+        crate::proxy::pipeline::resolve_thinking_intent(client_switch, raw_effort.as_deref());
+    let effort_hint = thinking_intent.routing_effort.clone();
     let canonical_model = openai_req.model.clone();
     // [ROUTE SINGLE ENTRY] 路由只由 router 决定；variant 仅根据已路由的物理模型解析 spec。
     openai_req.model = crate::proxy::common::model_mapping::finalize_gated_model_route(
@@ -2570,7 +2580,8 @@ pub async fn handle_chat_completions(
             openai_req.thinking = Some(crate::proxy::mappers::openai::models::ThinkingConfig {
                 thinking_type: Some("enabled".to_string()),
                 budget_tokens: spec.budget_tokens_option(None),
-                effort: effort_hint.clone(),
+                // 保留客户端原始 effort/关闭信号，确保下游 configure_inbound_thinking 只做单次映射
+                effort: raw_effort_signal.clone(),
             });
         }
         // 尊重客户端显式 max_tokens，只做官方硬顶收敛（不再无条件抬到官方上限）
@@ -2607,14 +2618,10 @@ pub async fn handle_chat_completions(
     let mut degraded_gemini_body: Option<Value> = None;
 
     // 2. 模型路由解析 (移到循环外以支持在所有路径返回 X-Mapped-Model)
-    // [2026-10-29] 四协议统一抽象：显式关闭思考（thinking.type=disabled / budget=0 / effort=none）
-    // 归一为路由意图 "none"，由路由层按官方档位数组降为最低档。
-    let route_effort =
-        crate::proxy::pipeline::routing_effort(client_switch.is_disabled(), effort_hint.as_deref());
     let mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
         &openai_req.model,
         gated.from_custom_route,
-        route_effort,
+        effort_hint.as_deref(),
     );
     let anchor = SessionManager::openai_content_anchor(&openai_req);
     let session_scope = crate::proxy::thinking_store::SessionScope::resolve(
@@ -4704,27 +4711,26 @@ pub async fn handle_completions(
                 .and_then(|t| t.effort.as_deref())
         });
 
-    let route_effort = crate::proxy::pipeline::routing_effort(
-        crate::proxy::pipeline::extract_client_thinking_switch(
-            openai_req
-                .thinking
-                .as_ref()
-                .and_then(|t| t.thinking_type.as_deref()),
-            openai_req
-                .thinking
-                .as_ref()
-                .and_then(|t| t.budget_tokens.map(|b| b as u64))
-                .or_else(|| {
-                    openai_req
-                        .reasoning
-                        .as_ref()
-                        .and_then(|r| r.max_tokens.map(|b| b as u64))
-                }),
-            effort_hint,
-        )
-        .is_disabled(),
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        openai_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.thinking_type.as_deref()),
+        openai_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.budget_tokens.map(|b| b as u64))
+            .or_else(|| {
+                openai_req
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.max_tokens.map(|b| b as u64))
+            }),
         effort_hint,
     );
+    let thinking_intent =
+        crate::proxy::pipeline::resolve_thinking_intent(client_switch, effort_hint);
+    let route_effort = thinking_intent.routing_effort.as_deref();
     let original_requested_model = openai_req.model.clone();
     let mapped_model = if let Some(ref gated) = gated_model {
         openai_req.model = gated.model.clone();

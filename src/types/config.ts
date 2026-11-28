@@ -106,6 +106,37 @@ export type ThinkingBudgetMode = 'default' | 'custom' | 'auto' | 'passthrough' |
 /** Thinking Effort 等级 (仅 adaptive 模式) */
 export type ThinkingEffort = 'low' | 'medium' | 'high';
 
+/** 客户端思考模式映射源键 */
+export type ThinkingModeSourceKey =
+    | 'default'
+    | 'off'
+    | 'minimal'
+    | 'low'
+    | 'medium'
+    | 'high'
+    | 'xhigh'
+    | 'max';
+
+/** 网关侧思考模式映射目标档位 */
+export type ThinkingModeTargetValue =
+    | 'auto'
+    | 'off'
+    | 'minimal'
+    | 'low'
+    | 'medium'
+    | 'high'
+    | 'xhigh';
+
+/** 跨协议思考模式映射配置 */
+export interface ThinkingModeMappingConfig {
+    /** 是否启用跨协议思考模式映射 */
+    enabled: boolean;
+    /** 是否允许显式映射强度覆盖具名档位后缀模型（如 -high -> -xhigh） */
+    override_suffixed_models: boolean;
+    /** 客户端源模式 -> 网关目标档位映射表 */
+    rules: Record<string, ThinkingModeTargetValue | string>;
+}
+
 /**
  * Thinking Budget 配置。
  *
@@ -116,6 +147,9 @@ export type ThinkingEffort = 'low' | 'medium' | 'high';
 export interface ThinkingBudgetConfig {
     /** 控制权大选择（仅兼容旧配置；运行期强制 gateway） */
     control_source?: ThinkingControlSource;
+
+    /** 跨协议思考模式映射配置 */
+    mode_mapping?: ThinkingModeMappingConfig;
 
     // --- Gemini Flash 系列（仅官方未收录模型生效；-1 = 自适应）---
     flash_mode?: ThinkingBudgetMode;

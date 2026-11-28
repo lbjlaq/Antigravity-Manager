@@ -443,23 +443,66 @@ pub struct DynamicTierRouter;
 
 impl DynamicTierRouter {
     pub fn resolve(model: &str, client_effort: Option<&str>) -> Option<String> {
+        Self::resolve_with_override(model, client_effort, false)
+    }
+
+    pub fn resolve_with_override(
+        model: &str,
+        client_effort: Option<&str>,
+        override_suffixed: bool,
+    ) -> Option<String> {
         let clean = model.trim().to_lowercase();
 
-        // 1. 若当前模型名本身已经带有档位后缀（如 -xhigh, -high, -low, -tiered 等），说明已经是指向具名变体，不在此解析
-        if clean.ends_with("-xhigh")
+        // 1. 若当前模型名本身已经带有档位后缀（如 -xhigh, -high, -low, -tiered 等）：
+        // 默认不在此改写（保持具名变体契约）；仅当启用了 `override_suffixed` 且客户端/映射给出显式非 default 思考强度，
+        // 且剥离后的基准模型确实拥有多档位可选（>= 2）时，才允许剥离重路由。
+        let has_overridable_tier_suffix = clean.ends_with("-tiered-xhigh")
+            || clean.ends_with("-tiered-high")
+            || clean.ends_with("-tiered-medium")
+            || clean.ends_with("-tiered-low")
+            || clean.ends_with("-extra-low")
+            || clean.ends_with("-minimal")
+            || clean.ends_with("-xhigh")
             || clean.ends_with("-high")
             || clean.ends_with("-medium")
             || clean.ends_with("-low")
-            || clean.ends_with("-extra-low")
-            || clean.ends_with("-tiered")
-            || clean.ends_with("-lite")
-            || clean.ends_with("-agent")
-        {
+            || clean.ends_with("-tiered");
+
+        let has_locked_non_tier_suffix = clean.ends_with("-lite") || clean.ends_with("-agent");
+        if has_locked_non_tier_suffix {
             return None;
         }
 
         // 规范化 base 名称（例如对于 claude-sonnet-5.5 规范化为 claude-sonnet-5-5）
-        let base = if clean.contains("claude") {
+        let base = if has_overridable_tier_suffix {
+            if !override_suffixed {
+                return None;
+            }
+            let has_explicit_effort = client_effort
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty() && s != "default")
+                .is_some();
+            if !has_explicit_effort {
+                return None;
+            }
+            let stripped = crate::proxy::common::model_mapping::strip_tier_suffix(&clean);
+            if stripped == clean {
+                return None;
+            }
+            let norm_stripped = if stripped.contains("claude") {
+                crate::proxy::common::model_mapping::canonicalize_claude_client_model_id(&stripped)
+            } else if stripped == "gemini-3-flash" {
+                "gemini-3.8-flash".to_string()
+            } else {
+                stripped
+            };
+            // 安全护栏：仅当剥离后的基准确实拥有多个可选思考档位时才覆盖，
+            // 防止将 `gpt-oss-120b-medium` 这类固定单名模型误剥离。
+            if available_efforts_for(&norm_stripped).len() < 2 {
+                return None;
+            }
+            norm_stripped
+        } else if clean.contains("claude") {
             crate::proxy::common::model_mapping::canonicalize_claude_client_model_id(&clean)
         } else if clean == "gemini-3-flash" {
             "gemini-3.8-flash".to_string()
@@ -479,7 +522,7 @@ impl DynamicTierRouter {
             return None;
         }
 
-        // 2.5 显式关闭思考：仅裸模型能走到这里（具名档位已在步骤 1 返回）。
+        // 2.5 显式关闭思考：仅裸模型（或显式开启覆盖时的多档位模型）能走到这里。
         // 官方不允许真正关闭思考，因此降为**官方档位数组中的最低档**（tiered 不参与）。
         if let Some(raw) = client_effort.map(|s| s.trim().to_lowercase()) {
             if matches!(raw.as_str(), "none" | "off" | "disabled" | "false" | "0") {
@@ -507,7 +550,18 @@ impl DynamicTierRouter {
                 {
                     return Some(format!("{}-{}", base, matched));
                 }
-                // ② 语义等价映射后再命中：支持数字档（1/2/3/100）与别名；
+                // ② minimal / extra-low 优先匹配 -extra-low，无则回落到 -low
+                if matches!(raw.as_str(), "minimal" | "min" | "extra-low") {
+                    for target in ["extra-low", "low"] {
+                        if let Some(matched) = available_tiers
+                            .iter()
+                            .find(|t| t.eq_ignore_ascii_case(target))
+                        {
+                            return Some(format!("{}-{}", base, matched));
+                        }
+                    }
+                }
+                // ③ 语义等价映射后再命中：支持数字档（1/2/3/100）与别名；
                 // 若结果为 XHIGH，优先匹配 -xhigh 变体，无 -xhigh 变体再回落到 -high
                 if let Some(level) = normalize_client_thinking_level(&raw) {
                     let candidates: &[&str] = match level {
@@ -526,7 +580,7 @@ impl DynamicTierRouter {
                         }
                     }
                 }
-                // ③ 不属于官方实际后缀档位 → 不猜、不就近，直接走默认档位
+                // ④ 不属于官方实际后缀档位 → 不猜、不就近，直接走默认档位
             }
         }
 
@@ -565,6 +619,15 @@ pub fn available_efforts_for(model_id: &str) -> Vec<String> {
 /// 通用裸模型档位路由器 (Unified Bare Model Tier Router)
 pub fn resolve_bare_tiered_model_route(model: &str, client_effort: Option<&str>) -> Option<String> {
     DynamicTierRouter::resolve(model, client_effort)
+}
+
+/// 支持「显式思考强度覆盖具名档位后缀」的统一档位路由器
+pub fn resolve_bare_tiered_model_route_with_override(
+    model: &str,
+    client_effort: Option<&str>,
+    override_suffixed: bool,
+) -> Option<String> {
+    DynamicTierRouter::resolve_with_override(model, client_effort, override_suffixed)
 }
 
 /// 将 3.x Flash 裸模型（如 gemini-3.8-flash, gemini-3.7-flash 等）依据客户端思考档位解析为具名模型（兼容封装）
@@ -905,5 +968,98 @@ mod tests {
         assert!(is_gemini_v4_or_above("gemini-pro-orchestrator-g1-pro"));
         assert!(!is_gemini_under_v3("gemini-pro-orchestrator-g1-pro"));
         assert!(!is_bare_gemini_pro("gemini-pro-orchestrator-g1-pro"));
+    }
+
+    #[test]
+    fn test_dynamic_tier_router_override_suffixed_and_minimal() {
+        // 默认不覆盖具名后缀
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-4-hydrogen-high",
+                Some("xhigh"),
+                false
+            ),
+            None
+        );
+
+        // 开启覆盖且有显式有效 effort：多档位族允许重路由到目标档位
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-4-hydrogen-high",
+                Some("xhigh"),
+                true
+            ),
+            Some("gemini-4-hydrogen-xhigh".to_string())
+        );
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-4-hydrogen-high",
+                Some("low"),
+                true
+            ),
+            Some("gemini-4-hydrogen-low".to_string())
+        );
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-3.8-flash-tiered",
+                Some("low"),
+                true
+            ),
+            Some("gemini-3.8-flash-low".to_string())
+        );
+
+        // 开启覆盖但未传显式 effort（None 或 default）：保持原具名模型不动
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override("gemini-4-hydrogen-high", None, true),
+            None
+        );
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-4-hydrogen-high",
+                Some("default"),
+                true
+            ),
+            None
+        );
+
+        // 安全护栏：单档位 / 固定后缀模型绝不允许被剥离覆盖
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gpt-oss-120b-medium",
+                Some("high"),
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "claude-opus-4-6-thinking",
+                Some("high"),
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-4-hydrogen-sonar",
+                Some("low"),
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_bare_tiered_model_route_with_override(
+                "gemini-3.8-flash-agent",
+                Some("low"),
+                true
+            ),
+            None
+        );
+
+        // minimal 等价匹配 extra-low -> low
+        assert_eq!(
+            resolve_bare_tiered_model_route("gemini-3.8-flash", Some("minimal")),
+            Some("gemini-3.8-flash-low".to_string())
+        );
     }
 }

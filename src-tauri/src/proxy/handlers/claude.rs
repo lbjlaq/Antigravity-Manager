@@ -986,15 +986,28 @@ pub async fn handle_messages(
             .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.as_deref())),
     );
     let client_disabled = client_switch.is_disabled();
+    let raw_effort = request
+        .output_config
+        .as_ref()
+        .and_then(|config| config.effort.clone())
+        .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.clone()))
+        .or_else(|| thinking_hint.level.clone());
+    // 保留客户端原始信号（含显式关闭），避免下文标准化 thinking.type_="enabled" 时丢失开关意图
+    let raw_effort_signal = raw_effort.clone().or_else(|| {
+        if client_disabled {
+            Some("none".to_string())
+        } else {
+            None
+        }
+    });
 
     // [USER RULE] 对于 Gemini >= 3 或显式指定档位的模型，进站阶段彻底忽略客户端思考与预算参数，绝不被客户端 1024 或 low 污染
     if is_v3_or_above || is_explicit_tier_model {
         // 无论客户端未提供 thinking，或者传了 disabled，只要是 3+ 或显式模型，强制矫正为 enabled，清理客户端 budget_tokens
-        let effort_in_thinking = request.thinking.as_ref().and_then(|t| t.effort.clone());
         request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
             type_: "enabled".to_string(),
             budget_tokens: None,
-            effort: effort_in_thinking,
+            effort: raw_effort_signal.clone(),
             display: None,
         });
     } else {
@@ -1013,18 +1026,11 @@ pub async fn handle_messages(
             .map(|v| v as u32)
     };
 
-    // 当客户端显式关闭思考或预算为 0 时（如 Claude Desktop 自动模式安全门禁），
-    // 统一归一为 "none"：具体降到哪个档位由路由层根据官方档位数组推导（不再硬编码 low）。
-    // [Pipeline First] 四协议共用同一个 `routing_effort` 抽象，避免各自手写归一规则。
-    let raw_effort = request
-        .output_config
-        .as_ref()
-        .and_then(|config| config.effort.clone())
-        .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.clone()))
-        .or_else(|| thinking_hint.level.clone());
-    let effort_hint =
-        crate::proxy::pipeline::routing_effort(client_disabled, raw_effort.as_deref())
-            .map(str::to_string);
+    // 通过「思考模式映射」单次求值得到路由用档位意图；请求体仍保留 raw_effort_signal，
+    // 确保下游 Pipeline `configure_inbound_thinking` 仅执行一次映射（杜绝二次叠加）。
+    let thinking_intent =
+        crate::proxy::pipeline::resolve_thinking_intent(client_switch, raw_effort.as_deref());
+    let effort_hint = thinking_intent.routing_effort.clone();
     let canonical_model = request.model.clone();
     // [ROUTE SINGLE ENTRY] 路由只由 router 决定；variant 仅根据已路由的物理模型
     // 解析 spec（budget / max / supports_thinking），不再做第二套档位选择。
@@ -1034,10 +1040,10 @@ pub async fn handle_messages(
         effort_hint.as_deref(),
     );
     if let Some(spec) = apply_routed_spec(&mut request, effective_budget_hint) {
-        // 网关权威控制模式（唯一模式）：保留客户端 effort 等级提示供下游 Pipeline 精准感知
+        // 网关权威控制模式（唯一模式）：保留客户端原始 effort/关闭信号供下游 Pipeline 单次映射解析
         if let Some(ref mut t) = request.thinking {
-            if t.effort.is_none() && effort_hint.is_some() {
-                t.effort = effort_hint.clone();
+            if t.effort.is_none() && raw_effort_signal.is_some() {
+                t.effort = raw_effort_signal.clone();
             }
         }
         tracing::info!(

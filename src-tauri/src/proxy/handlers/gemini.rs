@@ -199,8 +199,20 @@ pub async fn handle_generate(
         tc.get("includeThoughts").and_then(|v| v.as_bool()) == Some(false)
             || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
     });
-    let route_effort =
-        crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref());
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        if explicit_disable {
+            Some("disabled")
+        } else {
+            None
+        },
+        thinking_cfg
+            .and_then(|tc| tc.get("thinkingBudget"))
+            .and_then(|v| v.as_u64()),
+        client_effort.as_deref(),
+    );
+    let thinking_intent =
+        crate::proxy::pipeline::resolve_thinking_intent(client_switch, client_effort.as_deref());
+    let route_effort = thinking_intent.routing_effort.as_deref();
 
     let initial_mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
         &gated.model,
@@ -1561,11 +1573,24 @@ pub async fn execute_count_tokens(
         tc.get("includeThoughts").and_then(|v| v.as_bool()) == Some(false)
             || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
     });
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        if explicit_disable {
+            Some("disabled")
+        } else {
+            None
+        },
+        thinking_cfg
+            .and_then(|tc| tc.get("thinkingBudget"))
+            .and_then(|v| v.as_u64()),
+        client_effort.as_deref(),
+    );
+    let thinking_intent =
+        crate::proxy::pipeline::resolve_thinking_intent(client_switch, client_effort.as_deref());
 
     let mapped_model = crate::proxy::common::model_mapping::finalize_gated_model_route(
         &gated.model,
         gated.from_custom_route,
-        crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref()),
+        thinking_intent.routing_effort.as_deref(),
     );
 
     // 2. 解析请求配置并获取 Token
