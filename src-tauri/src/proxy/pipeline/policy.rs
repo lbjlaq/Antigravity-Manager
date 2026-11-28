@@ -152,6 +152,7 @@ impl UpstreamClassification {
         let lower = body.to_lowercase();
         let is_hard_quota = lower.contains("exceeded your current quota")
             || lower.contains("insufficient_quota")
+            || lower.contains("credits")
             || lower.contains("weekly quota")
             || lower.contains("daily quota")
             || lower.contains("per day")
@@ -195,6 +196,10 @@ impl UpstreamClassification {
                 || reason_lower.contains("weekly_limit")
                 || reason_lower.contains("individual_quota")
                 || reason_lower.contains("quota_exceeded")
+                || reason_lower.contains("insufficient_g1_credits")
+                || reason_lower.contains("insufficient_credits")
+                || reason_lower.contains("credits_balance")
+                || reason_lower.contains("insufficient_quota")
             {
                 has_quota_failure = true;
             }
@@ -584,6 +589,13 @@ mod tests {
         assert!(UpstreamClassification::is_request_level_429_without_retry_delay(429, bare, None));
         let hard = "You have exceeded your current quota.";
         assert!(!UpstreamClassification::is_request_level_429_without_retry_delay(429, hard, None));
+
+        let g1_credits = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INSUFFICIENT_G1_CREDITS_BALANCE"}]}}"#;
+        assert!(
+            !UpstreamClassification::is_request_level_429_without_retry_delay(
+                429, g1_credits, None
+            )
+        );
     }
 
     #[test]

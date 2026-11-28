@@ -63,10 +63,13 @@ pub(crate) fn is_quota_depleted_signal(body: &str) -> bool {
         return true;
     }
 
-    // 2. 结构化确认（四类桶通用）
+    // 2. 结构化确认（四类桶与 G1 credits 耗尽通用）
     if lower.contains("\"quota_exhausted\"")
         || lower.contains("quotaresetdelay")
         || lower.contains("quotaresettimestamp")
+        || lower.contains("insufficient_g1_credits")
+        || lower.contains("insufficient_credits")
+        || lower.contains("credits_balance")
     {
         return true;
     }
@@ -815,8 +818,11 @@ impl RateLimitTracker {
                             }
                         }
                         if let Some(reason_str) = item.get("reason").and_then(|v| v.as_str()) {
-                            match reason_str {
-                                "QUOTA_EXHAUSTED" => return RateLimitReason::QuotaExhausted,
+                            match reason_str.to_ascii_uppercase().as_str() {
+                                "QUOTA_EXHAUSTED"
+                                | "INSUFFICIENT_G1_CREDITS_BALANCE"
+                                | "INSUFFICIENT_CREDITS"
+                                | "INSUFFICIENT_QUOTA" => return RateLimitReason::QuotaExhausted,
                                 "RATE_LIMIT_EXCEEDED" => return RateLimitReason::RateLimitExceeded,
                                 "MODEL_CAPACITY_EXHAUSTED" => {
                                     return RateLimitReason::ModelCapacityExhausted
@@ -1437,6 +1443,41 @@ mod tests {
             is_quota_depleted_signal("Resource has been exhausted (e.g. check quota)."),
             "check quota is the 1.5% bucket trigger and must stay"
         );
+    }
+
+    #[test]
+    fn test_insufficient_g1_credits_balance_is_hard_quota_exhausted() {
+        let body = r#"{
+            "error": {
+                "code": 429,
+                "message": "Resource has been exhausted.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "INSUFFICIENT_G1_CREDITS_BALANCE"
+                    }
+                ]
+            }
+        }"#;
+        assert!(
+            is_quota_depleted_signal(body),
+            "INSUFFICIENT_G1_CREDITS_BALANCE must be detected even without 'check quota'"
+        );
+
+        let tracker = RateLimitTracker::new();
+        let info = tracker
+            .parse_from_error(
+                "acc1",
+                429,
+                None,
+                body,
+                Some("gemini-3.8-flash".to_string()),
+                &[60, 300, 1800, 7200],
+            )
+            .expect("G1 credits exhaustion must produce lockout info");
+        assert_eq!(info.reason, RateLimitReason::QuotaExhausted);
+        assert_eq!(info.retry_after_sec, 60);
     }
 
     #[test]
