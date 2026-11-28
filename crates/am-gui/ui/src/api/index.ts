@@ -368,7 +368,11 @@ export const api = {
   },
 
   // 11. 手工根据 Refresh Token 添加账号
-  async addAccountByToken(refreshToken: string, tags: string[] = []): Promise<BackendAccount> {
+  async addAccountByToken(
+    refreshToken: string,
+    tags: string[] = [],
+    oauthClientKey?: string | null
+  ): Promise<BackendAccount> {
     if (!isTauri()) {
       console.warn('[Web Mock] addAccountByToken in browser mode');
       return {
@@ -380,13 +384,69 @@ export const api = {
         banned: false,
       };
     }
-    return invokeTauri<BackendAccount>('add_account_by_token', { refreshToken, tags });
+    return invokeTauri<BackendAccount>('add_account_by_token', {
+      refreshToken,
+      tags,
+      oauthClientKey: oauthClientKey ?? null,
+    });
   },
 
-  // 12. 启动 Google OAuth 官方授权登录 (随机端口回调 + 自动写库)
-  async startOAuthLogin(): Promise<BackendAccount> {
+  // 12. Google OAuth 授权登录 (预生成链接 / 打开浏览器 / 等待完成 / 取消 / 手动提交码)
+  async prepareOAuthUrl(oauthClientKey?: string | null): Promise<string> {
     if (!isTauri()) throw new Error('OAuth login requires native Tauri runtime');
-    return invokeTauri<BackendAccount>('start_oauth_login');
+    return invokeTauri<string>('prepare_oauth_url', {
+      oauthClientKey: oauthClientKey ?? null,
+    });
+  },
+
+  async startOAuthLogin(oauthClientKey?: string | null): Promise<BackendAccount> {
+    if (!isTauri()) throw new Error('OAuth login requires native Tauri runtime');
+    return invokeTauri<BackendAccount>('start_oauth_login', {
+      oauthClientKey: oauthClientKey ?? null,
+    });
+  },
+
+  async completeOAuthLogin(): Promise<BackendAccount> {
+    if (!isTauri()) throw new Error('OAuth login requires native Tauri runtime');
+    return invokeTauri<BackendAccount>('complete_oauth_login');
+  },
+
+  async cancelOAuthLogin(): Promise<void> {
+    if (!isTauri()) return;
+    return invokeTauri<void>('cancel_oauth_login');
+  },
+
+  async submitOAuthCode(code: string, state?: string | null): Promise<BackendAccount> {
+    if (!isTauri()) throw new Error('OAuth login requires native Tauri runtime');
+    return invokeTauri<BackendAccount>('submit_oauth_code', {
+      code,
+      state: state ?? null,
+    });
+  },
+
+  // 12.1 从本地 Antigravity/IDE/CLI 或自定义 state.vscdb 导入账号
+  async importFromLocalDb(): Promise<BackendAccount[]> {
+    if (!isTauri()) throw new Error('Storage import only works in desktop app.');
+    return invokeTauri<BackendAccount[]>('import_from_local_db');
+  },
+
+  async importFromCustomDb(dbPath: string): Promise<BackendAccount> {
+    if (!isTauri()) throw new Error('Storage import only works in desktop app.');
+    return invokeTauri<BackendAccount>('import_from_custom_db', { dbPath });
+  },
+
+  async pickVscdbFile(): Promise<string | null> {
+    if (!isTauri()) return null;
+    const selected = await invokeTauri<string | string[] | null>('plugin:dialog|open', {
+      options: {
+        multiple: false,
+        filters: [
+          { name: 'VSCode DB', extensions: ['vscdb'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      },
+    });
+    return typeof selected === 'string' ? selected : null;
   },
 
   // 13. 重新生成并隔离设备指纹

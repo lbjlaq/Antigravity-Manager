@@ -40,6 +40,7 @@ import {
   QuotaWindowBadge,
   quotaPctTextClass,
 } from '../components/common/QuotaMatrixBar';
+import { AddAccountDialog } from '../components/accounts/AddAccountDialog';
 
 export type SortMode = 'health_default' | 'name_asc' | 'tier_desc' | 'custom';
 export type ViewMode = 'table' | 'card';
@@ -281,22 +282,19 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     currentOverId: string | null;
   } | null>(null);
 
-  // 弹窗状态 (指纹、标签管理、JSON导入导出、OAuth登录、异常详情/申诉、删除确认)
+  // 弹窗状态 (指纹、标签管理、JSON导入导出、添加账号/重新授权、异常详情/申诉、删除确认)
   const [activeModal, setActiveModal] = useState<{
     type: 'fingerprint' | 'tags' | 'export' | 'import' | 'oauth' | 'error' | 'deleteConfirm';
     account?: AccountItem;
   } | null>(null);
   const [tempTagInput, setTempTagInput] = useState('');
   const [importJsonInput, setImportJsonInput] = useState('');
-  const [isOAuthWaiting, setIsOAuthWaiting] = useState(false);
-  const [oauthError, setOauthError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!activeModal) return;
+    if (!activeModal || activeModal.type === 'oauth') return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setActiveModal(null);
-        setIsOAuthWaiting(false);
       }
     };
     document.addEventListener('keydown', onKeyDown);
@@ -1069,21 +1067,6 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       );
     }
     setActiveModal(null);
-  };
-
-  // 启动 Google OAuth 授权登录
-  const handleStartOAuthLogin = async () => {
-    setIsOAuthWaiting(true);
-    setOauthError(null);
-    try {
-      await api.startOAuthLogin();
-      setIsOAuthWaiting(false);
-      setActiveModal(null);
-      await loadAccountsData();
-    } catch (e: any) {
-      setIsOAuthWaiting(false);
-      setOauthError(typeof e === 'string' ? e : e.message || 'OAuth authorization failed');
-    }
   };
 
   // 导入备份包
@@ -2220,13 +2203,20 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
         </div>
       )}
 
-      {/* 模态浮层：设备指纹 / 标签管理 / 导出备份 / 导入备份 / OAuth 登录 */}
-      {activeModal && (
+      <AddAccountDialog
+        isOpen={activeModal?.type === 'oauth'}
+        onClose={() => setActiveModal(null)}
+        onSuccess={loadAccountsData}
+        lang={lang}
+        reauthEmail={activeModal?.type === 'oauth' ? activeModal.account?.email : null}
+      />
+
+      {/* 模态浮层：设备指纹 / 标签管理 / 导出备份 / 导入备份 / 异常诊断 / 删除确认 */}
+      {activeModal && activeModal.type !== 'oauth' && (
         <div
           className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in-0 duration-150"
           onClick={() => {
             setActiveModal(null);
-            setIsOAuthWaiting(false);
           }}
         >
           <div
@@ -2236,7 +2226,6 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             <button
               onClick={() => {
                 setActiveModal(null);
-                setIsOAuthWaiting(false);
               }}
               className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             >
@@ -2400,63 +2389,6 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
                     {tUi(lang, 'acc_import_start')}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* 5. 官方 OAuth 授权登录模态 (支持新授权与特定账号重新授权) */}
-            {activeModal.type === 'oauth' && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-                    {activeModal.account ? <RefreshCw className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-gray-900 dark:text-zinc-100">
-                      {activeModal.account
-                        ? tUi(lang, 'oauth_reauth_title', { email: activeModal.account.email })
-                        : tUi(lang, 'oauth_login_title')}
-                    </h3>
-                    <p className="text-xs text-gray-400">
-                      {activeModal.account
-                        ? tUi(lang, 'oauth_reauth_desc')
-                        : tUi(lang, 'oauth_login_desc')}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-xl bg-gray-50 dark:bg-zinc-900/60 border border-gray-200/60 dark:border-zinc-800 text-xs space-y-2 text-gray-600 dark:text-zinc-300">
-                  <p>
-                    {tUi(lang, 'oauth_browser_guide')}
-                  </p>
-                  {isOAuthWaiting && (
-                    <div className="p-2.5 rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200/50 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2 animate-pulse">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>{tUi(lang, 'acc_oauth_waiting')}</span>
-                    </div>
-                  )}
-                  {oauthError && (
-                    <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200/50 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 font-medium">
-                      {oauthError}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    disabled={isOAuthWaiting}
-                    onClick={handleStartOAuthLogin}
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>
-                      {isOAuthWaiting
-                        ? tUi(lang, 'oauth_btn_waiting')
-                        : activeModal.account
-                        ? tUi(lang, 'oauth_btn_reauth')
-                        : tUi(lang, 'oauth_btn_auth')}
-                    </span>
                   </button>
                 </div>
               </div>
