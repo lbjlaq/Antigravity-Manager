@@ -1520,4 +1520,170 @@ mod tests {
 
         assert!(OfficialModelCatalog::try_health_check());
     }
+
+    #[test]
+    fn sync_live_catalog_and_remove_live_account_do_not_deadlock_on_rwlock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        struct StateRestore {
+            prev_env: Option<String>,
+            prev_live: Option<LiveCatalogState>,
+            prev_bg: Option<String>,
+            prev_catalog: HashMap<String, OfficialModelInfo>,
+            temp_dir: std::path::PathBuf,
+        }
+
+        impl Drop for StateRestore {
+            fn drop(&mut self) {
+                if let Ok(mut live) = OfficialModelCatalog::live_recommended_store().write() {
+                    *live = self.prev_live.take();
+                }
+                if let Ok(mut bg) = RESOLVED_BACKGROUND_MODEL.write() {
+                    *bg = self.prev_bg.take();
+                }
+                if let Ok(mut catalog) = DYNAMIC_CATALOG.write() {
+                    *catalog = std::mem::take(&mut self.prev_catalog);
+                }
+                if let Some(ref prev) = self.prev_env {
+                    std::env::set_var("ABV_DATA_DIR", prev);
+                } else {
+                    std::env::remove_var("ABV_DATA_DIR");
+                }
+                let _ = std::fs::remove_dir_all(&self.temp_dir);
+            }
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "abv_sync_live_catalog_deadlock_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let _restore = StateRestore {
+            prev_env: std::env::var("ABV_DATA_DIR").ok(),
+            prev_live: OfficialModelCatalog::live_recommended_store()
+                .read()
+                .unwrap()
+                .clone(),
+            prev_bg: RESOLVED_BACKGROUND_MODEL.read().unwrap().clone(),
+            prev_catalog: DYNAMIC_CATALOG.read().unwrap().clone(),
+            temp_dir: temp_dir.clone(),
+        };
+
+        std::env::set_var("ABV_DATA_DIR", &temp_dir);
+        *OfficialModelCatalog::live_recommended_store()
+            .write()
+            .unwrap() = None;
+        *RESOLVED_BACKGROUND_MODEL.write().unwrap() = None;
+
+        let run_with_timeout = |label: &'static str, f: Box<dyn FnOnce() + Send>| {
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                f();
+                let _ = tx.send(());
+            });
+            rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| {
+                panic!(
+                    "{label} timed out after 5s (suspected std::sync::RwLock write-read self-deadlock)"
+                )
+            });
+        };
+
+        // 1. Real entry point: sync_live_catalog holds live_recommended_store().write()
+        //    and invokes build_cache_snapshot(state). Must never re-enter live_recommended_store().read().
+        run_with_timeout(
+            "sync_live_catalog (account 1)",
+            Box::new(|| {
+                let models = make_catalog(&[
+                    ("gemini-3.5-flash-lite", None, Some(true), None),
+                    ("gemini-4-hydrogen-high", None, Some(true), None),
+                ]);
+                let supported: std::collections::HashSet<String> = [
+                    "gemini-3.5-flash-lite".to_string(),
+                    "gemini-4-hydrogen-high".to_string(),
+                ]
+                .into_iter()
+                .collect();
+                let tiered = HashMap::from([(
+                    "flashLite".to_string(),
+                    vec!["gemini-3.5-flash-lite".to_string()],
+                )]);
+                let deprecated = HashMap::from([(
+                    "legacy-lite".to_string(),
+                    "gemini-3.5-flash-lite".to_string(),
+                )]);
+                OfficialModelCatalog::sync_live_catalog(
+                    Some("acc1@example.com"),
+                    models,
+                    &supported,
+                    Some(&tiered),
+                    Some(&deprecated),
+                );
+            }),
+        );
+
+        assert!(OfficialModelCatalog::try_health_check());
+        assert!(OfficialModelCatalog::has_live_catalog());
+        assert_eq!(
+            OfficialModelCatalog::resolved_background_model().as_deref(),
+            Some("gemini-3.5-flash-lite")
+        );
+
+        let cache_path = temp_dir.join(LIVE_CACHE_FILE_NAME);
+        let persisted = OfficialModelCatalog::load_live_cache_from_path(&cache_path)
+            .expect("sync_live_catalog must persist live cache snapshot");
+        assert_eq!(
+            persisted.resolved_background_model.as_deref(),
+            Some("gemini-3.5-flash-lite")
+        );
+
+        // 2. Sync a second account so removing account 1 hits the non-empty build_cache_snapshot path
+        //    inside remove_live_account's write lock.
+        run_with_timeout(
+            "sync_live_catalog (account 2)",
+            Box::new(|| {
+                let models = make_catalog(&[("gemini-3.5-flash-lite", None, Some(true), None)]);
+                let supported: std::collections::HashSet<String> =
+                    ["gemini-3.5-flash-lite".to_string()].into_iter().collect();
+                let tiered = HashMap::from([(
+                    "flashLite".to_string(),
+                    vec!["gemini-3.5-flash-lite".to_string()],
+                )]);
+                OfficialModelCatalog::sync_live_catalog(
+                    Some("acc2@example.com"),
+                    models,
+                    &supported,
+                    Some(&tiered),
+                    None,
+                );
+            }),
+        );
+
+        run_with_timeout(
+            "remove_live_account (account 1, non-empty snapshot path)",
+            Box::new(|| {
+                OfficialModelCatalog::remove_live_account("acc1@example.com");
+            }),
+        );
+        assert!(OfficialModelCatalog::try_health_check());
+        let after_first_remove = OfficialModelCatalog::load_live_cache_from_path(&cache_path)
+            .expect("cache must remain present while account 2 still exists");
+        assert!(!after_first_remove.accounts.contains_key("acc1@example.com"));
+        assert!(after_first_remove.accounts.contains_key("acc2@example.com"));
+
+        // 3. Removing the last remaining account clears the persisted cache file cleanly.
+        run_with_timeout(
+            "remove_live_account (account 2, empty cleanup path)",
+            Box::new(|| {
+                OfficialModelCatalog::remove_live_account("acc2@example.com");
+            }),
+        );
+        assert!(OfficialModelCatalog::try_health_check());
+        assert!(!cache_path.exists());
+    }
 }
