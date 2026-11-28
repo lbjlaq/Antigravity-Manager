@@ -22,7 +22,7 @@ import CurrentAccount from '../components/dashboard/CurrentAccount';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
 import { Account } from '../types/account';
-import { isAccountAbnormal } from '../utils/accountStatus';
+import { isAccountRestricted } from '../utils/accountStatus';
 import { DashboardQuotaView } from '../utils/quotaDisplay';
 import {
     ClientTarget,
@@ -123,10 +123,10 @@ function Dashboard() {
     // 全维度账号健康与配额计算矩阵 (状态由风控定生死，底座池支持仅可用账号与全部正常账号无缝切换)
     const stats = useMemo(() => {
         // 1. 账号生态健康状态分类（风控与启用状态定生死，不以额度定生死）
-        // 异常账号：触发 Google 验证码/风控阻断，或配额接口返回 403 Forbidden 封禁
-        const abnormalAccounts = accounts.filter(isAccountAbnormal);
+        // 异常账号：触发 Google 验证码/风控阻断，或配额接口返回 403 Forbidden 封禁（不含纯 disabled 停用）
+        const abnormalAccounts = accounts.filter(isAccountRestricted);
         // 全量正常状态账号（彻底剔除风控异常账号）
-        const normalAccounts = accounts.filter(a => !isAccountAbnormal(a));
+        const normalAccounts = accounts.filter(a => !isAccountRestricted(a));
         // 完全被用户手动停用的账号 (disabled 为 true)
         const fullyDisabledAccounts = normalAccounts.filter(
             a => a.disabled
