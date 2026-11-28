@@ -14,6 +14,20 @@ pub use platform::{detect_system_proxies, install_shell_hook, uninstall_shell_ho
 pub use relay::{RelayServer, DEFAULT_RELAY_PORT};
 pub use types::{ProxyError, ProxyNode, ProxyProtocol, ProxySource, TargetApp};
 
+/// Windows 下为后台辅助命令设置 CREATE_NO_WINDOW，避免 GUI 应用每次后台调用都闪烁命令行窗口
+#[cfg(target_os = "windows")]
+pub fn hide_console(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW)
+}
+
+/// 非 Windows 平台为空操作，保持调用点跨平台一致
+#[cfg(not(target_os = "windows"))]
+pub fn hide_console(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    cmd
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

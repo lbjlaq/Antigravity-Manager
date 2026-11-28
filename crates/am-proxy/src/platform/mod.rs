@@ -1,4 +1,4 @@
-use crate::types::{ProxyError, ProxyNode, ProxyProtocol, ProxySource, TargetApp};
+use crate::types::{ProxyError, ProxyNode, ProxyProtocol, ProxySource};
 use std::path::{Path, PathBuf};
 
 const HOOK_START: &str = "# >>> am-proxy managed block >>>";
@@ -182,7 +182,7 @@ fn detect_macos_system_proxies() -> Vec<ProxyNode> {
 #[cfg(target_os = "windows")]
 fn detect_windows_system_proxies() -> Vec<ProxyNode> {
     let mut nodes = Vec::new();
-    let output = match std::process::Command::new("reg")
+    let output = match crate::hide_console(std::process::Command::new("reg"))
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",

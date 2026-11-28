@@ -230,6 +230,7 @@ pub fn launch_with_proxy(
         if is_batch_shim {
             let mut c = Command::new("cmd");
             c.arg("/C").arg(&bin);
+            crate::hide_console(&mut c);
             c
         } else {
             Command::new(&bin)
@@ -328,7 +329,7 @@ fn graceful_terminate_root_host(target: TargetApp) {
             "$procs = Get-Process -Name '{}' -ErrorAction SilentlyContinue; foreach ($p in $procs) {{ if ($p.MainWindowHandle -ne 0) {{ [void]$p.CloseMainWindow(); [void]$p.WaitForExit(2200) }} }}",
             img.trim_end_matches(".exe")
         );
-        let _ = Command::new("powershell")
+        let _ = crate::hide_console(Command::new("powershell"))
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .status();
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -429,11 +430,11 @@ pub fn get_app_runtime_status(target: TargetApp) -> AppRuntimeStatus {
             }
         }
 
-        return AppRuntimeStatus {
+        AppRuntimeStatus {
             running: true,
             proxy_active: false,
             proxy_url: None,
-        };
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -443,7 +444,7 @@ pub fn get_app_runtime_status(target: TargetApp) -> AppRuntimeStatus {
             TargetApp::AntigravityIde => "Antigravity IDE",
             TargetApp::AgyCli => return AppRuntimeStatus::default(),
         };
-        let running = Command::new("powershell")
+        let running = crate::hide_console(Command::new("powershell"))
             .args([
                 "-NoProfile",
                 "-NonInteractive",
