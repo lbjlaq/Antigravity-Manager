@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/am-proxy",
     "crates/am-core",
     "crates/am-cli",
     "crates/am-gui/src-tauri",

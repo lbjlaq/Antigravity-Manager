@@ -6,7 +6,7 @@ export type DashboardPoolPreference = 'balanced' | 'claude' | 'gemini';
 export type AccountsSortMode = 'health_default' | 'name_asc' | 'tier_desc' | 'custom';
 export type AccountsViewMode = 'table' | 'card';
 
-export const VALID_TABS: readonly TabId[] = ['dashboard', 'accounts', 'stats', 'settings'];
+export const VALID_TABS: readonly TabId[] = ['dashboard', 'accounts', 'stats', 'toolbox', 'settings'];
 const VALID_HOSTS: readonly HostTarget[] = ['app', 'ide', 'plugin', 'cli'];
 const VALID_PICK_STRATEGIES: readonly DashboardPickStrategy[] = [
   'max-quota',

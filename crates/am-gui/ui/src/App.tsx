@@ -18,6 +18,7 @@ import {
 const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })));
 const Accounts = lazy(() => import('./pages/Accounts').then((m) => ({ default: m.Accounts })));
 const Stats = lazy(() => import('./pages/Stats').then((m) => ({ default: m.Stats })));
+const Toolbox = lazy(() => import('./pages/Toolbox').then((m) => ({ default: m.Toolbox })));
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 const MiniPopover = lazy(() =>
   import('./components/mini/MiniPopover').then((m) => ({ default: m.MiniPopover }))
@@ -364,6 +365,7 @@ export function App() {
     if (currentTab === 'dashboard') return <Dashboard lang={lang} />;
     if (currentTab === 'accounts') return <Accounts lang={lang} />;
     if (currentTab === 'stats') return <Stats lang={lang} />;
+    if (currentTab === 'toolbox') return <Toolbox lang={lang} />;
     return <Settings lang={lang} />;
   }, [currentTab, lang, localeVersion]);
 

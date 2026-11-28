@@ -1,5 +1,8 @@
+pub use am_proxy;
 pub mod auth;
+pub mod cli_statusline;
 pub mod config;
+pub mod context_monitor;
 pub mod device;
 pub mod quota;
 pub mod runtime;

@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "am-cli"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "am-core",
  "anyhow",
@@ -65,8 +65,9 @@ dependencies = [
 
 [[package]]
 name = "am-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
+ "am-proxy",
  "anyhow",
  "base64 0.22.1",
  "chrono",
@@ -88,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "am-gui"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "am-core",
  "objc2",
@@ -104,6 +105,19 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tokio",
+ "url",
+]
+
+[[package]]
+name = "am-proxy"
+version = "0.0.4"
+dependencies = [
+ "dirs 5.0.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "url",
 ]
 

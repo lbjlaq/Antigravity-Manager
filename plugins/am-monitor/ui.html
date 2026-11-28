@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AM Monitor</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --border: rgba(15, 23, 42, 0.08);
+    --text: #0f172a;
+    --muted: #64748b;
+    --surface-2: #f1f5f9;
+    --accent: #3b82f6;
+    --sky: #0ea5e9;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+    --purple: #8b5cf6;
+  }
+  body.theme-dark {
+    --bg: #0a0c10;
+    --card: #11141b;
+    --border: rgba(255, 255, 255, 0.075);
+    --text: #f8fafc;
+    --muted: #7e8799;
+    --surface-2: rgba(255, 255, 255, 0.045);
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 12px 14px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  .shell { max-width: 980px; margin: 0 auto; }
+
+  /* AM Top Bar */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 6px 10px; margin-bottom: 10px; flex-wrap: wrap;
+  }
+  .tabs { display: inline-flex; gap: 3px; }
+  .tab-btn {
+    border: none; background: transparent; color: var(--muted);
+    padding: 5px 11px; border-radius: 9px; font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  .controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  select {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px 8px; font-size: 11.5px; outline: none;
+    max-width: 170px; height: 28px; line-height: 1.4;
+  }
+  #session-select {
+    min-width: 140px;
+    max-width: 220px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .icon-btn {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+    border-radius: 8px; height: 28px; padding: 0 8px; font-size: 11.5px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px; line-height: 1;
+    transition: all 0.15s ease;
+  }
+  .icon-btn:hover { color: var(--text); background: var(--border); }
+  .icon-btn svg { width: 13px; height: 13px; fill: currentColor; }
+
+  /* Row 1: AM 4-Card KPI Strip */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin-bottom: 10px; }
+  .kpi {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 12px 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
+  }
+  .kpi-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
+  .kpi-main { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+  .kpi-val { font-size: 22px; font-weight: 700; letter-spacing: -0.025em; }
+  .kpi-unit { font-size: 11px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+  .kpi-foot { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
+
+  /* Row 2 & 3: 2-Column AM Bento */
+  .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 10px; margin-bottom: 10px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px 16px;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .card-title { font-size: 12px; font-weight: 600; color: var(--text); }
+  .muted { font-size: 11px; color: var(--muted); }
+  .badge { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+  .badge-green { background: rgba(16,185,129,0.14); color: #10b981; }
+  .badge-rose { background: rgba(244,63,94,0.14); color: #f43f5e; }
+  .badge-sky { background: rgba(14,165,233,0.14); color: #0ea5e9; }
+
+  /* Dual Ring + Breakdown */
+  .ring-layout { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+  .ctx-mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; flex: 1; }
+  .ctx-mini { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; }
+  .dot { width: 7px; height: 7px; border-radius: 99px; display: inline-block; margin-right: 6px; }
+
+  /* AM 10-Segment Tool Matrix */
+  .tool-matrix { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .tm-head { display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; margin-bottom: 5px; }
+  .tm-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; color: var(--text); }
+  .seg-bar { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; height: 7px; }
+  .seg-cell { border-radius: 2px; background: var(--surface-2); }
+
+  /* Model & Step Rows */
+  .list-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 8px; margin: 0 -8px; border-radius: 8px; font-size: 11.5px;
+  }
+  .list-row:hover { background: var(--surface-2); }
+  .err-banner {
+    background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.22);
+    color: #fb7185; border-radius: 9px; padding: 6px 10px; font-size: 11px; margin-bottom: 8px;
+  }
+
+  /* Analytics / Accounts / Settings */
+  .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 6px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+  .btn-ghost { background: var(--surface-2); color: var(--text); }
+  .heatmap { display: grid; grid-template-columns: repeat(26, 1fr); gap: 2.5px; margin-top: 10px; }
+  .hm-cell { aspect-ratio: 1; border-radius: 2.5px; background: var(--surface-2); }
+  .acc-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-top: 6px; }
+  .poster-preview { border-radius: 14px; padding: 18px; margin: 8px 0; border: 1px solid var(--border); }
+  .poster-dark { background: linear-gradient(135deg, #0f172a 0%, #090d16 60%, #0c2224 100%); color: #f8fafc; }
+  .poster-light { background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 60%, #ecfdf5 100%); color: #0f172a; }
+  .hidden { display: none !important; }
+  .toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 11.5px; z-index: 99; }
+</style>
+</head>
+<body class="theme-dark">
+<div class="shell">
+  <!-- AM Style Top Navigation -->
+  <div class="topbar">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="live">当前会话</button>
+      <button class="tab-btn" data-tab="analytics">汇总与海报</button>
+      <button class="tab-btn" data-tab="accounts">账号</button>
+      <button class="tab-btn" data-tab="settings">设置</button>
+    </div>
+    <div class="controls">
+      <select id="session-select"><option value="">Loading Sessions…</option></select>
+      <select id="limit-select">
+        <option value="128000">128K</option>
+        <option value="200000">200K</option>
+        <option value="400000">400K</option>
+        <option value="1000000" selected>1.00M</option>
+      </select>
+      <select id="view-select">
+        <option value="window" selected>当前窗口</option>
+        <option value="full">全会话</option>
+      </select>
+      <button class="icon-btn" id="btn-refresh" title="立即刷新">
+        <svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 0 5.46 6.22.75.75 0 0 1 1.49.19A7 7 0 1 1 8 1a6.97 6.97 0 0 1 4.95 2.05L14.5 1.5a.75.75 0 0 1 1.28.53v4a.75.75 0 0 1-.75.75h-4a.75.75 0 0 1-.53-1.28l1.62-1.62A5.47 5.47 0 0 0 8 2.5z"/></svg>
+        <span id="btn-refresh-text">刷新</span>
+      </button>
+      <button class="icon-btn" id="btn-theme" title="切换深色/浅色">
+        <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5v11a5.5 5.5 0 0 1 0-11z"/></svg>
+        <span id="btn-theme-text">深色</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB 1: 当前会话（1:1 对齐 AM Token 统计视觉） -->
+  <div id="tab-live">
+    <!-- 4 KPI Cards -->
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-head"><span>当前上下文</span><span id="k-compact">压缩 0 次</span></div>
+        <div class="kpi-main">
+          <div><span id="k-ctx" class="kpi-val">0</span><span id="k-ctx-pct" class="kpi-unit">0%</span></div>
+          <button class="icon-btn" id="btn-compact" style="padding:2px 6px; font-size:10px;">/compact</button>
+        </div>
+        <div class="kpi-foot"><span id="k-forecast">上下文平稳</span><span id="k-cost">≈ $0.00</span></div>
+      </div>
+
+      <div class="kpi">
+        <div class="kpi-head"><span>缓存命中率</span><span style="color:var(--green);">●</span></div>
+        <div class="kpi-main">
+          <div><span id="k-cache" class="kpi-val">0.0%</span><span id="k-drop" class="kpi-unit" style="color:var(--rose);"></span></div>
+        </div>
+        <div class="kpi-foot"><span id="k-cache-tok">复用 0</span><span id="k-roi" style="color:var(--green);">0.0x 回本</span></div>
+      </div>
+
+      <div class="kpi">
+        <div class="kpi-head"><span>平均生成速度</span><span class="muted">TPS</span></div>
+        <div class="kpi-main">
+          <div><span id="k-tps" class="kpi-val">-</span><span class="kpi-unit">tok/s</span></div>
+        </div>
+        <div class="kpi-foot"><span id="k-peak">峰值 -</span><span id="k-dur">模型 0s</span></div>
+      </div>
+
+      <div class="kpi">
+        <div class="kpi-head"><span>交互深度 · 工具</span><span id="k-err-dot">0 异常</span></div>
+        <div class="kpi-main">
+          <div><span id="k-turns" class="kpi-val">0</span><span id="k-calls" class="kpi-unit">0 calls</span></div>
+        </div>
+        <div class="kpi-foot"><span id="k-steps">0 步</span><span id="k-out">输出 0</span></div>
+      </div>
+    </div>
+
+    <!-- Middle Row: Dual Ring + Curves | 10-Segment Tool Matrix -->
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">上下文与缓存双环总览</span>
+          <span id="m-model" class="badge badge-sky">Antigravity</span>
+        </div>
+        <div class="ring-layout">
+          <div id="dual-ring"></div>
+          <div class="ctx-mini-grid">
+            <div class="ctx-mini"><span><i class="dot" style="background:#3b82f6;"></i>消息</span><strong id="b-msg">0</strong></div>
+            <div class="ctx-mini"><span><i class="dot" style="background:#10b981;"></i>工具</span><strong id="b-tool">0</strong></div>
+            <div class="ctx-mini"><span><i class="dot" style="background:#f59e0b;"></i>系统</span><strong id="b-sys">0</strong></div>
+            <div class="ctx-mini"><span><i class="dot" style="background:#8b5cf6;"></i>推理</span><strong id="b-think">0</strong></div>
+          </div>
+        </div>
+        <div id="dual-curves"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">工具调用矩阵</span>
+          <span id="tm-total" class="muted">0 calls</span>
+        </div>
+        <div id="tool-matrix" class="tool-matrix"></div>
+      </div>
+    </div>
+
+    <!-- Bottom Row: Model Breakdown | Heaviest Steps & Errors -->
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">本场模型切换排行</span>
+          <span id="mc-count" class="muted">0 个模型</span>
+        </div>
+        <div id="model-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">最重步骤 Top 4 & 异常排查</span>
+          <span id="err-badge" class="badge badge-green">0 异常</span>
+        </div>
+        <div id="err-banner" class="err-banner hidden"></div>
+        <div id="steps-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: 汇总与海报（对齐 AM Token 统计 + 战报卡片） -->
+  <div id="tab-analytics" class="hidden">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <div class="tabs" id="range-tabs">
+        <button class="tab-btn" data-range="today">今天</button>
+        <button class="tab-btn" data-range="7d">近 7 天</button>
+        <button class="tab-btn" data-range="30d">近 30 天</button>
+        <button class="tab-btn active" data-range="all">全部</button>
+      </div>
+      <button class="icon-btn" id="btn-wake-am-banner" style="color:var(--sky); border-color:rgba(14,165,233,0.3);">
+        打开 Antigravity Manager 查看完整项目排行与高级战报 ↗
+      </button>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">宏观汇总大盘</span>
+          <span id="roi-pill" class="badge badge-green">0.0x 回本</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+          <div style="background:var(--surface-2); border-radius:10px; padding:9px 11px;">
+            <div class="muted">总吞吐 Token</div>
+            <div id="a-total" style="font-size:18px; font-weight:700; margin-top:2px;">0</div>
+          </div>
+          <div style="background:var(--surface-2); border-radius:10px; padding:9px 11px;">
+            <div class="muted">全局缓存命中</div>
+            <div id="a-hit" style="font-size:18px; font-weight:700; color:var(--green); margin-top:2px;">0%</div>
+          </div>
+          <div style="background:var(--surface-2); border-radius:10px; padding:9px 11px;">
+            <div class="muted">等价 API 价值</div>
+            <div id="a-cost" style="font-size:18px; font-weight:700; color:var(--sky); margin-top:2px;">$0.00</div>
+          </div>
+          <div style="background:var(--surface-2); border-radius:10px; padding:9px 11px;">
+            <div class="muted">统计会话 · 均速</div>
+            <div id="a-sub" style="font-size:14px; font-weight:700; margin-top:4px;">0 · -</div>
+          </div>
+        </div>
+        <div class="muted" style="margin-bottom:5px;">全模型算力分布</div>
+        <div id="a-model-bar" style="display:flex; height:7px; border-radius:999px; overflow:hidden; background:var(--surface-2); gap:1.5px; margin-bottom:8px;"></div>
+        <div id="a-model-list" style="margin-bottom:10px;"></div>
+        <div class="muted">近 26 周（半年）活跃热力图</div>
+        <div id="heatmap" class="heatmap"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">分享战报卡片</span>
+          <div style="display:flex; gap:6px;">
+            <div class="tabs">
+              <button class="tab-btn active" id="ps-summary">汇总</button>
+              <button class="tab-btn" id="ps-session">本场</button>
+            </div>
+            <div class="tabs">
+              <button class="tab-btn active" id="poster-dark-btn">深色</button>
+              <button class="tab-btn" id="poster-light-btn">浅色</button>
+            </div>
+          </div>
+        </div>
+        <div id="poster-card" class="poster-preview poster-dark" style="padding:18px 20px; position:relative; overflow:hidden;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div>
+              <span id="p-title-text" style="font-size:13px; font-weight:700;">Antigravity 战报</span>
+              <span id="p-scope" style="font-size:10.5px; opacity:0.55; margin-left:6px;">全局汇总</span>
+            </div>
+            <span style="font-size:10px; opacity:0.5; letter-spacing:0.06em;">ANTIGRAVITY MANAGER</span>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 124px 1fr; align-items:center; gap:10px;">
+            <div>
+              <div id="p-lbl-total" style="font-size:10px; opacity:0.65;">● 总消耗</div>
+              <div style="display:flex; align-items:baseline; gap:5px; margin:2px 0 8px;">
+                <span id="p-total" style="font-size:22px; font-weight:800; letter-spacing:-0.02em;">0</span>
+                <span id="p-hero" style="font-size:11px; font-weight:700; color:#10b981;">↑0%</span>
+              </div>
+              <div id="p-models" style="font-size:10px; opacity:0.8; display:flex; flex-direction:column; gap:3px; margin-bottom:10px;"></div>
+              <div style="display:flex; gap:10px; font-size:10px; opacity:0.8;">
+                <span><strong style="color:#8b5cf6;">IN</strong> <span id="p-in">0</span></span>
+                <span><strong style="color:#0ea5e9;">OUT</strong> <span id="p-out">0</span></span>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:center; align-items:center;">
+              <svg width="118" height="118" viewBox="0 0 120 120">
+                <defs>
+                  <linearGradient id="og1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="50%" stop-color="#0ea5e9"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient>
+                  <linearGradient id="og2" x1="1" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b"/><stop offset="50%" stop-color="#ec4899"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient>
+                </defs>
+                <circle cx="60" cy="60" r="44" fill="none" stroke="currentColor" stroke-opacity="0.1" stroke-width="1"/>
+                <circle cx="60" cy="60" r="30" fill="none" stroke="currentColor" stroke-opacity="0.08" stroke-width="1"/>
+                <polygon points="60,18 96,40 94,82 60,102 24,80 26,38" fill="url(#og1)" fill-opacity="0.12" stroke="url(#og1)" stroke-width="2.2"/>
+                <polygon points="60,24 90,46 86,86 60,96 32,76 34,34" fill="none" stroke="url(#og2)" stroke-width="1.6" stroke-opacity="0.85"/>
+                <circle cx="60" cy="60" r="14" fill="rgba(15,23,42,0.85)" stroke="url(#og1)" stroke-width="1.5"/>
+                <text x="60" y="64" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="800">AM</text>
+                <text x="60" y="10" text-anchor="middle" fill="currentColor" fill-opacity="0.45" font-size="7">TOK</text>
+                <text x="108" y="42" text-anchor="middle" fill="currentColor" fill-opacity="0.45" font-size="7">HIT</text>
+                <text x="108" y="84" text-anchor="middle" fill="currentColor" fill-opacity="0.45" font-size="7">CTX</text>
+                <text x="60" y="116" text-anchor="middle" fill="currentColor" fill-opacity="0.45" font-size="7">TPS</text>
+                <text x="12" y="84" text-anchor="middle" fill="currentColor" fill-opacity="0.45" font-size="7">OUT</text>
+                <text x="12" y="42" text-anchor="middle" fill="currentColor" fill-opacity="0.45" font-size="7">REQ</text>
+              </svg>
+            </div>
+            <div style="text-align:right;">
+              <div id="p-lbl-cost" style="font-size:10px; opacity:0.65;">● API 价值</div>
+              <div id="p-cost" style="font-size:20px; font-weight:800; margin:2px 0;">$0.00</div>
+              <div id="p-roi" style="font-size:10px; color:#10b981; font-weight:600; margin-bottom:10px;">回本 0.0x</div>
+              <div id="p-lbl-cache" style="font-size:10px; opacity:0.65;">● 缓存复用</div>
+              <div id="p-cache-val" style="font-size:16px; font-weight:700; margin-top:2px;">0</div>
+              <div id="p-sub" style="font-size:10px; opacity:0.55; margin-top:4px;">0 轮</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn" id="btn-export-png" style="flex:1;">导出高清 PNG 战报</button>
+          <button class="btn btn-ghost" id="btn-copy-summary" style="flex:1;">复制战报文本</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: 账号（真实订阅类型 + 双池额度条 + 搜索筛选 + 热切换） -->
+  <div id="tab-accounts" class="hidden">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">账号列表与快捷热切换</span>
+        <span id="am-status-pill" class="badge">检测中</span>
+      </div>
+      <div id="current-account-box" class="hidden" style="margin-bottom:10px;"></div>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+        <input id="acc-search" type="text" placeholder="搜索邮箱..." style="flex:1; min-width:140px; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:5px 9px; font-size:11.5px; outline:none;" />
+        <div class="tabs" id="acc-filters">
+          <button class="tab-btn active" data-af="all">全部</button>
+          <button class="tab-btn" data-af="quota">高额度</button>
+          <button class="tab-btn" data-af="pro">PRO/ULTRA</button>
+        </div>
+      </div>
+      <div id="accounts-list" class="muted" style="max-height:360px; overflow-y:auto;">正在检测 Antigravity Manager / am CLI…</div>
+      <button class="btn" id="btn-wake-am" style="width:100%; margin-top:10px;">唤醒 Antigravity Manager 管理全部账号与刷新额度 ↗</button>
+    </div>
+  </div>
+
+  <!-- TAB 4: 设置（2x2 清晰分组 + 实时预览） -->
+  <div id="tab-settings" class="hidden">
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">状态栏快捷胶囊自定义</span>
+          <span class="badge badge-sky">IDE 底部状态栏</span>
+        </div>
+        <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:9px; padding:7px 10px; margin-bottom:10px; font-size:11px; font-family:ui-monospace,monospace;">
+          <span class="muted">实时预览：</span><strong id="pill-preview">361K · 36% | Cache 88%</strong>
+        </div>
+        <div class="muted" style="margin-bottom:6px;">当前会话指标</div>
+        <div style="display:flex; flex-wrap:wrap; gap:10px 14px; margin-bottom:10px;">
+          <label><input type="checkbox" class="pill-opt" value="context" checked /> 当前上下文 (%)</label>
+          <label><input type="checkbox" class="pill-opt" value="cache" checked /> 当前缓存命中 (%)</label>
+          <label><input type="checkbox" class="pill-opt" value="tps" /> 当前吐字速度 (t/s)</label>
+          <label><input type="checkbox" class="pill-opt" value="cost" /> 当前会话费用 ($)</label>
+          <label><input type="checkbox" class="pill-opt" value="turns" /> 当前会话轮次</label>
+        </div>
+        <div class="muted" style="margin-bottom:6px;">当前账号指标（需连接 AM）</div>
+        <div style="display:flex; flex-wrap:wrap; gap:10px 14px;">
+          <label><input type="checkbox" class="pill-opt" value="account" /> 当前登录账号</label>
+          <label><input type="checkbox" class="pill-opt" value="quota" /> 当前账号额度 (G/C)</label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">刷新频率与外观偏好</span>
+          <span class="badge">v1.0.0</span>
+        </div>
+        <div class="list-row">
+          <span class="muted">自动刷新频率</span>
+          <select id="poll-select">
+            <option value="2000">每 2 秒</option>
+            <option value="3500" selected>每 3.5 秒</option>
+            <option value="5000">每 5 秒</option>
+            <option value="10000">每 10 秒</option>
+            <option value="0">仅手动刷新</option>
+          </select>
+        </div>
+        <div class="list-row">
+          <span class="muted" data-i18n="langLabel">界面语言</span>
+          <select id="lang-select">
+            <option value="auto" selected>跟随系统 (Auto)</option>
+            <option value="zh">简体中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="list-row">
+          <span class="muted">界面外观</span>
+          <button class="icon-btn" id="btn-theme-2">切换 深色 / 浅色</button>
+        </div>
+        <div class="list-row">
+          <span class="muted">手动同步全部数据</span>
+          <button class="btn btn-ghost" id="btn-refresh-2" style="padding:4px 10px; font-size:11px;">↻ 立即刷新</button>
+        </div>
+        <div class="list-row" style="margin-top:6px;">
+          <span class="muted">主应用联动</span>
+          <button class="btn" id="btn-wake-am-2" style="padding:4px 10px; font-size:11px;">唤醒 Antigravity Manager ↗</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script>
+  let currentLangPref = 'auto';
+  function resolveLang(pref) {
+    if (pref === 'zh' || pref === 'en') return pref;
+    return String(navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+  function isEn() { return resolveLang(currentLangPref) === 'en'; }
+  const isVsCode = typeof acquireVsCodeApi === 'function';
+  const vscodeApi = isVsCode ? acquireVsCodeApi() : null;
+  const state = { tab: 'live', sessionId: '', viewMode: 'window', limit: 1000000, range: 'all', accFilter: 'all', accQuery: '', amData: null, posterSource: 'summary', posterTheme: 'dark', snapshot: null, analytics: null, pillItems: ['context', 'cache'] };
+
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.classList.remove('hidden');
+    clearTimeout(window.__t); window.__t = setTimeout(() => el.classList.add('hidden'), 2200);
+  }
+  function fmtK(n) {
+    n = Number(n || 0);
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+  function fmtDur(sec) {
+    sec = Math.round(sec || 0);
+    return sec < 60 ? `${sec}s` : `${Math.floor(sec/60)}m${sec%60}s`;
+  }
+
+  function renderDualRing(cachePct, ctxPct) {
+    const r1 = 30, c1 = 2 * Math.PI * r1, o1 = c1 * (1 - Math.min(100, cachePct) / 100);
+    const r2 = 22, c2 = 2 * Math.PI * r2, o2 = c2 * (1 - Math.min(100, ctxPct) / 100);
+    return `<svg width="76" height="76" viewBox="0 0 76 76" style="flex-shrink:0;">
+      <circle cx="38" cy="38" r="${r1}" fill="none" stroke="rgba(148,163,184,0.14)" stroke-width="5"/>
+      <circle cx="38" cy="38" r="${r1}" fill="none" stroke="#10b981" stroke-width="5" stroke-linecap="round"
+        stroke-dasharray="${c1.toFixed(1)}" stroke-dashoffset="${o1.toFixed(1)}" transform="rotate(-90 38 38)"/>
+      <circle cx="38" cy="38" r="${r2}" fill="none" stroke="rgba(148,163,184,0.12)" stroke-width="4"/>
+      <circle cx="38" cy="38" r="${r2}" fill="none" stroke="#0ea5e9" stroke-width="4" stroke-linecap="round"
+        stroke-dasharray="${c2.toFixed(1)}" stroke-dashoffset="${o2.toFixed(1)}" transform="rotate(-90 38 38)"/>
+      <text x="38" y="42" text-anchor="middle" fill="currentColor" font-size="12" font-weight="700">${Math.round(cachePct)}%</text>
+    </svg>`;
+  }
+
+  function renderDualCurves(turns, limit) {
+    const box = document.getElementById('dual-curves');
+    if (!turns || turns.length < 2) { box.innerHTML = `<div class="muted">${isEn() ? 'At least 2 turns needed for curves' : '至少 2 轮对话生成双曲线'}</div>`; return; }
+    const w = 360, h = 58;
+    const maxCtx = Math.max(limit * 0.5, ...turns.map(t => t.total));
+    const ptsCache = turns.map((t, i) => `${Math.round((i/(turns.length-1))*(w-6)+3)},${Math.round(h-4-(t.cache_hit_rate)*(h-10))}`).join(' ');
+    const ptsCtx = turns.map((t, i) => `${Math.round((i/(turns.length-1))*(w-6)+3)},${Math.round(h-4-(t.total/maxCtx)*(h-10))}`).join(' ');
+    box.innerHTML = `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="cg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#10b981" stop-opacity="0.22"/><stop offset="100%" stop-color="#10b981" stop-opacity="0"/></linearGradient>
+        <linearGradient id="cg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.22"/><stop offset="100%" stop-color="#0ea5e9" stop-opacity="0"/></linearGradient>
+      </defs>
+      <polygon fill="url(#cg1)" points="3,${h-2} ${ptsCache} ${w-3},${h-2}"/>
+      <polyline fill="none" stroke="#10b981" stroke-width="1.8" points="${ptsCache}"/>
+      <polygon fill="url(#cg2)" points="3,${h-2} ${ptsCtx} ${w-3},${h-2}"/>
+      <polyline fill="none" stroke="#0ea5e9" stroke-width="1.8" points="${ptsCtx}"/>
+    </svg>`;
+  }
+
+  async function apiCall(action, payload = {}) {
+    if (isVsCode) {
+      return new Promise((resolve) => {
+        const reqId = 'r_' + Math.random().toString(36).slice(2);
+        const handler = (ev) => {
+          if (ev.data && ev.data.reqId === reqId) { window.removeEventListener('message', handler); resolve(ev.data.data); }
+        };
+        window.addEventListener('message', handler);
+        vscodeApi.postMessage({ type: action, reqId, ...payload });
+      });
+    }
+    if (action === 'snapshot') {
+      const q = new URLSearchParams({ session: payload.session || '', view: payload.view || 'window', limit: String(payload.limit || 1000000) });
+      return (await fetch('/api/snapshot?' + q.toString())).json();
+    }
+    if (action === 'analytics') return (await fetch('/api/analytics?range=' + encodeURIComponent(payload.range || 'all'))).json();
+    if (action === 'switch') return (await fetch('/api/switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
+    if (action === 'wakeAm') { await fetch('/api/wake-am', { method: 'POST' }); return { ok: true }; }
+    return {};
+  }
+
+  function renderSnapshot(snap) {
+    if (!snap || !snap.report) return;
+    state.snapshot = snap;
+    const r = snap.report;
+    const sel = document.getElementById('session-select');
+    if (sel && snap.sessions && snap.sessions.length) {
+      const curVal = state.sessionId || snap.active_session_id || (snap.sessions[0] ? snap.sessions[0].session_id : '');
+      if (!state.sessionId && curVal) state.sessionId = curVal;
+      const opts = snap.sessions.map(s => {
+        const title = (s.title || s.session_id || '').trim() || (isEn() ? 'Untitled Session' : '未命名会话');
+        const isSel = s.session_id === curVal ? ' selected' : '';
+        return `<option value="${s.session_id}"${isSel}>${title.replace(/</g, '&lt;')}</option>`;
+      }).join('');
+      // Update options when empty, placeholder, or conversation changed
+      const isPlaceholder = sel.options.length <= 1 && (!sel.value || sel.options[0]?.text?.includes('Loading'));
+      if (isPlaceholder || sel.getAttribute('data-loaded-id') !== curVal) {
+        sel.innerHTML = opts;
+        sel.value = curVal;
+        sel.setAttribute('data-loaded-id', curVal);
+      }
+    }
+    const ctxPct = Math.min(100, (r.active_context_tokens / state.limit) * 100);
+    const cachePct = r.avg_cache_hit_rate * 100;
+    const totalCalls = (r.tool_counts || []).reduce((a, [, c]) => a + c, 0);
+
+    document.getElementById('k-compact').textContent = isEn() ? `Compact ${r.compaction_count}` : `压缩 ${r.compaction_count} 次`;
+    document.getElementById('k-ctx').textContent = fmtK(r.active_context_tokens);
+    document.getElementById('k-ctx-pct').textContent = `${ctxPct.toFixed(1)}%`;
+    document.getElementById('k-forecast').textContent = r.turns_remaining_to_80
+      ? (isEn() ? `~${r.turns_remaining_to_80} turns to 80%` : `约 ${r.turns_remaining_to_80} 轮触达 80%`)
+      : (isEn() ? 'Context steady' : '上下文平稳');
+    document.getElementById('k-cost').textContent = `≈ $${r.estimated_cost_usd.toFixed(2)}`;
+
+    document.getElementById('k-cache').textContent = `${cachePct.toFixed(1)}%`;
+    document.getElementById('k-drop').textContent = r.cache_drop_count > 0 ? (isEn() ? `Drop ${r.cache_drop_count}` : `骤降 ${r.cache_drop_count}`) : '';
+    document.getElementById('k-cache-tok').textContent = isEn() ? `Hit ${fmtK(r.total_cache_read_tokens)}` : `复用 ${fmtK(r.total_cache_read_tokens)}`;
+    document.getElementById('k-roi').textContent = isEn() ? `${r.roi_multiplier}x ROI` : `${r.roi_multiplier}x 回本`;
+
+    document.getElementById('k-tps').textContent = r.avg_tps > 0 ? String(r.avg_tps) : '-';
+    document.getElementById('k-peak').textContent = isEn() ? `Peak ${r.peak_tps || '-'}` : `峰值 ${r.peak_tps || '-'}`;
+    document.getElementById('k-dur').textContent = isEn() ? `Model ${fmtDur(r.model_duration_sec)}` : `模型 ${fmtDur(r.model_duration_sec)}`;
+
+    document.getElementById('k-turns').textContent = String(r.turns.length);
+    document.getElementById('k-calls').textContent = `${totalCalls} calls`;
+    document.getElementById('k-steps').textContent = isEn() ? `${r.total_steps} steps` : `${r.total_steps} 步`;
+    document.getElementById('k-out').textContent = isEn() ? `Out ${fmtK(r.total_output_tokens)}` : `输出 ${fmtK(r.total_output_tokens)}`;
+    document.getElementById('k-err-dot').textContent = isEn() ? `${r.error_count} err` : `${r.error_count} 异常`;
+    document.getElementById('k-err-dot').style.color = r.error_count > 0 ? '#f43f5e' : '#10b981';
+
+    document.getElementById('m-model').textContent = r.model || 'Antigravity';
+    document.getElementById('dual-ring').innerHTML = renderDualRing(cachePct, ctxPct);
+    const bMap = Object.fromEntries((r.breakdown || []).map(b => [b.key, b.tokens]));
+    document.getElementById('b-msg').textContent = fmtK(bMap.messages || 0);
+    document.getElementById('b-tool').textContent = fmtK(bMap.tools || 0);
+    document.getElementById('b-sys').textContent = fmtK(bMap.system || 0);
+    document.getElementById('b-think').textContent = fmtK(bMap.thinking || 0);
+    renderDualCurves(r.turns, state.limit);
+
+    document.getElementById('tm-total').textContent = `${totalCalls} calls`;
+    const maxTool = Math.max(1, ...(r.tool_counts || []).map(([, c]) => c));
+    const palette = ['#3b82f6', '#0ea5e9', '#8b5cf6', '#10b981', '#64748b', '#64748b'];
+    document.getElementById('tool-matrix').innerHTML = (r.tool_counts || []).map(([name, count], idx) => {
+      const filled = Math.max(1, Math.round((count / maxTool) * 10));
+      const col = palette[idx % palette.length];
+      const cells = Array.from({ length: 10 }, (_, i) => `<div class="seg-cell" style="${i < filled ? 'background:' + col : ''}"></div>`).join('');
+      return `<div><div class="tm-head"><span class="tm-name">${name}</span><span class="muted">${count}</span></div><div class="seg-bar">${cells}</div></div>`;
+    }).join('') || `<div class="muted">${isEn() ? 'No tool calls yet' : '暂无工具调用'}</div>`;
+
+    const mc = r.model_counts || [];
+    const totalM = Math.max(1, mc.reduce((a, m) => a + (m.turns || 0), 0));
+    document.getElementById('mc-count').textContent = isEn() ? `${mc.length} Models` : `${mc.length} 个模型`;
+    document.getElementById('model-list').innerHTML = mc.map((m, i) => `
+      <div class="list-row">
+        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><span class="badge" style="margin-right:6px;">${i+1}</span>${m.name}</span>
+        <span style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          <span class="badge badge-green">${Math.round((m.cache_hit_rate || 0)*100)}%</span>
+          <span style="color:var(--sky); font-weight:600; min-width:52px; text-align:right;">${m.avg_tps > 0 ? m.avg_tps + ' t/s' : '-'}</span>
+          <span class="muted" style="min-width:66px; text-align:right;">${Math.round((m.turns/totalM)*100)}% · ${m.turns}${isEn() ? ' turns' : '轮'}</span>
+        </span>
+      </div>`).join('') || `<div class="muted">${isEn() ? 'No model records yet' : '暂无模型记录'}</div>`;
+
+    const eb = document.getElementById('err-badge');
+    eb.textContent = isEn() ? `${r.error_count} Errors` : `${r.error_count} 异常`;
+    eb.className = r.error_count > 0 ? 'badge badge-rose' : 'badge badge-green';
+    const banner = document.getElementById('err-banner');
+    if (r.recent_errors && r.recent_errors.length) {
+      banner.classList.remove('hidden');
+      banner.innerHTML = r.recent_errors.slice(0, 2).map(e => `<div><strong>#${e.step_index}</strong> ${e.preview.replace(/</g,'&lt;')}</div>`).join('');
+    } else banner.classList.add('hidden');
+
+    document.getElementById('steps-list').innerHTML = (r.heaviest_steps || []).slice(0, 4).map(s => `
+      <div class="list-row">
+        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><span class="badge" style="margin-right:6px;">${s.label}</span><span class="muted">${s.preview.replace(/</g,'&lt;')}</span></span>
+        <strong>~${fmtK(s.approx_tokens)}</strong>
+      </div>`).join('') || `<div class="muted">${isEn() ? 'No heavy steps yet' : '暂无重型步骤'}</div>`;
+
+    document.getElementById('p-hero').textContent = `${Math.round(cachePct)}%`;
+    document.getElementById('p-sub').textContent = isEn() ? `Context ${fmtK(r.active_context_tokens)} · API $${r.estimated_cost_usd.toFixed(2)} (${r.roi_multiplier}x)` : `上下文 ${fmtK(r.active_context_tokens)} · API $${r.estimated_cost_usd.toFixed(2)} (${r.roi_multiplier}x)`;
+    updatePosterPreview();
+  }
+
+  function updatePosterPreview() {
+    const useSummary = state.posterSource === 'summary' && state.analytics;
+    const hit = useSummary ? Math.round((state.analytics.avg_cache_hit_rate || 0) * 100) : Math.round((state.snapshot?.report?.avg_cache_hit_rate || 0) * 100);
+    const total = useSummary ? fmtK(state.analytics.total_tokens || 0) : fmtK(state.snapshot?.report?.cumulative_tokens || 0);
+    const inp = useSummary ? fmtK(state.analytics.total_input_tokens || 0) : fmtK(state.snapshot?.report?.total_input_tokens || 0);
+    const out = useSummary ? fmtK(state.analytics.total_output_tokens || 0) : fmtK(state.snapshot?.report?.total_output_tokens || 0);
+    const cache = useSummary ? fmtK(state.analytics.total_cache_read_tokens || 0) : fmtK(state.snapshot?.report?.total_cache_read_tokens || 0);
+    const cost = useSummary ? (state.analytics.total_cost_usd || 0).toFixed(2) : (state.snapshot?.report?.estimated_cost_usd || 0).toFixed(2);
+    const roi = useSummary ? (state.analytics.roi_multiplier || 0) : (state.snapshot?.report?.roi_multiplier || 0);
+    const sub = useSummary
+      ? (isEn() ? `${state.analytics.session_count || 0} Sessions` : `${state.analytics.session_count || 0} 会话`)
+      : (isEn() ? `${state.snapshot?.report?.turns?.length || 0} Turns` : `${state.snapshot?.report?.turns?.length || 0} 轮`);
+    const models = useSummary ? (state.analytics.top_models || []) : (state.snapshot?.report?.model_counts || []).map(m => ({ name: m.name, pct: m.turns }));
+    const cols = ['#10b981', '#8b5cf6', '#0ea5e9', '#f59e0b'];
+
+    const pTitle = document.getElementById('p-title-text');
+    if (pTitle) pTitle.textContent = isEn() ? 'Antigravity Report' : 'Antigravity 战报';
+    const pLblTotal = document.getElementById('p-lbl-total');
+    if (pLblTotal) pLblTotal.textContent = isEn() ? '● Total Tokens' : '● 总消耗';
+    const pLblCost = document.getElementById('p-lbl-cost');
+    if (pLblCost) pLblCost.textContent = isEn() ? '● Est. API Value' : '● API 价值';
+    const pLblCache = document.getElementById('p-lbl-cache');
+    if (pLblCache) pLblCache.textContent = isEn() ? '● Cache Reused' : '● 缓存复用';
+
+    document.getElementById('p-scope').textContent = useSummary ? (isEn() ? 'Global Summary' : '全局汇总') : (isEn() ? 'Current Session' : '当前会话');
+    document.getElementById('p-total').textContent = total;
+    document.getElementById('p-hero').textContent = `↑${hit}%`;
+    document.getElementById('p-in').textContent = inp;
+    document.getElementById('p-out').textContent = out;
+    document.getElementById('p-cost').textContent = `$${cost}`;
+    document.getElementById('p-roi').textContent = isEn() ? `${roi}x ROI` : `回本 ${roi}x`;
+    document.getElementById('p-cache-val').textContent = cache;
+    document.getElementById('p-sub').textContent = sub;
+    document.getElementById('p-models').innerHTML = models.slice(0, 3).map((m, i) =>
+      `<div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><i class="dot" style="background:${cols[i % cols.length]};"></i>${m.name}</div>`
+    ).join('');
+  }
+
+  function quotaColor(pct) {
+    if (pct >= 50) return '#10b981';
+    if (pct >= 20) return '#f59e0b';
+    return '#f43f5e';
+  }
+
+  function formatResetTag(models, kind) {
+    if (!Array.isArray(models)) return '';
+    const m = models.find(x => String(x.name || '').toLowerCase().includes(kind) && x.reset_time);
+    if (!m || !m.reset_time) return '';
+    const diffMs = Date.parse(m.reset_time) - Date.now();
+    if (!Number.isFinite(diffMs) || diffMs <= 0) return isEn() ? 'Reset' : '已重置';
+    const hrs = diffMs / 3600000;
+    if (hrs <= 6) {
+      const h = Math.floor(hrs);
+      const min = Math.floor((hrs - h) * 60);
+      return `5h · ${h}h${min}m`;
+    }
+    const d = Math.floor(hrs / 24);
+    const h = Math.floor(hrs % 24);
+    return `7d · ${d}d${h}h`;
+  }
+
+  function renderAccountCard(a, isCurrent) {
+    const tier = String(a.quota?.subscription_tier || a.tier || 'FREE').toUpperCase();
+    const tierCls = tier === 'ULTRA' ? 'badge-rose' : tier === 'PRO' ? 'badge-sky' : '';
+    const gp = Math.round(Number(a.quota?.gemini_percentage ?? 0));
+    const cp = Math.round(Number(a.quota?.claude_percentage ?? 0));
+    const gReset = formatResetTag(a.quota?.models, 'gemini');
+    const cReset = formatResetTag(a.quota?.models, 'claude');
+    const forb = a.quota?.is_forbidden ? `<span class="badge badge-rose">${isEn() ? 'Limited' : '受限'}</span>` : '';
+    const curBadge = isCurrent ? `<span class="badge badge-green">${isEn() ? 'Active' : '当前使用'}</span>` : '';
+    const borderStyle = isCurrent ? 'border:1px solid rgba(16,185,129,0.4); background:rgba(16,185,129,0.06);' : '';
+    return `<div class="acc-row" style="gap:10px; ${borderStyle}">
+      <div style="min-width:0; flex:1;">
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <strong style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${a.email || a.id}</strong>
+          ${curBadge}
+          <span class="badge ${tierCls}">${tier}</span>
+          ${forb}
+        </div>
+        <div style="display:flex; align-items:center; gap:14px; margin-top:6px; font-size:10.5px; flex-wrap:wrap;">
+          <span style="display:flex; align-items:center; gap:5px; min-width:130px;">
+            <span class="muted">G</span>
+            <span style="width:44px; height:4px; background:var(--border); border-radius:99px; overflow:hidden;"><span style="display:block; height:100%; width:${gp}%; background:${quotaColor(gp)};"></span></span>
+            <span style="color:${quotaColor(gp)}; font-weight:600;">${gp}%</span>
+            ${gReset ? `<span class="muted">(${gReset})</span>` : ''}
+          </span>
+          <span style="display:flex; align-items:center; gap:5px; min-width:130px;">
+            <span class="muted">C</span>
+            <span style="width:44px; height:4px; background:var(--border); border-radius:99px; overflow:hidden;"><span style="display:block; height:100%; width:${cp}%; background:${quotaColor(cp)};"></span></span>
+            <span style="color:${quotaColor(cp)}; font-weight:600;">${cp}%</span>
+            ${cReset ? `<span class="muted">(${cReset})</span>` : ''}
+          </span>
+        </div>
+      </div>
+      ${isCurrent ? `<span class="muted" style="font-size:11px; padding:0 6px;">${isEn() ? 'In Use' : '使用中'}</span>` : `<button class="btn btn-ghost" style="padding:5px 10px; font-size:11px; flex-shrink:0;" onclick="hotSwitch('${a.id}')">${isEn() ? 'Switch' : '热切换'}</button>`}
+    </div>`;
+  }
+
+  function renderAccountsList() {
+    const am = state.amData;
+    const pill = document.getElementById('am-status-pill');
+    const curBox = document.getElementById('current-account-box');
+    const accEl = document.getElementById('accounts-list');
+    if (!am || !am.available || !am.accounts.length) {
+      pill.className = 'badge'; pill.textContent = isEn() ? 'Standalone Read-Only' : '独立只读模式';
+      curBox.classList.add('hidden');
+      accEl.innerHTML = `<div class="muted">${isEn() ? 'am CLI not detected, currently in standalone read-only mode.' : '未检测到 am CLI，当前处于独立只读模式。'}</div>`;
+      return;
+    }
+    pill.className = 'badge badge-green';
+    pill.textContent = isEn() ? `Connected (${am.accounts.length} accounts)` : `已连接 (${am.accounts.length} 账号)`;
+
+    const curEmail = (am.current_email || '').toLowerCase();
+    const curAcc = curEmail ? am.accounts.find(a => String(a.email || '').toLowerCase() === curEmail) : null;
+    if (curAcc) {
+      curBox.classList.remove('hidden');
+      curBox.innerHTML = renderAccountCard(curAcc, true);
+    } else {
+      curBox.classList.add('hidden');
+    }
+
+    const q = (state.accQuery || '').trim().toLowerCase();
+    const list = am.accounts.filter(a => {
+      const email = String(a.email || a.id || '').toLowerCase();
+      if (curAcc && a.id === curAcc.id) return false;
+      if (q && !email.includes(q)) return false;
+      const tier = String(a.quota?.subscription_tier || a.tier || 'FREE').toUpperCase();
+      const gp = Number(a.quota?.gemini_percentage ?? 0);
+      const cp = Number(a.quota?.claude_percentage ?? 0);
+      if (state.accFilter === 'pro' && !['PRO', 'ULTRA'].includes(tier)) return false;
+      if (state.accFilter === 'quota' && Math.max(gp, cp) < 50) return false;
+      return true;
+    });
+    if (!list.length) {
+      accEl.innerHTML = `<div class="muted" style="padding:12px 0;">${isEn() ? 'No matching accounts found' : '没有匹配的账号'}</div>`;
+      return;
+    }
+    accEl.innerHTML = list.slice(0, 30).map(a => renderAccountCard(a, false)).join('');
+  }
+
+  function renderAnalytics(data) {
+    if (!data) return;
+    const { analytics, am } = data;
+    state.analytics = analytics;
+    state.amData = am;
+    renderAccountsList();
+    if (analytics) {
+      document.getElementById('roi-pill').textContent = isEn() ? `${analytics.roi_multiplier}x ROI` : `${analytics.roi_multiplier}x 回本`;
+      document.getElementById('a-total').textContent = fmtK(analytics.total_tokens);
+      document.getElementById('a-hit').textContent = `${Math.round((analytics.avg_cache_hit_rate || 0) * 100)}%`;
+      document.getElementById('a-cost').textContent = `$${analytics.total_cost_usd.toFixed(2)}`;
+      document.getElementById('a-sub').textContent = isEn() ? `${analytics.session_count} Sessions · ${analytics.avg_tps > 0 ? analytics.avg_tps + ' t/s' : '-'}` : `${analytics.session_count} 会话 · ${analytics.avg_tps > 0 ? analytics.avg_tps + ' t/s' : '-'}`;
+      const colors = ['#10b981', '#8b5cf6', '#0ea5e9', '#f59e0b', '#f43f5e'];
+      const tm = analytics.top_models || [];
+      document.getElementById('a-model-bar').innerHTML = tm.map((m, i) => `<div style="width:${m.pct}%; background:${colors[i % colors.length]};" title="${m.name}: ${m.pct}%"></div>`).join('');
+      document.getElementById('a-model-list').innerHTML = tm.slice(0, 3).map((m, i) => `
+        <div class="list-row" style="padding:3px 0; margin:0;">
+          <span><i class="dot" style="background:${colors[i % colors.length]};"></i>${m.name}</span>
+          <span class="muted">${m.pct}% (${m.turns}${isEn() ? ' turns' : '轮'})</span>
+        </div>`).join('');
+      const hm = document.getElementById('heatmap');
+      const maxT = Math.max(1, ...analytics.heatmap.map(d => d.tokens));
+      hm.innerHTML = analytics.heatmap.map(d => {
+        const bg = d.tokens === 0 ? 'var(--surface-2)' : `rgba(16,185,129,${Math.min(0.95, 0.25 + (d.tokens/maxT)*0.7).toFixed(2)})`;
+        return `<div class="hm-cell" style="background:${bg};" title="${d.date}: ${fmtK(d.tokens)}"></div>`;
+      }).join('');
+      updatePosterPreview();
+    }
+  }
+
+  window.hotSwitch = async (id) => {
+    showToast(isEn() ? 'Switching account…' : '正在热切换账号…');
+    const res = await apiCall('switch', { account: id });
+    showToast(res.ok ? (isEn() ? 'Account switched successfully' : '热切换成功') : ((isEn() ? 'Switch failed: ' : '切换失败: ') + (res.error || 'unknown')));
+    loadAnalytics();
+  };
+
+  async function loadSnapshot() {
+    try {
+      const data = await apiCall('snapshot', { session: state.sessionId, view: state.viewMode, limit: state.limit });
+      if (data) renderSnapshot(data);
+    } catch (err) {
+      console.error('loadSnapshot error:', err);
+    }
+  }
+  async function loadAnalytics() { renderAnalytics(await apiCall('analytics', { range: state.range })); }
+
+  document.querySelectorAll('#range-tabs .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#range-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.range = btn.dataset.range;
+      loadAnalytics();
+    };
+  });
+  document.getElementById('acc-search').oninput = (e) => { state.accQuery = e.target.value; renderAccountsList(); };
+  document.querySelectorAll('#acc-filters .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#acc-filters .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.accFilter = btn.dataset.af;
+      renderAccountsList();
+    };
+  });
+  document.getElementById('btn-wake-am-banner').onclick = async () => { await apiCall('wakeAm'); showToast(isEn() ? 'Opening Antigravity Manager…' : '正在唤醒 Antigravity Manager…'); };
+  document.getElementById('ps-summary').onclick = () => { state.posterSource = 'summary'; document.getElementById('ps-summary').classList.add('active'); document.getElementById('ps-session').classList.remove('active'); updatePosterPreview(); };
+  document.getElementById('ps-session').onclick = () => { state.posterSource = 'session'; document.getElementById('ps-session').classList.add('active'); document.getElementById('ps-summary').classList.remove('active'); updatePosterPreview(); };
+  document.getElementById('btn-copy-summary').onclick = () => {
+    const txt = isEn()
+      ? `Antigravity Report: Cache Saved ${document.getElementById('p-hero').textContent} · ${document.getElementById('p-sub').textContent} (by Antigravity Manager)`
+      : `Antigravity 战报：缓存节省 ${document.getElementById('p-hero').textContent} · ${document.getElementById('p-sub').textContent} (by Antigravity Manager)`;
+    if (navigator.clipboard) navigator.clipboard.writeText(txt);
+    showToast(isEn() ? 'Report summary copied' : '已复制战报文本');
+  };
+
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.tab = btn.dataset.tab;
+      ['live','analytics','accounts','settings'].forEach(t => document.getElementById('tab-' + t).classList.toggle('hidden', t !== state.tab));
+      if (state.tab === 'analytics' || state.tab === 'accounts') loadAnalytics();
+    };
+  });
+  function updateThemeLabel() {
+    const isDark = document.body.classList.contains('theme-dark');
+    const tEl = document.getElementById('btn-theme-text');
+    if (tEl) tEl.textContent = isEn() ? (isDark ? 'Dark' : 'Light') : (isDark ? '深色' : '浅色');
+    const rEl = document.getElementById('btn-refresh-text');
+    if (rEl) rEl.textContent = isEn() ? 'Refresh' : '刷新';
+  }
+  function toggleTheme() {
+    document.body.classList.toggle('theme-dark');
+    updateThemeLabel();
+  }
+  document.getElementById('btn-theme').onclick = toggleTheme;
+  document.getElementById('session-select').onchange = (e) => { state.sessionId = e.target.value; loadSnapshot(); };
+  document.getElementById('limit-select').onchange = (e) => { state.limit = Number(e.target.value); if (isVsCode) vscodeApi.postMessage({ type: 'setLimit', limit: state.limit }); loadSnapshot(); };
+  document.getElementById('view-select').onchange = (e) => { state.viewMode = e.target.value; loadSnapshot(); };
+  document.getElementById('btn-compact').onclick = () => { if (isVsCode) vscodeApi.postMessage({ type: 'copyCompact' }); else if (navigator.clipboard) navigator.clipboard.writeText('/compact'); showToast(isEn() ? 'Copied /compact' : '已复制 /compact'); };
+  document.getElementById('btn-wake-am').onclick = async () => { await apiCall('wakeAm'); showToast(isEn() ? 'Opening Antigravity Manager…' : '正在唤醒 Antigravity Manager…'); };
+  document.getElementById('poster-dark-btn').onclick = () => { state.posterTheme = 'dark'; document.getElementById('poster-card').className = 'poster-preview poster-dark'; document.getElementById('poster-dark-btn').classList.add('active'); document.getElementById('poster-light-btn').classList.remove('active'); };
+  document.getElementById('poster-light-btn').onclick = () => { state.posterTheme = 'light'; document.getElementById('poster-card').className = 'poster-preview poster-light'; document.getElementById('poster-light-btn').classList.add('active'); document.getElementById('poster-dark-btn').classList.remove('active'); };
+  let pollTimer = null;
+  function restartPolling(ms) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = ms > 0 ? setInterval(loadSnapshot, ms) : null;
+  }
+  function updatePillPreview() {
+    const el = document.getElementById('pill-preview');
+    if (!el) return;
+    const r = state.snapshot?.report;
+    const p = [];
+    if (state.pillItems.includes('context')) p.push(r ? `${fmtK(r.active_context_tokens)} · ${Math.round((r.active_context_tokens/state.limit)*100)}%` : '361K · 36%');
+    if (state.pillItems.includes('cache')) p.push(`Cache ${r ? Math.round(r.avg_cache_hit_rate*100) : 88}%`);
+    if (state.pillItems.includes('tps')) p.push(`${r?.avg_tps || 71} t/s`);
+    if (state.pillItems.includes('cost')) p.push(`$${(r?.estimated_cost_usd || 12.3).toFixed(2)}`);
+    if (state.pillItems.includes('turns')) p.push(`${r?.turns?.length || 120}T`);
+    if (state.pillItems.includes('account')) p.push((state.amData?.current_email || 'user@gmail.com').split('@')[0]);
+    if (state.pillItems.includes('quota')) p.push('G100% C100%');
+    el.textContent = p.join(' | ') || 'AM Monitor';
+  }
+  async function manualRefreshAll() {
+    showToast(isEn() ? 'Refreshing data…' : '正在刷新数据…');
+    await Promise.all([loadSnapshot(), loadAnalytics()]);
+    updatePillPreview();
+    showToast(isEn() ? 'Data refreshed' : '已刷新最新数据');
+  }
+  document.getElementById('btn-refresh').onclick = manualRefreshAll;
+  document.getElementById('btn-refresh-2').onclick = manualRefreshAll;
+  document.getElementById('btn-theme-2').onclick = toggleTheme;
+  document.getElementById('btn-wake-am-2').onclick = async () => { await apiCall('wakeAm'); showToast(isEn() ? 'Opening Antigravity Manager…' : '正在唤醒 Antigravity Manager…'); };
+  document.getElementById('poll-select').onchange = (e) => {
+    const ms = Number(e.target.value);
+    restartPolling(ms);
+    showToast(ms > 0 ? (isEn() ? `Auto-refresh set to every ${ms/1000}s` : `已切换为每 ${ms/1000} 秒自动刷新`) : (isEn() ? 'Set to manual refresh only' : '已切换为仅手动刷新'));
+  };
+  document.querySelectorAll('.pill-opt').forEach(cb => {
+    cb.onchange = () => {
+      state.pillItems = Array.from(document.querySelectorAll('.pill-opt:checked')).map(x => x.value);
+      updatePillPreview();
+      if (isVsCode) vscodeApi.postMessage({ type: 'setPill', items: state.pillItems });
+      showToast(isEn() ? 'Status bar pill updated' : '状态栏胶囊已更新');
+    };
+  });
+  document.getElementById('btn-export-png').onclick = () => {
+    const useSummary = state.posterSource === 'summary' && state.analytics;
+    const hit = useSummary ? Math.round((state.analytics.avg_cache_hit_rate || 0) * 100) : Math.round((state.snapshot?.report?.avg_cache_hit_rate || 0) * 100);
+    const total = useSummary ? fmtK(state.analytics.total_tokens || 0) : fmtK(state.snapshot?.report?.cumulative_tokens || 0);
+    const inp = useSummary ? fmtK(state.analytics.total_input_tokens || 0) : fmtK(state.snapshot?.report?.total_input_tokens || 0);
+    const out = useSummary ? fmtK(state.analytics.total_output_tokens || 0) : fmtK(state.snapshot?.report?.total_output_tokens || 0);
+    const cache = useSummary ? fmtK(state.analytics.total_cache_read_tokens || 0) : fmtK(state.snapshot?.report?.total_cache_read_tokens || 0);
+    const cost = useSummary ? (state.analytics.total_cost_usd || 0).toFixed(2) : (state.snapshot?.report?.estimated_cost_usd || 0).toFixed(2);
+    const roi = useSummary ? (state.analytics.roi_multiplier || 0) : (state.snapshot?.report?.roi_multiplier || 0);
+    const models = useSummary ? (state.analytics.top_models || []) : (state.snapshot?.report?.model_counts || []).map(m => ({ name: m.name }));
+
+    const isDark = state.posterTheme === 'dark';
+    const canvas = document.createElement('canvas'); canvas.width = 1200; canvas.height = 620;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 1200, 620);
+    if (isDark) { grad.addColorStop(0, '#0f172a'); grad.addColorStop(0.55, '#090d16'); grad.addColorStop(1, '#0c2224'); }
+    else { grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.55, '#f1f5f9'); grad.addColorStop(1, '#ecfdf5'); }
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 1200, 620);
+
+    const fg = isDark ? '#f8fafc' : '#0f172a';
+    const dim = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(15,23,42,0.55)';
+    const reportTitle = isEn() ? 'Antigravity Report' : 'Antigravity 战报';
+    const reportScope = useSummary ? (isEn() ? 'Global Summary' : '全局汇总') : (isEn() ? 'Current Session' : '当前会话');
+    ctx.fillStyle = fg; ctx.font = '700 32px -apple-system, sans-serif'; ctx.fillText(`${reportTitle}  ${reportScope}`, 64, 82);
+    ctx.fillStyle = dim; ctx.font = '600 20px -apple-system, sans-serif'; ctx.fillText('ANTIGRAVITY MANAGER', 880, 80);
+
+    // Left column
+    ctx.fillStyle = dim; ctx.font = '600 22px -apple-system, sans-serif'; ctx.fillText(isEn() ? 'TOTAL TOKENS' : '总消耗 TOKEN', 64, 170);
+    ctx.fillStyle = fg; ctx.font = '800 64px -apple-system, sans-serif'; ctx.fillText(total, 64, 240);
+    ctx.fillStyle = '#10b981'; ctx.font = '700 28px -apple-system, sans-serif'; ctx.fillText(`↑${hit}% Cache`, 64, 285);
+    const cols = ['#10b981', '#8b5cf6', '#0ea5e9'];
+    models.slice(0, 3).forEach((m, i) => {
+      ctx.fillStyle = cols[i % 3]; ctx.beginPath(); ctx.arc(74, 345 + i * 38, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = fg; ctx.font = '500 22px -apple-system, sans-serif'; ctx.fillText(String(m.name).slice(0, 26), 92, 353 + i * 38);
+    });
+    ctx.fillStyle = dim; ctx.font = '600 22px -apple-system, sans-serif'; ctx.fillText(`IN ${inp}   ·   OUT ${out}`, 64, 520);
+
+    // Center 6-axis orbital radar
+    const cx = 600, cy = 320;
+    [130, 88].forEach(rad => {
+      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.1)';
+      ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke();
+    });
+    const rg = ctx.createLinearGradient(cx - 120, cy - 120, cx + 120, cy + 120);
+    rg.addColorStop(0, '#10b981'); rg.addColorStop(0.5, '#0ea5e9'); rg.addColorStop(1, '#8b5cf6');
+    ctx.strokeStyle = rg; ctx.lineWidth = 5; ctx.fillStyle = 'rgba(16,185,129,0.12)';
+    ctx.beginPath();
+    [[0,-118],[105,-58],[98,64],[0,114],[-104,58],[-96,-64]].forEach(([dx,dy], i) => i === 0 ? ctx.moveTo(cx+dx, cy+dy) : ctx.lineTo(cx+dx, cy+dy));
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0f172a'; ctx.beginPath(); ctx.arc(cx, cy, 40, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = rg; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#f8fafc'; ctx.font = '800 28px -apple-system, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('AM', cx, cy + 10);
+
+    // Right column
+    ctx.textAlign = 'right';
+    ctx.fillStyle = dim; ctx.font = '600 22px -apple-system, sans-serif'; ctx.fillText(isEn() ? 'EST. API VALUE' : '等价 API 价值', 1136, 170);
+    ctx.fillStyle = fg; ctx.font = '800 58px -apple-system, sans-serif'; ctx.fillText(`$${cost}`, 1136, 238);
+    ctx.fillStyle = '#10b981'; ctx.font = '700 26px -apple-system, sans-serif'; ctx.fillText(`${roi}x ROI`, 1136, 282);
+    ctx.fillStyle = dim; ctx.font = '600 22px -apple-system, sans-serif'; ctx.fillText(isEn() ? 'CACHE REUSED' : '缓存复用量', 1136, 380);
+    ctx.fillStyle = fg; ctx.font = '700 44px -apple-system, sans-serif'; ctx.fillText(cache, 1136, 435);
+    ctx.fillStyle = dim; ctx.font = '500 20px -apple-system, sans-serif'; ctx.fillText('Generated by Antigravity Manager', 1136, 560);
+
+    const dataUrl = canvas.toDataURL('image/png');
+    if (isVsCode) { vscodeApi.postMessage({ type: 'savePosterPng', dataUrl }); showToast('Poster saved to Desktop'); }
+    else { const a = document.createElement('a'); a.href = dataUrl; a.download = `antigravity-poster-${Date.now()}.png`; a.click(); showToast('Exported PNG Poster'); }
+  };
+
+  // Smart Auto-Theme (follows VS Code / OS prefers-color-scheme)
+  function applyAutoTheme() {
+    const isLightHost = document.body.classList.contains('vscode-light') ||
+      (!document.body.classList.contains('vscode-dark') && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.body.classList.toggle('theme-dark', !isLightHost);
+  }
+  applyAutoTheme(); updateThemeLabel();
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyAutoTheme);
+  }
+
+  // Smart Auto-Language (Full UI zh <-> en translation)
+  const ZH_TO_EN = {
+    '消息': 'Messages', '工具': 'Tools', '系统': 'System', '推理': 'Thinking',
+    '当前会话': 'Session', '汇总与海报': 'Summary & Poster', '账号': 'Accounts', '设置': 'Settings',
+    '当前窗口': 'Current Window', '全会话': 'Full Session', '↻ 刷新': '↻ Refresh', '深/浅': 'Theme',
+    '当前上下文': 'Active Context', '缓存命中率': 'Cache Hit Rate', '平均生成速度': 'Avg Speed',
+    '交互深度 · 工具': 'Turns · Tools', '上下文与缓存双环总览': 'Context & Cache Overview',
+    '工具调用矩阵': 'Tool Call Matrix', '本场模型切换排行': 'Model Breakdown',
+    '最重步骤 Top 4 & 异常排查': 'Top 4 Heaviest Steps & Errors',
+    '今天': 'Today', '近 7 天': '7 Days', '近 30 天': '30 Days', '全部': 'All',
+    '宏观汇总大盘': 'Usage Summary', '总吞吐 Token': 'Total Tokens', '全局缓存命中': 'Global Cache Hit',
+    '等价 API 价值': 'Est. API Value', '统计会话 · 均速': 'Sessions · Avg TPS',
+    '全模型算力分布': 'Model Distribution', '近 26 周（半年）活跃热力图': '26-Week Activity Heatmap',
+    '分享战报卡片': 'Share Report Card', '汇总': 'Summary', '本场': 'Session', '深色': 'Dark', '浅色': 'Light',
+    '导出高清 PNG 战报': 'Export HD PNG Poster', '复制战报文本': 'Copy Summary',
+    '打开 Antigravity Manager 查看完整项目排行与高级战报 ↗': 'Open Antigravity Manager for Full Stats & Posters ↗',
+    '账号列表与快捷热切换': 'Accounts & Hot-Switch', '高额度': 'High Quota',
+    '唤醒 Antigravity Manager 管理全部账号与刷新额度 ↗': 'Open Antigravity Manager to Manage All Accounts ↗',
+    '状态栏快捷胶囊自定义': 'Status Bar Pill Customizer', 'IDE 底部状态栏': 'IDE Status Bar',
+    '实时预览：': 'Live Preview: ', '当前会话指标': 'Current Session Metrics',
+    '当前账号指标（需连接 AM）': 'Current Account Metrics (AM Required)',
+    '当前上下文 (%)': 'Active Context (%)', '当前缓存命中 (%)': 'Cache Hit (%)',
+    '当前吐字速度 (t/s)': 'Decode Speed (t/s)', '当前会话费用 ($)': 'Session Cost ($)',
+    '当前会话轮次': 'Session Turns', '当前登录账号': 'Active Account', '当前账号额度 (G/C)': 'Account Quota (G/C)',
+    '刷新频率与外观偏好': 'Refresh & Appearance', '自动刷新频率': 'Auto-Refresh Interval',
+    '界面语言': 'Language', '界面外观': 'Appearance', '切换 深色 / 浅色': 'Toggle Dark / Light',
+    '手动同步全部数据': 'Manual Sync All', '↻ 立即刷新': '↻ Refresh Now',
+    '主应用联动': 'Main App Link', '唤醒 Antigravity Manager ↗': 'Open Antigravity Manager ↗',
+    '每 2 秒': 'Every 2s', '每 3.5 秒': 'Every 3.5s', '每 5 秒': 'Every 5s', '每 10 秒': 'Every 10s', '仅手动刷新': 'Manual Only',
+    'Antigravity 战报': 'Antigravity Report',
+    '全局汇总': 'Global Summary',
+    '● 总消耗': '● Total Tokens',
+    '● API 价值': '● Est. API Value',
+    '● 缓存复用': '● Cache Reused',
+    '回本': 'ROI',
+    '已重置': 'Reset',
+    '受限': 'Limited',
+    '当前使用': 'Active',
+    '使用中': 'In Use',
+    '热切换': 'Switch',
+    '独立只读模式': 'Standalone Read-Only',
+    '跟随系统 (Auto)': 'System (Auto)',
+    '简体中文': 'Simplified Chinese',
+    '检测中': 'Detecting...',
+    '暂无工具调用': 'No tool calls yet',
+    '暂无模型记录': 'No model records yet',
+    '暂无重型步骤': 'No heavy steps yet',
+    '没有匹配的账号': 'No matching accounts found',
+
+  };
+  function resolveLang(pref) {
+    if (pref === 'zh' || pref === 'en') return pref;
+    return String(navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+  function applyLang(pref = 'auto') {
+    const lang = resolveLang(pref);
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent || parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE') continue;
+      const raw = node.nodeValue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (!node.__zhOrig && ZH_TO_EN[trimmed]) node.__zhOrig = trimmed;
+      if (node.__zhOrig) {
+        const targetText = lang === 'en' ? ZH_TO_EN[node.__zhOrig] : node.__zhOrig;
+        node.nodeValue = raw.replace(trimmed, targetText);
+      }
+    }
+    const searchEl = document.getElementById('acc-search');
+    if (searchEl) searchEl.placeholder = lang === 'en' ? 'Search email...' : '搜索邮箱...';
+  }
+  document.getElementById('lang-select').onchange = (e) => {
+    currentLangPref = e.target.value;
+    applyLang(currentLangPref); updateThemeLabel();
+    if (state.snapshot) renderSnapshot(state.snapshot);
+    if (state.analytics) renderAnalytics({ analytics: state.analytics, am: state.amData });
+    else updatePosterPreview();
+  };
+  applyLang('auto');
+
+  // Load both snapshot and analytics on initial startup
+  loadSnapshot();
+  loadAnalytics();
+  restartPolling(3500);
+</script>
+</body>
+</html>

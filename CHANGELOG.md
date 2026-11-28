@@ -5,6 +5,42 @@
 
 ---
 
+## v0.0.4 (2026-11-28)
+
+### English
+
+- **No-TUN Transparent Proxy Acceleration (`am-proxy` Crate + Update-Proof Client Launchers)**:
+  - Added a dedicated `am-proxy` crate that auto-detects local & system proxy endpoints with live TCP latency probing (reusing existing local proxy clients without TUN mode or patching original `.app` bundles), supports custom proxy URLs, and includes a fixed-port hot-switchable local relay (`RelayServer`, default `17890`).
+  - Added one-click No-TUN launch and desktop shortcut wrappers for **Antigravity Desktop App** and **Antigravity IDE** (automatically syncing user proxy & loopback bypass settings so native Dock launches also work, with one-click restore), plus a managed Shell Hook for **`agy` CLI** with instant rollback.
+  - Enabled automatic OS system proxy inheritance in `am-core`'s `shared_http_client()` (with `localhost` / `127.0.0.1` / `::1` bypass) so quota sync and update checks work seamlessly without TUN mode.
+- **Native Zero-Patch Context Monitor Plugins Across All 3 Hosts (`AM Monitor`)**:
+  - **Antigravity Desktop (`Sidecar UI`)**: Built a native right-hand Aux Pane plugin (`~/.gemini/config/plugins/am-monitor`, powered by `sidecar_sdk`) featuring live context window watermarks (`Current Window` post-`/compact` vs. `Full Session`), dual-ring cache hit & context gauge, TPS speed, 10-cell tool call matrix, model breakdown, denoised Top 4 heaviest steps & error diagnostics, 26-week heatmap, HD share report PNG export, in-panel account hot-switching, and smart auto-follow language & dark/light theme.
+  - **Antigravity IDE Extension (`~/.antigravity-ide/extensions/am-monitor`)**: Added a native bottom status bar pill with customizable live metrics (context %, cache hit %, TPS, cost, turns, active account, G/C quota), rich hover summary, and one-click full Bento monitor panel.
+  - **Antigravity CLI (`agy` Dual-Line Statusline)**: Added a zero-network, millisecond-fast dual-line ANSI statusline (`am statusline`) hooked into `~/.gemini/antigravity-cli/settings.json` displaying live context usage, active account quota, and proxy status — automatically backing up and losslessly restoring any pre-existing `statusLine` config on uninstall.
+- **Apple HIG Toolbox Console & Full 12-Language Support**:
+  - Added a new **Toolbox** tab (`NavMenu` + `Toolbox.tsx`) styled to match Dashboard, Stats, and Settings: top Apple segmented filter (`All Tools` / `No-TUN Proxy` / `Monitor Plugins`), 4-card status KPI strip, asymmetric `7 + 5` Bento grid, live running/proxy badges, and a post-install quick-entry guide.
+  - Added full translations (69 keys) across all 12 locale packs (`zh`, `en`, `zh-TW`, `ja`, `ko`, `es`, `pt`, `ru`, `tr`, `vi`, `ar`, `my`).
+- **Expanded `am` CLI Subcommands for Full Headless Parity**:
+  - Added `am proxy` (`detect`, `relay`, `launch`, `hook`), `am session-context [--session] [--json]`, `am statusline`, and `am plugin` (`install`, `uninstall`, `status`).
+
+### 中文
+
+- **免 TUN 透明代理加速引擎（新增 `am-proxy` Crate + 零侵入抗更新启动器）**：
+  - 新增独立 `am-proxy` 模块，自动探测本机与系统代理出口及实时 TCP 延迟（直接复用 Shadowrocket / Clash / Surge / v2ray 等本机代理软件，无需开启 TUN 模式，也绝不修改原版 `.app` 包），支持自定义代理地址与固定端口热切换本地中继（`RelayServer`，默认 `17890`）。
+  - 支持对 **Antigravity 桌面版** 与 **Antigravity IDE** 一键免 TUN 启动及创建带原版图标的桌面快捷启动器（IDE 自动同步用户级代理与本地回环保护，直接点 Dock 原版图标同样生效，支持一键恢复默认），并为 **`agy` CLI** 提供托管式 Shell Hook 无感代理与一键还原。
+  - 在 `am-core` 全局 `shared_http_client()` 中自动继承操作系统代理设置（内置 `localhost` / `127.0.0.1` / `::1` 回环直连保护），不开 TUN 即可稳定刷新配额与检查更新。
+- **三宿主原生零侵入上下文监控插件（`AM Monitor` · 抗官方更新）**：
+  - **Antigravity 桌面端（`Sidecar UI`）**：基于官方 `sidecar_sdk` 构建右侧原生辅助面板插件（安装至 `~/.gemini/config/plugins/am-monitor`），支持实时上下文水位与 `/compact` 压缩窗口识别（当前窗口 / 全会话切换）、双环缓存命中率与 ROI 回本倍率、TPS 生成速率、10 格工具调用矩阵、模型排行、降噪后的 Top 4 最重步骤与异常排查、近 26 周活跃热力图、高清 PNG 战报海报导出、面板内多账号热切换以及中英文与深浅色智能跟随。
+  - **Antigravity IDE 扩展（`~/.antigravity-ide/extensions/am-monitor`）**：提供底部状态栏实时胶囊（可自定义勾选上下文 %、缓存命中 %、吐字速度、会话费用、轮次、当前账号与 G/C 额度）、富文本悬浮摘要与单击直达完整监控面板。
+  - **Antigravity CLI（`agy` 双行实时状态栏）**：新增零网络请求、毫秒级响应的双行 ANSI 终端状态栏（`am statusline`），写入 `~/.gemini/antigravity-cli/settings.json` 实时展示 CTX 水位、当前账号额度与代理端口，安装前自动备份原有配置、卸载时无损还原。
+- **全新 Apple HIG「工具箱」控制台与 12 国语言全量适配**：
+  - 顶栏新增 **工具箱**（`Toolbox`）独立模块，与仪表盘 / 统计 / 设置保持 1:1 视觉统一：顶部 Apple 分段控制器（`全部工具 / 免 TUN 代理 / 监控插件`）、4 列状态 KPI 矩阵、`7 + 5` 非对称 Bento 双栏布局、运行态实时徽章及「安装后入口速览」引导卡。
+  - 全部 12 份多语言包（`zh` / `en` / `zh-TW` / `ja` / `ko` / `es` / `pt` / `ru` / `tr` / `vi` / `ar` / `my`）同步补齐 69 条工具箱与导航词条。
+- **`am` CLI 命令行能力全面对等扩展**：
+  - 新增 `am proxy`（`detect` / `relay` / `launch` / `hook`）、`am session-context [--session] [--json]`、`am statusline` 与 `am plugin`（`install` / `uninstall` / `status`）子命令，完整覆盖终端与无头工作流。
+
+---
+
 ## v0.0.3 (2026-11-26)
 
 ### English

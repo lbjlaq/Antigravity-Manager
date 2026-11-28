@@ -26,6 +26,7 @@ const TAURI_CONF = path.join(ROOT_DIR, 'crates/am-gui/src-tauri/tauri.conf.json'
 const UI_PKG = path.join(ROOT_DIR, 'crates/am-gui/ui/package.json');
 const UI_LOCK = path.join(ROOT_DIR, 'crates/am-gui/ui/package-lock.json');
 const CARGO_TOMLS = [
+  'crates/am-proxy/Cargo.toml',
   'crates/am-core/Cargo.toml',
   'crates/am-cli/Cargo.toml',
   'crates/am-gui/src-tauri/Cargo.toml',

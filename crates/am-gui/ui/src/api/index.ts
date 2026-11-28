@@ -625,4 +625,164 @@ export const api = {
     if (!isTauri()) return;
     return invokeTauri<void>('sync_ui_preferences', prefs);
   },
+
+  // 25. 免 TUN 代理与工具箱接口
+  async proxyDetectNodes(): Promise<ProxyNode[]> {
+    if (!isTauri()) {
+      return [
+        {
+          name: 'Clash / Mihomo (Mock)',
+          host: '127.0.0.1',
+          port: 7890,
+          protocol: 'http',
+          latency_ms: 12,
+          source: 'auto_detected',
+        },
+      ];
+    }
+    return invokeTauri<ProxyNode[]>('proxy_detect_nodes');
+  },
+
+  async proxyGetStatus(): Promise<ProxyStatus> {
+    if (!isTauri()) {
+      return { running: false, local_addr: null, upstream: null };
+    }
+    return invokeTauri<ProxyStatus>('proxy_get_status');
+  },
+
+  async proxyStartOrSwitch(node: ProxyNode | null, port?: number): Promise<ProxyStatus> {
+    if (!isTauri()) {
+      return { running: true, local_addr: `http://127.0.0.1:${port ?? 17890}`, upstream: node };
+    }
+    return invokeTauri<ProxyStatus>('proxy_start_or_switch', { node, port: port ?? null });
+  },
+
+  async proxyStop(): Promise<ProxyStatus> {
+    if (!isTauri()) {
+      return { running: false, local_addr: null, upstream: null };
+    }
+    return invokeTauri<ProxyStatus>('proxy_stop');
+  },
+
+  async proxyLaunchApp(target: 'app' | 'ide' | 'cli', proxyUrl?: string): Promise<number> {
+    if (!isTauri()) return 0;
+    return invokeTauri<number>('proxy_launch_app', { target, proxyUrl: proxyUrl ?? null });
+  },
+
+  async proxyInstallShellHook(enable: boolean, proxyUrl?: string): Promise<string> {
+    if (!isTauri()) return '~/.zshrc';
+    return invokeTauri<string>('proxy_install_shell_hook', { enable, proxyUrl: proxyUrl ?? null });
+  },
+
+  async proxyCreateMacosWrapper(target: 'app' | 'ide', proxyUrl?: string): Promise<string> {
+    if (!isTauri()) return '~/Desktop/Antigravity (No-TUN).app';
+    return invokeTauri<string>('proxy_create_macos_wrapper', { target, proxyUrl: proxyUrl ?? null });
+  },
+
+  async proxyRemoveMacosWrapper(target: 'app' | 'ide'): Promise<boolean> {
+    if (!isTauri()) return true;
+    return invokeTauri<boolean>('proxy_remove_macos_wrapper', { target });
+  },
+
+  async proxyGetIntegrations(): Promise<ProxyIntegrations> {
+    if (!isTauri()) {
+      return { app_wrapper: false, ide_wrapper: false, shell_hook: false, ide_settings_proxy: null };
+    }
+    return invokeTauri<ProxyIntegrations>('proxy_get_integrations');
+  },
+
+  async proxyRuntimeStatus(): Promise<Record<string, { running: boolean; proxy_active: boolean; proxy_url?: string | null }>> {
+    if (!isTauri()) return {};
+    return invokeTauri<Record<string, { running: boolean; proxy_active: boolean; proxy_url?: string | null }>>('proxy_runtime_status');
+  },
+
+  async proxySetAutoNoTun(enabled: boolean, proxyUrl?: string | null): Promise<void> {
+    if (!isTauri()) return;
+    return invokeTauri<void>('proxy_set_auto_no_tun', { enabled, proxyUrl: proxyUrl ?? null });
+  },
+
+  async contextPluginStatus(): Promise<{ ide_installed: boolean; mcp_installed: boolean; cli_installed: boolean }> {
+    if (!isTauri()) return { ide_installed: false, mcp_installed: false, cli_installed: false };
+    return invokeTauri<{ ide_installed: boolean; mcp_installed: boolean; cli_installed: boolean }>('context_plugin_status');
+  },
+
+  async contextPluginInstall(target: 'ide' | 'mcp' | 'cli'): Promise<{ ide_installed: boolean; mcp_installed: boolean; cli_installed: boolean }> {
+    if (!isTauri()) return { ide_installed: false, mcp_installed: false, cli_installed: false };
+    return invokeTauri<{ ide_installed: boolean; mcp_installed: boolean; cli_installed: boolean }>('context_plugin_install', { target });
+  },
+
+  async contextPluginUninstall(target: 'ide' | 'mcp' | 'cli'): Promise<{ ide_installed: boolean; mcp_installed: boolean; cli_installed: boolean }> {
+    if (!isTauri()) return { ide_installed: false, mcp_installed: false, cli_installed: false };
+    return invokeTauri<{ ide_installed: boolean; mcp_installed: boolean; cli_installed: boolean }>('context_plugin_uninstall', { target });
+  },
+
+  async proxySyncIdeSettings(proxyUrl: string | null): Promise<void> {
+    if (!isTauri()) return;
+    return invokeTauri<void>('proxy_sync_ide_settings', { proxyUrl });
+  },
+
+  // 26. 多语言本地化（零 ASAR 侵入）
+  async localizeListLocales(): Promise<LocaleOption[]> {
+    if (!isTauri()) {
+      return [
+        { code: 'zh-cn', label: '简体中文', native_label: '简体中文 (中国大陆)' },
+        { code: 'zh-tw', label: '繁體中文', native_label: '繁體中文 (台灣)' },
+        { code: 'ja', label: '日语', native_label: '日本語' },
+        { code: 'ko', label: '韩语', native_label: '한국어' },
+        { code: 'en', label: 'English (原版)', native_label: 'English (Default)' },
+      ];
+    }
+    return invokeTauri<LocaleOption[]>('localize_list_locales');
+  },
+
+  async localizeGetStatus(): Promise<LocalizeStatus> {
+    if (!isTauri()) return { ide_locale: null, app_locale: null, locales_dir: '~/.antigravity_tools/locales' };
+    return invokeTauri<LocalizeStatus>('localize_get_status');
+  },
+
+  async localizeSetIdeLocale(locale: string): Promise<LocalizeStatus> {
+    if (!isTauri()) return { ide_locale: locale === 'en' ? null : locale, app_locale: null, locales_dir: '' };
+    return invokeTauri<LocalizeStatus>('localize_set_ide_locale', { locale });
+  },
+
+  async localizeSetAppLocale(locale: string): Promise<LocalizeStatus> {
+    if (!isTauri()) return { ide_locale: null, app_locale: locale === 'en' ? null : locale, locales_dir: '' };
+    return invokeTauri<LocalizeStatus>('localize_set_app_locale', { locale });
+  },
 };
+
+export interface LocaleOption {
+  code: string;
+  label: string;
+  native_label: string;
+}
+
+export interface LocalizeStatus {
+  ide_locale: string | null;
+  app_locale: string | null;
+  locales_dir: string;
+}
+
+export interface ProxyIntegrations {
+  app_wrapper: boolean;
+  ide_wrapper: boolean;
+  shell_hook: boolean;
+  ide_settings_proxy?: string | null;
+}
+
+export interface ProxyNode {
+  name: string;
+  host: string;
+  port: number;
+  protocol: 'http' | 'socks5';
+  username?: string | null;
+  password?: string | null;
+  latency_ms?: number | null;
+  source: 'system' | 'auto_detected' | 'custom';
+}
+
+export interface ProxyStatus {
+  running: boolean;
+  local_addr: string | null;
+  upstream: ProxyNode | null;
+}

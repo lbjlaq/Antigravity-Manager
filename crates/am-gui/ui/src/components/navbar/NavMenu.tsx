@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { LayoutDashboard, Users, BarChart3, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, BarChart3, Wrench, Settings } from 'lucide-react';
 import { tUi } from '../../i18n/ui';
 
-export type TabId = 'dashboard' | 'accounts' | 'stats' | 'settings';
+export type TabId = 'dashboard' | 'accounts' | 'stats' | 'toolbox' | 'settings';
 
 interface NavMenuProps {
   currentTab: TabId;
@@ -26,6 +26,11 @@ export const NavMenu: React.FC<NavMenuProps> = ({ currentTab, onTabChange, lang 
       id: 'stats' as TabId,
       label: tUi(lang, 'nav_stats'),
       icon: BarChart3,
+    },
+    {
+      id: 'toolbox' as TabId,
+      label: tUi(lang, 'nav_toolbox'),
+      icon: Wrench,
     },
     {
       id: 'settings' as TabId,

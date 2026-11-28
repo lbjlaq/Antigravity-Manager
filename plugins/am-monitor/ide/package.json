@@ -1,0 +1,26 @@
+{
+  "name": "am-monitor",
+  "displayName": "AM Context Monitor",
+  "icon": "assets/logo.png",
+  "description": "Apple Liquid Glass context window, cache hit rate, ROI analytics, account hot-switch & share poster for Antigravity IDE.",
+  "version": "1.0.0",
+  "publisher": "antigravity-manager",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "amMonitor.openPanel",
+        "title": "AM Monitor: Open Context & Analytics"
+      }
+    ]
+  }
+}

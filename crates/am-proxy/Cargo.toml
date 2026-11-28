@@ -1,0 +1,14 @@
+[package]
+name = "am-proxy"
+version = "0.0.4"
+edition = "2021"
+description = "Cross-platform No-TUN transparent proxy & launcher SDK for Antigravity"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "process"] }
+thiserror = "2.0"
+tracing = "0.1"
+dirs = "5.0"
+url = "2.5"

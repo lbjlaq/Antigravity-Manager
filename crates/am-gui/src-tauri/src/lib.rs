@@ -46,6 +46,11 @@ async fn get_accounts(state: tauri::State<'_, AntigravityManager>) -> Result<Vec
         .map_err(|e| e.to_string())
 }
 
+static AUTO_NO_TUN_ON_SWITCH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static PREFERRED_PROXY_URL: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
 #[tauri::command]
 async fn switch_account(
     app: tauri::AppHandle,
@@ -56,10 +61,37 @@ async fn switch_account(
 ) -> Result<Account, String> {
     let host: TargetHost = target.parse().map_err(|e: String| e)?;
     let should_restart = restart.unwrap_or(false);
+    let auto_no_tun =
+        should_restart && AUTO_NO_TUN_ON_SWITCH.load(std::sync::atomic::Ordering::Relaxed);
+
     let switched = state
-        .switch_account_with_refresh(&account, host, should_restart)
+        .switch_account_with_refresh(&account, host, should_restart && !auto_no_tun)
         .await
         .map_err(|e| e.to_string())?;
+
+    if auto_no_tun {
+        let preferred = PREFERRED_PROXY_URL
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        let proxy_url = match preferred.filter(|s| !s.trim().is_empty()) {
+            Some(u) => Some(u),
+            None => am_core::am_proxy::detect_local_proxies()
+                .await
+                .into_iter()
+                .next()
+                .map(|n| n.to_url()),
+        };
+        if let Some(url) = proxy_url {
+            let target_app = match host {
+                TargetHost::Ide => am_core::am_proxy::TargetApp::AntigravityIde,
+                _ => am_core::am_proxy::TargetApp::AntigravityApp,
+            };
+            let _ = am_core::am_proxy::launch_with_proxy(target_app, &url, &[]);
+        }
+    }
+
     let _ = app.emit("tray://accounts-changed", ());
     Ok(switched)
 }
@@ -459,6 +491,407 @@ fn skip_update_version(
     controller.skip_version(&app, &version)
 }
 
+#[derive(serde::Serialize)]
+struct ProxyStatusPayload {
+    running: bool,
+    local_addr: Option<String>,
+    upstream: Option<am_core::am_proxy::ProxyNode>,
+}
+
+struct ProxyState(tokio::sync::Mutex<Option<am_core::am_proxy::RelayServer>>);
+
+#[tauri::command]
+async fn proxy_detect_nodes() -> Vec<am_core::am_proxy::ProxyNode> {
+    am_core::am_proxy::detect_local_proxies().await
+}
+
+#[tauri::command]
+async fn proxy_get_status(
+    state: tauri::State<'_, ProxyState>,
+) -> Result<ProxyStatusPayload, String> {
+    let guard = state.0.lock().await;
+    if let Some(relay) = guard.as_ref() {
+        Ok(ProxyStatusPayload {
+            running: true,
+            local_addr: Some(relay.local_http_url()),
+            upstream: relay.current_upstream().await,
+        })
+    } else {
+        Ok(ProxyStatusPayload {
+            running: false,
+            local_addr: None,
+            upstream: None,
+        })
+    }
+}
+
+#[tauri::command]
+async fn proxy_start_or_switch(
+    state: tauri::State<'_, ProxyState>,
+    node: Option<am_core::am_proxy::ProxyNode>,
+    port: Option<u16>,
+) -> Result<ProxyStatusPayload, String> {
+    let mut guard = state.0.lock().await;
+    if let Some(relay) = guard.as_ref() {
+        relay.switch_upstream(node).await;
+        return Ok(ProxyStatusPayload {
+            running: true,
+            local_addr: Some(relay.local_http_url()),
+            upstream: relay.current_upstream().await,
+        });
+    }
+    let bind_port = port.unwrap_or(am_core::am_proxy::DEFAULT_RELAY_PORT);
+    let bind_addr = format!("127.0.0.1:{}", bind_port);
+    let relay = am_core::am_proxy::RelayServer::start(&bind_addr, node)
+        .await
+        .map_err(|e| e.to_string())?;
+    let payload = ProxyStatusPayload {
+        running: true,
+        local_addr: Some(relay.local_http_url()),
+        upstream: relay.current_upstream().await,
+    };
+    *guard = Some(relay);
+    Ok(payload)
+}
+
+#[tauri::command]
+async fn proxy_stop(state: tauri::State<'_, ProxyState>) -> Result<ProxyStatusPayload, String> {
+    let mut guard = state.0.lock().await;
+    if let Some(relay) = guard.take() {
+        relay.shutdown();
+    }
+    Ok(ProxyStatusPayload {
+        running: false,
+        local_addr: None,
+        upstream: None,
+    })
+}
+
+#[tauri::command]
+async fn proxy_launch_app(
+    state: tauri::State<'_, ProxyState>,
+    target: String,
+    proxy_url: Option<String>,
+) -> Result<u32, String> {
+    let resolved_url = match proxy_url.filter(|s| !s.trim().is_empty()) {
+        Some(u) => u,
+        None => {
+            let guard = state.0.lock().await;
+            guard
+                .as_ref()
+                .map(|r| r.local_http_url())
+                .ok_or_else(|| "请先选择一个本机代理出口".to_string())?
+        }
+    };
+    let target_app = match target.as_str() {
+        "app" => am_core::am_proxy::TargetApp::AntigravityApp,
+        "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
+        "cli" | "agy" => am_core::am_proxy::TargetApp::AgyCli,
+        other => return Err(format!("未知目标应用: {}", other)),
+    };
+    am_core::am_proxy::launch_with_proxy(target_app, &resolved_url, &[]).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn proxy_install_shell_hook(
+    state: tauri::State<'_, ProxyState>,
+    enable: bool,
+    proxy_url: Option<String>,
+) -> Result<String, String> {
+    if !enable {
+        am_core::am_proxy::uninstall_shell_hook().map_err(|e| e.to_string())?;
+        return Ok("已移除终端 agy 代理 Hook".into());
+    }
+    let resolved_url = match proxy_url.filter(|s| !s.trim().is_empty()) {
+        Some(u) => u,
+        None => {
+            let guard = state.0.lock().await;
+            guard
+                .as_ref()
+                .map(|r| r.local_http_url())
+                .ok_or_else(|| "请先选择一个本机代理出口".to_string())?
+        }
+    };
+    let path = am_core::am_proxy::install_shell_hook(&resolved_url).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+async fn proxy_create_macos_wrapper(
+    state: tauri::State<'_, ProxyState>,
+    target: String,
+    proxy_url: Option<String>,
+) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let resolved_url = match proxy_url.filter(|s| !s.trim().is_empty()) {
+            Some(u) => u,
+            None => {
+                let guard = state.0.lock().await;
+                guard
+                    .as_ref()
+                    .map(|r| r.local_http_url())
+                    .ok_or_else(|| "请先选择一个本机代理出口".to_string())?
+            }
+        };
+        let target_app = match target.as_str() {
+            "app" => am_core::am_proxy::TargetApp::AntigravityApp,
+            "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
+            other => return Err(format!("不支持的目标: {}", other)),
+        };
+        let desktop = std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Desktop"))
+            .ok_or_else(|| "无法定位桌面目录".to_string())?;
+        let path = am_core::am_proxy::platform::create_macos_wrapper_app(
+            target_app,
+            &resolved_url,
+            &desktop,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (state, target, proxy_url);
+        Err("桌面 Wrapper .app 仅适用于 macOS".into())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ProxyIntegrationsPayload {
+    app_wrapper: bool,
+    ide_wrapper: bool,
+    shell_hook: bool,
+    ide_settings_proxy: Option<String>,
+    auto_no_tun_on_switch: bool,
+}
+
+#[tauri::command]
+async fn proxy_get_integrations() -> ProxyIntegrationsPayload {
+    let shell_hook = am_core::am_proxy::platform::is_shell_hook_installed();
+    let ide_settings_proxy = am_core::am_proxy::get_ide_settings_proxy();
+    #[cfg(target_os = "macos")]
+    let (app_wrapper, ide_wrapper) = {
+        let desktop = std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Desktop"))
+            .unwrap_or_default();
+        (
+            desktop.join("Antigravity (No-TUN).app").exists(),
+            desktop.join("Antigravity IDE (No-TUN).app").exists(),
+        )
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (app_wrapper, ide_wrapper) = (false, false);
+
+    ProxyIntegrationsPayload {
+        app_wrapper,
+        ide_wrapper,
+        shell_hook,
+        ide_settings_proxy,
+        auto_no_tun_on_switch: AUTO_NO_TUN_ON_SWITCH.load(std::sync::atomic::Ordering::Relaxed),
+    }
+}
+
+#[tauri::command]
+async fn proxy_set_auto_no_tun(enabled: bool, proxy_url: Option<String>) {
+    AUTO_NO_TUN_ON_SWITCH.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut guard) = PREFERRED_PROXY_URL
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+    {
+        *guard = proxy_url.filter(|s| !s.trim().is_empty());
+    }
+}
+
+#[tauri::command]
+async fn proxy_sync_ide_settings(proxy_url: Option<String>) -> Result<(), String> {
+    am_core::am_proxy::sync_ide_proxy_settings(proxy_url.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn proxy_runtime_status(
+) -> std::collections::HashMap<String, am_core::am_proxy::AppRuntimeStatus> {
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "antigravity".to_string(),
+        am_core::am_proxy::get_app_runtime_status(am_core::am_proxy::TargetApp::AntigravityApp),
+    );
+    map.insert(
+        "ide".to_string(),
+        am_core::am_proxy::get_app_runtime_status(am_core::am_proxy::TargetApp::AntigravityIde),
+    );
+    map
+}
+
+#[derive(serde::Serialize)]
+struct ContextPluginStatus {
+    ide_installed: bool,
+    mcp_installed: bool,
+    cli_installed: bool,
+}
+
+fn context_plugin_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)?;
+    let ide_dir = home
+        .join(".antigravity-ide")
+        .join("extensions")
+        .join("am-monitor");
+    let mcp_dir = home
+        .join(".gemini")
+        .join("config")
+        .join("plugins")
+        .join("am-monitor");
+    Some((ide_dir, mcp_dir))
+}
+
+#[tauri::command]
+fn context_plugin_status() -> ContextPluginStatus {
+    let cli_installed = am_core::cli_statusline::is_cli_statusline_installed();
+    if let Some((ide_dir, mcp_dir)) = context_plugin_dirs() {
+        ContextPluginStatus {
+            ide_installed: ide_dir.join("package.json").exists(),
+            mcp_installed: mcp_dir.join("plugin.json").exists()
+                && mcp_dir
+                    .join("sidecars")
+                    .join("panel")
+                    .join("sidecar.json")
+                    .exists(),
+            cli_installed,
+        }
+    } else {
+        ContextPluginStatus {
+            ide_installed: false,
+            mcp_installed: false,
+            cli_installed,
+        }
+    }
+}
+
+#[tauri::command]
+fn context_plugin_install(target: String) -> Result<ContextPluginStatus, String> {
+    let (ide_dir, mcp_dir) =
+        context_plugin_dirs().ok_or_else(|| "Cannot resolve home directory".to_string())?;
+    match target.as_str() {
+        "ide" => {
+            if let Some(parent) = ide_dir.parent() {
+                let legacy = parent.join("antigravity-context-ide");
+                if legacy.exists() {
+                    let _ = std::fs::remove_dir_all(&legacy);
+                }
+            }
+            std::fs::create_dir_all(ide_dir.join("assets")).map_err(|e| e.to_string())?;
+            std::fs::write(
+                ide_dir.join("assets").join("logo.png"),
+                include_bytes!("../../../../plugins/am-monitor/assets/logo.png"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                ide_dir.join("package.json"),
+                include_str!("../../../../plugins/am-monitor/ide/package.json"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                ide_dir.join("extension.js"),
+                include_str!("../../../../plugins/am-monitor/ide/extension.js"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                ide_dir.join("telemetry.mjs"),
+                include_str!("../../../../plugins/am-monitor/telemetry.mjs"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                ide_dir.join("ui.html"),
+                include_str!("../../../../plugins/am-monitor/ui.html"),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        "mcp" => {
+            let panel_dir = mcp_dir.join("sidecars").join("panel");
+            std::fs::create_dir_all(&panel_dir).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(mcp_dir.join("assets")).map_err(|e| e.to_string())?;
+            std::fs::write(
+                mcp_dir.join("assets").join("logo.png"),
+                include_bytes!("../../../../plugins/am-monitor/assets/logo.png"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                mcp_dir.join("plugin.json"),
+                include_str!("../../../../plugins/am-monitor/plugin.json"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                mcp_dir.join("telemetry.mjs"),
+                include_str!("../../../../plugins/am-monitor/telemetry.mjs"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                mcp_dir.join("ui.html"),
+                include_str!("../../../../plugins/am-monitor/ui.html"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                panel_dir.join("sidecar.json"),
+                include_str!("../../../../plugins/am-monitor/sidecars/panel/sidecar.json"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(
+                panel_dir.join("main.mjs"),
+                include_str!("../../../../plugins/am-monitor/sidecars/panel/main.mjs"),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        "cli" => {
+            am_core::cli_statusline::install_cli_statusline(None).map_err(|e| e.to_string())?;
+        }
+        _ => return Err(format!("Unknown plugin target: {}", target)),
+    }
+    Ok(context_plugin_status())
+}
+
+#[tauri::command]
+fn context_plugin_uninstall(target: String) -> Result<ContextPluginStatus, String> {
+    if target == "cli" {
+        am_core::cli_statusline::uninstall_cli_statusline().map_err(|e| e.to_string())?;
+        return Ok(context_plugin_status());
+    }
+    let (ide_dir, mcp_dir) =
+        context_plugin_dirs().ok_or_else(|| "Cannot resolve home directory".to_string())?;
+    let dir = match target.as_str() {
+        "ide" => ide_dir,
+        "mcp" => mcp_dir,
+        _ => return Err(format!("Unknown plugin target: {}", target)),
+    };
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(context_plugin_status())
+}
+
+#[tauri::command]
+async fn proxy_remove_macos_wrapper(target: String) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let target_app = match target.as_str() {
+            "app" => am_core::am_proxy::TargetApp::AntigravityApp,
+            "ide" => am_core::am_proxy::TargetApp::AntigravityIde,
+            other => return Err(format!("不支持的目标: {}", other)),
+        };
+        let desktop = std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Desktop"))
+            .ok_or_else(|| "无法定位桌面目录".to_string())?;
+        am_core::am_proxy::platform::remove_macos_wrapper_app(target_app, &desktop)
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = target;
+        Ok(false)
+    }
+}
+
 /// 兼容旧命令：一次性下载、验签、安装并重启更新
 #[tauri::command]
 async fn install_update(
@@ -474,6 +907,15 @@ async fn install_update(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 跨平台原子单实例锁（macOS / Windows / Linux 通用；进程异常退出时内核自动释放端口）
+    let _single_instance_guard = match std::net::TcpListener::bind("127.0.0.1:49271") {
+        Ok(listener) => listener,
+        Err(_) => {
+            eprintln!("Antigravity Manager is already running (single-instance lock active).");
+            return;
+        }
+    };
+
     // 紧凑 Tokio 运行时：限制工作线程为 2、阻塞池上限 4 且空闲 15s 自动回收，
     // 显著降低多核 Windows / Linux / macOS 下的线程栈与 allocator arena 内存占用
     let compact_rt = tokio::runtime::Builder::new_multi_thread()
@@ -494,6 +936,7 @@ pub fn run() {
         .manage(manager)
         .manage(DaemonWakeup(daemon_wakeup))
         .manage(UpdateController::new())
+        .manage(ProxyState(tokio::sync::Mutex::new(None)))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -516,6 +959,7 @@ pub fn run() {
                     daemon.run_loop().await;
                 });
             }
+            tauri::async_runtime::spawn(async move {});
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -592,6 +1036,21 @@ pub fn run() {
             dismiss_update_banner,
             skip_update_version,
             install_update,
+            proxy_detect_nodes,
+            proxy_get_status,
+            proxy_runtime_status,
+            proxy_set_auto_no_tun,
+            context_plugin_status,
+            context_plugin_install,
+            context_plugin_uninstall,
+            proxy_start_or_switch,
+            proxy_stop,
+            proxy_launch_app,
+            proxy_install_shell_hook,
+            proxy_create_macos_wrapper,
+            proxy_remove_macos_wrapper,
+            proxy_get_integrations,
+            proxy_sync_ide_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building antigravity manager application");

@@ -255,6 +255,78 @@ enum Commands {
 
     /// 🩺 Inspect system diagnostics and host installation status
     Doctor,
+
+    /// 🛡️ No-TUN transparent proxy & update-proof launcher (detect, relay, launch, hook)
+    Proxy {
+        #[command(subcommand)]
+        action: ProxyAction,
+    },
+
+    /// 📊 Analyze active or historical Antigravity session context & token usage
+    SessionContext {
+        /// Optional conversation/session ID (defaults to most recently active)
+        #[arg(short, long)]
+        session: Option<String>,
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 📟 Render compact ANSI statusline for Antigravity CLI (`agy` statusLine hook)
+    Statusline,
+
+    /// 🧩 Manage Antigravity CLI statusline plugin (install, uninstall, status)
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginAction {
+    /// Install `agy` CLI statusline hook into ~/.gemini/antigravity-cli/settings.json
+    Install {
+        /// Optional explicit path to `am` binary
+        #[arg(long)]
+        bin: Option<String>,
+    },
+    /// Uninstall `agy` CLI statusline hook (restoring previous backup if any)
+    Uninstall,
+    /// Show `agy` CLI statusline installation status
+    Status,
+}
+
+#[derive(Subcommand)]
+enum ProxyAction {
+    /// Detect local system & VPN proxy ports with latency
+    Detect,
+    /// Start local fixed-port hot-switchable proxy relay
+    Relay {
+        /// Local listen port (default: 17890)
+        #[arg(short, long, default_value_t = am_core::am_proxy::DEFAULT_RELAY_PORT)]
+        port: u16,
+        /// Optional upstream proxy URL (e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:10808)
+        #[arg(short, long)]
+        upstream: Option<String>,
+    },
+    /// Launch Antigravity App / IDE / agy CLI with No-TUN proxy injection
+    Launch {
+        /// Target app: app, ide, or cli
+        #[arg(short, long, default_value = "ide")]
+        target: String,
+        /// Proxy URL to inject (default: http://127.0.0.1:17890)
+        #[arg(short, long)]
+        proxy: Option<String>,
+    },
+    /// Install or remove shell hook for agy CLI
+    Hook {
+        /// Remove existing shell hook
+        #[arg(long)]
+        remove: bool,
+        /// Proxy URL for shell hook (default: http://127.0.0.1:17890)
+        #[arg(short, long)]
+        proxy: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -559,8 +631,145 @@ async fn main() -> Result<()> {
         Some(Commands::Delete { accounts }) => {
             handle_delete(&manager, accounts)?;
         }
+        Some(Commands::Proxy { action }) => {
+            handle_proxy(action).await?;
+        }
+        Some(Commands::Statusline) => {
+            use std::io::{IsTerminal, Read};
+            let mut input = String::new();
+            if !std::io::stdin().is_terminal() {
+                let _ = std::io::stdin().read_to_string(&mut input);
+            }
+            print!("{}", am_core::cli_statusline::render_statusline(&input));
+        }
+        Some(Commands::Plugin { action }) => match action {
+            PluginAction::Install { bin } => {
+                let path = am_core::cli_statusline::install_cli_statusline(bin.as_deref())?;
+                println!(
+                    "{} Installed agy CLI statusline hook in {}",
+                    "✓".green().bold(),
+                    path.display()
+                );
+            }
+            PluginAction::Uninstall => {
+                let removed = am_core::cli_statusline::uninstall_cli_statusline()?;
+                if removed {
+                    println!("{} Uninstalled agy CLI statusline hook", "✓".green().bold());
+                } else {
+                    println!("{} agy CLI statusline hook was not installed", "ℹ".cyan());
+                }
+            }
+            PluginAction::Status => {
+                let installed = am_core::cli_statusline::is_cli_statusline_installed();
+                let path = am_core::cli_statusline::agy_settings_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "~/.gemini/antigravity-cli/settings.json".into());
+                println!(
+                    "agy CLI statusline: {} ({})",
+                    if installed {
+                        "installed".green().bold()
+                    } else {
+                        "not installed".yellow()
+                    },
+                    path
+                );
+            }
+        },
+        Some(Commands::SessionContext { session, json }) => {
+            let report = am_core::context_monitor::analyze_session(session.as_deref());
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Session: {}",
+                    report.session_id.as_deref().unwrap_or("(none)")
+                );
+                println!("Active Context: {} tokens", report.active_context_tokens);
+                println!(
+                    "Totals: input={}, cache_read={}, output={}, cache_hit={:.1}%",
+                    report.total_input_tokens,
+                    report.total_cache_read_tokens,
+                    report.total_output_tokens,
+                    report.cache_hit_rate * 100.0
+                );
+            }
+        }
     }
 
+    Ok(())
+}
+
+async fn handle_proxy(action: ProxyAction) -> Result<()> {
+    use am_core::am_proxy;
+
+    match action {
+        ProxyAction::Detect => {
+            println!("🔍 Scanning local system & VPN proxy ports...");
+            let nodes = am_proxy::detect_local_proxies().await;
+            if nodes.is_empty() {
+                println!("{}", "No local proxy ports detected.".yellow());
+                return Ok(());
+            }
+            for node in nodes {
+                println!(
+                    "  • {}  [{}://{}:{}]  ({}ms)",
+                    node.name.green().bold(),
+                    node.protocol,
+                    node.host,
+                    node.port,
+                    node.latency_ms.unwrap_or(0)
+                );
+            }
+        }
+        ProxyAction::Relay { port, upstream } => {
+            let upstream_node = match upstream {
+                Some(raw) => Some(am_proxy::ProxyNode::parse_url(&raw, None)?),
+                None => am_proxy::detect_local_proxies().await.into_iter().next(),
+            };
+            let bind_addr = format!("127.0.0.1:{}", port);
+            let relay = am_proxy::RelayServer::start(&bind_addr, upstream_node.clone()).await?;
+            println!(
+                "🛡️  No-TUN relay listening on {} (upstream: {})",
+                relay.local_http_url().green().bold(),
+                upstream_node
+                    .as_ref()
+                    .map(|n| format!("{} [{}]", n.name, n.to_url()))
+                    .unwrap_or_else(|| "Direct".to_string())
+            );
+            println!("Press Ctrl+C to stop...");
+            let _ = tokio::signal::ctrl_c().await;
+            relay.shutdown();
+        }
+        ProxyAction::Launch { target, proxy } => {
+            let proxy_url = proxy
+                .unwrap_or_else(|| format!("http://127.0.0.1:{}", am_proxy::DEFAULT_RELAY_PORT));
+            let target_app = match target.as_str() {
+                "app" => am_proxy::TargetApp::AntigravityApp,
+                "ide" => am_proxy::TargetApp::AntigravityIde,
+                "cli" | "agy" => am_proxy::TargetApp::AgyCli,
+                other => return Err(anyhow!("Unknown target: {} (use app, ide, or cli)", other)),
+            };
+            let pid = am_proxy::launch_with_proxy(target_app, &proxy_url, &[])?;
+            println!(
+                "🚀 Launched {} with No-TUN proxy {} (PID: {})",
+                target_app.to_string().green().bold(),
+                proxy_url,
+                pid
+            );
+        }
+        ProxyAction::Hook { remove, proxy } => {
+            if remove {
+                am_proxy::uninstall_shell_hook()?;
+                println!("✅ Removed agy CLI shell hook.");
+            } else {
+                let proxy_url = proxy.unwrap_or_else(|| {
+                    format!("http://127.0.0.1:{}", am_proxy::DEFAULT_RELAY_PORT)
+                });
+                let rc = am_proxy::install_shell_hook(&proxy_url)?;
+                println!("✅ Installed agy CLI shell hook in {}", rc.display());
+            }
+        }
+    }
     Ok(())
 }
 

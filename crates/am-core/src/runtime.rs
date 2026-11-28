@@ -23,13 +23,22 @@ pub fn spawn_and_reap(mut cmd: Command) {
 /// - 限制每主机最大空闲连接为 2，闲置 30 秒自动释放底层 Socket 与 TLS 缓冲区
 pub fn shared_http_client() -> &'static reqwest::Client {
     SHARED_HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
             .pool_max_idle_per_host(2)
-            .pool_idle_timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
+            .pool_idle_timeout(Duration::from_secs(30));
+
+        // 遵循操作系统系统代理设置（不扫描端口，行为与浏览器一致），避免必须开启 TUN
+        if let Some(sys_proxy) = am_proxy::detect_system_proxies().into_iter().next() {
+            if let Ok(proxy) = reqwest::Proxy::all(sys_proxy.to_url()) {
+                builder = builder.proxy(
+                    proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1")),
+                );
+            }
+        }
+
+        builder.build().unwrap_or_else(|_| reqwest::Client::new())
     })
 }
 

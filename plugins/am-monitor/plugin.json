@@ -1,0 +1,12 @@
+{
+  "name": "am-monitor",
+  "displayName": "AM Context Monitor",
+  "version": "1.0.0",
+  "logo": "assets/logo.png",
+  "description": "Apple Liquid Glass context window, cache hit rate, ROI analytics, account hot-switch & share poster for Antigravity.",
+  "suggestedPrompts": [
+    "Open AM Context Monitor",
+    "Show my current conversation's context window and cache hit rate",
+    "Check my token usage and subscription ROI"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "command": "node",
+  "args": ["main.mjs"],
+  "restart_policy": "always",
+  "display_name": "AM Context Monitor",
+  "description": "Apple Liquid Glass context window, cache hit rate, ROI analytics, account hot-switch & share poster.",
+  "has_web_ui": true,
+  "ui_config": {
+    "display_name": "AM Context Monitor",
+    "views": [
+      {
+        "path": "/",
+        "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
+        "title": "AM Monitor"
+      }
+    ]
+  }
+}
