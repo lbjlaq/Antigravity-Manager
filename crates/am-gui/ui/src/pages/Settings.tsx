@@ -25,6 +25,8 @@ import {
 import { api, APP_VERSION_FALLBACK, AppConfig, isTauri, SystemInfo, UpdateSnapshot } from '../api';
 import { tUi } from '../i18n/ui';
 import { ReleaseNotesView } from '../components/ReleaseNotesView';
+import { ZOOM_LEVELS, DEFAULT_ZOOM, getStoredZoom, applyZoom, snapToClosestZoom } from '../utils/zoom';
+import { saveUiZoom } from '../utils/uiState';
 
 interface SettingsProps {
   lang: string;
@@ -117,6 +119,7 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
   const [trayMode, setTrayMode] = useState(true);
   const [trayClickAction, setTrayClickAction] = useState<'popover' | 'main' | 'menu'>('popover');
   const [closeToTray, setCloseToTray] = useState(true);
+  const [uiZoom, setUiZoom] = useState<number>(() => getStoredZoom());
 
   // 自定义宿主路径状态
   const [customPaths, setCustomPaths] = useState<{
@@ -217,6 +220,10 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
         if (cfg.update && typeof cfg.update.auto_check === 'boolean') {
           setAutoCheckUpdates(cfg.update.auto_check);
         }
+
+        if (typeof cfg.ui_state?.ui_zoom === 'number' && Number.isFinite(cfg.ui_state.ui_zoom)) {
+          setUiZoom(snapToClosestZoom(cfg.ui_state.ui_zoom));
+        }
       }
 
       try {
@@ -257,6 +264,17 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
   useEffect(() => {
     loadConfigAndSystem();
   }, [loadConfigAndSystem]);
+
+  useEffect(() => {
+    const onZoomChange = (e: Event) => {
+      const custom = e as CustomEvent<number>;
+      if (typeof custom.detail === 'number' && Number.isFinite(custom.detail)) {
+        setUiZoom(snapToClosestZoom(custom.detail));
+      }
+    };
+    window.addEventListener('app-ui-zoom-change', onZoomChange);
+    return () => window.removeEventListener('app-ui-zoom-change', onZoomChange);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -512,8 +530,65 @@ export const Settings: React.FC<SettingsProps> = ({ lang }) => {
                 </h3>
               </div>
 
+              {/* 界面与字体等比例缩放 */}
+              <div className="flex flex-wrap items-center justify-between gap-4 py-1">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11.5px] font-semibold text-gray-800 dark:text-zinc-200">
+                      {tUi(lang, 'settings_ui_zoom_title')}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06] text-[9.5px] font-mono text-gray-500 dark:text-zinc-400">
+                      Cmd / Ctrl + / - / 0
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-gray-400">
+                    {tUi(lang, 'settings_ui_zoom_desc')}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    aria-label={tUi(lang, 'settings_ui_zoom_title')}
+                    value={uiZoom}
+                    onChange={(e) => {
+                      const nextZoom = snapToClosestZoom(Number(e.target.value));
+                      setUiZoom(nextZoom);
+                      applyZoom(nextZoom);
+                      saveUiZoom(nextZoom);
+                      triggerSaved();
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-gray-100 dark:bg-[#22242b] border border-gray-200/80 dark:border-white/[0.08] text-[11px] font-mono font-semibold text-gray-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40 cursor-pointer"
+                  >
+                    {ZOOM_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {level}%
+                        {level === DEFAULT_ZOOM
+                          ? ` (${tUi(lang, 'settings_ui_zoom_default')})`
+                          : level === 100
+                            ? ` (${tUi(lang, 'settings_ui_zoom_standard')})`
+                            : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {uiZoom !== DEFAULT_ZOOM && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUiZoom(DEFAULT_ZOOM);
+                        applyZoom(DEFAULT_ZOOM);
+                        saveUiZoom(DEFAULT_ZOOM);
+                        triggerSaved();
+                      }}
+                      title={tUi(lang, 'settings_ui_zoom_reset')}
+                      className="px-2 py-1 rounded-md text-[10px] font-medium bg-gray-100 hover:bg-gray-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.10] text-gray-600 dark:text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      {tUi(lang, 'settings_ui_zoom_reset')}
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* 静默配额轮询 */}
-              <div className="flex items-center justify-between gap-4 py-1">
+              <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100 dark:border-white/5">
                 <div>
                   <div className="text-[11.5px] font-semibold text-gray-800 dark:text-zinc-200">
                     {tUi(lang, 'settings_polling_title')}
