@@ -1002,6 +1002,10 @@ pub fn resolve_model_route_with_effort_and_pool(
     client_effort: Option<&str>,
     token_manager: Option<&crate::proxy::token_manager::TokenManager>,
 ) -> String {
+    let override_suffixed = crate::proxy::config::get_thinking_budget_config()
+        .mode_mapping
+        .override_suffixed_models;
+
     // 0 & 1 & 2. 优先匹配淘汰重定向与自定义映射（精确、大小写、规范化、通配符）
     if let Some(custom) = resolve_custom_model_route(original_model, custom_mapping) {
         // 自适应暗路由解析 (auto:*)
@@ -1025,7 +1029,11 @@ pub fn resolve_model_route_with_effort_and_pool(
             .is_some();
         if has_explicit_effort {
             if let Some(routed) =
-                crate::proxy::model_specs::resolve_bare_tiered_model_route(&target, client_effort)
+                crate::proxy::model_specs::resolve_bare_tiered_model_route_with_override(
+                    &target,
+                    client_effort,
+                    override_suffixed,
+                )
             {
                 crate::modules::logger::log_info(&format!(
                     "[Router] 自定义映射目标依据显式思考档位路由: {} (target={}, effort={:?}) -> {}",
@@ -1050,7 +1058,23 @@ pub fn resolve_model_route_with_effort_and_pool(
     }
 
     // 3. 系统默认映射
-    // Variant 已经写出的上游真实 id 在此停住，避免公开名反向覆盖（Issue #3551）。
+    // Variant 已经写出的上游真实 id 在此停住，避免公开名反向覆盖（Issue #3551）；
+    // 仅当用户显式开启 override_suffixed_models 且传入有效思考强度时，先尝试对多档位模型重新分档。
+    if override_suffixed {
+        if let Some(routed) =
+            crate::proxy::model_specs::resolve_bare_tiered_model_route_with_override(
+                original_model,
+                client_effort,
+                true,
+            )
+        {
+            crate::modules::logger::log_info(&format!(
+                "[Router] 覆盖具名档位并依据思考强度重路由: {} (effort={:?}) -> {}",
+                original_model, client_effort, routed
+            ));
+            return map_claude_model_to_gemini(&routed);
+        }
+    }
     if crate::proxy::common::variant_mapping::is_physical_upstream_id(original_model) {
         // The physical-ID check also accepts tier suffixes on public aliases.
         // Normalize those aliases without selecting a different effort tier.
@@ -1067,9 +1091,11 @@ pub fn resolve_model_route_with_effort_and_pool(
         original_model
     };
 
-    if let Some(routed) =
-        crate::proxy::model_specs::resolve_bare_tiered_model_route(target_ref, client_effort)
-    {
+    if let Some(routed) = crate::proxy::model_specs::resolve_bare_tiered_model_route_with_override(
+        target_ref,
+        client_effort,
+        override_suffixed,
+    ) {
         crate::modules::logger::log_info(&format!(
             "[Router] 裸模型依据思考档位通用路由: {} (target={}, effort={:?}) -> {}",
             original_model, target_ref, client_effort, routed
@@ -1103,16 +1129,22 @@ pub fn finalize_gated_model_route(
     from_custom_route: bool,
     client_effort: Option<&str>,
 ) -> String {
+    let override_suffixed = crate::proxy::config::get_thinking_budget_config()
+        .mode_mapping
+        .override_suffixed_models;
     if from_custom_route {
         let has_explicit_effort = client_effort
             .map(str::trim)
             .filter(|s| !s.is_empty() && *s != "default")
             .is_some();
         if has_explicit_effort {
-            if let Some(routed) = crate::proxy::model_specs::resolve_bare_tiered_model_route(
-                gated_model,
-                client_effort,
-            ) {
+            if let Some(routed) =
+                crate::proxy::model_specs::resolve_bare_tiered_model_route_with_override(
+                    gated_model,
+                    client_effort,
+                    override_suffixed,
+                )
+            {
                 return map_claude_model_to_gemini(&routed);
             }
         }
@@ -2368,5 +2400,40 @@ mod tests {
         assert!(!raw_only.contains(&"gemini-4-hydrogen-high".to_string()));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_override_suffixed_models_respects_config_and_guardrails() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap();
+        let prev = crate::proxy::config::get_thinking_budget_config();
+        struct ResetGuard(crate::proxy::config::ThinkingBudgetConfig);
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(self.0.clone());
+            }
+        }
+        let _guard = ResetGuard(prev.clone());
+
+        let mut cfg = prev;
+        cfg.mode_mapping.override_suffixed_models = true;
+        crate::proxy::config::update_thinking_budget_config(cfg);
+
+        let empty = HashMap::new();
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-4-hydrogen-high", &empty, Some("xhigh")),
+            "gemini-4-hydrogen-xhigh"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-4-hydrogen-high", &empty, None),
+            "gemini-4-hydrogen-high"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gpt-oss-120b-medium", &empty, Some("high")),
+            "gpt-oss-120b-medium"
+        );
+        assert_eq!(
+            finalize_gated_model_route("gemini-4-hydrogen-high", true, Some("low")),
+            "gemini-4-hydrogen-low"
+        );
     }
 }

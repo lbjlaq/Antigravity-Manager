@@ -37,6 +37,104 @@ pub fn routing_effort<'a>(explicit_disable: bool, effort: Option<&'a str>) -> Op
     }
 }
 
+/// 经「思考模式映射」单次求值后的统一思考意图。
+///
+/// **单次映射不变量 (Single-Pass Mapping Invariant)**：
+/// - 协议处理器仅读取 `routing_effort` 传递给模型路由，同时保留请求结构体上的客户端原始 `effort` / 开关；
+/// - 统一进站管线 `configure_inbound_thinking` 对同一原始参数再做一次 `resolve_thinking_intent`，
+///   从而彻底杜绝 `low -> medium -> high` 之类的二次叠加映射。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedThinkingIntent {
+    /// 映射后的思考开关状态
+    pub switch: ClientThinkingSwitch,
+    /// 用于模型分档路由的思考强度（关闭为 `Some("none")`，跟随默认/auto 为 `None`）
+    pub routing_effort: Option<String>,
+    /// 用于 thinkingLevel / thinkingBudget 解析的目标思考强度（auto/off 时为 `None`）
+    pub target_effort: Option<String>,
+    /// 命中映射表的源模式键（`default` / `off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`）
+    pub source_key: &'static str,
+}
+
+pub fn resolve_thinking_intent(
+    client_switch: ClientThinkingSwitch,
+    client_effort: Option<&str>,
+) -> ResolvedThinkingIntent {
+    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    resolve_thinking_intent_with_config(client_switch, client_effort, &tb_config)
+}
+
+pub fn resolve_thinking_intent_with_config(
+    client_switch: ClientThinkingSwitch,
+    client_effort: Option<&str>,
+    tb_config: &crate::proxy::config::ThinkingBudgetConfig,
+) -> ResolvedThinkingIntent {
+    use crate::proxy::config::ThinkingModeMappingConfig;
+
+    let trimmed = client_effort.map(str::trim).filter(|s| !s.is_empty());
+
+    if !tb_config.mode_mapping.enabled {
+        if client_switch.is_disabled() {
+            return ResolvedThinkingIntent {
+                switch: ClientThinkingSwitch::Disabled,
+                routing_effort: Some("none".to_string()),
+                target_effort: None,
+                source_key: "off",
+            };
+        }
+        let eff = trimmed.map(str::to_string);
+        let source_key = trimmed
+            .and_then(ThinkingModeMappingConfig::normalize_source_key)
+            .unwrap_or("default");
+        return ResolvedThinkingIntent {
+            switch: client_switch,
+            routing_effort: eff.clone(),
+            target_effort: eff,
+            source_key,
+        };
+    }
+
+    let source_key = if client_switch.is_disabled() {
+        Some("off")
+    } else if let Some(raw) = trimmed {
+        ThinkingModeMappingConfig::normalize_source_key(raw)
+    } else {
+        Some("default")
+    };
+
+    let Some(key) = source_key else {
+        // 未收录的扩展自定义字面值：不强行截断，原样透传给下游
+        let eff = trimmed.map(str::to_string);
+        return ResolvedThinkingIntent {
+            switch: client_switch,
+            routing_effort: eff.clone(),
+            target_effort: eff,
+            source_key: "default",
+        };
+    };
+
+    let target = tb_config.mode_mapping.resolve_target(key).unwrap_or("auto");
+    match target {
+        "off" => ResolvedThinkingIntent {
+            switch: ClientThinkingSwitch::Disabled,
+            routing_effort: Some("none".to_string()),
+            target_effort: None,
+            source_key: key,
+        },
+        "auto" => ResolvedThinkingIntent {
+            switch: ClientThinkingSwitch::Default,
+            routing_effort: None,
+            target_effort: None,
+            source_key: key,
+        },
+        _ => ResolvedThinkingIntent {
+            switch: ClientThinkingSwitch::Enabled,
+            routing_effort: Some(target.to_string()),
+            target_effort: Some(target.to_string()),
+            source_key: key,
+        },
+    }
+}
+
 /// 从 JSON 值提取思考等级文本（同时兼容 `"LOW"/"HIGH"` 字符串与 `1/2/3/100` 整数）
 pub fn extract_thinking_level_str(val: &Value) -> Option<String> {
     if let Some(s) = val.as_str() {
@@ -1876,8 +1974,11 @@ impl InboundThinkingPipeline {
 
         // 统一从官方模型结构体中读取权威默认值
         let official_info = crate::models::OfficialModelCatalog::get(target_model);
+        let tb_config = crate::proxy::config::get_thinking_budget_config();
+        let intent = resolve_thinking_intent_with_config(client_switch, client_effort, &tb_config);
+        let effective_effort = intent.target_effort.as_deref();
 
-        if client_switch.is_disabled() {
+        if intent.switch.is_disabled() {
             if let Some(ref info) = official_info {
                 if info.supports_thinking == Some(false) {
                     if let Some(obj) = generation_config.as_object_mut() {
@@ -1932,8 +2033,6 @@ impl InboundThinkingPipeline {
             .and_then(|info| info.thinking_level.as_deref());
         let official_budget = official_info.as_ref().and_then(|info| info.thinking_budget);
         let is_thinking_level_model = official_level.is_some();
-
-        let tb_config = crate::proxy::config::get_thinking_budget_config();
 
         // 等级取值优先级：
         // ① 具名档位后缀（模型名即档位：-low → "LOW"；-xhigh 若官方声明扩展数值如 100 则发整数 100）
@@ -2027,7 +2126,7 @@ impl InboundThinkingPipeline {
             // 等级通道：官方声明了 thinkingLevel 的模型
             // （3.8 Flash / 4 Argon / Claude 5.5 / 2.5 Flash / 3-flash 等）。
             // 官方场上 thinkingLevel 与 thinkingBudget 只会生效其一，这里严格只发等级。
-            let level = resolve_level_for_model(client_effort);
+            let level = resolve_level_for_model(effective_effort);
             generation_config["thinkingConfig"] = json!({
                 "includeThoughts": true,
                 "thinkingLevel": level
@@ -2052,7 +2151,7 @@ impl InboundThinkingPipeline {
             // 保留旧的预算解析作为兼容兜底，避免静默丢掉现有的思考能力。
             match crate::proxy::model_specs::resolve_custom_budget(
                 target_model,
-                client_effort,
+                effective_effort,
                 client_budget,
                 &tb_config,
                 token,
@@ -7875,5 +7974,130 @@ mod tests {
             ),
             730_525
         );
+    }
+
+    #[test]
+    fn test_thinking_mode_mapping_single_pass_and_overrides() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap();
+        let prev = crate::proxy::config::get_thinking_budget_config();
+        struct ResetGuard(crate::proxy::config::ThinkingBudgetConfig);
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(self.0.clone());
+            }
+        }
+        let _guard = ResetGuard(prev);
+
+        // 1. Default config maps "max" -> "xhigh" (level 100 on gemini-4-hydrogen-xhigh)
+        crate::proxy::config::update_thinking_budget_config(
+            crate::proxy::config::ThinkingBudgetConfig::default(),
+        );
+        let default_max = resolve_thinking_intent(ClientThinkingSwitch::Enabled, Some("max"));
+        assert_eq!(default_max.source_key, "max");
+        assert_eq!(default_max.routing_effort.as_deref(), Some("xhigh"));
+        assert_eq!(default_max.target_effort.as_deref(), Some("xhigh"));
+
+        let mut gc_max = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-hydrogen-xhigh",
+            &mut gc_max,
+            ClientThinkingSwitch::Enabled,
+            Some("max"),
+            None,
+            None,
+        );
+        assert_eq!(
+            gc_max["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": 100 })
+        );
+
+        // 2. Single-pass invariant: low -> medium & medium -> high must NOT chain low -> high
+        let mut chained_cfg = crate::proxy::config::ThinkingBudgetConfig::default();
+        chained_cfg
+            .mode_mapping
+            .rules
+            .insert("low".to_string(), "medium".to_string());
+        chained_cfg
+            .mode_mapping
+            .rules
+            .insert("medium".to_string(), "high".to_string());
+        chained_cfg
+            .mode_mapping
+            .rules
+            .insert("off".to_string(), "low".to_string());
+        chained_cfg
+            .mode_mapping
+            .rules
+            .insert("default".to_string(), "high".to_string());
+        chained_cfg
+            .mode_mapping
+            .rules
+            .insert("high".to_string(), "off".to_string());
+        crate::proxy::config::update_thinking_budget_config(chained_cfg.clone());
+
+        let low_intent = resolve_thinking_intent(ClientThinkingSwitch::Enabled, Some("low"));
+        assert_eq!(low_intent.routing_effort.as_deref(), Some("medium"));
+        let mut gc_low = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-hydrogen-tiered",
+            &mut gc_low,
+            ClientThinkingSwitch::Enabled,
+            Some("low"),
+            None,
+            None,
+        );
+        assert_eq!(
+            gc_low["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": "MEDIUM" })
+        );
+
+        // 3. off -> low revives thinking on Disabled switch
+        let off_intent = resolve_thinking_intent(ClientThinkingSwitch::Disabled, None);
+        assert_eq!(off_intent.switch, ClientThinkingSwitch::Enabled);
+        assert_eq!(off_intent.routing_effort.as_deref(), Some("low"));
+        let mut gc_off = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-hydrogen-low",
+            &mut gc_off,
+            ClientThinkingSwitch::Disabled,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            gc_off["thinkingConfig"],
+            json!({ "includeThoughts": true, "thinkingLevel": "LOW" })
+        );
+
+        // 4. default -> high applies when client omits effort
+        let def_intent = resolve_thinking_intent(ClientThinkingSwitch::Default, None);
+        assert_eq!(def_intent.switch, ClientThinkingSwitch::Enabled);
+        assert_eq!(def_intent.routing_effort.as_deref(), Some("high"));
+
+        // 5. high -> off disables thinking
+        let high_intent = resolve_thinking_intent(ClientThinkingSwitch::Enabled, Some("high"));
+        assert_eq!(high_intent.switch, ClientThinkingSwitch::Disabled);
+        assert_eq!(high_intent.routing_effort.as_deref(), Some("none"));
+        let mut gc_high_off = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-hydrogen-low",
+            &mut gc_high_off,
+            ClientThinkingSwitch::Enabled,
+            Some("high"),
+            None,
+            None,
+        );
+        assert_eq!(
+            gc_high_off["thinkingConfig"],
+            json!({ "includeThoughts": false, "thinkingLevel": "LOW" })
+        );
+
+        // 6. Disabling mode_mapping.enabled bypasses custom rules
+        chained_cfg.mode_mapping.enabled = false;
+        crate::proxy::config::update_thinking_budget_config(chained_cfg);
+        let bypassed = resolve_thinking_intent(ClientThinkingSwitch::Enabled, Some("low"));
+        assert_eq!(bypassed.routing_effort.as_deref(), Some("low"));
+        let bypassed_off = resolve_thinking_intent(ClientThinkingSwitch::Disabled, None);
+        assert_eq!(bypassed_off.switch, ClientThinkingSwitch::Disabled);
     }
 }

@@ -43,8 +43,9 @@ pub use image::{
     value_has_nonempty_image_data_url, ImageDiagnostic,
 };
 pub use inbound::{
-    extract_client_thinking_switch, extract_thinking_level_str, routing_effort,
-    InboundThinkingPipeline,
+    extract_client_thinking_switch, extract_thinking_level_str, resolve_thinking_intent,
+    resolve_thinking_intent_with_config, routing_effort, InboundThinkingPipeline,
+    ResolvedThinkingIntent,
 };
 pub use policy::UpstreamClassification;
 pub use qos::{wrap_gemini_stream_with_qos_usage, QosAttemptTracker};

@@ -42,7 +42,68 @@ pub fn get_thinking_budget_config() -> ThinkingBudgetConfig {
         .map(|cfg| cfg.clone())
         .unwrap_or_default();
     cfg.control_source = ThinkingControlSource::Gateway;
+    apply_thinking_mode_mapping_env_overrides(&mut cfg.mode_mapping);
     cfg
+}
+
+fn parse_thinking_bool_env(val: Option<&str>) -> Option<bool> {
+    match val?.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn apply_thinking_mode_mapping_env_overrides(mapping: &mut ThinkingModeMappingConfig) {
+    let override_env = std::env::var("ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED")
+        .ok()
+        .or_else(|| std::env::var("ABV_THINKING_OVERRIDE_SUFFIXED").ok());
+    if let Some(override_flag) = parse_thinking_bool_env(override_env.as_deref()) {
+        mapping.override_suffixed_models = override_flag;
+    }
+
+    let raw_env = std::env::var("ANTIGRAVITY_THINKING_MODE_MAPPING")
+        .ok()
+        .or_else(|| std::env::var("ABV_THINKING_MODE_MAPPING").ok());
+    let Some(raw) = raw_env else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Some(flag) = parse_thinking_bool_env(Some(trimmed)) {
+        mapping.enabled = flag;
+        return;
+    }
+    if trimmed.starts_with('{') {
+        if let Ok(parsed) =
+            serde_json::from_str::<std::collections::BTreeMap<String, String>>(trimmed)
+        {
+            for (k, v) in parsed {
+                if let (Some(src), Some(dst)) = (
+                    ThinkingModeMappingConfig::normalize_source_key(&k),
+                    ThinkingModeMappingConfig::normalize_target_value(&v),
+                ) {
+                    mapping.rules.insert(src.to_string(), dst.to_string());
+                }
+            }
+            mapping.enabled = true;
+        }
+        return;
+    }
+    for pair in trimmed.split([',', ';']) {
+        let Some((k, v)) = pair.split_once('=').or_else(|| pair.split_once(':')) else {
+            continue;
+        };
+        if let (Some(src), Some(dst)) = (
+            ThinkingModeMappingConfig::normalize_source_key(k),
+            ThinkingModeMappingConfig::normalize_target_value(v),
+        ) {
+            mapping.rules.insert(src.to_string(), dst.to_string());
+            mapping.enabled = true;
+        }
+    }
 }
 
 /// 更新全局 Thinking Budget 配置
@@ -51,40 +112,22 @@ pub fn update_thinking_budget_config(config: ThinkingBudgetConfig) {
         if let Ok(mut cfg) = lock.write() {
             *cfg = config.clone();
             tracing::info!(
-                "[Thinking-Budget] Global config updated: source={:?}, flash_mode={:?} (L:{}, M:{}, H:{}, T:{}), pro_mode={:?} (L:{}, H:{}), claude_mode={:?} (L:{}, M:{}, H:{})",
+                "[Thinking-Budget] Global config updated: source={:?}, mode_mapping_enabled={}, override_suffixed={}, rules={:?}",
                 config.control_source,
-                config.flash_mode,
-                config.flash_low,
-                config.flash_medium,
-                config.flash_high,
-                config.flash_tiered,
-                config.pro_mode,
-                config.pro_low,
-                config.pro_high,
-                config.claude_mode,
-                config.claude_low,
-                config.claude_medium,
-                config.claude_high
+                config.mode_mapping.enabled,
+                config.mode_mapping.override_suffixed_models,
+                config.mode_mapping.rules,
             );
         }
     } else {
         // 首次初始化
         let _ = GLOBAL_THINKING_BUDGET_CONFIG.set(RwLock::new(config.clone()));
         tracing::info!(
-            "[Thinking-Budget] Global config initialized: source={:?}, flash_mode={:?} (L:{}, M:{}, H:{}, T:{}), pro_mode={:?} (L:{}, H:{}), claude_mode={:?} (L:{}, M:{}, H:{})",
+            "[Thinking-Budget] Global config initialized: source={:?}, mode_mapping_enabled={}, override_suffixed={}, rules={:?}",
             config.control_source,
-            config.flash_mode,
-            config.flash_low,
-            config.flash_medium,
-            config.flash_high,
-            config.flash_tiered,
-            config.pro_mode,
-            config.pro_low,
-            config.pro_high,
-            config.claude_mode,
-            config.claude_low,
-            config.claude_medium,
-            config.claude_high
+            config.mode_mapping.enabled,
+            config.mode_mapping.override_suffixed_models,
+            config.mode_mapping.rules,
         );
     }
 }
@@ -885,6 +928,89 @@ impl Default for ThinkingBudgetMode {
     }
 }
 
+pub fn default_thinking_mode_rules() -> std::collections::BTreeMap<String, String> {
+    let mut rules = std::collections::BTreeMap::new();
+    rules.insert("default".to_string(), "auto".to_string());
+    rules.insert("off".to_string(), "off".to_string());
+    rules.insert("minimal".to_string(), "minimal".to_string());
+    rules.insert("low".to_string(), "low".to_string());
+    rules.insert("medium".to_string(), "medium".to_string());
+    rules.insert("high".to_string(), "high".to_string());
+    rules.insert("xhigh".to_string(), "xhigh".to_string());
+    rules.insert("max".to_string(), "xhigh".to_string());
+    rules
+}
+
+/// 跨协议思考模式映射配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingModeMappingConfig {
+    /// 是否启用思考模式映射（默认开启）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// 是否允许映射后的思考模式覆盖已带档位后缀的模型（如 -low / -medium / -high / -xhigh）
+    #[serde(default)]
+    pub override_suffixed_models: bool,
+
+    /// 客户端思考模式 -> 网关目标模式映射表
+    /// 源键: "default" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+    /// 目标值: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+    #[serde(default = "default_thinking_mode_rules")]
+    pub rules: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for ThinkingModeMappingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            override_suffixed_models: false,
+            rules: default_thinking_mode_rules(),
+        }
+    }
+}
+
+impl ThinkingModeMappingConfig {
+    pub fn normalize_source_key(raw: &str) -> Option<&'static str> {
+        match raw.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "default" | "auto" | "adaptive" => Some("default"),
+            "off" | "none" | "disabled" => Some("off"),
+            "minimal" | "min" | "extra-low" => Some("minimal"),
+            "low" | "1" => Some("low"),
+            "medium" | "normal" | "standard" | "2" => Some("medium"),
+            "high" | "3" | "4" => Some("high"),
+            "xhigh" | "x-high" | "100" => Some("xhigh"),
+            "max" | "extreme" => Some("max"),
+            _ => None,
+        }
+    }
+
+    pub fn normalize_target_value(raw: &str) -> Option<&'static str> {
+        match raw.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "auto" | "default" | "gateway" => Some("auto"),
+            "off" | "none" | "disabled" => Some("off"),
+            "minimal" | "min" | "extra-low" => Some("minimal"),
+            "low" => Some("low"),
+            "medium" | "normal" => Some("medium"),
+            "high" => Some("high"),
+            "xhigh" | "x-high" | "max" => Some("xhigh"),
+            _ => None,
+        }
+    }
+
+    pub fn resolve_target(&self, source_key: &str) -> Option<&'static str> {
+        if !self.enabled {
+            return None;
+        }
+        let canonical_key = Self::normalize_source_key(source_key)?;
+        if let Some(raw_target) = self.rules.get(canonical_key) {
+            return Self::normalize_target_value(raw_target);
+        }
+        default_thinking_mode_rules()
+            .get(canonical_key)
+            .and_then(|v| Self::normalize_target_value(v))
+    }
+}
+
 /// Thinking Budget 配置
 ///
 /// 官方模型目录已收录的模型完全由官方 `thinkingBudget` / `thinkingLevel` 驱动；
@@ -895,6 +1021,10 @@ pub struct ThinkingBudgetConfig {
     /// 控制权大选择：网关控制 vs 客户端控制
     #[serde(default = "default_control_source")]
     pub control_source: ThinkingControlSource,
+
+    /// 跨协议思考模式映射配置
+    #[serde(default)]
+    pub mode_mapping: ThinkingModeMappingConfig,
 
     // --- Gemini Flash 系列配置（仅对官方目录未收录模型生效）---
     #[serde(default = "default_thinking_budget_mode")]
@@ -1000,6 +1130,7 @@ impl Default for ThinkingBudgetConfig {
     fn default() -> Self {
         Self {
             control_source: default_control_source(),
+            mode_mapping: ThinkingModeMappingConfig::default(),
             flash_mode: default_thinking_budget_mode(),
             flash_low: default_flash_low(),
             flash_medium: default_flash_medium(),
@@ -1997,5 +2128,60 @@ mod tests {
 
         cfg.bind_host = Some("   ".to_string());
         assert_eq!(cfg.get_bind_address(), "0.0.0.0");
+    }
+
+    #[test]
+    fn thinking_mode_mapping_roundtrip_and_env_overrides() {
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_cfg = get_thinking_budget_config();
+        let prev_map = std::env::var("ANTIGRAVITY_THINKING_MODE_MAPPING").ok();
+        let prev_ovr = std::env::var("ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED").ok();
+
+        struct EnvGuard {
+            prev_cfg: ThinkingBudgetConfig,
+            prev_map: Option<String>,
+            prev_ovr: Option<String>,
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.prev_map {
+                    Some(v) => std::env::set_var("ANTIGRAVITY_THINKING_MODE_MAPPING", v),
+                    None => std::env::remove_var("ANTIGRAVITY_THINKING_MODE_MAPPING"),
+                }
+                match &self.prev_ovr {
+                    Some(v) => std::env::set_var("ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED", v),
+                    None => std::env::remove_var("ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED"),
+                }
+                update_thinking_budget_config(self.prev_cfg.clone());
+            }
+        }
+        let _guard = EnvGuard {
+            prev_cfg: prev_cfg.clone(),
+            prev_map,
+            prev_ovr,
+        };
+
+        std::env::remove_var("ANTIGRAVITY_THINKING_MODE_MAPPING");
+        std::env::remove_var("ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED");
+
+        // 1. Default JSON roundtrip preserves mode_mapping defaults
+        let parsed: ThinkingBudgetConfig = serde_json::from_str("{}").unwrap();
+        assert!(parsed.mode_mapping.enabled);
+        assert!(!parsed.mode_mapping.override_suffixed_models);
+        assert_eq!(parsed.mode_mapping.resolve_target("max"), Some("xhigh"));
+        assert_eq!(parsed.mode_mapping.resolve_target("default"), Some("auto"));
+
+        // 2. Env overrides apply key=value and JSON rules cleanly
+        update_thinking_budget_config(ThinkingBudgetConfig::default());
+        std::env::set_var(
+            "ANTIGRAVITY_THINKING_MODE_MAPPING",
+            "low=medium,high=xhigh,off=low",
+        );
+        std::env::set_var("ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED", "true");
+        let cfg = get_thinking_budget_config();
+        assert!(cfg.mode_mapping.override_suffixed_models);
+        assert_eq!(cfg.mode_mapping.resolve_target("low"), Some("medium"));
+        assert_eq!(cfg.mode_mapping.resolve_target("high"), Some("xhigh"));
+        assert_eq!(cfg.mode_mapping.resolve_target("off"), Some("low"));
     }
 }
