@@ -18,6 +18,28 @@ interface AddAccountDialogProps {
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 
+const OAUTH_BROADCAST_CHANNEL = 'abv-oauth-channel';
+
+function isLoopbackHostname(hostname: string): boolean {
+    const clean = hostname.trim().replace(/^\[|\]$/g, '').toLowerCase();
+    return clean === 'localhost' || clean === '127.0.0.1' || clean === '::1';
+}
+
+function isTrustedOAuthMessageOrigin(origin: string, currentLocation: Location): boolean {
+    if (!origin) return true;
+    if (origin === currentLocation.origin) return true;
+    try {
+        const parsed = new URL(origin);
+        return (
+            isLoopbackHostname(parsed.hostname) &&
+            isLoopbackHostname(currentLocation.hostname) &&
+            parsed.port === currentLocation.port
+        );
+    } catch {
+        return false;
+    }
+}
+
 function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     const { t } = useTranslation();
     const fetchAccounts = useAccountStore(state => state.fetchAccounts);
@@ -42,6 +64,8 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     const statusRef = useRef(status);
     const activeTabRef = useRef(activeTab);
     const isOpenRef = useRef(isOpen);
+    const manualInputRef = useRef<HTMLInputElement>(null);
+    const webOAuthCleanupRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
         oauthUrlRef.current = oauthUrl;
@@ -49,6 +73,17 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         activeTabRef.current = activeTab;
         isOpenRef.current = isOpen;
     }, [oauthUrl, status, activeTab, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) {
+            webOAuthCleanupRef.current?.();
+            webOAuthCleanupRef.current = null;
+        }
+        return () => {
+            webOAuthCleanupRef.current?.();
+            webOAuthCleanupRef.current = null;
+        };
+    }, [isOpen]);
 
     // Reset state when dialog opens or tab changes
     useEffect(() => {
@@ -330,10 +365,14 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
 
     const handleOAuthWeb = async () => {
         try {
+            webOAuthCleanupRef.current?.();
+            webOAuthCleanupRef.current = null;
+
             setStatus('loading');
             setMessage(t('accounts.add.oauth.btn_start') + '...');
 
             const clientKey = accountType === 'enterprise' ? 'antigravity_gcp' : 'antigravity_enterprise';
+            const prevAccountIds = new Set(useAccountStore.getState().accounts.map((acc) => acc.id));
 
             // 1. 获取 URL (复用已有 URL，避免重复触发 prepare_oauth_url 导致后端 Flow 状态被覆盖重置)
             let url = oauthUrl;
@@ -355,42 +394,116 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                 return;
             }
 
-            // 3. 监听消息
-            const handleMessage = async (event: MessageEvent) => {
-                // 安全检查: 严格校验消息来源为当前同源 origin
-                if (event.origin && event.origin !== window.location.origin) {
+            let finished = false;
+            let broadcastChannel: BroadcastChannel | null = null;
+            let closedCheckTimer: ReturnType<typeof setInterval> | null = null;
+            let pollTimer: ReturnType<typeof setInterval> | null = null;
+            let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+            const cleanupListeners = () => {
+                window.removeEventListener('message', handleMessage);
+                if (broadcastChannel) {
+                    broadcastChannel.close();
+                    broadcastChannel = null;
+                }
+                if (closedCheckTimer) {
+                    clearInterval(closedCheckTimer);
+                    closedCheckTimer = null;
+                }
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+                if (timeoutTimer) {
+                    clearTimeout(timeoutTimer);
+                    timeoutTimer = null;
+                }
+                webOAuthCleanupRef.current = null;
+            };
+
+            const finishSuccess = async () => {
+                if (finished) return;
+                finished = true;
+                cleanupListeners();
+                try {
+                    popup.close();
+                } catch {
+                    // ignore cross-origin window close errors
+                }
+
+                await fetchAccounts();
+
+                setStatus('success');
+                setMessage(t('accounts.add.oauth_success') || t('common.success'));
+
+                setTimeout(() => {
+                    setIsOpen(false);
+                    resetState();
+                }, 1500);
+            };
+
+            // 3. 监听同源消息 + BroadcastChannel（兼容 COOP 切断 window.opener 的场景）
+            const handleMessage = (event: MessageEvent) => {
+                if (!isTrustedOAuthMessageOrigin(event.origin, window.location)) {
                     return;
                 }
                 if (event.data?.type === 'oauth-success') {
-                    popup.close();
-                    window.removeEventListener('message', handleMessage);
-
-                    // 4. 成功后刷新列表
-                    await fetchAccounts();
-
-                    setStatus('success');
-                    setMessage(t('accounts.add.oauth_success') || t('common.success'));
-
-                    setTimeout(() => {
-                        setIsOpen(false);
-                        resetState();
-                    }, 1500);
+                    void finishSuccess();
                 }
             };
 
             window.addEventListener('message', handleMessage);
 
-            // 5. 检测窗口关闭 (用户手动关闭)
-            const timer = setInterval(() => {
-                if (popup.closed) {
-                    clearInterval(timer);
-                    window.removeEventListener('message', handleMessage);
-                    if (statusRef.current === 'loading') { // 如果还在 loading 状态就关闭了，说明取消了
-                        setStatus('idle');
-                        setMessage('');
+            if ('BroadcastChannel' in window) {
+                try {
+                    broadcastChannel = new BroadcastChannel(OAUTH_BROADCAST_CHANNEL);
+                    broadcastChannel.onmessage = (event: MessageEvent) => {
+                        if (event.data?.type === 'oauth-success') {
+                            void finishSuccess();
+                        }
+                    };
+                } catch {
+                    broadcastChannel = null;
+                }
+            }
+
+            // 4. 轮询账号列表兜底（远程 NAS 场景下用户改 host 访问回调或 popup 失去引用时自动完成）
+            pollTimer = setInterval(async () => {
+                if (finished || !isOpenRef.current || statusRef.current !== 'loading') return;
+                try {
+                    const latest = await accountService.listAccounts();
+                    if (latest.some((acc) => !prevAccountIds.has(acc.id))) {
+                        await finishSuccess();
                     }
+                } catch {
+                    // ignore transient polling errors
+                }
+            }, 2500);
+
+            // 5. 检测窗口关闭 (用户手动关闭或远程 NAS 复制 localhost 回调 URL)
+            closedCheckTimer = setInterval(() => {
+                if (popup.closed) {
+                    if (statusRef.current === 'loading') {
+                        setStatus('idle');
+                        if (!isLoopbackHostname(window.location.hostname)) {
+                            setMessage(t('accounts.add.oauth.remote_hint'));
+                            window.setTimeout(() => manualInputRef.current?.focus(), 0);
+                        } else {
+                            setMessage('');
+                        }
+                    }
+                    cleanupListeners();
                 }
             }, 1000);
+
+            timeoutTimer = setTimeout(() => {
+                cleanupListeners();
+                if (!finished && statusRef.current === 'loading') {
+                    setStatus('idle');
+                }
+            }, 5 * 60 * 1000);
+
+            webOAuthCleanupRef.current = cleanupListeners;
 
         } catch (error) {
             console.error('OAuth Web Error:', error);
@@ -807,6 +920,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                                             <div className="relative group/manual flex gap-2">
                                                 <div className="relative flex-1">
                                                     <input
+                                                        ref={manualInputRef}
                                                         type="text"
                                                         className="w-full text-xs py-2 px-3 bg-white dark:bg-base-100 border border-gray-200 dark:border-base-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all placeholder:text-gray-300 dark:placeholder:text-gray-600"
                                                         placeholder={t('accounts.add.oauth.manual_placeholder')}

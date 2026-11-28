@@ -4891,64 +4891,51 @@ async fn handle_oauth_callback(
             }
 
             // Success HTML
-            Ok(Html(format!(
+            Ok(Html(
                 r#"
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <title>Authorization Successful</title>
                     <style>
-                        body {{ font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #f9fafb; padding: 20px; box-sizing: border-box; }}
-                        .card {{ background: white; padding: 2rem; border-radius: 1.5rem; box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1); text-align: center; max-width: 500px; width: 100%; }}
-                        .icon {{ font-size: 3rem; margin-bottom: 1rem; }}
-                        h1 {{ color: #059669; margin: 0 0 1rem 0; font-size: 1.5rem; }}
-                        p {{ color: #4b5563; line-height: 1.5; margin-bottom: 1.5rem; }}
-                        .fallback-box {{ background-color: #f3f4f6; padding: 1.25rem; border-radius: 1rem; border: 1px dashed #d1d5db; text-align: left; margin-top: 1.5rem; }}
-                        .fallback-title {{ font-weight: 600; font-size: 0.875rem; color: #1f2937; margin-bottom: 0.5rem; display: block; }}
-                        .fallback-text {{ font-size: 0.75rem; color: #6b7280; margin-bottom: 1rem; display: block; }}
-                        .copy-btn {{ width: 100%; padding: 0.75rem; background-color: #3b82f6; color: white; border: none; border-radius: 0.75rem; font-weight: 500; cursor: pointer; transition: background-color 0.2s; }}
-                        .copy-btn:hover {{ background-color: #2563eb; }}
+                        body { font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #f9fafb; padding: 20px; box-sizing: border-box; }
+                        .card { background: white; padding: 2rem; border-radius: 1.5rem; box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1); text-align: center; max-width: 500px; width: 100%; }
+                        .icon { font-size: 3rem; margin-bottom: 1rem; }
+                        h1 { color: #059669; margin: 0 0 1rem 0; font-size: 1.5rem; }
+                        p { color: #4b5563; line-height: 1.5; margin-bottom: 1.5rem; }
+                        .fallback-box { background-color: #f3f4f6; padding: 1.25rem; border-radius: 1rem; border: 1px dashed #d1d5db; text-align: left; margin-top: 1.5rem; }
+                        .fallback-title { font-weight: 600; font-size: 0.875rem; color: #1f2937; margin-bottom: 0.5rem; display: block; }
+                        .fallback-text { font-size: 0.75rem; color: #4b5563; line-height: 1.5; display: block; }
                     </style>
                 </head>
                 <body>
                     <div class="card">
                         <div class="icon">✅</div>
                         <h1>Authorization Successful</h1>
-                        <p>You can close this window now. The application should refresh automatically.</p>
-                        
+                        <p>Account credentials have been saved. You can close this window and return to Antigravity Manager.</p>
                         <div class="fallback-box">
-                            <span class="fallback-title">💡 Did it not refresh?</span>
-                            <span class="fallback-text">If the application is running in a container or remote environment, you may need to manually copy the link below:</span>
-                            <button onclick="copyUrl()" class="copy-btn" id="copyBtn">Copy Completion Link</button>
+                            <span class="fallback-title">What happens next</span>
+                            <span class="fallback-text">The application tab will sync and close the login dialog automatically within a few seconds. If not, close this tab and click Refresh in the Accounts list.</span>
                         </div>
                     </div>
                     <script>
-                        // 1. Notify opener if exists
-                        if (window.opener) {{
-                            window.opener.postMessage({{
-                                type: 'oauth-success',
-                                message: 'login success'
-                            }}, '*');
-                        }}
-
-                        // 2. Copy URL functionality
-                        function copyUrl() {{
-                            navigator.clipboard.writeText(window.location.href).then(() => {{
-                                const btn = document.getElementById('copyBtn');
-                                const originalText = btn.innerText;
-                                btn.innerText = '✅ Link Copied!';
-                                btn.style.backgroundColor = '#059669';
-                                setTimeout(() => {{
-                                    btn.innerText = originalText;
-                                    btn.style.backgroundColor = '#3b82f6';
-                                }}, 2000);
-                            }});
-                        }}
+                        var payload = { type: 'oauth-success', message: 'login success' };
+                        if (window.opener) {
+                            try { window.opener.postMessage(payload, '*'); } catch (_) {}
+                        }
+                        if ('BroadcastChannel' in window) {
+                            try {
+                                var ch = new BroadcastChannel('abv-oauth-channel');
+                                ch.postMessage(payload);
+                                ch.close();
+                            } catch (_) {}
+                        }
                     </script>
                 </body>
                 </html>
             "#
-            )))
+                .to_string(),
+            ))
         }
         Err(e) => {
             error!("OAuth exchange failed: {}", e);
@@ -4990,7 +4977,10 @@ async fn admin_prepare_oauth_url_web(
     proxy_options.proxy_id = validated_proxy_id;
 
     let port = state.security.read().await.port;
-    let host = headers.get("host").and_then(|h| h.to_str().ok());
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|h| h.to_str().ok());
     let proto = headers
         .get("x-forwarded-proto")
         .and_then(|h| h.to_str().ok());
@@ -5014,19 +5004,43 @@ async fn admin_prepare_oauth_url_web(
     })))
 }
 
+fn is_loopback_host_str(host: &str) -> bool {
+    let h = host.trim().trim_matches(|c| c == '[' || c == ']');
+    h.eq_ignore_ascii_case("localhost") || h == "127.0.0.1" || h == "::1"
+}
+
 fn is_loopback_url(raw_url: &str) -> bool {
     if let Ok(parsed) = url::Url::parse(raw_url.trim()) {
         if let Some(host) = parsed.host_str() {
-            let h = host.trim_matches(|c| c == '[' || c == ']');
-            return h.eq_ignore_ascii_case("localhost") || h == "127.0.0.1" || h == "::1";
+            return is_loopback_host_str(host);
         }
     }
     false
 }
 
-fn resolve_oauth_redirect_uri(
+fn parse_request_host(raw_host: Option<&str>) -> Option<(String, Option<u16>)> {
+    let first = raw_host?.split(',').next()?.trim();
+    if first.is_empty() {
+        return None;
+    }
+    let parsed = url::Url::parse(&format!("http://{}", first)).ok()?;
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return None;
+    }
+    let host = parsed.host_str()?.to_string();
+    Some((host, parsed.port()))
+}
+
+fn resolve_oauth_redirect_uri_with_request(
     port: u16,
     public_url_override: Option<&str>,
+    request_host: Option<&str>,
+    request_proto: Option<&str>,
     is_builtin_client: bool,
 ) -> String {
     if let Some(raw_public_url) = public_url_override {
@@ -5036,23 +5050,65 @@ fn resolve_oauth_redirect_uri(
                 return format!("{}/auth/callback", base);
             }
             crate::modules::logger::log_warn(&format!(
-                "Ignored non-loopback ABV_PUBLIC_URL '{}' for built-in Google OAuth client (loopback required); falling back to http://localhost:{}/auth/callback",
+                "Ignored non-loopback ABV_PUBLIC_URL '{}' for built-in Google OAuth client (loopback required); falling back to request host/localhost:{}",
                 base, port
             ));
         }
     }
+
+    if let Some((host_str, explicit_port)) = parse_request_host(request_host) {
+        let scheme = match request_proto
+            .and_then(|p| p.split(',').next())
+            .map(str::trim)
+        {
+            Some(p) if p.eq_ignore_ascii_case("https") => "https",
+            _ => "http",
+        };
+
+        if !is_builtin_client {
+            let authority = match explicit_port {
+                Some(p) => format!("{}:{}", host_str, p),
+                None => host_str,
+            };
+            return format!("{}://{}/auth/callback", scheme, authority);
+        }
+
+        // Built-in Google Desktop OAuth clients only accept loopback hosts, but preserve
+        // both explicit mapped Docker ports (e.g. :18045 -> :8045) and exact loopback hostnames.
+        let target_port = explicit_port.unwrap_or(port);
+        if is_loopback_host_str(&host_str) {
+            return format!("http://{}:{}/auth/callback", host_str, target_port);
+        }
+        return format!("http://localhost:{}/auth/callback", target_port);
+    }
+
     format!("http://localhost:{}/auth/callback", port)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn resolve_oauth_redirect_uri(
+    port: u16,
+    public_url_override: Option<&str>,
+    is_builtin_client: bool,
+) -> String {
+    resolve_oauth_redirect_uri_with_request(
+        port,
+        public_url_override,
+        None,
+        None,
+        is_builtin_client,
+    )
 }
 
 fn get_oauth_redirect_uri(
     port: u16,
-    _host: Option<&str>,
-    _proto: Option<&str>,
+    host: Option<&str>,
+    proto: Option<&str>,
     client_key: Option<&str>,
 ) -> String {
     let public_url = std::env::var("ABV_PUBLIC_URL").ok();
     let is_builtin = crate::modules::oauth::is_builtin_oauth_client(client_key);
-    resolve_oauth_redirect_uri(port, public_url.as_deref(), is_builtin)
+    resolve_oauth_redirect_uri_with_request(port, public_url.as_deref(), host, proto, is_builtin)
 }
 
 // ============================================================================
@@ -6173,6 +6229,56 @@ mod save_update_settings_payload_tests {
         assert_eq!(
             resolve_oauth_redirect_uri(8045, Some("https://my-domain.example.com/"), false),
             "https://my-domain.example.com/auth/callback"
+        );
+    }
+
+    #[test]
+    fn test_resolve_oauth_redirect_uri_with_request_docker_and_nas() {
+        use super::resolve_oauth_redirect_uri_with_request;
+
+        // Docker mapped port on 127.0.0.1 keeps exact loopback host + external port
+        assert_eq!(
+            resolve_oauth_redirect_uri_with_request(
+                8045,
+                None,
+                Some("127.0.0.1:18045"),
+                None,
+                true
+            ),
+            "http://127.0.0.1:18045/auth/callback"
+        );
+        // Docker mapped port accessed via NAS LAN IP keeps mapped port while using localhost for built-in client
+        assert_eq!(
+            resolve_oauth_redirect_uri_with_request(
+                8045,
+                None,
+                Some("192.168.1.50:18045"),
+                None,
+                true
+            ),
+            "http://localhost:18045/auth/callback"
+        );
+        // Non-builtin custom OAuth client honors proxy host + scheme
+        assert_eq!(
+            resolve_oauth_redirect_uri_with_request(
+                8045,
+                None,
+                Some("nas.local:18045"),
+                Some("https"),
+                false
+            ),
+            "https://nas.local:18045/auth/callback"
+        );
+        // Rejects malformed Host header injection cleanly
+        assert_eq!(
+            resolve_oauth_redirect_uri_with_request(
+                8045,
+                None,
+                Some("evil.com/path?x=1"),
+                None,
+                false
+            ),
+            "http://localhost:8045/auth/callback"
         );
     }
 }
