@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "am-cli"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "am-core",
  "anyhow",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "am-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "am-proxy",
  "anyhow",
@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "am-gui"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "am-core",
  "objc2",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "am-proxy"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "dirs 5.0.1",
  "serde",
