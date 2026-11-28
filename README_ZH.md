@@ -238,6 +238,81 @@ antigravity-server
 antigravity-server --no-web
 ```
 
+### 选项 E: Linux / Windows 服务器原生 Headless 部署
+针对专用服务器，每个版本都会发布独立的 Headless 安装包，内含对应平台的原生 `antigravity-server` 二进制与 Web UI 资源（`dist/`）。一键安装脚本仅下载并解压，不会安装桌面 GUI：
+
+```bash
+# Linux（自动识别 x86_64 / aarch64）
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.sh | bash
+```
+
+```powershell
+# Windows x64 (PowerShell)
+irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.ps1 | iex
+```
+
+#### 安装脚本参数
+
+**Linux（`install-headless.sh`）**——在命令前以环境变量设置：
+
+| 变量 | 说明 | 默认值 |
+|---|---|---|
+| `INSTALL_DIR` | **安装目录**，`antigravity-server` 与 `dist/` 放置于此 | `$HOME/.local/antigravity-server` |
+| `VERSION` | 要安装的版本（如 `5.0.4`，带不带 `v` 均可） | 最新 release |
+| `DRY_RUN` | 设为 `1` 时只打印操作、不实际执行 | `0` |
+| `REPO` | 源仓库（fork 时可覆盖） | `lbjlaq/Antigravity-Manager` |
+| `GITHUB_MIRROR` | 下载代理前缀，如 `https://gh-proxy.org/` | 直连 GitHub |
+| `ASSET_DIR` | 本地资产目录（离线测试用，跳过下载） | 空 |
+
+> 镜像仅作用于归档下载，不代理 GitHub API。若因 API 限流导致版本探测失败，请显式传入 `VERSION=x.y.z`。
+
+示例——自定义安装路径与指定版本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.sh \
+  | INSTALL_DIR=/opt/antigravity-server VERSION=5.0.4 bash
+```
+
+**Windows（`install-headless.ps1`）**——以 PowerShell 参数传入：
+
+| 参数 | 说明 | 默认值 |
+|---|---|---|
+| `-InstallDir` | **安装目录**，`antigravity-server.exe` 与 `dist\` 放置于此 | `$env:LOCALAPPDATA\AntigravityServer` |
+| `-Version` | 要安装的版本（如 `5.0.4`） | 最新 release |
+| `-DryRun` | 只打印操作、不实际执行 | 关 |
+| `-Repo` | 源仓库（fork 时可覆盖） | `lbjlaq/Antigravity-Manager` |
+| `-GithubMirror` | 下载代理前缀，如 `https://gh-proxy.org/` | 直连 GitHub |
+| `-AssetDir` | 本地资产目录（离线测试用） | 空 |
+
+`irm ... | iex` 管道形式无法传参。若需指定版本或安装路径，请以 scriptblock 方式调用：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.ps1))) -InstallDir "$env:LOCALAPPDATA\AntigravityServer" -Version 5.0.4
+```
+
+两个安装脚本都会把二进制与 `dist/` 同级放在安装目录下，布局如下：
+
+```
+<INSTALL_DIR>/
+  antigravity-server(.exe)
+  dist/
+  VERSION
+```
+
+启动服务（headless 默认绑定 `0.0.0.0:8045`，生产环境请设置 `ABV_API_KEY`，仅本机访问可加 `ABV_BIND_LOCAL_ONLY=1`）：
+
+```bash
+ABV_API_KEY='your-key' ./antigravity-server -p 8045
+```
+
+> [!NOTE]
+> headless 二进制链接了 GTK/WebKit，Debian/Ubuntu 需先安装运行库：
+> `sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 libsoup-3.0-0 libgdk-pixbuf-2.0-0`
+> （用 `ldd antigravity-server | grep 'not found'` 校验，应无输出）。
+
+> [!NOTE]
+> 安装脚本仅下载与解压文件，**不会**注册任何系统服务。进程管理请使用 systemd / NSSM / 任务计划程序。
+
 > [!TIP]
 > **🧪 Beta / 预览版镜像拉取**：
 > 若需使用最新的 Beta 预发布特性，请直接指定对应的 Beta 版本 Tag（预发布版本独立发布，不会覆盖 `latest` 稳定版标签）：

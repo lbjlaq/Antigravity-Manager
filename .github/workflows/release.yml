@@ -110,10 +110,13 @@ jobs:
             args: "--target universal-apple-darwin --bundles app"
           - platform: "ubuntu-22.04"
             args: ""
+            headless_target: "linux-x86_64"
           - platform: "ubuntu-24.04-arm"
             args: ""
+            headless_target: "linux-aarch64"
           - platform: "windows-2025"
             args: ""
+            headless_target: "windows-x64"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -183,6 +186,57 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- ${{ matrix.args }} ${{ env.PRE_BUNDLE_ARGS }}
+
+      # Headless 产物：复用上一步 tauri build 已编译的 antigravity-server 与已生成的 dist，
+      # 仅做打包，不重复执行 npm build / cargo build，避免额外 CI 时长。
+      - name: Package headless artifact (Linux)
+        if: matrix.headless_target && startsWith(matrix.platform, 'ubuntu')
+        shell: bash
+        run: |
+          BIN="src-tauri/target/release/antigravity-server"
+          # 兜底：tauri build 通常已编译该 bin；若缺失则增量编译（复用 target 缓存，很快）
+          if [ ! -f "$BIN" ]; then
+            echo "headless binary not found, building it incrementally..."
+            cargo build --release --bin antigravity-server --manifest-path src-tauri/Cargo.toml
+          fi
+          test -f "$BIN" || { echo "::error::headless binary not found at $BIN"; exit 1; }
+          mkdir -p dist-headless
+          cp "$BIN" dist-headless/
+          cp -r dist dist-headless/dist
+          tar -czf "antigravity-server-${{ matrix.headless_target }}.tar.gz" -C dist-headless antigravity-server dist
+
+      - name: Package headless artifact (Windows)
+        if: matrix.headless_target && matrix.platform == 'windows-2025'
+        shell: pwsh
+        run: |
+          $bin = "src-tauri/target/release/antigravity-server.exe"
+          if (-not (Test-Path $bin)) {
+            Write-Host "headless binary not found, building it incrementally..."
+            cargo build --release --bin antigravity-server --manifest-path src-tauri/Cargo.toml
+          }
+          if (-not (Test-Path $bin)) { throw "headless binary not found at $bin" }
+          New-Item -ItemType Directory -Force -Path dist-headless | Out-Null
+          Copy-Item -Path $bin -Destination dist-headless/
+          Copy-Item -Path dist -Destination dist-headless/dist -Recurse -Force
+          tar -czf "antigravity-server-${{ matrix.headless_target }}.tar.gz" -C dist-headless antigravity-server.exe dist
+
+      - name: Generate headless SHA256
+        if: matrix.headless_target
+        shell: bash
+        run: |
+          f="antigravity-server-${{ matrix.headless_target }}.tar.gz"
+          sha256sum "$f" > "$f.sha256"
+          cat "$f.sha256"
+
+      - name: Upload headless artifact
+        if: matrix.headless_target
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-headless-${{ matrix.headless_target }}
+          path: |
+            antigravity-server-${{ matrix.headless_target }}.tar.gz
+            antigravity-server-${{ matrix.headless_target }}.tar.gz.sha256
+          if-no-files-found: error
 
       # 3. 处理 macOS 架构重命名冲突 (解决 422 Already Exists)
       - name: Rename macOS assets for architecture
@@ -485,13 +539,21 @@ jobs:
             -name "*.exe" -o \
             -name "*.rpm" -o \
             -name "*.tar.gz" -o \
-            -name "*.sig" \
+            -name "*.sig" -o \
+            -name "*.sha256" \
           \) -print0 | while IFS= read -r -d '' file; do
             cp "$file" release-files/
           done
           # 包含 Termux 一键安装脚本
           if [ -f scripts/install-termux.sh ]; then
             cp scripts/install-termux.sh release-files/
+          fi
+          # 包含 Headless 一键安装脚本
+          if [ -f scripts/install-headless.sh ]; then
+            cp scripts/install-headless.sh release-files/
+          fi
+          if [ -f scripts/install-headless.ps1 ]; then
+            cp scripts/install-headless.ps1 release-files/
           fi
           # 同步生成点号规范命名的副本，确保与 updater.json 中的下载 URL 100% 绝对一致
           cd release-files

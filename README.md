@@ -238,6 +238,82 @@ antigravity-server
 antigravity-server --no-web
 ```
 
+### Option E: Linux / Windows Server Headless (Native, no GUI)
+
+For dedicated servers, each release publishes standalone headless archives containing the native `antigravity-server` binary plus the Web UI assets (`dist/`). One-line installers download and unpack them without installing the desktop GUI:
+
+```bash
+# Linux (x86_64 / aarch64 auto-detected)
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.sh | bash
+```
+
+```powershell
+# Windows x64 (PowerShell)
+irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.ps1 | iex
+```
+
+#### Installer parameters
+
+**Linux (`install-headless.sh`)** — set as environment variables before the command:
+
+| Variable | Description | Default |
+|---|---|---|
+| `INSTALL_DIR` | **Installation directory** where `antigravity-server` and `dist/` are placed | `$HOME/.local/antigravity-server` |
+| `VERSION` | Release version to install (e.g. `5.0.4`, with or without `v`) | latest release |
+| `DRY_RUN` | Set to `1` to print actions without executing | `0` |
+| `REPO` | Source repository (override for forks) | `lbjlaq/Antigravity-Manager` |
+| `GITHUB_MIRROR` | Download proxy prefix, e.g. `https://gh-proxy.org/` | direct GitHub |
+| `ASSET_DIR` | Local asset directory for offline testing (skips download) | unset |
+
+> The mirror only applies to archive downloads; it does not proxy the GitHub API. If version detection fails due to API rate limits, pass `VERSION=x.y.z` explicitly.
+
+Example — custom install path and a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.sh \
+  | INSTALL_DIR=/opt/antigravity-server VERSION=5.0.4 bash
+```
+
+**Windows (`install-headless.ps1`)** — pass as PowerShell parameters:
+
+| Parameter | Description | Default |
+|---|---|---|
+| `-InstallDir` | **Installation directory** where `antigravity-server.exe` and `dist\` are placed | `$env:LOCALAPPDATA\AntigravityServer` |
+| `-Version` | Release version to install (e.g. `5.0.4`) | latest release |
+| `-DryRun` | Print actions without executing | off |
+| `-Repo` | Source repository (override for forks) | `lbjlaq/Antigravity-Manager` |
+| `-GithubMirror` | Download proxy prefix, e.g. `https://gh-proxy.org/` | direct GitHub |
+| `-AssetDir` | Local asset directory for offline testing | unset |
+
+The `irm ... | iex` pipe form cannot pass parameters. To specify a version or install path, invoke the script as a scriptblock:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-headless.ps1))) -InstallDir "$env:LOCALAPPDATA\AntigravityServer" -Version 5.0.4
+```
+
+Both installers place the binary and `dist/` as siblings under the install directory. The layout is:
+
+```
+<INSTALL_DIR>/
+  antigravity-server(.exe)
+  dist/
+  VERSION
+```
+
+Then start the server (headless mode binds `0.0.0.0:8045` by default — set `ABV_API_KEY` for production and `ABV_BIND_LOCAL_ONLY=1` for localhost-only):
+
+```bash
+ABV_API_KEY='your-key' ./antigravity-server -p 8045
+```
+
+> [!NOTE]
+> The headless binary links against GTK/WebKit. On Debian/Ubuntu install the runtime libs first:
+> `sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 libsoup-3.0-0 libgdk-pixbuf-2.0-0`
+> (verify with `ldd antigravity-server | grep 'not found'` — it should print nothing).
+
+> [!NOTE]
+> These installers only download and unpack files; they do **not** register any system service. Use systemd / NSSM / Task Scheduler for process management.
+
 > [!TIP]
 > **🧪 Pulling Beta / Preview Images**:
 > To test the latest Beta pre-release features, specify the corresponding Beta version tag (pre-releases are published independently and will never overwrite the `latest` stable tag):
