@@ -1,9 +1,121 @@
 import { useState, useEffect } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { Save, Check, Layers, HelpCircle, HardDrive, Trash2, AlertTriangle } from "lucide-react";
+import { Save, Check, Layers, HelpCircle, HardDrive, Trash2, AlertTriangle, ArrowRight, RotateCcw, Sliders } from "lucide-react";
 import { request } from "../../utils/request";
 import { showToast } from "../common/ToastContainer";
-import { ThinkingBudgetConfig } from "../../types/config";
+import {
+    ThinkingBudgetConfig,
+    ThinkingModeMappingConfig,
+    ThinkingModeSourceKey,
+    ThinkingModeTargetValue,
+} from "../../types/config";
+
+const DEFAULT_MODE_MAPPING_RULES: Record<ThinkingModeSourceKey, ThinkingModeTargetValue> = {
+    default: "auto",
+    off: "off",
+    minimal: "minimal",
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
+    max: "xhigh",
+};
+
+const SOURCE_MODE_ITEMS: Array<{
+    key: ThinkingModeSourceKey;
+    labelKey: string;
+    labelDefault: string;
+    hintKey: string;
+    hintDefault: string;
+}> = [
+    {
+        key: "default",
+        labelKey: "proxy.config.thinking_budget.mode_source_default",
+        labelDefault: "缺省 / Auto",
+        hintKey: "proxy.config.thinking_budget.mode_source_default_hint",
+        hintDefault: "未传或 default / adaptive",
+    },
+    {
+        key: "off",
+        labelKey: "proxy.config.thinking_budget.mode_source_off",
+        labelDefault: "关闭 / Off",
+        hintKey: "proxy.config.thinking_budget.mode_source_off_hint",
+        hintDefault: "disabled / off / none / budget=0",
+    },
+    {
+        key: "minimal",
+        labelKey: "proxy.config.thinking_budget.mode_source_minimal",
+        labelDefault: "Minimal",
+        hintKey: "proxy.config.thinking_budget.mode_source_minimal_hint",
+        hintDefault: "minimal / min / extra_low",
+    },
+    {
+        key: "low",
+        labelKey: "proxy.config.thinking_budget.mode_source_low",
+        labelDefault: "Low",
+        hintKey: "proxy.config.thinking_budget.mode_source_low_hint",
+        hintDefault: "low / 1",
+    },
+    {
+        key: "medium",
+        labelKey: "proxy.config.thinking_budget.mode_source_medium",
+        labelDefault: "Medium",
+        hintKey: "proxy.config.thinking_budget.mode_source_medium_hint",
+        hintDefault: "medium / normal / 2",
+    },
+    {
+        key: "high",
+        labelKey: "proxy.config.thinking_budget.mode_source_high",
+        labelDefault: "High",
+        hintKey: "proxy.config.thinking_budget.mode_source_high_hint",
+        hintDefault: "high / 3 / 4",
+    },
+    {
+        key: "xhigh",
+        labelKey: "proxy.config.thinking_budget.mode_source_xhigh",
+        labelDefault: "XHigh",
+        hintKey: "proxy.config.thinking_budget.mode_source_xhigh_hint",
+        hintDefault: "xhigh / x-high / 100",
+    },
+    {
+        key: "max",
+        labelKey: "proxy.config.thinking_budget.mode_source_max",
+        labelDefault: "Max",
+        hintKey: "proxy.config.thinking_budget.mode_source_max_hint",
+        hintDefault: "max / extreme (Claude Code Max)",
+    },
+];
+
+const TARGET_MODE_OPTIONS: Array<{
+    value: ThinkingModeTargetValue;
+    labelKey: string;
+    labelDefault: string;
+}> = [
+    { value: "auto", labelKey: "proxy.config.thinking_budget.mode_target_auto", labelDefault: "跟随模型默认 (Auto)" },
+    { value: "off", labelKey: "proxy.config.thinking_budget.mode_target_off", labelDefault: "关闭思考 (Off)" },
+    { value: "minimal", labelKey: "proxy.config.thinking_budget.mode_target_minimal", labelDefault: "极低 (MINIMAL)" },
+    { value: "low", labelKey: "proxy.config.thinking_budget.mode_target_low", labelDefault: "低 (LOW)" },
+    { value: "medium", labelKey: "proxy.config.thinking_budget.mode_target_medium", labelDefault: "中 (MEDIUM)" },
+    { value: "high", labelKey: "proxy.config.thinking_budget.mode_target_high", labelDefault: "高 (HIGH)" },
+    { value: "xhigh", labelKey: "proxy.config.thinking_budget.mode_target_xhigh", labelDefault: "极高 (XHIGH / 100)" },
+];
+
+function normalizeModeMappingConfig(config?: ThinkingBudgetConfig): ThinkingModeMappingConfig {
+    const raw = config?.mode_mapping;
+    const rules: Record<string, ThinkingModeTargetValue> = { ...DEFAULT_MODE_MAPPING_RULES };
+    if (raw?.rules) {
+        for (const [k, v] of Object.entries(raw.rules)) {
+            if (k in DEFAULT_MODE_MAPPING_RULES && typeof v === "string") {
+                rules[k] = v as ThinkingModeTargetValue;
+            }
+        }
+    }
+    return {
+        enabled: raw?.enabled ?? true,
+        override_suffixed_models: raw?.override_suffixed_models ?? false,
+        rules,
+    };
+}
 
 interface ThinkingBudgetProps {
     config?: ThinkingBudgetConfig;
@@ -72,6 +184,8 @@ const CONCURRENCY_GUIDE_PRESETS: ConcurrencyGuidePreset[] = [
 ];
 
 export default function ThinkingBudget({
+    config,
+    onChange,
     onSave,
     thinkingStoreEnabled = true,
     onThinkingStoreChange,
@@ -562,25 +676,247 @@ export default function ThinkingBudget({
                 </div>
             )}
 
-            {/* 思考档位：网关自适应（官方结构体驱动） */}
-            <div className="p-3.5 bg-blue-50/70 dark:bg-blue-900/20 border border-blue-200/80 dark:border-blue-800/40 rounded-xl space-y-1.5 shadow-2xs">
-                <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-900 dark:text-white">
-                        {t("thinking_adaptive.title", {
-                            defaultValue: "思考档位：网关自适应（官方结构体驱动）",
-                        })}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
-                        {t("thinking_adaptive.tag", { defaultValue: "推荐" })}
-                    </span>
-                </div>
-                <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
-                    {t("thinking_adaptive.desc", {
-                        defaultValue:
-                            "客户端直控模式与自定义 Token 档位已下线：具备 thinkingLevel 的模型由模型档位直接决定等级（low / medium / high），其余模型沿用官方 thinkingBudget 默认值。客户端传入的思考档位仅在无后缀（裸）模型上生效，用于选择具体档位模型。",
-                    })}
-                </p>
-            </div>
+            {/* 思考模式映射 (Cross-Protocol Thinking Mode Mapping) */}
+            {(() => {
+                const mapping = normalizeModeMappingConfig(config);
+                const updateMapping = (patch: Partial<ThinkingModeMappingConfig>) => {
+                    const nextMapping: ThinkingModeMappingConfig = {
+                        ...mapping,
+                        ...patch,
+                        rules: patch.rules ? { ...patch.rules } : { ...mapping.rules },
+                    };
+                    onChange({
+                        ...(config || {}),
+                        mode_mapping: nextMapping,
+                    });
+                };
+                const handleRuleChange = (sourceKey: ThinkingModeSourceKey, target: ThinkingModeTargetValue) => {
+                    updateMapping({
+                        rules: {
+                            ...mapping.rules,
+                            [sourceKey]: target,
+                        },
+                    });
+                };
+                const applyPreset = (
+                    rules: Record<ThinkingModeSourceKey, ThinkingModeTargetValue>,
+                    overrideSuffixed?: boolean
+                ) => {
+                    updateMapping({
+                        enabled: true,
+                        override_suffixed_models: overrideSuffixed ?? mapping.override_suffixed_models,
+                        rules,
+                    });
+                };
+                const isModified =
+                    !mapping.enabled ||
+                    mapping.override_suffixed_models ||
+                    SOURCE_MODE_ITEMS.some((item) => mapping.rules[item.key] !== DEFAULT_MODE_MAPPING_RULES[item.key]);
+
+                return (
+                    <div
+                        data-testid="thinking-mode-mapping-panel"
+                        className="p-4 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200/80 dark:border-blue-800/40 rounded-xl space-y-3.5 shadow-2xs"
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Sliders size={14} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                                    <span className="text-xs font-bold text-gray-900 dark:text-white">
+                                        {t("proxy.config.thinking_budget.mode_mapping_title", {
+                                            defaultValue: "跨协议思考模式映射 (Thinking Mode Mapping)",
+                                        })}
+                                    </span>
+                                    <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                            mapping.enabled
+                                                ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/60"
+                                                : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-base-300"
+                                        }`}
+                                    >
+                                        {mapping.enabled
+                                            ? t("proxy.config.thinking_budget.mode_mapping_active", { defaultValue: "单次映射生效中" })
+                                            : t("proxy.config.thinking_budget.mode_mapping_disabled", { defaultValue: "已旁路透传" })}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                                    {t("proxy.config.thinking_budget.mode_mapping_desc", {
+                                        defaultValue:
+                                            "统一接管 Claude / OpenAI / Responses / Gemini 传入的思考开关与强度（如 output_config.effort、reasoning_effort、thinkingLevel），在模型分档与 thinkingConfig 注入前执行单次映射，不再硬编码把 Max 压回 HIGH。",
+                                    })}
+                                </p>
+                            </div>
+                            <input
+                                type="checkbox"
+                                data-testid="thinking-mode-mapping-enabled"
+                                className="toggle toggle-sm toggle-primary shrink-0 mt-0.5"
+                                checked={mapping.enabled}
+                                onChange={(e) => updateMapping({ enabled: e.target.checked })}
+                            />
+                        </div>
+
+                        {/* 快捷预设 & 重置 */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[11px] font-medium text-gray-500 dark:text-gray-400 mr-1">
+                                    {t("proxy.config.thinking_budget.mode_presets_label", { defaultValue: "快捷预设:" })}
+                                </span>
+                                <button
+                                    type="button"
+                                    data-testid="thinking-mode-preset-default"
+                                    disabled={!mapping.enabled}
+                                    onClick={() => applyPreset({ ...DEFAULT_MODE_MAPPING_RULES }, false)}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white dark:bg-base-100 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-base-300 transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                    {t("proxy.config.thinking_budget.mode_preset_default", { defaultValue: "官方对齐 (Max→XHigh)" })}
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="thinking-mode-preset-force-xhigh"
+                                    disabled={!mapping.enabled}
+                                    onClick={() =>
+                                        applyPreset({
+                                            default: "xhigh",
+                                            off: "low",
+                                            minimal: "minimal",
+                                            low: "low",
+                                            medium: "medium",
+                                            high: "high",
+                                            xhigh: "xhigh",
+                                            max: "xhigh",
+                                        })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white dark:bg-base-100 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-base-300 transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                    {t("proxy.config.thinking_budget.mode_preset_force_xhigh", { defaultValue: "默认拉满 (缺省→XHigh)" })}
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="thinking-mode-preset-low-cost"
+                                    disabled={!mapping.enabled}
+                                    onClick={() =>
+                                        applyPreset({
+                                            default: "low",
+                                            off: "off",
+                                            minimal: "minimal",
+                                            low: "low",
+                                            medium: "low",
+                                            high: "medium",
+                                            xhigh: "high",
+                                            max: "high",
+                                        })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white dark:bg-base-100 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-base-300 transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                    {t("proxy.config.thinking_budget.mode_preset_low_cost", { defaultValue: "轻量省额 (降一档)" })}
+                                </button>
+                            </div>
+
+                            {isModified && (
+                                <button
+                                    type="button"
+                                    data-testid="thinking-mode-reset"
+                                    onClick={() =>
+                                        updateMapping({
+                                            enabled: true,
+                                            override_suffixed_models: false,
+                                            rules: { ...DEFAULT_MODE_MAPPING_RULES },
+                                        })
+                                    }
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-100/70 dark:hover:bg-blue-900/30 transition-colors cursor-pointer"
+                                >
+                                    <RotateCcw size={12} />
+                                    <span>{t("proxy.config.thinking_budget.mode_reset_btn", { defaultValue: "恢复默认" })}</span>
+                                </button>
+                            )}
+                        </div>
+
+                        {/* 8 行客户端模式 -> 网关目标档位映射矩阵 */}
+                        <div className={`grid grid-cols-1 md:grid-cols-2 gap-2.5 ${!mapping.enabled ? "opacity-55 pointer-events-none" : ""}`}>
+                            {SOURCE_MODE_ITEMS.map((item) => {
+                                const currentTarget = (mapping.rules[item.key] || DEFAULT_MODE_MAPPING_RULES[item.key]) as ThinkingModeTargetValue;
+                                const isOverridden = currentTarget !== DEFAULT_MODE_MAPPING_RULES[item.key];
+                                return (
+                                    <div
+                                        key={item.key}
+                                        className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border transition-colors ${
+                                            isOverridden
+                                                ? "bg-amber-50/70 dark:bg-amber-950/20 border-amber-300/80 dark:border-amber-700/60"
+                                                : "bg-white/90 dark:bg-base-100/80 border-gray-200/80 dark:border-base-300"
+                                        }`}
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="text-xs font-semibold text-gray-900 dark:text-white truncate">
+                                                    {t(item.labelKey, { defaultValue: item.labelDefault })}
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 truncate">
+                                                {t(item.hintKey, { defaultValue: item.hintDefault })}
+                                            </div>
+                                        </div>
+
+                                        <ArrowRight size={13} className="text-gray-400 dark:text-gray-500 shrink-0" />
+
+                                        <select
+                                            data-testid={`thinking-mode-select-${item.key}`}
+                                            aria-label={t(item.labelKey, { defaultValue: item.labelDefault })}
+                                            disabled={!mapping.enabled}
+                                            value={currentTarget}
+                                            onChange={(e) => handleRuleChange(item.key, e.target.value as ThinkingModeTargetValue)}
+                                            className="select select-bordered select-xs h-7 min-h-7 w-40 shrink-0 bg-white dark:bg-base-200 text-xs font-medium text-gray-900 dark:text-gray-100"
+                                        >
+                                            {TARGET_MODE_OPTIONS.map((opt) => (
+                                                <option key={opt.value} value={opt.value}>
+                                                    {t(opt.labelKey, { defaultValue: opt.labelDefault })}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* 允许覆盖具名档位后缀开关 */}
+                        <div className="p-3 rounded-lg bg-white/80 dark:bg-base-100/70 border border-blue-200/70 dark:border-base-300 flex items-center justify-between gap-4">
+                            <div className="space-y-0.5 min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-gray-900 dark:text-white">
+                                        {t("proxy.config.thinking_budget.override_suffixed_title", {
+                                            defaultValue: "允许映射/客户端强度覆盖具名档位后缀",
+                                        })}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-base-300 text-gray-600 dark:text-gray-300">
+                                        -high → -xhigh / -low
+                                    </span>
+                                </div>
+                                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
+                                    {t("proxy.config.thinking_budget.override_suffixed_desc", {
+                                        defaultValue:
+                                            "默认关闭：仅裸模型（如 gemini-4-hydrogen）按思考强度选档，具名模型（如 -high）锁定后缀档位。开启后，当请求/映射给出显式强度时，将对多档位模型族重新分档，同时自动保护 gpt-oss-120b-medium、claude-opus-4-6-thinking 等单名模型。",
+                                    })}
+                                </p>
+                            </div>
+                            <input
+                                type="checkbox"
+                                data-testid="thinking-mode-override-suffixed"
+                                disabled={!mapping.enabled}
+                                className="toggle toggle-sm toggle-primary shrink-0"
+                                checked={mapping.override_suffixed_models}
+                                onChange={(e) => updateMapping({ override_suffixed_models: e.target.checked })}
+                            />
+                        </div>
+
+                        {/* CLI / Headless 环境变量兼容提示 */}
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400 font-mono bg-white/60 dark:bg-base-100/40 px-2.5 py-1.5 rounded-lg border border-blue-100 dark:border-base-300/70">
+                            {t("proxy.config.thinking_budget.mode_mapping_env_hint", {
+                                defaultValue:
+                                    "Headless/ENV: ANTIGRAVITY_THINKING_MODE_MAPPING=\"max=xhigh,low=medium\" · ANTIGRAVITY_THINKING_OVERRIDE_SUFFIXED=true",
+                            })}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* 底部专属保存操作栏 */}
             {onSave && (

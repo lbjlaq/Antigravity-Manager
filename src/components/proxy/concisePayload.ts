@@ -29,6 +29,8 @@ const SECTION_KEYS = [
     'generationConfig',
     'generation_config',
     'thinking',
+    'output_config',
+    'effort',
     'reasoning_effort',
     'reasoning',
     'reasoning_content',
