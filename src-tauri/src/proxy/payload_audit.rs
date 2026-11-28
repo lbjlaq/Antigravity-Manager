@@ -457,10 +457,16 @@ fn simplify_content_block(obj: &Map<String, Value>) -> Value {
 fn simplify_responses_input_item(item: &Value) -> Value {
     let mut out = simplify_message(item);
     if let Some(obj) = out.as_object_mut() {
-        for key in ["type", "role", "call_id", "arguments"] {
+        for key in ["type", "role", "name", "namespace", "call_id", "arguments"] {
             if let Some(v) = item.get(key) {
                 obj.insert(key.to_string(), v.clone());
             }
+        }
+        if let Some(input) = item.get("input") {
+            obj.insert("input".to_string(), simplify_content(input));
+        }
+        if let Some(tools) = item.get("tools") {
+            obj.insert("tools".to_string(), simplify_tools(tools));
         }
         if let Some(output) = item.get("output") {
             obj.insert("output".to_string(), simplify_content(output));
@@ -1351,5 +1357,53 @@ mod tests {
         assert_eq!(cand[1]["functionCall"]["name"], "search_code");
         assert_eq!(cand[1]["functionCall"]["args"]["query"], "struct Token");
         assert_eq!(simplified["usageMetadata"]["promptTokenCount"], 1500);
+    }
+
+    #[test]
+    fn test_simplify_responses_input_item_preserves_custom_tool_namespace_and_additional_tools() {
+        let embedded_img = format!("echo ok data:image/png;base64,{}", "A".repeat(1200));
+        let req = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "tools": [
+                        { "type": "custom", "name": "exec", "description": "run cmd" }
+                    ]
+                },
+                {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "namespace": "functions",
+                    "call_id": "call_custom_1",
+                    "input": embedded_img
+                },
+                {
+                    "type": "function_call",
+                    "name": "js",
+                    "namespace": "mcp__node_repl",
+                    "call_id": "call_fn_1",
+                    "arguments": "{\"code\":\"1+1\"}"
+                }
+            ]
+        });
+
+        let simplified = simplify_payload_json(&req);
+        let input = simplified["input"].as_array().expect("input array");
+        assert_eq!(input[0]["type"], "additional_tools");
+        assert_eq!(input[0]["tools"][0]["name"], "exec");
+
+        assert_eq!(input[1]["type"], "custom_tool_call");
+        assert_eq!(input[1]["name"], "exec");
+        assert_eq!(input[1]["namespace"], "functions");
+        assert_eq!(input[1]["call_id"], "call_custom_1");
+        assert!(input[1]["input"].as_str().unwrap().starts_with("echo ok "));
+        assert!(input[1]["input"].as_str().unwrap().contains("base64"));
+
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["name"], "js");
+        assert_eq!(input[2]["namespace"], "mcp__node_repl");
+        assert_eq!(input[2]["call_id"], "call_fn_1");
+        assert_eq!(input[2]["arguments"], "{\"code\":\"1+1\"}");
     }
 }
