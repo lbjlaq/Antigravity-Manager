@@ -28,6 +28,12 @@ import {
   saveDashboardPoolPreference,
   hydrateUiStateFromConfig,
 } from '../utils/uiState';
+import {
+  getAccountTier,
+  isAccountAbnormal,
+  isAccountRestricted,
+  tierSortWeight,
+} from '../utils/accountStatus';
 
 interface DashboardProps {
   lang: string;
@@ -61,34 +67,11 @@ interface CandidateAccount {
 }
 
 function tierRank(tier: string): number {
-  const t = tier.toUpperCase();
-  if (t === 'ULTRA') return 4;
-  if (t === 'PRO') return 3;
-  if (t === 'ENTERPRISE') return 2;
-  return 1;
+  return tierSortWeight(tier);
 }
 
 function resolveSubscriptionTier(acc: BackendAccount): string {
-  const subTier = (acc.quota?.subscription_tier || '').toUpperCase();
-  if (subTier.includes('ULTRA') || subTier.includes('HELIUM')) {
-    return 'ULTRA';
-  }
-  if (subTier.includes('PRO') || subTier.includes('PREMIUM')) {
-    return 'PRO';
-  }
-  if (subTier.includes('ENTERPRISE')) {
-    return 'ENTERPRISE';
-  }
-  if (subTier === 'FREE' || subTier.includes('STARTER')) {
-    return 'FREE';
-  }
-  if (acc.tags?.some((t) => t.toUpperCase().includes('ULTRA'))) {
-    return 'ULTRA';
-  }
-  if (acc.tags?.some((t) => t.toUpperCase().includes('PRO'))) {
-    return 'PRO';
-  }
-  return 'FREE';
+  return getAccountTier(acc);
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
@@ -275,10 +258,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
               if (!Number.isNaN(ts) && ts > nowMs) resetTs = ts;
             }
           }
-          // proxy_disabled 仅为旧版反代网关调度开关，不视为账号本身受限
-          const restricted = Boolean(
-            acc.disabled || acc.banned || acc.validation_blocked || acc.quota?.is_forbidden
-          );
+          const restricted = Boolean(acc.disabled || isAccountAbnormal(acc));
           const isWarn = restricted || claude < 30 || gemini < 30;
           return {
             id: acc.id,
@@ -372,7 +352,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ lang }) => {
         let disabled = 0;
 
         accounts.forEach((acc) => {
-          if (acc.banned || acc.quota?.is_forbidden || acc.validation_blocked) {
+          if (isAccountRestricted(acc)) {
             banned++;
           } else if (acc.disabled) {
             disabled++;

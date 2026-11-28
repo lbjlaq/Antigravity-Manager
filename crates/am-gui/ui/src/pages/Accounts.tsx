@@ -41,6 +41,14 @@ import {
   quotaPctTextClass,
 } from '../components/common/QuotaMatrixBar';
 import { AddAccountDialog } from '../components/accounts/AddAccountDialog';
+import {
+  getAccountTier,
+  getValidationBlockedLabelKey,
+  isAccountAbnormal,
+  isLocationUnsupportedReason,
+  isValidationBlockActive,
+  tierSortWeight,
+} from '../utils/accountStatus';
 
 export type SortMode = 'health_default' | 'name_asc' | 'tier_desc' | 'custom';
 export type ViewMode = 'table' | 'card';
@@ -65,6 +73,11 @@ export interface AccountItem {
   geminiQuota?: ModelGroupQuota;
   claudeQuota?: ModelGroupQuota;
   argonQuota?: ModelGroupQuota;
+  isAbnormal?: boolean;
+  isDisabled?: boolean;
+  isBanned?: boolean;
+  isValidationBlocked?: boolean;
+  validationLabelKey?: 'status_risk_controlled' | 'status_oauth_reauth_required' | 'status_validation_required';
   isForbidden?: boolean;
   isTokenExpired?: boolean;
   statusReason?: string;
@@ -142,21 +155,21 @@ const QuotaPoolDisplay: React.FC<QuotaPoolDisplayProps> = React.memo(({
   }
 
   return (
-    <div className="flex flex-col justify-center gap-2 px-3 py-2 min-h-[48px] h-full rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+    <div className="flex flex-col justify-center gap-2 px-2 py-2 min-h-[48px] h-full min-w-0 overflow-hidden rounded-[10px] bg-white/95 dark:bg-[#181920] border border-slate-200/75 dark:border-white/[0.08] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
       {rows.length === 0 ? (
-        <div className="flex items-center gap-2.5">
-          <div className="w-[72px] shrink-0 flex items-center gap-1.5 leading-none">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="w-[60px] shrink-0 flex items-center gap-1 leading-none">
             <span className="text-[11px] font-bold text-slate-800 dark:text-zinc-100">
               {isGemini ? 'Gemini' : 'Claude'}
             </span>
             <QuotaWindowBadge window="7d" className="text-[9px] px-1 py-[0.5px] opacity-40" />
           </div>
-          <QuotaMatrixBar pool={pool} window="7d" percentage={0} empty className="min-w-[84px] h-[12px]" />
-          <div className="flex items-center justify-end font-mono tabular-nums shrink-0 leading-none">
-            <span className="text-[10.5px] font-bold w-[34px] text-right text-slate-400 dark:text-zinc-500">
+          <QuotaMatrixBar pool={pool} window="7d" percentage={0} empty className="flex-1 min-w-[36px] h-[12px]" />
+          <div className="flex items-center justify-end gap-1 font-mono tabular-nums shrink-0 leading-none">
+            <span className="text-[10.5px] font-bold w-[31px] text-right text-slate-400 dark:text-zinc-500">
               --
             </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 w-[44px] text-right">
+            <span className="text-[9px] text-slate-400 dark:text-zinc-500 w-[42px] text-right">
               --
             </span>
           </div>
@@ -181,9 +194,9 @@ const QuotaPoolDisplay: React.FC<QuotaPoolDisplayProps> = React.memo(({
           const tooltip = `${baseTip}${paceTip}`;
 
           return (
-            <div key={item.window} title={tooltip} className="flex items-center gap-2.5">
+            <div key={item.window} title={tooltip} className="flex items-center gap-1.5 min-w-0">
               {/* 模型名 + 窗口高对比度胶囊层级 */}
-              <div className="w-[72px] shrink-0 flex items-center gap-1.5 leading-none">
+              <div className="w-[60px] shrink-0 flex items-center gap-1 leading-none">
                 <span className="text-[11px] font-bold text-slate-800 dark:text-zinc-100">
                   {isGemini ? 'Gemini' : 'Claude'}
                 </span>
@@ -195,15 +208,15 @@ const QuotaPoolDisplay: React.FC<QuotaPoolDisplayProps> = React.memo(({
                 pool={pool}
                 window={item.window}
                 percentage={item.percentage}
-                className="min-w-[84px] h-[12px]"
+                className="flex-1 min-w-[36px] h-[12px]"
               />
 
               {/* 纯净右对齐数值与倒计时 */}
-              <div className="flex items-center justify-end font-mono tabular-nums shrink-0 leading-none">
-                <span className={`text-[10.5px] font-bold w-[34px] text-right ${quotaPctTextClass(item.percentage)}`}>
+              <div className="flex items-center justify-end gap-1 font-mono tabular-nums shrink-0 leading-none">
+                <span className={`text-[10.5px] font-bold w-[31px] text-right ${quotaPctTextClass(item.percentage)}`}>
                   {item.percentage}%
                 </span>
-                <span className="text-[9px] w-[44px] text-right whitespace-nowrap truncate text-slate-400 dark:text-zinc-500">
+                <span className="text-[9px] w-[42px] text-right whitespace-nowrap truncate text-slate-400 dark:text-zinc-500">
                   {item.resetText}
                 </span>
               </div>
@@ -222,7 +235,7 @@ interface AccountsProps {
 export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
   // 1. 检索与分类状态
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterTab, setFilterTab] = useState<'all' | 'ultra' | 'pro' | 'free' | 'warning'>('all');
+  const [filterTab, setFilterTab] = useState<'all' | 'pro' | 'ultra' | 'enterprise' | 'free' | 'warning'>('all');
   const [selectedTag, setSelectedTag] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -326,38 +339,45 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
           if (matches(hosts?.plugin_account)) activeHostsList.push('plugin');
           if (matches(hosts?.agy_account)) activeHostsList.push('cli');
 
-          // 真实订阅等级判定：严格依准 quota.subscription_tier / raw_tier
-          let tier: 'PRO' | 'FREE' | 'ULTRA' | 'ENTERPRISE' = 'FREE';
-          const subTier = (acc.quota?.subscription_tier || '').toUpperCase();
-          if (subTier.includes('ULTRA') || subTier.includes('HELIUM')) {
-            tier = 'ULTRA';
-          } else if (subTier.includes('PRO') || subTier.includes('PREMIUM')) {
-            tier = 'PRO';
-          } else if (subTier.includes('ENTERPRISE')) {
-            tier = 'ENTERPRISE';
-          } else if (subTier === 'FREE' || subTier.includes('STARTER')) {
-            tier = 'FREE';
-          } else if (acc.tags?.some((t) => t.toUpperCase().includes('PRO'))) {
-            tier = 'PRO';
-          }
+          // 真实订阅等级判定：直接复用 Antigravity Tools getAccountTier
+          const tier = getAccountTier(acc);
 
-          // 真实封禁/停用/风控状态判定 (proxy_disabled 仅为网关代理调度设置，不视为账号本身异常)
+          // 真实异常/禁用状态判定：直接复用 Antigravity Tools isAccountAbnormal / isValidationBlockActive
           const isBanned = Boolean(acc.banned);
           const isDisabled = Boolean(acc.disabled);
-          const isQuotaForbidden = Boolean(acc.quota?.is_forbidden);
-          const isValidationBlocked = Boolean(acc.validation_blocked);
+          const isValidationBlocked = isValidationBlockActive(acc);
+          const isAbnormal = isAccountAbnormal(acc);
+          const proxyReasonLower = (acc.proxy_disabled_reason ?? '').toLowerCase();
+          const isProxyForbidden = Boolean(
+            acc.proxy_disabled &&
+              (proxyReasonLower.startsWith('forbidden (403)') ||
+                proxyReasonLower.includes('403 forbidden') ||
+                proxyReasonLower.startsWith('banned:'))
+          );
+          const isQuotaForbidden = Boolean(acc.quota?.is_forbidden || isProxyForbidden);
           const rawReason =
             acc.banned_reason ||
+            acc.validation_blocked_reason ||
             acc.disabled_reason ||
             acc.quota?.forbidden_reason ||
-            (acc.proxy_disabled_reason?.toLowerCase().includes('403') ? acc.proxy_disabled_reason : '');
+            (isProxyForbidden ? acc.proxy_disabled_reason : '') ||
+            '';
+          const rawLower = rawReason.toLowerCase();
+          const isOAuthInvalid =
+            rawLower.includes('invalid_grant') ||
+            rawLower.includes('token expired') ||
+            rawLower.includes('revoked') ||
+            rawLower.includes('unauthorized_client') ||
+            rawLower.includes('invalid_client');
 
-          let isForbidden = false;
-          let isTokenExpired = false;
+          const isForbidden = Boolean(isBanned || isQuotaForbidden);
+          const isTokenExpired = Boolean(isDisabled && isOAuthInvalid);
+          const validationLabelKey = isValidationBlocked
+            ? getValidationBlockedLabelKey(rawReason)
+            : undefined;
           let statusReason: string | undefined = undefined;
-          let banAppealUrl: string | undefined = (acc as any).ban_appeal_url || undefined;
+          let banAppealUrl: string | undefined = acc.ban_appeal_url || acc.validation_url || undefined;
 
-          // 1. 优先提取申诉 URL (优先匹配显式 http(s) 链接)
           if (rawReason) {
             const urlMatch = rawReason.match(/https?:\/\/[^\s"',}]+/i);
             if (urlMatch && !banAppealUrl) {
@@ -365,41 +385,24 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             }
           }
 
-          // 2. 封禁/403权限受限/服务条款违规判定 (必须优先于普通的 Token 失效)
-          if (
-            isQuotaForbidden ||
-            isBanned ||
-            isValidationBlocked ||
-            rawReason.includes('PERMISSION_DENIED') ||
-            rawReason.includes('403') ||
-            rawReason.includes('UNSUPPORTED_LOCATION') ||
-            rawReason.includes('SUBSCRIPTION_REQUIRED') ||
-            rawReason.includes('violation of Terms of Service') ||
-            rawReason.includes('TOS')
-          ) {
-            isForbidden = true;
-            if (isBanned || rawReason.includes('violation of Terms of Service') || rawReason.includes('TOS')) {
-              statusReason = tUi(lang, 'status_tos_violation');
-            } else if (rawReason.includes('UNSUPPORTED_LOCATION')) {
-              statusReason = tUi(lang, 'status_location_unsupported');
-            } else {
-              statusReason = tUi(lang, 'status_forbidden_403');
-            }
+          if (isBanned) {
+            statusReason = tUi(lang, 'status_banned_banner');
             if (!banAppealUrl) {
               banAppealUrl = 'https://forms.gle/hGzM9MEUv2azZsrb9';
             }
-          } else if (
-            rawReason.includes('invalid_grant') ||
-            rawReason.includes('token expired') ||
-            rawReason.includes('revoked') ||
-            (isDisabled && !rawReason.includes('403'))
-          ) {
-            // 3. 授权凭据失效：不是 403 / 封禁
-            isTokenExpired = true;
-            statusReason = tUi(lang, 'status_token_expired');
+          } else if (isQuotaForbidden) {
+            statusReason = isLocationUnsupportedReason(rawReason)
+              ? tUi(lang, 'status_location_unsupported')
+              : tUi(lang, 'status_forbidden_403');
+            if (!banAppealUrl) {
+              banAppealUrl = 'https://forms.gle/hGzM9MEUv2azZsrb9';
+            }
+          } else if (isValidationBlocked && validationLabelKey) {
+            statusReason = tUi(lang, validationLabelKey);
           } else if (isDisabled) {
-            isTokenExpired = true;
-            statusReason = tUi(lang, 'status_token_expired');
+            statusReason = isOAuthInvalid
+              ? tUi(lang, 'status_token_expired')
+              : tUi(lang, 'status_disabled_banner');
           }
 
           // 配额解析：复用单一数据源 extractAccountPoolQuota (与托盘小窗 100% 同步)
@@ -468,6 +471,11 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               acc.device_profile?.dev_device_id ||
               acc.device_profile?.machine_id ||
               'fp_isolated_default',
+            isAbnormal,
+            isDisabled,
+            isBanned,
+            isValidationBlocked,
+            validationLabelKey,
             isForbidden,
             isTokenExpired,
             statusReason,
@@ -518,18 +526,19 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     return Array.from(set);
   }, [accounts]);
 
-  // 统计各 Tab 数量（拆分 ULTRA 与 PRO，异常涵盖受限与凭据失效）
+  // 统计各 Tab 数量：直接对齐 Antigravity Tools（PRO / ULTRA / ENTERPRISE / FREE / 异常；disabled 归入已禁用，不计入异常）
   const tabCounts = useMemo(() => {
     return {
       all: accounts.length,
-      ultra: accounts.filter((a) => a.tier === 'ULTRA' || a.tier === 'ENTERPRISE').length,
       pro: accounts.filter((a) => a.tier === 'PRO').length,
+      ultra: accounts.filter((a) => a.tier === 'ULTRA').length,
+      enterprise: accounts.filter((a) => a.tier === 'ENTERPRISE').length,
       free: accounts.filter((a) => a.tier === 'FREE').length,
-      warning: accounts.filter((a) => a.isForbidden || a.isTokenExpired).length,
+      warning: accounts.filter((a) => a.isAbnormal).length,
     };
   }, [accounts]);
 
-  // 筛选与多维排序计算 (无论何种排序，非正常账号始终沉底，保持极致专业)
+  // 筛选与多维排序计算 (无论何种排序，不可用账号默认沉底)
   const filteredAccounts = useMemo(() => {
     const list = accounts.filter((acc) => {
       const matchText =
@@ -539,10 +548,11 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
       if (!matchText) return false;
 
       // Tab 过滤
-      if (filterTab === 'ultra' && acc.tier !== 'ULTRA' && acc.tier !== 'ENTERPRISE') return false;
       if (filterTab === 'pro' && acc.tier !== 'PRO') return false;
+      if (filterTab === 'ultra' && acc.tier !== 'ULTRA') return false;
+      if (filterTab === 'enterprise' && acc.tier !== 'ENTERPRISE') return false;
       if (filterTab === 'free' && acc.tier !== 'FREE') return false;
-      if (filterTab === 'warning' && !acc.isForbidden && !acc.isTokenExpired) return false;
+      if (filterTab === 'warning' && !acc.isAbnormal) return false;
 
       // Tag 下拉过滤
       if (selectedTag === 'all') return true;
@@ -552,25 +562,17 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
     // 复制数组用于排序
     const sorted = [...list];
 
-    // 订阅等级权重辅助函数 (ENTERPRISE > ULTRA > PRO > FREE)
-    const tierWeight = (t: string) => {
-      if (t === 'ENTERPRISE') return 4;
-      if (t === 'ULTRA') return 3;
-      if (t === 'PRO') return 2;
-      return 1;
-    };
-
     // custom 模式：完全忠实保留用户自由拖拽后的自定义顺序，不强行重排
     if (sortMode === 'custom') {
       return sorted;
     }
 
     sorted.sort((a, b) => {
-      // 核心专业规则：非自定义模式下，异常账号（403 受限或 Token 失效）默认沉底排在健康账号后面
-      const aBroken = Boolean(a.isForbidden || a.isTokenExpired);
-      const bBroken = Boolean(b.isForbidden || b.isTokenExpired);
-      if (aBroken !== bBroken) {
-        return aBroken ? 1 : -1;
+      // 非自定义模式下，异常/已禁用账号默认沉底排在健康账号后面
+      const aUnavailable = Boolean(a.isAbnormal || a.isDisabled);
+      const bUnavailable = Boolean(b.isAbnormal || b.isDisabled);
+      if (aUnavailable !== bUnavailable) {
+        return aUnavailable ? 1 : -1;
       }
 
       // 如果健康状态相同，则根据当前选中的排序模式深入比较：
@@ -578,7 +580,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
         return a.email.localeCompare(b.email);
       }
       if (sortMode === 'tier_desc') {
-        const diff = tierWeight(b.tier) - tierWeight(a.tier);
+        const diff = tierSortWeight(b.tier) - tierSortWeight(a.tier);
         if (diff !== 0) return diff;
         return a.email.localeCompare(b.email);
       }
@@ -1153,7 +1155,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
             )}
           </div>
 
-          {/* 分类快捷分段胶囊 */}
+          {/* 分类快捷分段胶囊（直接对齐 Antigravity Tools：全部 / PRO / ULTRA / ENTERPRISE / FREE / 异常，均常驻显示） */}
           <div className="h-7 flex items-center p-0.5 bg-gray-100/85 dark:bg-[#1a1b1f] rounded-lg border border-gray-200/50 dark:border-white/5 text-[11px] min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => setFilterTab('all')}
@@ -1166,19 +1168,6 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               <span>{tUi(lang, 'all')}</span>
               <span className="tabular-nums opacity-55 text-[10px]">{tabCounts.all}</span>
             </button>
-            {tabCounts.ultra > 0 && (
-              <button
-                onClick={() => setFilterTab('ultra')}
-                className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                  filterTab === 'ultra'
-                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-2xs font-semibold'
-                    : 'text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
-                }`}
-              >
-                <span>ULTRA</span>
-                <span className="tabular-nums opacity-80 text-[10px]">{tabCounts.ultra}</span>
-              </button>
-            )}
             <button
               onClick={() => setFilterTab('pro')}
               className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
@@ -1191,6 +1180,28 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.pro}</span>
             </button>
             <button
+              onClick={() => setFilterTab('ultra')}
+              className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                filterTab === 'ultra'
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-2xs font-semibold'
+                  : 'text-amber-600/85 hover:text-amber-700 dark:text-amber-400/85 dark:hover:text-amber-300'
+              }`}
+            >
+              <span>ULTRA</span>
+              <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.ultra}</span>
+            </button>
+            <button
+              onClick={() => setFilterTab('enterprise')}
+              className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                filterTab === 'enterprise'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-2xs font-semibold'
+                  : 'text-emerald-600/85 hover:text-emerald-700 dark:text-emerald-400/85 dark:hover:text-emerald-300'
+              }`}
+            >
+              <span>ENTERPRISE</span>
+              <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.enterprise}</span>
+            </button>
+            <button
               onClick={() => setFilterTab('free')}
               className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
                 filterTab === 'free'
@@ -1201,19 +1212,17 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               <span>FREE</span>
               <span className="tabular-nums opacity-55 text-[10px]">{tabCounts.free}</span>
             </button>
-            {tabCounts.warning > 0 && (
-              <button
-                onClick={() => setFilterTab('warning')}
-                className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                  filterTab === 'warning'
-                    ? 'bg-rose-500 text-white shadow-2xs font-semibold'
-                    : 'text-rose-500 hover:text-rose-600 dark:text-rose-400'
-                }`}
-              >
-                <span>{tUi(lang, 'errors')}</span>
-                <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.warning}</span>
-              </button>
-            )}
+            <button
+              onClick={() => setFilterTab('warning')}
+              className={`h-6 px-2 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                filterTab === 'warning'
+                  ? 'bg-rose-500 text-white shadow-2xs font-semibold'
+                  : 'text-rose-500/85 hover:text-rose-600 dark:text-rose-400/85 dark:hover:text-rose-300'
+              }`}
+            >
+              <span>{tUi(lang, 'errors')}</span>
+              <span className="tabular-nums opacity-75 text-[10px]">{tabCounts.warning}</span>
+            </button>
           </div>
         </div>
 
@@ -1328,7 +1337,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                 >
                   <div className="flex flex-col">
                     <span>{tUi(lang, 'sort_tier')}</span>
-                    <span className="text-[9.5px] opacity-60 font-normal">ULTRA / PRO &gt; FREE</span>
+                    <span className="text-[9.5px] opacity-60 font-normal">ENTERPRISE / ULTRA / PRO &gt; FREE</span>
                   </div>
                   {sortMode === 'tier_desc' && <Check className="w-3.5 h-3.5 text-blue-600" />}
                 </DropdownMenu.Item>
@@ -1460,10 +1469,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
         <div className="bg-white dark:bg-[#16181e] border border-slate-200/90 dark:border-white/[0.10] rounded-xl overflow-hidden shadow-2xs relative w-full">
           <table className="w-full text-left border-collapse table-fixed">
             <colgroup>
-              <col className="w-[54px]" />
-              <col className="w-[224px]" />
+              <col className="w-[50px]" />
+              <col className="w-[206px]" />
               <col className="w-auto" />
-              <col className="w-[180px]" />
+              <col className="w-[176px]" />
             </colgroup>
 
             <thead className="bg-gray-50/80 dark:bg-[#16171b]/80 border-b border-gray-200/60 dark:border-white/5 text-gray-500 dark:text-zinc-400">
@@ -1519,7 +1528,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                         >
                           <div className="flex flex-col">
                             <span>{tUi(lang, 'sort_tier')}</span>
-                            <span className="text-[9.5px] opacity-60 font-normal">ULTRA / PRO &gt; FREE</span>
+                            <span className="text-[9.5px] opacity-60 font-normal">ENTERPRISE / ULTRA / PRO &gt; FREE</span>
                           </div>
                           {sortMode === 'tier_desc' && <Check className="w-3.5 h-3.5 text-blue-600" />}
                         </DropdownMenu.Item>
@@ -1631,8 +1640,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                             className={`px-1.5 py-0 text-[8.5px] font-extrabold tracking-wide rounded shrink-0 ${
                               acc.tier === 'PRO'
                                 ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white shadow-xs ring-1 ring-blue-400/25'
-                                : acc.tier === 'ULTRA' || acc.tier === 'ENTERPRISE'
+                                : acc.tier === 'ULTRA'
                                 ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-xs ring-1 ring-amber-400/30'
+                                : acc.tier === 'ENTERPRISE'
+                                ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-xs ring-1 ring-emerald-400/30'
                                 : 'bg-gray-200/80 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'
                             }`}
                           >
@@ -1655,6 +1666,28 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
 
                         {/* 第二行：应用激活状态标签 (放于此使第一行邮箱纯粹整齐) + 用户自定义标签 */}
                         <div className="flex flex-wrap items-center gap-1 min-w-0">
+                          {/* 状态徽章：已禁用 / 已封禁 / 403 受限 / 需验证（与 Antigravity Tools 严格分离） */}
+                          {acc.isDisabled && (
+                            <span className="px-1.5 py-0 text-[8.5px] font-bold rounded bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-200/60 dark:border-rose-800/50 shrink-0">
+                              {tUi(lang, 'status_disabled_badge')}
+                            </span>
+                          )}
+                          {acc.isBanned && (
+                            <span className="px-1.5 py-0 text-[8.5px] font-bold rounded bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 border border-red-200/60 dark:border-red-800/50 shrink-0">
+                              {tUi(lang, 'status_banned_badge')}
+                            </span>
+                          )}
+                          {acc.isForbidden && !acc.isBanned && (
+                            <span className="px-1.5 py-0 text-[8.5px] font-bold rounded bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 border border-red-200/60 dark:border-red-800/50 shrink-0">
+                              {tUi(lang, 'status_forbidden_badge')}
+                            </span>
+                          )}
+                          {acc.isValidationBlocked && !acc.isBanned && (
+                            <span className="px-1.5 py-0 text-[8.5px] font-bold rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/50 shrink-0">
+                              {tUi(lang, acc.validationLabelKey || 'status_validation_required')}
+                            </span>
+                          )}
+
                           {/* 活跃宿主指示胶囊标签 */}
                           {acc.activeHosts.map((h) => (
                             <span
@@ -1689,12 +1722,12 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                           </button>
                         </div>
 
-                        {/* 异常状态微型胶囊指示器 (点击唤起详情与申诉弹窗) */}
-                        {(acc.isForbidden || acc.isTokenExpired) && (
+                        {/* 异常状态微型胶囊指示器 (仅对封禁/403/验证受限账号展示，已禁用账号已在配额栏直接呈现) */}
+                        {(acc.isForbidden || acc.isValidationBlocked) && (
                           <button
                             onClick={() => setActiveModal({ type: 'error', account: acc })}
                             className={`inline-flex items-center gap-1 text-[9.5px] font-medium hover:underline max-w-[220px] truncate text-left cursor-pointer ${
-                              acc.isTokenExpired
+                              acc.isValidationBlocked && !acc.isBanned
                                 ? 'text-amber-500 hover:text-amber-600 dark:text-amber-400'
                                 : 'text-rose-500 hover:text-rose-600 dark:text-rose-400'
                             }`}
@@ -1710,9 +1743,9 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       </div>
                     </td>
 
-                    {/* 栏 2：Gemini / Claude / Argon 额度条 (受限/失效账号不显示额度，直接显示优雅的异常通告与申诉/解除通道) */}
-                    <td className="px-2.5 py-2 align-middle">
-                      {acc.isForbidden ? (
+                    {/* 栏 2：Gemini / Claude / Argon 额度条 (异常与已禁用账号独立呈现对应状态条) */}
+                    <td className="px-2 py-2 align-middle overflow-hidden">
+                      {acc.isAbnormal && acc.isForbidden ? (
                         <div className="flex flex-col gap-1 pr-2">
                           <div className="p-2 px-3 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between gap-2.5 text-[11px] shadow-2xs">
                             <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 min-w-0">
@@ -1722,17 +1755,17 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                               </span>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              {/* 解除 403 锁定按钮：仅对 403 受限账号显示 */}
-                              <button
-                                onClick={() => handleClearForbidden(acc.id)}
-                                className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                                title={tUi(lang, 'unlock_403')}
-                              >
-                                <RefreshCw className="w-2.5 h-2.5" />
-                                <span>{tUi(lang, 'unlock_403')}</span>
-                              </button>
+                              {!acc.isBanned && (
+                                <button
+                                  onClick={() => handleClearForbidden(acc.id)}
+                                  className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                  title={tUi(lang, 'unlock_403')}
+                                >
+                                  <RefreshCw className="w-2.5 h-2.5" />
+                                  <span>{tUi(lang, 'unlock_403')}</span>
+                                </button>
+                              )}
 
-                              {/* 官方申诉链接：调用底层原生浏览器安全拉起 */}
                               {acc.banAppealUrl && (
                                 <button
                                   onClick={() => api.openExternalUrl(acc.banAppealUrl!)}
@@ -1745,44 +1778,71 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
 
                               <button
                                 onClick={() => setActiveModal({ type: 'error', account: acc })}
-                                className="px-1.5 py-1 rounded-lg text-[10px] text-zinc-500 dark:text-zinc-400 hover:bg-rose-500/10 hover:text-rose-600 transition-colors cursor-pointer"
+                                className="px-1.5 py-1 rounded-lg text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline transition-colors cursor-pointer"
                               >
-                                {tUi(lang, 'details')}
+                                {tUi(lang, 'view_reason')}
                               </button>
                             </div>
                           </div>
                         </div>
-                      ) : acc.isTokenExpired ? (
+                      ) : acc.isAbnormal && acc.isValidationBlocked ? (
                         <div className="flex flex-col gap-1 pr-2">
                           <div className="p-2 px-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2.5 text-[11px] shadow-2xs">
                             <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 min-w-0">
                               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                               <span className="font-semibold truncate">
-                                {acc.statusReason || tUi(lang, 'status_token_expired')}
+                                {acc.statusReason || tUi(lang, 'status_validation_required')}
                               </span>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              {/* 凭据失效快捷重新授权 */}
-                              <button
-                                onClick={() => setActiveModal({ type: 'oauth', account: acc })}
-                                className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-zinc-800 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-900/40 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                                title={tUi(lang, 're_login')}
-                              >
-                                <ExternalLink className="w-2.5 h-2.5" />
-                                <span>{tUi(lang, 're_login')}</span>
-                              </button>
-
+                              {acc.validationLabelKey === 'status_oauth_reauth_required' && (
+                                <button
+                                  onClick={() => setActiveModal({ type: 'oauth', account: acc })}
+                                  className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-zinc-800 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-900/40 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                  title={tUi(lang, 're_login')}
+                                >
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                  <span>{tUi(lang, 're_login')}</span>
+                                </button>
+                              )}
+                              {acc.banAppealUrl && (
+                                <button
+                                  onClick={() => api.openExternalUrl(acc.banAppealUrl!)}
+                                  className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                >
+                                  <span>{tUi(lang, 'appeal')}</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </button>
+                              )}
                               <button
                                 onClick={() => setActiveModal({ type: 'error', account: acc })}
-                                className="px-1.5 py-1 rounded-lg text-[10px] text-zinc-500 dark:text-zinc-400 hover:bg-amber-500/10 hover:text-amber-600 transition-colors cursor-pointer"
+                                className="px-1.5 py-1 rounded-lg text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline transition-colors cursor-pointer"
                               >
-                                {tUi(lang, 'details')}
+                                {tUi(lang, 'view_reason')}
                               </button>
                             </div>
                           </div>
                         </div>
+                      ) : acc.isDisabled ? (
+                        <div className="flex flex-col gap-1 pr-2">
+                          <div className="p-2 px-3 rounded-xl bg-rose-500/8 border border-rose-500/20 flex items-center justify-center gap-3 text-[11px] shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 min-w-0">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              <span className="font-bold truncate">
+                                {tUi(lang, 'status_disabled_banner')}
+                              </span>
+                            </div>
+                            <span className="w-px h-3 bg-rose-200 dark:bg-rose-800/50 shrink-0" />
+                            <button
+                              onClick={() => setActiveModal({ type: 'error', account: acc })}
+                              className="text-[10.5px] font-medium text-blue-600 dark:text-blue-400 hover:underline transition-colors cursor-pointer shrink-0"
+                            >
+                              {tUi(lang, 'view_reason')}
+                            </button>
+                          </div>
+                        </div>
                       ) : (
-                        <div className="grid grid-cols-2 gap-2.5 w-full pr-2 items-stretch">
+                        <div className="grid grid-cols-2 gap-2 w-full min-w-0 pr-1 items-stretch">
                           <QuotaPoolDisplay pool="gemini" quota={acc.geminiQuota} lang={lang} />
                           <QuotaPoolDisplay pool="claude" quota={acc.claudeQuota} lang={lang} />
                         </div>
@@ -1967,8 +2027,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                         className={`px-1.5 py-0 text-[9px] font-extrabold tracking-wide rounded shadow-xs ${
                           acc.tier === 'PRO'
                             ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white ring-1 ring-blue-400/25'
-                            : acc.tier === 'ULTRA' || acc.tier === 'ENTERPRISE'
+                            : acc.tier === 'ULTRA'
                             ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white ring-1 ring-amber-400/30'
+                            : acc.tier === 'ENTERPRISE'
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white ring-1 ring-emerald-400/30'
                             : 'bg-gray-200/80 text-gray-700 dark:bg-zinc-800 dark:text-zinc-300'
                         }`}
                       >
@@ -1990,8 +2052,28 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                     </div>
                   </div>
 
-                  {/* 卡片第二行：自定义 Tag 标签展示区 */}
+                  {/* 卡片第二行：状态徽章与自定义 Tag 标签展示区 */}
                   <div className="flex flex-wrap items-center gap-1 pl-6 min-w-0">
+                    {acc.isDisabled && (
+                      <span className="px-1.5 py-0 text-[8px] font-bold rounded bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-200/60 dark:border-rose-800/50 shrink-0">
+                        {tUi(lang, 'status_disabled_badge')}
+                      </span>
+                    )}
+                    {acc.isBanned && (
+                      <span className="px-1.5 py-0 text-[8px] font-bold rounded bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 border border-red-200/60 dark:border-red-800/50 shrink-0">
+                        {tUi(lang, 'status_banned_badge')}
+                      </span>
+                    )}
+                    {acc.isForbidden && !acc.isBanned && (
+                      <span className="px-1.5 py-0 text-[8px] font-bold rounded bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 border border-red-200/60 dark:border-red-800/50 shrink-0">
+                        {tUi(lang, 'status_forbidden_badge')}
+                      </span>
+                    )}
+                    {acc.isValidationBlocked && !acc.isBanned && (
+                      <span className="px-1.5 py-0 text-[8px] font-bold rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/50 shrink-0">
+                        {tUi(lang, acc.validationLabelKey || 'status_validation_required')}
+                      </span>
+                    )}
                     {acc.tags.map((t) => (
                       <button
                         key={t}
@@ -2012,9 +2094,9 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                   </div>
                 </div>
 
-                {/* 卡片中部：数码像素晶格胶囊配额池 或 异常告警（flex-1 + grid-rows-2 确保同行单/双窗口卡片等高对称） */}
+                {/* 卡片中部：数码像素晶格胶囊配额池 或 异常/已禁用提示（flex-1 + grid-rows-2 确保同行单/双窗口卡片等高对称） */}
                 <div className="flex-1 flex flex-col justify-center gap-1 py-0.5">
-                  {acc.isForbidden ? (
+                  {acc.isAbnormal && acc.isForbidden ? (
                     <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 flex flex-col gap-1.5">
                       <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-[11px] font-semibold">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -2023,13 +2105,15 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                         </span>
                       </div>
                       <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-rose-500/10">
-                        <button
-                          onClick={() => handleClearForbidden(acc.id)}
-                          className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                        >
-                          <RefreshCw className="w-2.5 h-2.5" />
-                          <span>{tUi(lang, 'unlock_403')}</span>
-                        </button>
+                        {!acc.isBanned && (
+                          <button
+                            onClick={() => handleClearForbidden(acc.id)}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-900/40 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <RefreshCw className="w-2.5 h-2.5" />
+                            <span>{tUi(lang, 'unlock_403')}</span>
+                          </button>
+                        )}
                         {acc.banAppealUrl && (
                           <button
                             onClick={() => api.openExternalUrl(acc.banAppealUrl!)}
@@ -2039,25 +2123,55 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                             <ExternalLink className="w-2.5 h-2.5" />
                           </button>
                         )}
+                        <button
+                          onClick={() => setActiveModal({ type: 'error', account: acc })}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {tUi(lang, 'view_reason')}
+                        </button>
                       </div>
                     </div>
-                  ) : acc.isTokenExpired ? (
+                  ) : acc.isAbnormal && acc.isValidationBlocked ? (
                     <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col gap-1.5">
                       <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-[11px] font-semibold">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate">
-                          {acc.statusReason || tUi(lang, 'status_token_expired')}
+                          {acc.statusReason || tUi(lang, 'status_validation_required')}
                         </span>
                       </div>
                       <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-amber-500/10">
+                        {acc.validationLabelKey === 'status_oauth_reauth_required' && (
+                          <button
+                            onClick={() => setActiveModal({ type: 'oauth', account: acc })}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <ExternalLink className="w-2.5 h-2.5" />
+                            <span>{tUi(lang, 're_login')}</span>
+                          </button>
+                        )}
                         <button
-                          onClick={() => setActiveModal({ type: 'oauth', account: acc })}
-                          className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                          onClick={() => setActiveModal({ type: 'error', account: acc })}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                         >
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          <span>{tUi(lang, 're_login')}</span>
+                          {tUi(lang, 'view_reason')}
                         </button>
                       </div>
+                    </div>
+                  ) : acc.isDisabled ? (
+                    <div className="p-2 rounded-xl bg-rose-500/8 border border-rose-500/20 flex items-center justify-center gap-2.5">
+                      <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-[11px] font-bold">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {tUi(lang, 'status_disabled_banner')}
+                        </span>
+                      </div>
+                      <span className="w-px h-3 bg-rose-200 dark:bg-rose-800/50 shrink-0" />
+                      <button
+                        onClick={() => setActiveModal({ type: 'error', account: acc })}
+                        className="text-[10.5px] font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer shrink-0"
+                      >
+                        {tUi(lang, 'view_reason')}
+                      </button>
                     </div>
                   ) : (
                     <div className="flex-1 grid grid-rows-2 gap-1.5">
@@ -2457,7 +2571,7 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
                       <span>{tUi(lang, 'unlock_403')}</span>
                     </button>
                   )}
-                  {activeModal.account.isTokenExpired && (
+                  {(activeModal.account.isTokenExpired || activeModal.account.isDisabled) && (
                     <button
                       onClick={() => {
                         const target = activeModal.account;
@@ -2544,8 +2658,10 @@ export const Accounts: React.FC<AccountsProps> = ({ lang }) => {
               className={`px-1.5 py-0 text-[8.5px] font-extrabold rounded shrink-0 ${
                 draggedAcc.tier === 'PRO'
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white'
-                  : draggedAcc.tier === 'ULTRA' || draggedAcc.tier === 'ENTERPRISE'
+                  : draggedAcc.tier === 'ULTRA'
                   ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
+                  : draggedAcc.tier === 'ENTERPRISE'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white'
                   : 'bg-gray-200 text-gray-700 dark:bg-zinc-800 dark:text-zinc-300'
               }`}
             >

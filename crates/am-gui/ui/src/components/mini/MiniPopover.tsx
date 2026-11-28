@@ -40,13 +40,11 @@ import {
   readStoredDashboardPickStrategy,
   readStoredDashboardPoolPreference,
 } from '../../utils/uiState';
-
-function tierSortWeight(tier: 'ULTRA' | 'PRO' | 'ENTERPRISE' | 'FREE'): number {
-  if (tier === 'ENTERPRISE') return 4;
-  if (tier === 'ULTRA') return 3;
-  if (tier === 'PRO') return 2;
-  return 1;
-}
+import {
+  getAccountTier,
+  isAccountHealthy,
+  tierSortWeight,
+} from '../../utils/accountStatus';
 
 function normalizeSortMode(raw?: string | null): AccountsSortMode {
   if (raw === 'tier_desc' || raw === 'name_asc' || raw === 'custom' || raw === 'health_default') {
@@ -162,13 +160,7 @@ function modelDotColor(name: string): string {
 }
 
 function resolveTier(acc: BackendAccount): 'ULTRA' | 'PRO' | 'ENTERPRISE' | 'FREE' {
-  const sub = (acc.quota?.subscription_tier || '').toUpperCase();
-  if (sub.includes('ULTRA') || sub.includes('HELIUM')) return 'ULTRA';
-  if (sub.includes('PRO') || sub.includes('PREMIUM')) return 'PRO';
-  if (sub.includes('ENTERPRISE')) return 'ENTERPRISE';
-  if (acc.tags?.some((t) => t.toUpperCase().includes('ULTRA'))) return 'ULTRA';
-  if (acc.tags?.some((t) => t.toUpperCase().includes('PRO'))) return 'PRO';
-  return 'FREE';
+  return getAccountTier(acc);
 }
 
 function formatCandidatePoolTooltip(label: string, q: ParsedPoolQuota): string {
@@ -577,7 +569,7 @@ export const MiniPopover: React.FC<MiniPopoverProps> = ({ lang, theme, onToggleT
   // 候选账号列表严格遵循主窗口「账号管理」页的排序模式（tier_desc / name_asc / custom / health_default）
   const healthyCandidates = useMemo(() => {
     const list = accounts
-      .filter((a) => !a.disabled && !a.banned && !a.validation_blocked && !a.quota?.is_forbidden)
+      .filter((a) => isAccountHealthy(a))
       .map((a) => {
         const gPool = extractAccountPoolQuota(a, 'gemini');
         const cPool = extractAccountPoolQuota(a, 'claude');
