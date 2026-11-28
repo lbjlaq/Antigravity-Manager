@@ -274,6 +274,7 @@ pub fn resolve_wsl_home_dirs(custom_home: Option<&str>) -> Vec<PathBuf> {
             let root_home = PathBuf::from(format!("{}{}\\root", prefix, distro));
             if root_home.exists() {
                 candidates.push(root_home);
+                break;
             }
         }
     }

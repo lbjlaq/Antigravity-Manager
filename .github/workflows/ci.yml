@@ -89,7 +89,7 @@ jobs:
           cargo check
 
       - name: Run critical-path Rust regression tests
-        timeout-minutes: 15
+        timeout-minutes: 5
         run: |
           cd src-tauri
           cargo test --lib -- --test-threads=1 models::official_model::tests models::account::tests modules::config::tests modules::integration::tests proxy::config::tests proxy::middleware::auth::tests proxy::common::model_mapping::tests proxy::common::model_gate::tests proxy::mappers::common_utils::tests proxy::tests::quota_protection proxy::tests::ultra_priority_tests utils::fs::tests utils::crypto::tests
